@@ -10,4 +10,11 @@ if errorlevel 1 echo Python 3.13 32 bits non detecte par le launcher py.
 echo.
 echo === Roues principales ===
 dir /b wheels\*win32.whl 2>nul
+echo.
+echo === Roues SmartcardFramework ===
+if exist "requirements-smartcard.txt" (
+    dir /b wheels\cryptography*.whl wheels\cffi*.whl wheels\liboqs_python*.whl 2>nul
+) else (
+    echo requirements-smartcard.txt absent.
+)
 pause

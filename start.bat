@@ -17,11 +17,5 @@ if errorlevel 1 (
     if errorlevel 1 exit /b 1
 )
 
-".venv\Scripts\python.exe" main_qt.py
-set "APP_CODE=%ERRORLEVEL%"
-if not "%APP_CODE%"=="0" (
-    echo.
-    echo L'application s'est arretee avec le code %APP_CODE%.
-    pause
-)
-exit /b %APP_CODE%
+call setup\05_run_app.bat
+exit /b %ERRORLEVEL%

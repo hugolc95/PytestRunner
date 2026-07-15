@@ -15,20 +15,8 @@ if errorlevel 1 (
     exit /b 1
 )
 
-".venv\Scripts\python.exe" -m pip install --disable-pip-version-check --no-index --find-links="%CD%\wheels" -r requirements-dev.txt
-if errorlevel 1 goto :error
+call setup\02b_install_dev_deps.bat
+if errorlevel 1 exit /b 1
 
-set "QT_QPA_PLATFORM=offscreen"
-".venv\Scripts\python.exe" -m pytest -q tests
-if errorlevel 1 goto :error
-
-echo.
-echo Tous les tests sont passes.
-pause
-exit /b 0
-
-:error
-echo.
-echo Un test ou une installation locale a echoue.
-pause
-exit /b 1
+call setup\06_run_internal_tests.bat
+exit /b %ERRORLEVEL%

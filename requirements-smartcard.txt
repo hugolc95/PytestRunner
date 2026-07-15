@@ -1,0 +1,13 @@
+-r requirements.txt
+
+# Dependances Python de SmartcardFramework (utilise via PYTHONPATH, pas un paquet pip).
+# cryptography est fige a 48.0.1 : les versions plus recentes n'ont plus de wheel win32.
+attrs
+cffi
+cryptography==48.0.1
+pycparser
+pycryptodomex
+pyserial
+cbor2
+six
+liboqs-python
