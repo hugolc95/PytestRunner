@@ -26,6 +26,7 @@ from gui_qt.config.config_dialog import ConfigDialog
 from gui_qt.campaign_window import CampaignPanel
 from gui_qt.history_window import HistoryWindow
 from gui_qt.flaky_window import FlakyTestsDialog
+from gui_qt.dialogs import show_scrollable_error
 
 
 from core.test_discovery import collect_tests
@@ -749,7 +750,12 @@ class MainWindow(QMainWindow):
         self.load_button.setEnabled(True)
         self.run_button.setEnabled(False)
         self._queue_console_output("Workspace load failed.\n")
-        QMessageBox.critical(self, "Error", message)
+        show_scrollable_error(
+            self,
+            "Erreur de chargement du workspace",
+            message,
+            intro="pytest n'a pas pu collecter les tests de ce workspace :",
+        )
 
     def stop_tests(self):
         if hasattr(self, "worker") and self.worker.isRunning():

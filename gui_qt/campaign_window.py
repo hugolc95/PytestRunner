@@ -36,6 +36,7 @@ from core.pytest_executor import parse_test_status_line
 from core.run_history import RunHistoryManager, new_run_id, history_dir
 from gui_qt.config.config_loader import find_config_yaml
 from gui_qt.config.config_dialog import ConfigDialog
+from gui_qt.dialogs import show_scrollable_error
 from gui_qt.styles.styles import primary_button, neutral_button, success_button, danger_button, toolbar_button, tree_style, console_style
 from gui_qt.status_icons import STATUS_PRIORITY, STATUS_COLORS, status_icon
 
@@ -907,7 +908,12 @@ class CampaignPanel(QWidget):
             self.console.append(f"Scenarios: {len(self.campaign.scenarios)}\n")
             self.run_button.setEnabled(True)
         except Exception as exc:
-            QMessageBox.critical(self, "Error", str(exc))
+            show_scrollable_error(
+                self,
+                "Erreur de chargement de la campagne",
+                str(exc),
+                intro="Impossible de charger ce fichier campaign.yml :",
+            )
 
     def open_config(self):
         if not self.campaign:
