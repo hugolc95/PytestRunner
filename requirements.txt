@@ -1,0 +1,7 @@
+--no-index
+--find-links ./wheels
+
+PyQt5==5.15.11
+pytest==9.1.1
+PyYAML==6.0.3
+colorama==0.4.6

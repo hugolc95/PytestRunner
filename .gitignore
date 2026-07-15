@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Etat / rapports generes a l'execution, pas du code source
+campaign_state.txt
+rapport_*.html

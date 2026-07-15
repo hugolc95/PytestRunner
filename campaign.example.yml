@@ -1,0 +1,38 @@
+name: Example campaign - fake environment
+workspace: .
+
+# PYTHONPATH est force pour tous les setups et pytest lances par Campaign Mode.
+# - "." permet les imports depuis la racine workspace.
+# Pour ton architecture avec campaign.yml dans TSu/TestSuite1/Campaign :
+#   workspace: ../../..
+#   pythonpath:
+#     - .
+#     - TSu/TestSuite1
+# Cela permet a la fois :
+#   from TSu.TestSuite1.Define import *
+#   from conftest import *
+pythonpath:
+  - .
+
+# Ce fichier fonctionne directement avec le faux environnement inclus dans ce ZIP :
+#   testSuite1/test_api.py
+#   testSuite1/test_math.py
+#
+# Important : les nodeids ci-dessous doivent etre relatifs au workspace.
+# Si tu adaptes ce fichier a ton vrai environnement, copie les nodeids depuis le mode Workspace.
+scenarios:
+  - name: Config A
+    setup: scripts/campaign_config_a.py
+    tests:
+      - testSuite1/test_api.py::test_login[admin]
+      - nodeid: testSuite1/test_api.py::test_login[user]
+        repeat: 2
+      - testSuite1/test_math.py::test_compute[case_1-2]
+
+  - name: Config B
+    setup: scripts/campaign_config_b.py
+    tests:
+      - testSuite1/test_api.py::test_login[admin]
+      - nodeid: testSuite1/test_api.py::test_login[user]
+        repeat: 2
+      - testSuite1/test_math.py::test_compute[case_1-2]

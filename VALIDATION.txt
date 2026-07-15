@@ -1,0 +1,23 @@
+VALIDATION DU PAQUET
+====================
+
+Cible : CPython 3.13 / Windows x86 (32 bits)
+Mode : installation strictement hors ligne
+
+Validations effectuees :
+- resolution pip simulee avec --platform win32 --python-version 3.13 --abi cp313 : OK
+- requirements.txt : OK
+- requirements-dev.txt : OK
+- integrite ZIP des roues natives PyQt5, Qt5, PyQt5-sip et PyYAML : OK
+- compilation syntaxique de tous les modules Python : OK
+- tests du noyau : 6 passed
+- suite GUI existante : 6 tests supplementaires fournis dans tests/test_gui.py
+
+Limite de l'environnement de construction :
+Le lancement natif de l'interface Windows x86 ne peut pas etre execute depuis Linux.
+Le script test_offline.bat permet de lancer la suite complete directement sur le PC cible.
+
+
+CORRECTION 2026-07-14
+- Ajout de colorama 0.4.6, dependance Windows obligatoire de pytest.
+- Resolution hors ligne revalidee pour CPython 3.13 win32.
