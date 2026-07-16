@@ -36,7 +36,7 @@ from core.pytest_executor import parse_test_status_line
 from core.run_history import RunHistoryManager, new_run_id, history_dir
 from gui_qt.config.config_loader import find_config_yaml
 from gui_qt.config.config_dialog import ConfigDialog
-from gui_qt.dialogs import show_scrollable_error
+from gui_qt.dialogs import show_scrollable_error, open_test_log_for
 from gui_qt.styles.styles import primary_button, neutral_button, success_button, danger_button, toolbar_button, tree_style, console_style
 from gui_qt.status_icons import STATUS_PRIORITY, STATUS_COLORS, status_icon
 
@@ -60,6 +60,8 @@ class CampaignSelection:
 class CampaignTreeView(QTreeView):
     # Emis avec (nb coches, total) a chaque changement de selection des cases a cocher.
     selection_changed = pyqtSignal(int, int)
+    # Emis avec le nodeid d'un test dont on veut ouvrir le fichier .log.
+    open_log_requested = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -74,6 +76,8 @@ class CampaignTreeView(QTreeView):
         self._leaf_items: list[QStandardItem] = []
         # Nodeid pytest (normalise) -> items en attente d'un resultat (FIFO, pour gerer les repeats).
         self._nodeid_to_items: dict[str, list[QStandardItem]] = {}
+        # scenario_index -> item "setup" (pour colorer son statut apres execution).
+        self._setup_items: dict[int, QStandardItem] = {}
         # Sortie console complete du dernier run, pour "Voir la trace d'echec".
         self._last_output: str = ""
 
@@ -92,6 +96,7 @@ class CampaignTreeView(QTreeView):
         self.model.setHorizontalHeaderLabels([campaign.name])
         self._leaf_items.clear()
         self._nodeid_to_items.clear()
+        self._setup_items.clear()
         root = self.model.invisibleRootItem()
 
         for scenario_index, scenario in enumerate(campaign.scenarios):
@@ -106,6 +111,7 @@ class CampaignTreeView(QTreeView):
                 )
                 setup_item.setCheckable(False)
                 scenario_item.appendRow(setup_item)
+                self._setup_items[scenario_index] = setup_item
 
             for test_index, test in enumerate(scenario.tests):
                 label = test.name or test.nodeid
@@ -297,6 +303,15 @@ class CampaignTreeView(QTreeView):
         self._propagate_status_to_parents(item)
         return True
 
+    def update_setup_status(self, scenario_index: int, status: str):
+        """Colore le noeud 'setup' d'un scenario selon le resultat de son script
+        (PASSED = vert, FAILED = rouge), et remonte le statut au scenario parent."""
+        item = self._setup_items.get(scenario_index)
+        if item is None:
+            return
+        self._apply_status(item, status)
+        self._propagate_status_to_parents(item)
+
     def _apply_status(self, item: QStandardItem, status: str):
         item.setData(status, STATUS_ROLE)
         color = STATUS_COLORS.get(status)
@@ -405,12 +420,16 @@ class CampaignTreeView(QTreeView):
         own_status = item.data(STATUS_ROLE)
 
         menu = QMenu(self)
+        open_log_action = menu.addAction("Ouvrir le log de ce test")
+        open_log_action.setEnabled(bool(own_nodeid))
         view_trace_action = menu.addAction("Voir la trace d'echec")
         view_trace_action.setEnabled(bool(own_nodeid) and own_status in ("FAILED", "ERROR"))
 
         chosen = menu.exec_(self.viewport().mapToGlobal(pos))
         if chosen is view_trace_action and own_nodeid:
             self._show_failure_trace(own_nodeid)
+        elif chosen is open_log_action and own_nodeid:
+            self.open_log_requested.emit(own_nodeid)
 
     def _show_failure_trace(self, nodeid: str):
         trace = extract_failure_traceback(self._last_output, nodeid)
@@ -443,6 +462,8 @@ class CampaignWorker(QThread):
     error_signal = pyqtSignal(str)
     # Emis (nodeid, status) a chaque ligne de resultat pytest detectee dans la sortie.
     test_status_signal = pyqtSignal(str, str)
+    # Emis (scenario_index, status) apres l'execution du script setup d'un scenario.
+    setup_status_signal = pyqtSignal(int, str)
 
     def __init__(
         self,
@@ -491,6 +512,7 @@ class CampaignWorker(QThread):
 
                 if scenario.setup:
                     code = self._run_setup(scenario)
+                    self.setup_status_signal.emit(scenario_index, "PASSED" if code == 0 else "FAILED")
                     if code != 0:
                         exit_code = code
                         self.stdout_signal.emit(f"\nSetup failed for scenario '{scenario.name}' with exit code {code}.\n")
@@ -780,6 +802,7 @@ class CampaignPanel(QWidget):
         self.tree = CampaignTreeView()
         self.tree.setStyleSheet(tree_style())
         self.tree.selection_changed.connect(self.on_selection_changed)
+        self.tree.open_log_requested.connect(self.open_test_log)
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter tests...")
@@ -928,6 +951,11 @@ class CampaignPanel(QWidget):
         dialog = ConfigDialog(config_path, self)
         dialog.exec_()
 
+    def open_test_log(self, nodeid: str):
+        if not self.campaign:
+            return
+        open_test_log_for(self, self.campaign.workspace, nodeid)
+
     def on_selection_changed(self, selected: int, total: int):
         self.selection_label.setText(f"{selected} / {total} selected")
 
@@ -1015,6 +1043,7 @@ class CampaignPanel(QWidget):
         self.worker.stdout_signal.connect(self._on_stdout)
         self.worker.error_signal.connect(self._on_stdout)
         self.worker.test_status_signal.connect(self._on_test_status)
+        self.worker.setup_status_signal.connect(self._on_setup_status)
         self.worker.finished_signal.connect(self._on_finished)
         self.run_button.setEnabled(False)
         self.rerun_failed_button.setEnabled(False)
@@ -1046,6 +1075,9 @@ class CampaignPanel(QWidget):
 
     def _on_stdout(self, text: str):
         self._queue_console_output(text)
+
+    def _on_setup_status(self, scenario_index: int, status: str):
+        self.tree.update_setup_status(scenario_index, status)
 
     def _on_test_status(self, nodeid: str, status: str):
         if self.tree.update_next_for_nodeid(nodeid, status):

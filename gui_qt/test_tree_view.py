@@ -29,6 +29,8 @@ class TestTreeView(QTreeView):
     run_requested = pyqtSignal(list)
     # Emis avec le chemin RELATIF (au workspace) du fichier a ouvrir.
     open_file_requested = pyqtSignal(str)
+    # Emis avec le nodeid d'un test dont on veut ouvrir le fichier .log.
+    open_log_requested = pyqtSignal(str)
     # Emis (nb coches, total) a chaque changement de selection des cases a cocher.
     selection_changed = pyqtSignal(int, int)
 
@@ -443,6 +445,9 @@ class TestTreeView(QTreeView):
         open_file_action = menu.addAction("Ouvrir le fichier source")
         open_file_action.setEnabled(bool(reference_nodeid))
 
+        open_log_action = menu.addAction("Ouvrir le log de ce test")
+        open_log_action.setEnabled(bool(own_nodeid))
+
         own_status = item.data(STATUS_ROLE)
         menu.addSeparator()
         view_trace_action = menu.addAction("Voir la trace d'echec")
@@ -460,6 +465,8 @@ class TestTreeView(QTreeView):
             QApplication.clipboard().setText(reference_nodeid.split("::")[0])
         elif chosen is open_file_action and reference_nodeid:
             self.open_file_requested.emit(reference_nodeid.split("::")[0])
+        elif chosen is open_log_action and own_nodeid:
+            self.open_log_requested.emit(own_nodeid)
         elif chosen is view_trace_action and own_nodeid:
             self._show_failure_trace(own_nodeid)
 

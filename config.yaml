@@ -1,0 +1,6 @@
+# Configuration du workspace lue par Pytest Runner.
+#
+# log_directory : dossier racine ou le conftest ecrit un fichier .log par test
+# execute (dans un sous-dossier horodate par run). Chemin relatif au workspace,
+# ou absolu. Defaut si absent : <workspace>/logs
+log_directory: logs

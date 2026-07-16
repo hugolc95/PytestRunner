@@ -26,7 +26,7 @@ from gui_qt.config.config_dialog import ConfigDialog
 from gui_qt.campaign_window import CampaignPanel
 from gui_qt.history_window import HistoryWindow
 from gui_qt.flaky_window import FlakyTestsDialog
-from gui_qt.dialogs import show_scrollable_error
+from gui_qt.dialogs import show_scrollable_error, open_test_log_for
 
 
 from core.test_discovery import collect_tests
@@ -324,6 +324,7 @@ class MainWindow(QMainWindow):
         self.tree = TestTreeView()
         self.tree.run_requested.connect(self.run_specific_nodeids)
         self.tree.open_file_requested.connect(self.open_test_file)
+        self.tree.open_log_requested.connect(self.open_test_log)
 
         self.tree.setStyleSheet(tree_style())
         self.console.setStyleSheet(console_style())
@@ -865,6 +866,13 @@ class MainWindow(QMainWindow):
             )
         except OSError as exc:
             QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le fichier :\n{exc}")
+
+    def open_test_log(self, nodeid: str):
+        """Ouvre le fichier .log du dernier run pour ce test. A defaut, ouvre le
+        dossier racine des logs, sinon informe qu'aucun log n'existe encore."""
+        if not self.workspace:
+            return
+        open_test_log_for(self, self.workspace, nodeid)
 
 
 

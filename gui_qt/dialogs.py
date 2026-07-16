@@ -8,6 +8,8 @@
 # surtout sur des ecrans plus petits. On affiche donc les messages potentiellement
 # longs dans un QTextEdit defilant, dans une fenetre bornee a la taille de l'ecran.
 
+import os
+
 from PyQt5.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -16,10 +18,12 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QLabel,
     QApplication,
+    QMessageBox,
 )
 from PyQt5.QtCore import Qt
 
 from gui_qt.styles.styles import primary_button, neutral_button
+from gui_qt.config.config_loader import find_test_log, resolve_log_root
 
 
 def show_scrollable_error(parent, title: str, message: str, intro: str | None = None):
@@ -66,3 +70,49 @@ def show_scrollable_error(parent, title: str, message: str, intro: str | None = 
         dialog.resize(820, 560)
 
     dialog.exec_()
+
+
+def _startfile(parent, path) -> bool:
+    """Ouvre un fichier/dossier avec l'application par defaut de Windows.
+    Retourne True si l'ouverture a ete tentee, False sinon (plateforme non geree)."""
+    try:
+        os.startfile(str(path))
+        return True
+    except AttributeError:
+        QMessageBox.information(
+            parent,
+            "Non supporte",
+            f"Ouverture automatique non disponible sur cette plateforme.\nChemin : {path}",
+        )
+        return False
+    except OSError as exc:
+        QMessageBox.critical(parent, "Erreur", f"Impossible d'ouvrir :\n{exc}")
+        return True
+
+
+def open_test_log_for(parent, workspace: str, nodeid: str):
+    """Ouvre le fichier .log du dernier run pour ce test (via le manifeste ecrit par
+    le conftest). A defaut : ouvre le dossier racine des logs s'il existe, sinon
+    informe qu'aucun log n'a encore ete produit. Partage entre les onglets Workspace
+    et Campaign."""
+    log_path = find_test_log(workspace, nodeid)
+    if log_path is not None:
+        _startfile(parent, log_path)
+        return
+
+    log_root = resolve_log_root(workspace)
+    if log_root.is_dir():
+        QMessageBox.information(
+            parent,
+            "Log introuvable",
+            "Aucun log pour ce test precis dans le dernier run.\n"
+            f"Ouverture du dossier des logs :\n{log_root}",
+        )
+        _startfile(parent, log_root)
+    else:
+        QMessageBox.information(
+            parent,
+            "Aucun log",
+            "Aucun log n'a encore ete produit pour ce workspace.\n"
+            "Lancez d'abord ce test (le conftest cree un .log par test execute).",
+        )

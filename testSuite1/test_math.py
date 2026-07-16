@@ -14,6 +14,7 @@ def current_config() -> str:
 
 
 @pytest.mark.parametrize("case, expected", [("case_1", 2), ("case_2", 4)])
-def test_compute(case, expected):
+def test_compute(case, expected, apdu_log):
+    apdu_log.logSendAPDU("00B0000000", "9000")  # READ BINARY fictif pour la demo
     assert current_config() in {"A", "B"}
     assert expected == int(case.split("_")[-1]) * 2
