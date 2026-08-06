@@ -46,6 +46,7 @@ def pytest_nodeid_args(nodeids: list[str]):
         except OSError:
             pass
 
+
 # Sans pytest-xdist : "<nodeid> STATUS               [ XX%]"
 _NODEID_THEN_STATUS_RE = re.compile(
     r"^\s*(?P<nodeid>.+?::.+?)\s+(?P<status>PASSED|FAILED|SKIPPED|ERROR)\b"
