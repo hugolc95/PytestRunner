@@ -21,10 +21,13 @@ Laisser le réglage vide conserve le comportement historique : les tests tournen
 
 ## Exécutable Windows
 
-L'interface peut être distribuée en application autonome, sans installer Python sur le poste :
+L'interface peut être distribuée en application autonome, sans installer Python sur le poste.
 
-- **automatiquement** : chaque push déclenche le workflow *Build Windows executable*, qui publie l'application en artefact téléchargeable depuis l'onglet Actions du dépôt ;
-- **localement** : `build_exe.bat` (nécessite PyQt5, PyYAML et PyInstaller).
+**➜ [Télécharger la dernière version](https://github.com/hugolc95/PytestRunner/releases/tag/latest)** (`PytestRunner-windows.zip`)
+
+Ce lien est permanent et pointe toujours vers le dernier build. Chaque push reconstruit l'application sur une machine Windows, y rejoue la suite de tests, vérifie que l'exécutable démarre, puis met la release à jour.
+
+Pour construire soi-même : `build_exe.bat` (nécessite PyQt5, PyYAML et PyInstaller).
 
 Le résultat est le dossier `dist\PytestRunner\` : distribuez-le entier (zippé), pas seulement le `.exe`. L'exécutable ne contient que l'interface — pytest et les dépendances des tests restent du côté de l'interpréteur configuré, il faut donc toujours renseigner celui-ci au premier lancement.
 

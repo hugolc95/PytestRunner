@@ -12,6 +12,10 @@ on:
   release:
     types: [published]
 
+permissions:
+  # Necessaire pour publier la release "latest" a chaque push.
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -69,5 +73,43 @@ jobs:
         run: |
           Compress-Archive -Path dist\PytestRunner\* -DestinationPath PytestRunner-windows.zip
           gh release upload "${{ github.event.release.tag_name }}" PytestRunner-windows.zip --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Publish rolling "latest" release
+        # Donne une URL de telechargement permanente, toujours a jour, plutot que
+        # d'obliger a naviguer dans les artefacts (qui expirent au bout de 30 jours).
+        if: github.event_name == 'push'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\PytestRunner\* -DestinationPath PytestRunner-windows.zip -Force
+
+          # La release est recreee a chaque fois pour que le tag suive le dernier
+          # commit construit. `gh release view` sert de test d'existence : son code
+          # de sortie est le seul moyen fiable, et il ne doit pas faire echouer
+          # l'etape quand la release n'existe pas encore.
+          gh release view latest 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) {
+            gh release delete latest --yes --cleanup-tag
+          }
+
+          $notes = @"
+          Interface Pytest Runner pour Windows, construite automatiquement depuis ``$env:GITHUB_REF_NAME``.
+
+          **Installation** : telecharger ``PytestRunner-windows.zip``, dezipper, lancer ``PytestRunner.exe``.
+          Distribuez le dossier entier, pas seulement l'exe.
+
+          L'executable ne contient que l'interface. Au premier lancement, renseignez
+          **Configuration > Interpreteur Python des tests...** avec le chemin du Python
+          qui doit executer les tests (il lui faut ``pytest``, et ``pytest-xdist`` pour l'option Parallel).
+
+          Commit : $env:GITHUB_SHA
+          "@
+
+          gh release create latest PytestRunner-windows.zip `
+            --title "Derniere version (build automatique)" `
+            --notes $notes `
+            --prerelease `
+            --target $env:GITHUB_SHA
         env:
           GH_TOKEN: ${{ github.token }}
