@@ -278,7 +278,12 @@ class CampaignTreeView(QTreeView):
     # -----------------------------
 
     def reset_result_colors(self):
+        # Signaux bloques pendant le parcours : chaque setData/setIcon emet sinon
+        # itemChanged, donc _on_item_changed repropage les cases a cocher sur tout
+        # l'arbre a chaque item touche (cout quadratique). On ne modifie ici que
+        # l'apparence, jamais les cases a cocher.
         self.setUpdatesEnabled(False)
+        self.model.blockSignals(True)
         try:
             stack = [self.model.item(row) for row in range(self.model.rowCount())]
             while stack:
@@ -292,6 +297,7 @@ class CampaignTreeView(QTreeView):
                 for row in range(item.rowCount()):
                     stack.append(item.child(row))
         finally:
+            self.model.blockSignals(False)
             self.setUpdatesEnabled(True)
             self.viewport().update()
 
@@ -301,8 +307,7 @@ class CampaignTreeView(QTreeView):
         if not items:
             return False
         item = items.pop(0)
-        self._apply_status(item, status)
-        self._propagate_status_to_parents(item)
+        self._apply_status_quietly(item, status)
         return True
 
     def update_setup_status(self, scenario_index: int, status: str):
@@ -311,8 +316,22 @@ class CampaignTreeView(QTreeView):
         item = self._setup_items.get(scenario_index)
         if item is None:
             return
-        self._apply_status(item, status)
-        self._propagate_status_to_parents(item)
+        self._apply_status_quietly(item, status)
+
+    def _apply_status_quietly(self, item: QStandardItem, status: str):
+        """Applique un statut sans reveiller la propagation des cases a cocher.
+
+        Le cout est paye a chaque resultat recu : laisser itemChanged se declencher
+        ferait reparcourir tout l'arbre a chaque test termine.
+        """
+        self.model.blockSignals(True)
+        try:
+            self._apply_status(item, status)
+            self._propagate_status_to_parents(item)
+        finally:
+            self.model.blockSignals(False)
+
+        self.viewport().update()
 
     def _apply_status(self, item: QStandardItem, status: str):
         item.setData(status, STATUS_ROLE)

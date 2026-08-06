@@ -245,7 +245,14 @@ class TestTreeView(QTreeView):
     # -----------------------------
 
     def reset_result_colors(self):
+        # Les signaux du modele sont bloques pendant tout le parcours. Sans ca,
+        # chaque setData/setIcon/setFont emet itemChanged, donc _on_item_changed
+        # repropage les cases a cocher sur tout l'arbre et recompte la selection :
+        # un cout quadratique. Mesure sur 6000 tests : 45 s avec les signaux, 0,1 s
+        # sans. Cette methode ne touche que l'apparence (statut, couleur, icone),
+        # jamais les cases a cocher : rien ne depend de ces signaux ici.
         self.setUpdatesEnabled(False)
+        self.model.blockSignals(True)
         try:
             stack = [self.model.item(row) for row in range(self.model.rowCount())]
             while stack:
@@ -259,6 +266,7 @@ class TestTreeView(QTreeView):
                 for row in range(item.rowCount()):
                     stack.append(item.child(row))
         finally:
+            self.model.blockSignals(False)
             self.setUpdatesEnabled(True)
             self.viewport().update()
 
@@ -267,8 +275,17 @@ class TestTreeView(QTreeView):
         if item is None:
             return
 
-        self._apply_status(item, status)
-        self._propagate_status_to_parents(item)
+        # Meme raison que dans reset_result_colors, mais le cout est ici paye a
+        # CHAQUE resultat de test recu : sans blocage, un run sur un gros
+        # workspace ralentit a mesure que les resultats arrivent.
+        self.model.blockSignals(True)
+        try:
+            self._apply_status(item, status)
+            self._propagate_status_to_parents(item)
+        finally:
+            self.model.blockSignals(False)
+
+        self.viewport().update()
 
     def color_tests(self, results: dict[str, str]):
         self.reset_result_colors()
