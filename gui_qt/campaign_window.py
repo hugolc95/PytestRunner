@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 
@@ -34,6 +33,11 @@ from core.campaign import Campaign, CampaignScenario, CampaignTest, load_campaig
 from core.failure_report import extract_failure_traceback
 from core.pytest_executor import parse_test_status_line
 from core.run_history import RunHistoryManager, new_run_id, history_dir
+from core.python_interpreter import (
+    check_ready_to_run,
+    resolve_interpreter,
+    subprocess_flags,
+)
 from gui_qt.config.config_loader import find_config_yaml
 from gui_qt.config.config_dialog import ConfigDialog
 from gui_qt.dialogs import show_scrollable_error, open_test_log_for
@@ -471,12 +475,20 @@ class CampaignWorker(QThread):
         selections: list[CampaignSelection],
         junit_xml_path: str | None = None,
         parallel: bool = False,
+        interpreter: str | None = None,
     ):
         super().__init__()
         self.campaign = campaign
         self.selections = selections
         self.junit_xml_path = junit_xml_path
         self.parallel = parallel
+        # Priorite : cle `python:` de campaign.yml, puis interpreteur fourni par
+        # le GUI (config.yml du workspace ou reglage global), puis Python courant.
+        self.interpreter = (
+            campaign.python_executable
+            or interpreter
+            or resolve_interpreter(workspace=campaign.workspace)
+        )
         self._stopped = False
         self._process: subprocess.Popen | None = None
         # Sortie console complete (plafonnee), conservee pour l'historique des executions.
@@ -496,6 +508,7 @@ class CampaignWorker(QThread):
         exit_code = 0
         try:
             self.stdout_signal.emit("Campaign worker started.\n")
+            self.stdout_signal.emit(f"Interpreteur des tests : {self.interpreter}\n")
             grouped: dict[int, list[CampaignSelection]] = {}
             for selection in self.selections:
                 grouped.setdefault(selection.scenario_index, []).append(selection)
@@ -579,7 +592,7 @@ class CampaignWorker(QThread):
             assert command is not None
             if self._looks_like_pytest_target(command):
                 cmd = [
-                    sys.executable,
+                    self.interpreter,
                     "-m",
                     "pytest",
                     command,
@@ -588,7 +601,7 @@ class CampaignWorker(QThread):
                     "-v",
                 ]
             elif command.endswith(".py") and os.path.exists(os.path.join(self.campaign.workspace, command)):
-                cmd = [sys.executable, command]
+                cmd = [self.interpreter, command]
             else:
                 cmd = shlex.split(command)
         return self._run_command(cmd)
@@ -634,7 +647,7 @@ class CampaignWorker(QThread):
             )
 
         cmd = [
-            sys.executable,
+            self.interpreter,
             "-m",
             "pytest",
             *nodeids,
@@ -693,6 +706,7 @@ class CampaignWorker(QThread):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                creationflags=subprocess_flags(),
             )
         except Exception as exc:
             self.stdout_signal.emit(f"Unable to start command: {type(exc).__name__}: {exc}\n")
@@ -1016,7 +1030,35 @@ class CampaignPanel(QWidget):
 
         self._launch_worker(selections, f"Re-running {len(selections)} failed test(s)...\n")
 
+    def current_interpreter(self) -> str:
+        """Interpreteur effectif pour cette campagne.
+
+        campaign.yml (cle `python:`) a la priorite, sinon config.yml du workspace,
+        sinon le reglage global partage avec le mode Workspace.
+        """
+        if self.campaign and self.campaign.python_executable:
+            return self.campaign.python_executable
+
+        configured = self.settings.value("test_interpreter", "", type=str)
+        workspace = self.campaign.workspace if self.campaign else None
+        return resolve_interpreter(configured=configured, workspace=workspace)
+
     def _launch_worker(self, selections: list[CampaignSelection], intro_message: str):
+        parallel = self.parallel_checkbox.isChecked()
+        interpreter = self.current_interpreter()
+
+        # Verifie avant de reinitialiser l'UI, pour ne pas effacer les resultats
+        # precedents si finalement rien ne peut etre lance.
+        problem = check_ready_to_run(interpreter, parallel=parallel)
+        if problem:
+            show_scrollable_error(
+                self,
+                "Interpreteur des tests inutilisable",
+                problem,
+                intro="La campagne n'a pas pu etre lancee :",
+            )
+            return
+
         self.console.clear()
         self.console.append(intro_message)
 
@@ -1038,7 +1080,8 @@ class CampaignPanel(QWidget):
             self.campaign,
             selections,
             junit_xml_path=self._current_junit_path,
-            parallel=self.parallel_checkbox.isChecked(),
+            parallel=parallel,
+            interpreter=interpreter,
         )
         self.worker.stdout_signal.connect(self._on_stdout)
         self.worker.error_signal.connect(self._on_stdout)

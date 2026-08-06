@@ -28,6 +28,10 @@ class Campaign:
     scenarios: list[CampaignScenario] = field(default_factory=list)
     campaign_file: str | None = None
     pythonpath: list[str] = field(default_factory=list)
+    # Interpreteur impose par la campagne (cle `python:`), prioritaire sur le
+    # reglage global de l'application. Utile quand une campagne cible un
+    # environnement Python different du reste du projet.
+    python_executable: str | None = None
 
 
 def _load_yaml(path: str) -> dict[str, Any]:
@@ -129,12 +133,16 @@ def load_campaign(path: str) -> Campaign:
         tests = [_as_test(t) for t in raw_tests]
         scenarios.append(CampaignScenario(name=scenario_name, setup=setup, tests=tests))
 
+    raw_python = data.get("python") or data.get("python_executable")
+    python_executable = str(raw_python).strip() if raw_python else None
+
     return Campaign(
         name=name,
         workspace=str(workspace_path),
         scenarios=scenarios,
         campaign_file=str(campaign_path),
         pythonpath=pythonpath_entries,
+        python_executable=python_executable or None,
     )
 
 

@@ -4,3 +4,15 @@
 # execute (dans un sous-dossier horodate par run). Chemin relatif au workspace,
 # ou absolu. Defaut si absent : <workspace>/logs
 log_directory: logs
+
+# python_executable : interpreteur Python utilise pour COLLECTER et EXECUTER les
+# tests de ce workspace. Il est independant du Python qui fait tourner
+# l'interface : celle-ci lance pytest en sous-processus, elle n'importe jamais le
+# code teste. C'est ce qui permet de piloter depuis une interface 32 bits des
+# tests qui ont besoin d'un Python 64 bits (DLL natives, par exemple).
+#
+# Cet interpreteur doit avoir pytest installe (et pytest-xdist pour l'option
+# Parallel). Renseigne ici, il a priorite sur le reglage global de l'application
+# (menu Configuration). Absent ou vide : le reglage global s'applique.
+#
+# python_executable: C:\Python313-64\python.exe

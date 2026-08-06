@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QFileDialog,
     QMessageBox,
-    QTextEdit, QSplitter, QComboBox, QSizePolicy, QTabWidget, QCheckBox
+    QTextEdit, QSplitter, QComboBox, QSizePolicy, QTabWidget, QCheckBox, QDialog
 )
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
@@ -33,6 +33,13 @@ from core.test_discovery import collect_tests
 from core.test_tree import build_test_tree
 from core.pytest_executor import parse_test_status_line
 from core.run_history import RunHistoryManager, history_dir, new_run_id
+from core.python_interpreter import (
+    check_ready_to_run,
+    interpreter_source,
+    resolve_interpreter,
+    subprocess_flags,
+)
+from gui_qt.interpreter_dialog import InterpreterDialog
 
 from gui_qt.styles.styles import (
     primary_button,
@@ -74,21 +81,23 @@ class PytestWorker(QThread):
     stderr_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(int, str)
 
-    def __init__(self, nodeids, workspace, junit_xml_path=None, parallel=False):
+    def __init__(self, nodeids, workspace, junit_xml_path=None, parallel=False, interpreter=None):
         super().__init__()
         self.nodeids = nodeids
         self.workspace = workspace
         self.junit_xml_path = junit_xml_path
         self.parallel = parallel
+        self.interpreter = interpreter
         self._process = None
         self._stopped = False
 
     def run(self):
         import subprocess
-        import sys
+
+        python = self.interpreter or resolve_interpreter(workspace=self.workspace)
 
         command = [
-            sys.executable,
+            python,
             "-m", "pytest",
             *self.nodeids,
             "--import-mode=importlib",
@@ -105,15 +114,29 @@ class PytestWorker(QThread):
             # Option native de pytest : aucune dependance supplementaire requise.
             command.append(f"--junitxml={self.junit_xml_path}")
 
-        # Merge stderr into stdout to keep correct order and avoid deadlocks
-        self._process = subprocess.Popen(
-            command,
-            cwd=self.workspace,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            bufsize=1
-        )
+        # Merge stderr into stdout to keep correct order and avoid deadlocks.
+        # Le Popen est protege : sans ca, un chemin d'interpreteur invalide fait
+        # mourir le thread sans emettre finished_signal, et le GUI reste bloque
+        # avec "Run" desactive et "Stop" actif.
+        try:
+            self._process = subprocess.Popen(
+                command,
+                cwd=self.workspace,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+                creationflags=subprocess_flags(),
+            )
+        except (OSError, ValueError) as exc:
+            message = (
+                f"Impossible de lancer l'interpreteur des tests :\n  {python}\n"
+                f"{type(exc).__name__}: {exc}\n"
+                "Verifiez le menu Configuration > Interpreteur Python des tests...\n"
+            )
+            self.stderr_signal.emit(message)
+            self.finished_signal.emit(-1, message)
+            return
 
         stdout_buffer = []
         stdout_size = 0
@@ -161,13 +184,14 @@ class WorkspaceLoadWorker(QThread):
     loaded_signal = pyqtSignal(object, int, str)
     error_signal = pyqtSignal(str)
 
-    def __init__(self, workspace):
+    def __init__(self, workspace, interpreter=None):
         super().__init__()
         self.workspace = workspace
+        self.interpreter = interpreter
 
     def run(self):
         try:
-            nodeids = collect_tests(self.workspace)
+            nodeids = collect_tests(self.workspace, interpreter=self.interpreter)
             roots = build_test_tree(nodeids, self.workspace)
             self.loaded_signal.emit(roots, len(nodeids), self.workspace)
         except Exception as exc:
@@ -245,6 +269,7 @@ class MainWindow(QMainWindow):
         self._current_run_nodeids: list[str] = []
         self._build_mode_menu()
         self._build_reports_menu()
+        self._build_settings_menu()
 
         self.resize(900, 700)
         self.total_tests = 0
@@ -506,6 +531,41 @@ class MainWindow(QMainWindow):
         flaky_action = reports_menu.addAction("Tests instables (flaky)...")
         flaky_action.triggered.connect(self.open_flaky_window)
 
+    def _build_settings_menu(self):
+        settings_menu = self.menuBar().addMenu("Configuration")
+        interpreter_action = settings_menu.addAction("Interpreteur Python des tests...")
+        interpreter_action.triggered.connect(self.open_interpreter_dialog)
+
+    def current_interpreter(self, workspace: str | None = None) -> str:
+        """Interpreteur effectif pour le workspace donne (config.yml > reglage global)."""
+        configured = self.settings.value("test_interpreter", "", type=str)
+        return resolve_interpreter(configured=configured, workspace=workspace or self.workspace)
+
+    def open_interpreter_dialog(self):
+        configured = self.settings.value("test_interpreter", "", type=str)
+        dialog = InterpreterDialog(configured, workspace=self.workspace, parent=self)
+
+        if dialog.exec_() != QDialog.Accepted:
+            return
+
+        # Campaign lit la meme cle QSettings au moment de lancer : rien a propager.
+        self.settings.setValue("test_interpreter", dialog.interpreter_path())
+        self._report_current_interpreter()
+
+    def _report_current_interpreter(self):
+        """Affiche dans la console quel interpreteur sera utilise et d'ou il vient."""
+        configured = self.settings.value("test_interpreter", "", type=str)
+        python = self.current_interpreter()
+        source = interpreter_source(configured=configured, workspace=self.workspace)
+
+        if python:
+            self._queue_console_output(f"Interpreteur des tests : {python}  [{source}]\n")
+        else:
+            self._queue_console_output(
+                "Aucun interpreteur Python configure pour les tests "
+                "(menu Configuration > Interpreteur Python des tests...).\n"
+            )
+
     def open_history_window(self):
         if self.history_window is None:
             self.history_window = HistoryWindow(self.history_manager, self)
@@ -731,11 +791,14 @@ class MainWindow(QMainWindow):
         self.run_button.setEnabled(False)
         self.console.clear()
         self._queue_console_output(f"Loading workspace: {workspace}\n")
+        self._report_current_interpreter()
 
         # Collecte + construction de l'arbre logique dans un thread.
         # Important: le modele Qt est toujours rempli dans le thread UI
         # via _on_workspace_loaded, pour eviter les crashs natifs Qt.
-        self.workspace_loader = WorkspaceLoadWorker(workspace)
+        self.workspace_loader = WorkspaceLoadWorker(
+            workspace, interpreter=self.current_interpreter(workspace)
+        )
         self.workspace_loader.loaded_signal.connect(self._on_workspace_loaded)
         self.workspace_loader.error_signal.connect(self._on_workspace_load_error)
         self.workspace_loader.start()
@@ -772,6 +835,21 @@ class MainWindow(QMainWindow):
         l'arbre). Centraliser ce code evite de reintroduire le bug deja corrige
         une fois (compteurs/cartes non remis a zero entre deux runs).
         """
+        parallel = self.parallel_checkbox.isChecked()
+        interpreter = self.current_interpreter()
+
+        # Verifie l'interpreteur AVANT de reinitialiser l'UI : sinon on efface les
+        # resultats precedents pour finalement ne rien lancer.
+        problem = check_ready_to_run(interpreter, parallel=parallel)
+        if problem:
+            show_scrollable_error(
+                self,
+                "Interpreteur des tests inutilisable",
+                problem,
+                intro="Les tests n'ont pas pu etre lances :",
+            )
+            return
+
         self.console.clear()
         self.console.append(intro_message)
 
@@ -798,7 +876,8 @@ class MainWindow(QMainWindow):
             nodeids=nodeids,
             workspace=self.workspace,
             junit_xml_path=self._current_junit_path,
-            parallel=self.parallel_checkbox.isChecked(),
+            parallel=parallel,
+            interpreter=interpreter,
         )
 
         self.worker.stdout_signal.connect(self._on_stdout)
