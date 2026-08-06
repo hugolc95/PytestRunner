@@ -31,7 +31,7 @@ from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QBrush
 
 from core.campaign import Campaign, CampaignScenario, CampaignTest, load_campaign, command_to_display
 from core.failure_report import extract_failure_traceback
-from core.pytest_executor import parse_test_status_line
+from core.pytest_executor import parse_test_status_line, pytest_nodeid_args
 from core.run_history import RunHistoryManager, new_run_id, history_dir
 from core.python_interpreter import (
     check_ready_to_run,
@@ -672,23 +672,32 @@ class CampaignWorker(QThread):
                 "--keep-duplicates is enabled.\n"
             )
 
-        cmd = [
-            self.interpreter,
-            "-m",
-            "pytest",
-            *nodeids,
-            "--keep-duplicates",
-            "--import-mode=importlib",
-            "--tb=short",
-            "-v",
-        ]
-        if self.parallel:
-            # Necessite pytest-xdist. parse_test_status_line() gere le format
-            # de sortie -v specifique a -n (prefixe [gwN]).
-            cmd.extend(["-n", "auto"])
-        if junit_part_path:
-            cmd.append(f"--junitxml={junit_part_path}")
-        return self._run_command(cmd)
+        # Le fichier d'arguments eventuel doit exister tant que pytest tourne :
+        # _run_command() est donc appele a l'interieur du bloc.
+        with pytest_nodeid_args(nodeids) as nodeid_args:
+            if nodeid_args and nodeid_args[0].startswith("@"):
+                self.stdout_signal.emit(
+                    f"{len(nodeids)} nodeids passes via un fichier d'arguments "
+                    "(ligne de commande trop longue pour Windows).\n"
+                )
+
+            cmd = [
+                self.interpreter,
+                "-m",
+                "pytest",
+                *nodeid_args,
+                "--keep-duplicates",
+                "--import-mode=importlib",
+                "--tb=short",
+                "-v",
+            ]
+            if self.parallel:
+                # Necessite pytest-xdist. parse_test_status_line() gere le format
+                # de sortie -v specifique a -n (prefixe [gwN]).
+                cmd.extend(["-n", "auto"])
+            if junit_part_path:
+                cmd.append(f"--junitxml={junit_part_path}")
+            return self._run_command(cmd)
 
     def _merge_junit_reports(self, part_paths: list[str], dest_path: str):
         """Fusionne les rapports JUnit XML d'une campagne (un par scenario) en un

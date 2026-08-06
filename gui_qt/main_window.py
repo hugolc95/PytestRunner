@@ -29,7 +29,7 @@ from gui_qt.dialogs import show_scrollable_error, open_test_log_for, open_config
 
 from core.test_discovery import collect_tests
 from core.test_tree import build_test_tree
-from core.pytest_executor import parse_test_status_line
+from core.pytest_executor import parse_test_status_line, pytest_nodeid_args
 from core.run_history import RunHistoryManager, history_dir, new_run_id
 from core.python_interpreter import (
     check_ready_to_run,
@@ -91,14 +91,20 @@ class PytestWorker(QThread):
         self._stopped = False
 
     def run(self):
-        import subprocess
-
         python = self.interpreter or resolve_interpreter(workspace=self.workspace)
+
+        # Le fichier d'arguments doit survivre jusqu'a la fin du processus pytest :
+        # tout le run se deroule donc dans ce bloc.
+        with pytest_nodeid_args(self.nodeids) as nodeid_args:
+            self._run_pytest(python, nodeid_args)
+
+    def _run_pytest(self, python, nodeid_args):
+        import subprocess
 
         command = [
             python,
             "-m", "pytest",
-            *self.nodeids,
+            *nodeid_args,
             "--import-mode=importlib",
             "--tb=short",
             "-v",

@@ -1,4 +1,50 @@
+import os
 import re
+import tempfile
+from contextlib import contextmanager
+
+# Windows refuse toute ligne de commande depassant 32767 caracteres :
+# CreateProcess echoue alors avec "WinError 206: le nom de fichier ou son
+# extension est trop long". Selectionner un dossier entier suffit largement a
+# depasser cette limite, chaque nodeid pesant 40 a 100 caracteres.
+#
+# On bascule donc bien avant sur la syntaxe @fichier de pytest, qui lit ses
+# arguments dans un fichier a raison d'un par ligne et n'a aucune limite.
+MAX_INLINE_ARGS_LENGTH = 6000
+
+
+@contextmanager
+def pytest_nodeid_args(nodeids: list[str]):
+    """Fournit les arguments pytest pour ces nodeids, sans limite de longueur.
+
+    Passe les nodeids directement quand ils tiennent dans une ligne de commande
+    raisonnable, sinon les ecrit dans un fichier temporaire passe en @fichier.
+    Le fichier est supprime a la sortie du bloc.
+
+    Les nodeids produits par pytest sont echappes en ASCII (un identifiant
+    parametre "ete" accentue devient "\\xe9t\\xe9"), donc l'encodage du fichier
+    n'est pas un point de rupture ici.
+    """
+    if sum(len(nodeid) + 1 for nodeid in nodeids) <= MAX_INLINE_ARGS_LENGTH:
+        yield list(nodeids)
+        return
+
+    handle = tempfile.NamedTemporaryFile(
+        mode="w",
+        suffix=".txt",
+        prefix="pytest_nodeids_",
+        delete=False,
+        encoding="utf-8",
+    )
+    try:
+        with handle:
+            handle.write("\n".join(nodeids) + "\n")
+        yield [f"@{handle.name}"]
+    finally:
+        try:
+            os.remove(handle.name)
+        except OSError:
+            pass
 
 # Sans pytest-xdist : "<nodeid> STATUS               [ XX%]"
 _NODEID_THEN_STATUS_RE = re.compile(
