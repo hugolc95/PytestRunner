@@ -3,15 +3,51 @@ import json
 import yaml
 
 
+# Noms reconnus automatiquement. Ce sont aussi ceux que lit le conftest du
+# workspace : resolve_log_root() doit rester aligne dessus, sinon le GUI et les
+# tests chercheraient les logs a deux endroits differents.
+STANDARD_CONFIG_NAMES = ("config.yaml", "config.yml")
+
+
 def find_config_yaml(workspace: str) -> Path | None:
     root = Path(workspace)
 
-    for name in ("config.yaml", "config.yml"):
+    for name in STANDARD_CONFIG_NAMES:
         path = root / name
         if path.exists():
             return path
 
     return None
+
+
+def discover_config_candidates(workspace: str) -> list[Path]:
+    """Fichiers YAML de la racine du workspace pouvant servir de configuration.
+
+    Les noms standards viennent en tete, le reste par ordre alphabetique. Sert au
+    bouton "Open Config" pour les projets dont le fichier de configuration ne
+    s'appelle pas exactement config.yml.
+    """
+    root = Path(workspace)
+    if not root.is_dir():
+        return []
+
+    candidates: list[Path] = []
+
+    for name in STANDARD_CONFIG_NAMES:
+        path = root / name
+        if path.is_file():
+            candidates.append(path)
+
+    others = [
+        path
+        for path in root.iterdir()
+        if path.is_file()
+        and path.suffix.lower() in (".yml", ".yaml")
+        and path.name not in STANDARD_CONFIG_NAMES
+    ]
+
+    candidates.extend(sorted(others, key=lambda p: p.name.lower()))
+    return candidates
 
 
 def resolve_log_root(workspace: str) -> Path:

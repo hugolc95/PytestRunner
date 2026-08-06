@@ -41,7 +41,10 @@ class _ProbeWorker(QThread):
         self.path = path
 
     def run(self):
-        self.done_signal.emit(probe_interpreter(self.path))
+        # use_cache=False : "Tester" doit refleter l'etat reel maintenant (pytest
+        # vient peut-etre d'etre installe). Le resultat alimente quand meme le
+        # cache partage, donc le prochain lancement de tests reste instantane.
+        self.done_signal.emit(probe_interpreter(self.path, use_cache=False))
 
 
 class InterpreterDialog(QDialog):

@@ -174,18 +174,67 @@ _PROBE_CODE = (
 )
 
 
-def probe_interpreter(path: str, timeout: float = 15.0) -> InterpreterInfo:
+# Resultats de probe_interpreter() deja obtenus, cles par (chemin, mtime, taille)
+# pour qu'une mise a jour de l'interpreteur invalide l'entree automatiquement.
+#
+# Ce cache existe parce qu'un probe lance un vrai processus Python et y importe
+# pytest : plusieurs centaines de millisecondes, voire une a deux secondes sous
+# Windows avec un antivirus. Le payer a chaque lancement de tests gelait
+# l'interface.
+_PROBE_CACHE: dict[tuple, InterpreterInfo] = {}
+
+
+def _cache_key(path: str) -> tuple:
+    try:
+        stat = os.stat(path)
+        return (path, stat.st_mtime, stat.st_size)
+    except OSError:
+        return (path, None, None)
+
+
+def cached_probe(path: str) -> InterpreterInfo | None:
+    """Resultat deja connu pour cet interpreteur, ou None s'il n'a jamais ete teste.
+
+    Permet aux appelants du thread UI de repondre instantanement sans jamais
+    lancer de processus.
+    """
+    if not path:
+        return None
+    return _PROBE_CACHE.get(_cache_key(str(path).strip()))
+
+
+def forget_probe(path: str | None = None) -> None:
+    """Oublie un resultat mis en cache (ou tous si path est None)."""
+    if path is None:
+        _PROBE_CACHE.clear()
+    else:
+        _PROBE_CACHE.pop(_cache_key(str(path).strip()), None)
+
+
+def probe_interpreter(path: str, timeout: float = 15.0, use_cache: bool = True) -> InterpreterInfo:
     """Interroge un interpreteur : version, architecture, pytest disponible.
 
-    Sert au bouton "Tester" de la boite de dialogue et au message affiche avant
-    un run : c'est le seul moyen de confirmer d'un coup d'oeil qu'on pointe bien
-    vers le Python 64 bits attendu, et que pytest y est installe.
+    ATTENTION : lance un processus. A n'appeler QUE depuis un thread de travail,
+    jamais depuis le thread UI. Le thread UI doit passer par cached_probe().
     """
     if not path or not str(path).strip():
         return InterpreterInfo(path=path, error="Aucun interpreteur configure.")
 
     path = str(path).strip()
 
+    key = _cache_key(path)
+
+    if use_cache:
+        cached = _PROBE_CACHE.get(key)
+        if cached is not None:
+            return cached
+
+    info = _run_probe(path, timeout)
+    _PROBE_CACHE[key] = info
+    return info
+
+
+def _run_probe(path: str, timeout: float) -> InterpreterInfo:
     try:
         process = subprocess.run(
             [path, "-c", _PROBE_CODE],
@@ -226,11 +275,17 @@ def probe_interpreter(path: str, timeout: float = 15.0) -> InterpreterInfo:
     )
 
 
-def check_ready_to_run(path: str, parallel: bool = False) -> str:
+def check_ready_to_run(path: str, parallel: bool = False, cached_only: bool = True) -> str:
     """Retourne un message d'erreur pret a afficher, ou une chaine vide si tout va bien.
 
-    Appele juste avant un run : mieux vaut un message explicite qu'une sortie
-    pytest cryptique du type "No module named pytest".
+    Appele juste avant un run. Par defaut (cached_only), ne lance JAMAIS de
+    processus : il ne repond que sur la base d'un probe deja effectue dans un
+    thread de travail. C'est indispensable car cette fonction est appelee depuis
+    le thread UI, ou un probe synchrone gelait l'interface a chaque lancement.
+
+    Quand rien n'est en cache, on laisse le run partir : collect_tests et les
+    workers traduisent deja clairement un interpreteur invalide ou un pytest
+    manquant, et un test qui demarre vaut mieux qu'une interface figee.
     """
     if not path:
         return (
@@ -239,7 +294,10 @@ def check_ready_to_run(path: str, parallel: bool = False) -> str:
             "et indiquez le chemin de python.exe."
         )
 
-    info = probe_interpreter(path)
+    info = cached_probe(path) if cached_only else probe_interpreter(path)
+
+    if info is None:
+        return ""
 
     if info.error:
         return (

@@ -21,12 +21,10 @@ import time
 
 from gui_qt.test_tree_view import TestTreeView
 from gui_qt.config.config_editor import ConfigEditor
-from gui_qt.config.config_loader import find_config_yaml
-from gui_qt.config.config_dialog import ConfigDialog
 from gui_qt.campaign_window import CampaignPanel
 from gui_qt.history_window import HistoryWindow
 from gui_qt.flaky_window import FlakyTestsDialog
-from gui_qt.dialogs import show_scrollable_error, open_test_log_for
+from gui_qt.dialogs import show_scrollable_error, open_test_log_for, open_config_editor
 
 
 from core.test_discovery import collect_tests
@@ -36,6 +34,7 @@ from core.run_history import RunHistoryManager, history_dir, new_run_id
 from core.python_interpreter import (
     check_ready_to_run,
     interpreter_source,
+    probe_interpreter,
     resolve_interpreter,
     subprocess_flags,
 )
@@ -191,6 +190,12 @@ class WorkspaceLoadWorker(QThread):
 
     def run(self):
         try:
+            # Le probe est fait ICI, dans le thread de chargement, pour que les
+            # lancements de tests suivants puissent verifier l'interpreteur sans
+            # lancer de processus depuis le thread UI (sinon : gel de l'interface).
+            if self.interpreter:
+                probe_interpreter(self.interpreter)
+
             nodeids = collect_tests(self.workspace, interpreter=self.interpreter)
             roots = build_test_tree(nodeids, self.workspace)
             self.loaded_signal.emit(roots, len(nodeids), self.workspace)
@@ -713,14 +718,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Warning", "No workspace loaded.")
             return
 
-        config_path = find_config_yaml(self.workspace)
-
-        if not config_path:
-            QMessageBox.information(self, "Info", "No config.yaml found.")
-            return
-
-        dialog = ConfigDialog(config_path, self)
-        dialog.exec_()
+        open_config_editor(self, self.workspace, self.settings)
 
     def select_all_tests(self):
         self.tree.set_all_checked(True)

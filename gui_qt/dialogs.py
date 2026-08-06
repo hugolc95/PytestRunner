@@ -10,6 +10,8 @@
 
 import os
 
+from pathlib import Path
+
 from PyQt5.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -19,11 +21,18 @@ from PyQt5.QtWidgets import (
     QLabel,
     QApplication,
     QMessageBox,
+    QFileDialog,
+    QInputDialog,
 )
 from PyQt5.QtCore import Qt
 
 from gui_qt.styles.styles import primary_button, neutral_button
-from gui_qt.config.config_loader import find_test_log, resolve_log_root
+from gui_qt.config.config_loader import (
+    STANDARD_CONFIG_NAMES,
+    discover_config_candidates,
+    find_test_log,
+    resolve_log_root,
+)
 
 
 def show_scrollable_error(parent, title: str, message: str, intro: str | None = None):
@@ -70,6 +79,79 @@ def show_scrollable_error(parent, title: str, message: str, intro: str | None = 
         dialog.resize(820, 560)
 
     dialog.exec_()
+
+
+def resolve_config_to_open(parent, workspace: str, remembered: str | None = None) -> Path | None:
+    """Determine quel fichier de configuration ouvrir pour ce workspace.
+
+    Beaucoup de projets n'appellent pas leur configuration `config.yml`. Plutot
+    que d'abandonner avec "No config.yaml found", on procede par ordre :
+
+    1. le fichier deja choisi pour ce workspace, s'il existe toujours ;
+    2. un nom standard (config.yaml / config.yml) present a la racine ;
+    3. l'unique YAML de la racine, s'il n'y en a qu'un ;
+    4. sinon on laisse l'utilisateur choisir (liste des YAML trouves, ou
+       selecteur de fichiers si la racine n'en contient aucun).
+
+    Retourne None si l'utilisateur annule.
+    """
+    if remembered:
+        remembered_path = Path(remembered)
+        if remembered_path.is_file():
+            return remembered_path
+
+    candidates = discover_config_candidates(workspace)
+
+    for path in candidates:
+        if path.name in STANDARD_CONFIG_NAMES:
+            return path
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    if candidates:
+        names = [path.name for path in candidates]
+        choice, accepted = QInputDialog.getItem(
+            parent,
+            "Choisir la configuration",
+            f"Aucun fichier {STANDARD_CONFIG_NAMES[0]} dans ce workspace.\n"
+            "Fichiers YAML trouves a la racine :",
+            names,
+            0,
+            False,
+        )
+        if not accepted:
+            return None
+        return Path(workspace) / choice
+
+    path, _ = QFileDialog.getOpenFileName(
+        parent,
+        "Choisir le fichier de configuration",
+        workspace,
+        "Fichiers YAML (*.yml *.yaml);;Tous les fichiers (*)",
+    )
+    return Path(path) if path else None
+
+
+def open_config_editor(parent, workspace: str, settings=None) -> None:
+    """Ouvre l'editeur de configuration pour ce workspace.
+
+    Le fichier retenu est memorise par workspace, pour que les clics suivants
+    n'aient plus a demander. Partage entre les onglets Workspace et Campaign.
+    """
+    from gui_qt.config.config_dialog import ConfigDialog
+
+    key = f"config_file/{workspace}"
+    remembered = settings.value(key, "", type=str) if settings is not None else ""
+
+    config_path = resolve_config_to_open(parent, workspace, remembered)
+    if config_path is None:
+        return
+
+    if settings is not None:
+        settings.setValue(key, str(config_path))
+
+    ConfigDialog(config_path, parent).exec_()
 
 
 def _startfile(parent, path) -> bool:

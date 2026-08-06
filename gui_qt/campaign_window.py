@@ -38,9 +38,7 @@ from core.python_interpreter import (
     resolve_interpreter,
     subprocess_flags,
 )
-from gui_qt.config.config_loader import find_config_yaml
-from gui_qt.config.config_dialog import ConfigDialog
-from gui_qt.dialogs import show_scrollable_error, open_test_log_for
+from gui_qt.dialogs import show_scrollable_error, open_test_log_for, open_config_editor
 from gui_qt.styles.styles import primary_button, neutral_button, success_button, danger_button, toolbar_button, tree_style, console_style
 from gui_qt.status_icons import STATUS_PRIORITY, STATUS_COLORS, status_icon
 
@@ -509,6 +507,15 @@ class CampaignWorker(QThread):
         try:
             self.stdout_signal.emit("Campaign worker started.\n")
             self.stdout_signal.emit(f"Interpreteur des tests : {self.interpreter}\n")
+
+            # Verification dans le thread de travail : le thread UI ne peut pas se
+            # le permettre (lancer un processus l'y gelerait). Remplit aussi le
+            # cache pour que les lancements suivants soient verifies instantanement.
+            problem = check_ready_to_run(self.interpreter, parallel=self.parallel, cached_only=False)
+            if problem:
+                self.error_signal.emit(problem + "\n")
+                self.finished_signal.emit(-1, "".join(self._output_buffer))
+                return
             grouped: dict[int, list[CampaignSelection]] = {}
             for selection in self.selections:
                 grouped.setdefault(selection.scenario_index, []).append(selection)
@@ -957,13 +964,7 @@ class CampaignPanel(QWidget):
             QMessageBox.warning(self, "Warning", "No campaign loaded.")
             return
 
-        config_path = find_config_yaml(self.campaign.workspace)
-        if not config_path:
-            QMessageBox.information(self, "Info", "No config.yaml found.")
-            return
-
-        dialog = ConfigDialog(config_path, self)
-        dialog.exec_()
+        open_config_editor(self, self.campaign.workspace, self.settings)
 
     def open_test_log(self, nodeid: str):
         if not self.campaign:

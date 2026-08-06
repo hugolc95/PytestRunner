@@ -3,8 +3,10 @@ import sys
 import pytest
 
 from core.python_interpreter import (
+    cached_probe,
     check_ready_to_run,
     default_interpreter,
+    forget_probe,
     interpreter_from_config,
     interpreter_source,
     probe_interpreter,
@@ -12,6 +14,14 @@ from core.python_interpreter import (
     subprocess_flags,
 )
 from core.test_discovery import collect_tests
+
+
+@pytest.fixture(autouse=True)
+def clean_probe_cache():
+    """Le cache de probes est un etat global du module : on l'isole entre tests."""
+    forget_probe()
+    yield
+    forget_probe()
 
 
 def write_config(tmp_path, content: str):
@@ -102,8 +112,55 @@ def test_probe_rejects_a_non_python_executable(tmp_path):
     assert not info.ok
 
 
-def test_check_ready_accepts_the_current_interpreter():
+def test_probe_result_is_cached():
+    assert cached_probe(sys.executable) is None
+    first = probe_interpreter(sys.executable)
+    assert cached_probe(sys.executable) is not None
+    # Deuxieme appel : meme objet, donc aucun processus relance.
+    assert probe_interpreter(sys.executable) is first
+
+
+def test_probe_can_bypass_the_cache():
+    first = probe_interpreter(sys.executable)
+    assert probe_interpreter(sys.executable, use_cache=False) is not first
+
+
+def test_forgetting_a_probe_empties_the_cache():
+    probe_interpreter(sys.executable)
+    forget_probe(sys.executable)
+    assert cached_probe(sys.executable) is None
+
+
+def test_ui_thread_check_never_spawns_a_process(monkeypatch):
+    """Garantie centrale : appele depuis le thread UI, check_ready_to_run ne doit
+    JAMAIS lancer de processus, sinon l'interface gele a chaque lancement."""
+    def explode(*args, **kwargs):
+        raise AssertionError("check_ready_to_run a lance un processus")
+
+    monkeypatch.setattr("core.python_interpreter.subprocess.run", explode)
+
     assert check_ready_to_run(sys.executable) == ""
+    assert check_ready_to_run(sys.executable, parallel=True) == ""
+
+
+def test_ui_thread_check_reports_a_cached_failure():
+    probe_interpreter("/definitely/not/a/python")
+    message = check_ready_to_run("/definitely/not/a/python")
+    assert "introuvable" in message
+
+
+def test_ui_thread_check_reports_cached_missing_xdist(monkeypatch):
+    from core import python_interpreter
+
+    info = python_interpreter.probe_interpreter(sys.executable)
+    info.has_xdist = False
+
+    assert python_interpreter.check_ready_to_run(sys.executable, parallel=False) == ""
+    assert "pytest-xdist" in python_interpreter.check_ready_to_run(sys.executable, parallel=True)
+
+
+def test_check_ready_accepts_the_current_interpreter():
+    assert check_ready_to_run(sys.executable, cached_only=False) == ""
 
 
 def test_check_ready_explains_an_empty_configuration():
@@ -112,7 +169,7 @@ def test_check_ready_explains_an_empty_configuration():
 
 
 def test_check_ready_explains_a_bad_path():
-    message = check_ready_to_run("/definitely/not/a/python")
+    message = check_ready_to_run("/definitely/not/a/python", cached_only=False)
     assert "introuvable" in message
 
 
@@ -130,8 +187,8 @@ def test_check_ready_flags_missing_xdist(monkeypatch):
 
     monkeypatch.setattr(python_interpreter, "probe_interpreter", probe_without_xdist)
 
-    assert python_interpreter.check_ready_to_run(sys.executable, parallel=False) == ""
-    message = python_interpreter.check_ready_to_run(sys.executable, parallel=True)
+    assert python_interpreter.check_ready_to_run(sys.executable, parallel=False, cached_only=False) == ""
+    message = python_interpreter.check_ready_to_run(sys.executable, parallel=True, cached_only=False)
     assert "pytest-xdist" in message
 
 
