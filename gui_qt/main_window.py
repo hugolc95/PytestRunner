@@ -31,7 +31,7 @@ from gui_qt.detail_panel import DetailPanel
 
 from core.test_discovery import collect_tests
 from core.test_tree import build_test_tree
-from core.pytest_executor import parse_test_status_line, pytest_nodeid_args
+from core.pytest_executor import PytestOutputParser, pytest_nodeid_args
 from core.run_history import RunHistoryManager, history_dir, new_run_id
 from core.python_interpreter import (
     check_ready_to_run,
@@ -171,6 +171,7 @@ class PytestWorker(QThread):
         emit_buffer = []
         emit_size = 0
         last_flush = time.monotonic()
+        parser = PytestOutputParser()
 
         def flush_emit_buffer():
             nonlocal emit_buffer, emit_size, last_flush
@@ -189,7 +190,7 @@ class PytestWorker(QThread):
             # compris pour chaque cas parametre. L'analyser cote interface
             # obligeait a attendre un paquet de 50 lignes, d'ou un affichage qui
             # progressait par a-coups.
-            parsed = parse_test_status_line(line)
+            parsed = parser.feed(line)
             if parsed:
                 self.test_status_signal.emit(parsed[0], parsed[1])
             else:

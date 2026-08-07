@@ -58,12 +58,36 @@ _STATUS_THEN_NODEID_RE = re.compile(
 )
 
 
+# Quand les logs sont affiches en direct (log_cli = true dans pytest.ini, reglage
+# courant pour du test materiel), pytest coupe la ligne en deux : il ecrit le
+# nodeid, puis les enregistrements de log, puis le statut seul sur sa ligne.
+#
+#   test_carte.py::test_pso[nom-RSA-...-tc0]
+#   ------------------------------ live log call ------------------------------
+#   INFO     apdu APDU >> 00A4040007A0000000041010
+#   PASSED                                                            [ 16%]
+#
+# Un nodeid seul sur sa ligne est donc mis en attente, et le prochain statut seul
+# lui est attribue.
+_LONE_NODEID_RE = re.compile(r"^\s*(?P<nodeid>\S+::\S+)\s*$")
+
+# Statut seul : rien d'autre que le mot et un eventuel pourcentage. Cette
+# exigence evite d'attraper les lignes du resume final ("FAILED chemin::test -
+# raison"), qui commencent aussi par un statut mais portent leur propre nodeid.
+_LONE_STATUS_RE = re.compile(
+    r"^\s*(?P<status>PASSED|FAILED|SKIPPED|ERROR|XFAIL|XPASS)\s*(?:\[\s*\d+%\])?\s*$"
+)
+
+
 def parse_test_status_line(line: str) -> tuple[str, str] | None:
     """Detecte une ligne de resultat pytest -v et retourne (nodeid, status).
 
     Gere les deux formats de sortie -v de pytest : le format standard
     (nodeid puis status) et celui de pytest-xdist quand -n est utilise
     (status puis nodeid, prefixe par [gwN]).
+
+    Ne traite que les lignes completes. Pour le cas ou pytest separe le nodeid du
+    statut (logs affiches en direct), utiliser PytestOutputParser.
     """
     match = _STATUS_THEN_NODEID_RE.match(line)
     if match:
@@ -74,3 +98,36 @@ def parse_test_status_line(line: str) -> tuple[str, str] | None:
         return match.group("nodeid").strip(), match.group("status")
 
     return None
+
+
+class PytestOutputParser:
+    """Suit la sortie de pytest -v ligne par ligne et en extrait les resultats.
+
+    Contrairement a parse_test_status_line(), garde en memoire le dernier nodeid
+    vu seul sur sa ligne, ce qui permet de rattacher un statut ecrit plus loin.
+    Sans cela, un workspace qui affiche ses logs en direct ne colorait aucun test
+    dans l'arbre, alors que les compteurs finaux restaient justes puisqu'ils sont
+    relus dans le resume de pytest.
+    """
+
+    def __init__(self):
+        self._pending_nodeid: str | None = None
+
+    def feed(self, line: str) -> tuple[str, str] | None:
+        """Retourne (nodeid, status) si cette ligne termine un test."""
+        complete = parse_test_status_line(line)
+        if complete:
+            self._pending_nodeid = None
+            return complete
+
+        lone_status = _LONE_STATUS_RE.match(line)
+        if lone_status and self._pending_nodeid:
+            nodeid = self._pending_nodeid
+            self._pending_nodeid = None
+            return nodeid, lone_status.group("status")
+
+        lone_nodeid = _LONE_NODEID_RE.match(line)
+        if lone_nodeid:
+            self._pending_nodeid = lone_nodeid.group("nodeid").strip()
+
+        return None

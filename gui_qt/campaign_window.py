@@ -31,7 +31,7 @@ from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QBrush
 
 from core.campaign import Campaign, CampaignScenario, CampaignTest, load_campaign, command_to_display
 from core.failure_report import extract_failure_traceback
-from core.pytest_executor import parse_test_status_line, pytest_nodeid_args
+from core.pytest_executor import PytestOutputParser, pytest_nodeid_args
 from core.run_history import RunHistoryManager, new_run_id, history_dir
 from core.python_interpreter import (
     check_ready_to_run,
@@ -786,6 +786,7 @@ class CampaignWorker(QThread):
         emit_buffer = []
         emit_size = 0
         last_flush = time.monotonic()
+        parser = PytestOutputParser()
 
         def flush_emit_buffer():
             nonlocal emit_buffer, emit_size, last_flush
@@ -798,7 +799,7 @@ class CampaignWorker(QThread):
         for line in iter(self._process.stdout.readline, ""):
             if self._stopped:
                 break
-            parsed = parse_test_status_line(line)
+            parsed = parser.feed(line)
             if parsed:
                 self.test_status_signal.emit(parsed[0], parsed[1])
 
