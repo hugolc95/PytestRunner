@@ -33,6 +33,8 @@ LIGHT = {
     "checkbox_border": "#9e9e9e",
     "checkbox_checked": "#607d8b",
     "checkbox_partial": "#b0bec5",
+    "branch_arrow": "#5c6773",
+    "branch_arrow_hover": "#1976d2",
 
     "console_bg": "#ffffff",
     "console_text": "#1f2328",
@@ -68,7 +70,10 @@ LIGHT = {
     "mono_font": "Consolas, 'DejaVu Sans Mono', 'Courier New', monospace",
     "gutter_bg": "#f6f8fa",
     "gutter_text": "#8c959f",
-    "current_line": "#f2f7fd",
+    # Numero de la ligne courante : couleur dediee, la teinte principale de
+    # l'application passe juste sous le seuil de lisibilite sur ce fond.
+    "gutter_current": "#0b57b8",
+    "current_line": "#d2e3f7",
 
     # Coloration du code Python (teintes proches de celles d'un IDE clair).
     "syntax": {
@@ -125,6 +130,8 @@ DARK = {
     "checkbox_border": "#6b7480",
     "checkbox_checked": "#5aa9f8",
     "checkbox_partial": "#3f5a74",
+    "branch_arrow": "#98a2b0",
+    "branch_arrow_hover": "#5aa9f8",
 
     "console_bg": "#14171b",
     "console_text": "#d4d8de",
@@ -158,7 +165,8 @@ DARK = {
     "mono_font": "Consolas, 'DejaVu Sans Mono', 'Courier New', monospace",
     "gutter_bg": "#1a1d23",
     "gutter_text": "#5f6875",
-    "current_line": "#232833",
+    "gutter_current": "#7cc0ff",
+    "current_line": "#36435c",
 
     "syntax": {
         "keyword": "#c586c0",

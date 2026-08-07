@@ -76,8 +76,20 @@ class CodeView(QPlainTextEdit):
         haut = round(self.blockBoundingGeometry(bloc).translated(self.contentOffset()).top())
         bas = haut + round(self.blockBoundingRect(bloc).height())
 
+        # Le numero de la ligne courante est mis en avant : c'est le repere le
+        # plus net, la teinte de fond restant volontairement discrete pour ne
+        # pas gener la lecture du code.
+        ligne_courante = self.textCursor().blockNumber()
+        normal = QColor(palette["gutter_text"])
+        accent = QColor(palette["gutter_current"])
+        gras = painter.font()
+
         while bloc.isValid() and haut <= event.rect().bottom():
             if bloc.isVisible() and bas >= event.rect().top():
+                courante = numero == ligne_courante
+                painter.setPen(accent if courante else normal)
+                gras.setBold(courante)
+                painter.setFont(gras)
                 painter.drawText(
                     0, haut, self._line_numbers.width() - 6,
                     self.fontMetrics().height(), Qt.AlignRight, str(numero + 1),
@@ -98,6 +110,7 @@ class CodeView(QPlainTextEdit):
         selection.cursor = self.textCursor()
         selection.cursor.clearSelection()
         self.setExtraSelections([selection])
+        self._line_numbers.update()
 
     def restyle(self):
         self._update_width()

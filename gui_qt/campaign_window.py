@@ -6,7 +6,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSettings
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QPointF, QSettings
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import (
     QWidget,
@@ -27,7 +27,7 @@ from PyQt5.QtWidgets import (
     QDialog,
     QCheckBox,
 )
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QBrush
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QBrush, QColor, QCursor, QPainter, QPolygonF
 
 from core.campaign import Campaign, CampaignScenario, CampaignTest, load_campaign, command_to_display
 from core.failure_report import extract_failure_traceback
@@ -316,6 +316,53 @@ class CampaignTreeView(QTreeView):
             self.model.blockSignals(False)
             self.setUpdatesEnabled(True)
             self.viewport().update()
+
+    def drawBranches(self, painter, rect, index):
+        """Dessine les fleches de deploiement nous-memes.
+
+        Les fleches fournies par le style natif de Qt sont sombres et
+        disparaissent sur le fond sombre de l'arbre. Les dessiner ici garantit
+        qu'elles suivent la palette, quel que soit le theme.
+        """
+        palette = styles.palette()
+
+        if self.selectionModel() is not None and self.selectionModel().isSelected(index):
+            painter.fillRect(rect, QColor(palette["tree_selected"]))
+
+        model = index.model()
+        if model is None or not model.hasChildren(index):
+            return
+
+        sous_le_curseur = rect.contains(self.viewport().mapFromGlobal(QCursor.pos()))
+        couleur = QColor(palette["branch_arrow_hover"] if sous_le_curseur
+                         else palette["branch_arrow"])
+
+        # La fleche occupe le dernier cran d'indentation, juste avant la case.
+        centre_x = rect.right() - self.indentation() / 2 + 1
+        centre_y = rect.center().y() + 1
+        cote = 4.0
+
+        if self.isExpanded(index):
+            # Triangle vers le bas.
+            points = [
+                QPointF(centre_x - cote, centre_y - cote / 2),
+                QPointF(centre_x + cote, centre_y - cote / 2),
+                QPointF(centre_x, centre_y + cote * 0.9),
+            ]
+        else:
+            # Triangle vers la droite.
+            points = [
+                QPointF(centre_x - cote / 2, centre_y - cote),
+                QPointF(centre_x - cote / 2, centre_y + cote),
+                QPointF(centre_x + cote * 0.9, centre_y),
+            ]
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(couleur)
+        painter.drawPolygon(QPolygonF(points))
+        painter.restore()
 
     def recolor_statuses(self):
         """Reapplique les couleurs de statut avec la palette courante."""
