@@ -765,7 +765,12 @@ class MainWindow(QMainWindow):
         if status in self.test_counts:
             self.test_counts[status] += 1
 
-        if not self.tree.update_single_test(nodeid, status, self.workspace or ""):
+        # create_missing : un test execute mais absent de l'arbre y est ajoute,
+        # pour que l'arbre montre ce qui a reellement tourne plutot que de perdre
+        # le resultat.
+        if not self.tree.update_single_test(
+            nodeid, status, self.workspace or "", create_missing=True
+        ):
             self._unmatched_results.append(nodeid)
 
         self._cards_dirty = True
@@ -773,38 +778,31 @@ class MainWindow(QMainWindow):
             self._cards_timer.start()
 
     def _warn_about_unmatched_results(self):
-        """Signale les resultats que l'arbre n'a pas pu rattacher.
+        """Note les tests executes qui ne figuraient pas dans l'arbre.
 
-        Le cas typique : des identifiants de parametres calcules a chaque
-        collecte (valeurs aleatoires, date, compteur). L'arbre est une photo
-        prise au chargement, alors que pytest recollecte au lancement : les
-        nodeids different, donc les tests executes ne sont pas ceux affiches.
-        Aucun rattrapage cote interface ne peut corriger cela, seul le jeu de
-        tests le peut, d'ou un message qui dit quoi changer.
+        Ils y ont ete ajoutes au fil du run : l'arbre montre donc bien ce qui a
+        tourne. Le signaler reste utile, car cela veut dire que la collecte
+        n'est pas reproductible d'un lancement a l'autre (identifiants de
+        parametres calcules a chaque collecte), et donc que la selection faite
+        avant le lancement ne portait pas sur ces tests-la.
         """
         if not self._unmatched_results:
             return
 
-        exemples = "\n".join(f"  {nodeid}" for nodeid in self._unmatched_results[:5])
-        reste = len(self._unmatched_results) - 5
+        exemples = "\n".join(f"  {nodeid}" for nodeid in self._unmatched_results[:3])
+        reste = len(self._unmatched_results) - 3
         if reste > 0:
             exemples += f"\n  ... et {reste} autre(s)"
 
         self._queue_console_output(
-            f"\nATTENTION : {len(self._unmatched_results)} resultat(s) sans correspondance "
-            "dans l'arbre.\n"
-            "Les tests executes ne sont donc pas exactement ceux affiches.\n\n"
-            "Cause habituelle : les identifiants de parametres changent d'une collecte "
-            "a l'autre\n(valeurs aleatoires, date, compteur). L'arbre est etabli au "
-            "chargement du workspace,\net pytest recollecte au lancement : les deux ne "
-            "peuvent alors pas coincider.\n\n"
-            "Corriger cote tests, avec des identifiants stables :\n"
-            "  @pytest.mark.parametrize(\"valeur\", donnees, ids=[\"cas_1\", \"cas_2\"])\n"
-            "ou en tirant les valeurs aleatoires DANS le test plutot que dans le "
-            "parametrage.\n\n"
-            f"Exemples non rattaches :\n{exemples}\n"
+            f"\n{len(self._unmatched_results)} test(s) executes ne figuraient pas dans "
+            "l'arbre ; ils y ont ete ajoutes.\n"
+            "La collecte n'est donc pas reproductible : les identifiants de parametres "
+            "changent\nd'une collecte a l'autre. Pour que la selection porte sur les "
+            "memes tests que l'execution,\nfixez-les avec ids= dans parametrize, ou tirez "
+            "les valeurs aleatoires dans le test.\n"
+            f"{exemples}\n"
         )
-        self.details.show_console()
 
     def _refresh_summary_cards(self):
         if not self._cards_dirty:

@@ -2,12 +2,12 @@
 
 Quand les identifiants de parametres sont calcules a chaque collecte (valeurs
 aleatoires, date, compteur), l'arbre etabli au chargement ne decrit plus ce que
-pytest execute au lancement, puisqu'il recollecte. Les resultats arrivent alors
-avec des nodeids inconnus de l'arbre.
+pytest execute au lancement, puisqu'il recollecte.
 
-Aucun rattrapage cote interface ne peut corriger cela : les tests executes sont
-reellement d'autres tests. Ce qui est en notre pouvoir, c'est de le detecter et
-de le dire clairement plutot que de laisser croire a un affichage fiable.
+L'arbre est donc complete au fil du run avec les tests reellement executes :
+aucun resultat n'est perdu, et ce qui est affiche correspond a ce qui a tourne.
+Le fait reste signale, car il implique que la selection faite avant le
+lancement ne portait pas sur ces tests-la.
 """
 
 import textwrap
@@ -41,14 +41,14 @@ def test_the_tree_reports_whether_it_matched_a_result(qtbot):
     assert tree.update_single_test("test_x.py::test_f[valeur_aleatoire]", "PASSED") is False
 
 
-def test_matching_results_raise_no_warning(window):
+def test_matching_results_raise_no_note(window):
     for nodeid in NODEIDS:
         window._on_test_status(nodeid, "PASSED")
 
     assert window._unmatched_results == []
     window._warn_about_unmatched_results()
     window._flush_console_output()
-    assert "ATTENTION" not in window.console.toPlainText()
+    assert "ne figuraient pas" not in window.console.toPlainText()
 
 
 def test_unknown_results_are_collected(window):
@@ -60,27 +60,48 @@ def test_unknown_results_are_collected(window):
     ]
 
 
-def test_the_warning_explains_the_cause_and_the_fix(window):
+def test_an_executed_test_is_added_to_the_tree(window):
+    """Le point central : ce qui a tourne doit se retrouver dans l'arbre."""
+    from gui_qt.test_tree_view import STATUS_ROLE
+
+    inconnu = "test_x.py::test_f[7391]"
+    window._on_test_status(inconnu, "PASSED")
+
+    item = window.tree._find_item_for_nodeid(inconnu)
+    assert item is not None, "le test execute doit apparaitre dans l'arbre"
+    assert item.data(STATUS_ROLE) == "PASSED", "avec son resultat"
+
+
+def test_the_added_test_joins_the_existing_branch(window):
+    """Sans fusion, chaque test ajoute recreerait toute la hierarchie."""
+    window._on_test_status("test_x.py::test_f[7391]", "PASSED")
+    window._on_test_status("test_x.py::test_f[2048]", "FAILED")
+
+    assert window.tree.model.rowCount() == 1, "un seul fichier a la racine"
+    assert len(window.tree._nodeid_to_item) == len(NODEIDS) + 2
+
+
+def test_the_note_explains_the_cause_and_the_fix(window):
     window._on_test_status("test_x.py::test_f[7391]", "PASSED")
     window._warn_about_unmatched_results()
     window._flush_console_output()
 
     message = window.console.toPlainText()
-    assert "ATTENTION" in message
-    assert "aleatoires" in message, "la cause doit etre nommee"
+    assert "ils y ont ete ajoutes" in message, "dire ce qui a ete fait"
+    assert "reproductible" in message, "la cause doit etre nommee"
     assert "ids=" in message, "la correction doit etre montree"
     assert "test_x.py::test_f[7391]" in message, "l'exemple concret doit apparaitre"
 
 
-def test_the_warning_does_not_list_hundreds_of_examples(window):
+def test_the_note_does_not_list_hundreds_of_examples(window):
     for i in range(50):
         window._on_test_status(f"test_x.py::test_f[{i}]", "PASSED")
     window._warn_about_unmatched_results()
     window._flush_console_output()
 
     message = window.console.toPlainText()
-    assert "et 45 autre(s)" in message
-    assert message.count("test_x.py::test_f[") <= 6
+    assert "et 47 autre(s)" in message
+    assert message.count("test_x.py::test_f[") <= 4
 
 
 def test_the_count_resets_between_runs(window):

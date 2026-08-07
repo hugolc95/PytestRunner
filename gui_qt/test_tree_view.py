@@ -2,7 +2,7 @@ from PyQt5.QtGui import QStandardItemModel, QStandardItem, QBrush, QIcon, QColor
 from PyQt5.QtWidgets import QTreeView, QMenu, QApplication, QDialog, QVBoxLayout, QTextEdit, QMessageBox
 from PyQt5.QtCore import Qt, QModelIndex, QPointF, pyqtSignal
 
-from core.test_tree import TestNode
+from core.test_tree import TestNode, build_test_tree
 from core.failure_report import extract_failure_traceback
 from gui_qt.status_icons import STATUS_PRIORITY, STATUS_COLORS, status_icon as _status_icon
 from gui_qt.styles import styles
@@ -141,6 +141,61 @@ class TestTreeView(QTreeView):
             item.appendRow(self._build_item(child))
 
         return item
+
+    # -----------------------------
+    # Ajout en cours de run
+    # -----------------------------
+
+    def add_nodeid(self, nodeid: str) -> QStandardItem | None:
+        """Insere un test absent de l'arbre, en creant les niveaux manquants.
+
+        Sert quand pytest execute un test que la collecte initiale ne connaissait
+        pas. C'est le cas des jeux de tests dont les identifiants de parametres
+        sont calcules a chaque collecte : l'arbre est etabli au chargement, pytest
+        recollecte au lancement, et les nodeids different. Plutot que de perdre
+        ces resultats, on complete l'arbre avec ce qui a reellement tourne.
+        """
+        racines = build_test_tree([nodeid])
+        if not racines:
+            return None
+
+        self.setUpdatesEnabled(False)
+        self.model.blockSignals(True)
+        try:
+            for racine in racines:
+                self._merge_node(self.model.invisibleRootItem(), racine)
+        finally:
+            self.model.blockSignals(False)
+            self.setUpdatesEnabled(True)
+            self.viewport().update()
+
+        self._emit_selection_changed()
+        return self._nodeid_to_item.get(self._norm(nodeid))
+
+    def _merge_node(self, parent_item: QStandardItem, node: TestNode):
+        """Fusionne un noeud dans l'arbre existant, sans dupliquer les parents."""
+        existant = None
+        for row in range(parent_item.rowCount()):
+            enfant = parent_item.child(row) if parent_item is not self.model.invisibleRootItem() \
+                else self.model.item(row)
+            if enfant is not None and enfant.text() == node.name \
+                    and enfant.data(KIND_ROLE) == node.kind:
+                existant = enfant
+                break
+
+        if existant is None:
+            # _build_item cree toute la chaine restante et l'enregistre.
+            parent_item.appendRow(self._build_item(node))
+            return
+
+        if node.nodeid and not existant.data(NODEID_ROLE):
+            existant.setData(node.nodeid, NODEID_ROLE)
+            self._nodeid_to_item[self._norm(node.nodeid)] = existant
+        if node.target and not existant.data(TARGET_ROLE):
+            existant.setData(node.target, TARGET_ROLE)
+
+        for enfant_node in node.children:
+            self._merge_node(existant, enfant_node)
 
     # -----------------------------
     # Checkbox state management
@@ -393,10 +448,20 @@ class TestTreeView(QTreeView):
             self.setUpdatesEnabled(True)
             self.viewport().update()
 
-    def update_single_test(self, nodeid: str, status: str, workspace: str = "") -> bool:
-        """Applique le statut au test correspondant. Retourne False si aucun item
-        ne correspond, ce qui signale une collecte non reproductible."""
+    def update_single_test(self, nodeid: str, status: str, workspace: str = "",
+                           create_missing: bool = False) -> bool:
+        """Applique le statut au test correspondant.
+
+        Retourne False si le test etait absent de l'arbre. Avec `create_missing`,
+        il y est ajoute au passage : l'arbre reflete alors ce qui a reellement
+        ete execute, plutot que de perdre le resultat.
+        """
         item = self._find_item_for_nodeid(nodeid)
+        connu = item is not None
+
+        if item is None and create_missing:
+            item = self.add_nodeid(nodeid)
+
         if item is None:
             return False
 
@@ -411,7 +476,7 @@ class TestTreeView(QTreeView):
             self.model.blockSignals(False)
 
         self.viewport().update()
-        return True
+        return connu
 
     def color_tests(self, results: dict[str, str]):
         self.reset_result_colors()
