@@ -573,17 +573,18 @@ class MainWindow(QMainWindow):
         self.workspace: str | None = None
 
     def _build_theme_button(self):
-        """Bascule clair/sombre, discrete, dans le coin haut-gauche.
+        """Bascule clair/sombre, discrete, dans le coin haut-droit.
 
-        QMenuBar accepte un widget dans son coin : le bouton se place donc avant
-        les menus, sans occuper de place dans la fenetre elle-meme.
+        QMenuBar accepte un widget dans son coin : le bouton se loge donc a
+        l'extremite de la barre de menus, sans occuper de place dans la fenetre
+        elle-meme ni decaler les menus.
         """
         self.theme_button = QToolButton()
         self.theme_button.setAutoRaise(True)
         self.theme_button.setCursor(Qt.PointingHandCursor)
         self.theme_button.clicked.connect(self.toggle_theme)
         self._refresh_theme_button()
-        self.menuBar().setCornerWidget(self.theme_button, Qt.TopLeftCorner)
+        self.menuBar().setCornerWidget(self.theme_button, Qt.TopRightCorner)
 
     def _refresh_theme_button(self):
         # L'icone montre le theme vers lequel le clic bascule.

@@ -16,16 +16,89 @@ from gui_qt.test_tree_view import TestTreeView, STATUS_ROLE
 
 
 @pytest.fixture(autouse=True)
-def restore_light_theme():
-    """Le theme est un etat global du module : on le remet en place apres coup."""
+def isolate_theme():
+    """Le theme est un etat global du module, et MainWindow applique celui qui
+    est memorise dans QSettings. Sans remise a zero AVANT chaque test, l'ordre
+    d'execution et les reglages de la machine influenceraient le resultat."""
+    styles.set_theme("light")
+    forget_status_icons()
     yield
     styles.set_theme("light")
     forget_status_icons()
 
 
-def test_light_is_the_default():
+def test_selecting_light_gives_the_light_palette():
     assert styles.current_theme() == "light"
     assert not styles.is_dark()
+    assert styles.palette() is styles.LIGHT
+
+
+def test_the_saved_theme_is_applied_at_startup(qtbot):
+    """Le choix doit survivre a la fermeture de l'application."""
+    from PyQt5.QtCore import QSettings
+    from gui_qt.main_window import MainWindow
+
+    settings = QSettings("MyCompany", "PyTestRunner")
+    precedent = settings.value("theme", "light", type=str)
+    try:
+        settings.setValue("theme", "dark")
+        fenetre = MainWindow()
+        qtbot.addWidget(fenetre)
+        assert styles.is_dark()
+    finally:
+        settings.setValue("theme", precedent)
+
+
+def test_the_toggle_button_switches_and_persists(qtbot):
+    from PyQt5.QtCore import QSettings
+    from gui_qt.main_window import MainWindow
+
+    settings = QSettings("MyCompany", "PyTestRunner")
+    precedent = settings.value("theme", "light", type=str)
+    try:
+        settings.setValue("theme", "light")
+        fenetre = MainWindow()
+        qtbot.addWidget(fenetre)
+
+        fenetre.toggle_theme()
+        assert styles.is_dark()
+        assert settings.value("theme", type=str) == "dark"
+
+        fenetre.toggle_theme()
+        assert not styles.is_dark()
+        assert settings.value("theme", type=str) == "light"
+    finally:
+        settings.setValue("theme", precedent)
+
+
+def test_the_button_shows_the_theme_it_switches_to(qtbot):
+    from PyQt5.QtCore import QSettings
+    from gui_qt.main_window import MainWindow
+
+    settings = QSettings("MyCompany", "PyTestRunner")
+    precedent = settings.value("theme", "light", type=str)
+    try:
+        settings.setValue("theme", "light")
+        fenetre = MainWindow()
+        qtbot.addWidget(fenetre)
+
+        lune = fenetre.theme_button.text()
+        assert "sombre" in fenetre.theme_button.toolTip()
+
+        fenetre.toggle_theme()
+        assert fenetre.theme_button.text() != lune
+        assert "clair" in fenetre.theme_button.toolTip()
+    finally:
+        settings.setValue("theme", precedent)
+
+
+def test_the_button_sits_in_the_top_right_corner(qtbot):
+    from PyQt5.QtCore import Qt
+    from gui_qt.main_window import MainWindow
+
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    assert fenetre.menuBar().cornerWidget(Qt.TopRightCorner) is fenetre.theme_button
 
 
 def test_switching_to_dark_changes_the_palette():
