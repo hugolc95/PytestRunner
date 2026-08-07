@@ -84,21 +84,6 @@ def humanize(key: str) -> str:
     return texte[0].upper() + texte[1:]
 
 
-def key_worth_showing(key: str) -> bool:
-    """Vrai si la cle reelle apporte quelque chose a cote du nom lisible.
-
-    Afficher `LOG_PATH` a cote de `Log path` n'informe personne et allonge le
-    libelle. En revanche `ChecksumObjConfigAlgo`, rendu `Checksum obj config
-    algo`, devient difficile a relier a ce qu'on lit dans le fichier : la cle
-    est alors montree.
-
-    La comparaison se fait a separateurs pres, et non sur les seuls caracteres
-    alphanumeriques : humanize() ne modifiant que les espaces et la casse, une
-    comparaison trop permissive masquerait toujours la cle.
-    """
-    return humanize(key).lower().replace(" ", "_") != str(key).lower()
-
-
 def looks_like_directory(key: str) -> bool:
     normal = normalize_key(key)
     return normal in DIRECTORY_HINTS or normal.endswith(("_dir", "_path", "_directory"))
@@ -290,22 +275,22 @@ class _SectionForm(QScrollArea):
         self.setWidget(contenu)
 
     def _label_for(self, key: str) -> QWidget:
-        if key_worth_showing(key):
-            texte = (
-                f"<b>{humanize(key)}</b>"
-                f"&nbsp;<span style='font-size:10px; "
-                f"color:{styles.palette()['text_muted']}'>{key}</span>"
-            )
-        else:
-            texte = f"<b>{humanize(key)}</b>"
+        """Un seul nom affiche, le nom lisible.
 
-        libelle = QLabel(texte)
+        Montrer aussi la cle brute a cote doublait l'information sans rien
+        apprendre : humanize() ne fait qu'ajouter des espaces et ajuster la
+        casse. L'orthographe exacte, celle qu'on cherche dans le fichier, reste
+        disponible dans l'infobulle.
+        """
+        libelle = QLabel(f"<b>{humanize(key)}</b>")
         libelle.setTextFormat(Qt.RichText)
         libelle.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
+        infobulle = str(key)
         description = DESCRIPTIONS.get(normalize_key(key))
         if description:
-            libelle.setToolTip(description)
+            infobulle += f"\n\n{description}"
+        libelle.setToolTip(infobulle)
         return libelle
 
     def values(self) -> dict:

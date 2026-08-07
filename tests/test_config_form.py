@@ -14,7 +14,6 @@ from gui_qt.config.config_form import (
     ConfigForm,
     build_field,
     humanize,
-    key_worth_showing,
     looks_like_directory,
 )
 from gui_qt.config.config_loader import find_log_path_setting, resolve_log_root
@@ -316,15 +315,45 @@ def test_a_key_is_made_readable_without_losing_its_letters(cle, attendu):
     assert humanize(cle) == attendu
 
 
-def test_a_key_identical_to_its_label_is_not_repeated():
-    """Afficher LOG_PATH a cote de Log path n'informe personne."""
-    assert not key_worth_showing("LOG_PATH")
-    assert not key_worth_showing("workspace_path")
+def test_the_key_is_never_written_twice(qtbot):
+    """Le nom lisible et la cle brute cote a cote doublaient l'information."""
+    from PyQt5.QtWidgets import QLabel
+
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"ChecksumObjConfigAlgo": ["CRC_ISO_3309"], "LOG_PATH": "traces"})
+
+    page = form.pages.currentWidget()
+    for libelle in page.widget().findChildren(QLabel):
+        texte = libelle.text()
+        assert "ChecksumObjConfigAlgo" not in texte, "cle brute affichee en plus du libelle"
+        assert "LOG_PATH" not in texte, "cle brute affichee en plus du libelle"
 
 
-def test_a_camel_case_key_is_shown_next_to_its_label():
-    """Checksum obj config algo se relie mal a ce qu'on lit dans le fichier."""
-    assert key_worth_showing("ChecksumObjConfigAlgo")
+def test_the_exact_key_stays_available_in_the_tooltip(qtbot):
+    """C'est l'orthographe qu'on cherche dans le fichier : elle ne doit pas
+    disparaitre, seulement cesser d'encombrer."""
+    from PyQt5.QtWidgets import QLabel
+
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"ChecksumObjConfigAlgo": ["CRC_ISO_3309"]})
+
+    page = form.pages.currentWidget()
+    infobulles = [w.toolTip() for w in page.widget().findChildren(QLabel)]
+    assert any("ChecksumObjConfigAlgo" in bulle for bulle in infobulles)
+
+
+def test_a_described_setting_keeps_its_explanation_in_the_tooltip(qtbot):
+    from PyQt5.QtWidgets import QLabel
+
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"LOG_PATH": "traces"})
+
+    page = form.pages.currentWidget()
+    infobulles = [w.toolTip() for w in page.widget().findChildren(QLabel)]
+    assert any("LOG_PATH" in b and "fichiers .log" in b for b in infobulles)
 
 
 # --------------------------------------------------- navigation entre sections
