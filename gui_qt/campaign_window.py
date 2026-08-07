@@ -619,6 +619,7 @@ class CampaignWorker(QThread):
             if self._looks_like_pytest_target(command):
                 cmd = [
                     self.interpreter,
+                    "-u",
                     "-m",
                     "pytest",
                     command,
@@ -683,6 +684,7 @@ class CampaignWorker(QThread):
 
             cmd = [
                 self.interpreter,
+                "-u",
                 "-m",
                 "pytest",
                 *nodeid_args,
@@ -749,9 +751,11 @@ class CampaignWorker(QThread):
         assert self._process.stdout is not None
         emit_buffer = []
         emit_size = 0
+        last_flush = time.monotonic()
 
         def flush_emit_buffer():
-            nonlocal emit_buffer, emit_size
+            nonlocal emit_buffer, emit_size, last_flush
+            last_flush = time.monotonic()
             if emit_buffer:
                 self.stdout_signal.emit("".join(emit_buffer))
                 emit_buffer = []
@@ -771,7 +775,8 @@ class CampaignWorker(QThread):
 
             emit_buffer.append(line)
             emit_size += len(line)
-            if len(emit_buffer) >= 50 or emit_size >= 8192:
+            if (len(emit_buffer) >= 50 or emit_size >= 8192
+                    or time.monotonic() - last_flush >= 0.05):
                 flush_emit_buffer()
         flush_emit_buffer()
         if self._stopped:

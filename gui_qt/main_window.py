@@ -51,6 +51,9 @@ from gui_qt.styles.styles import (
 )
 
 
+_COLLECTED_RE = re.compile(r"collected (\d+) items")
+
+
 def blend_color(base: str, strong: str, ratio: float) -> str:
     """
     Blend two hex colors based on ratio (0.0 -> base, 1.0 -> strong)
@@ -79,6 +82,11 @@ class PytestWorker(QThread):
     stdout_signal = pyqtSignal(str)
     stderr_signal = pyqtSignal(str)
     finished_signal = pyqtSignal(int, str)
+    # Emis (nodeid, status) des qu'un resultat de test est lu, sans attendre le
+    # paquet de lignes suivant : c'est ce qui rend l'arbre vivant pendant le run.
+    test_status_signal = pyqtSignal(str, str)
+    # Emis avec le nombre de tests annonce par pytest ("collected N items").
+    collected_signal = pyqtSignal(int)
 
     def __init__(self, nodeids, workspace, junit_xml_path=None, parallel=False,
                  interpreter=None, targets=None):
@@ -109,6 +117,9 @@ class PytestWorker(QThread):
 
         command = [
             python,
+            # -u : pytest n'attend pas de remplir un tampon pour ecrire, les
+            # premiers resultats arrivent donc nettement plus tot.
+            "-u",
             "-m", "pytest",
             *nodeid_args,
             "--import-mode=importlib",
@@ -154,9 +165,11 @@ class PytestWorker(QThread):
         stdout_limit = 1_000_000  # on garde la fin de sortie pour le resume pytest
         emit_buffer = []
         emit_size = 0
+        last_flush = time.monotonic()
 
         def flush_emit_buffer():
-            nonlocal emit_buffer, emit_size
+            nonlocal emit_buffer, emit_size, last_flush
+            last_flush = time.monotonic()
             if emit_buffer:
                 self.stdout_signal.emit("".join(emit_buffer))
                 emit_buffer = []
@@ -165,14 +178,33 @@ class PytestWorker(QThread):
         for line in iter(self._process.stdout.readline, ""):
             if self._stopped:
                 break
+
+            # Le statut est analyse ICI, dans le thread de lecture, et remonte
+            # immediatement : l'arbre et les compteurs avancent test par test, y
+            # compris pour chaque cas parametre. L'analyser cote interface
+            # obligeait a attendre un paquet de 50 lignes, d'ou un affichage qui
+            # progressait par a-coups.
+            parsed = parse_test_status_line(line)
+            if parsed:
+                self.test_status_signal.emit(parsed[0], parsed[1])
+            else:
+                collected = _COLLECTED_RE.search(line)
+                if collected:
+                    self.collected_signal.emit(int(collected.group(1)))
+
             stdout_buffer.append(line)
             stdout_size += len(line)
             while stdout_size > stdout_limit and stdout_buffer:
                 stdout_size -= len(stdout_buffer.pop(0))
             emit_buffer.append(line)
             emit_size += len(line)
-            # Evite des milliers de signaux Qt et des QTextEdit.append() en rafale.
-            if len(emit_buffer) >= 50 or emit_size >= 8192:
+
+            # Le texte de la console reste groupe (des milliers de signaux Qt et
+            # d'insertions QTextEdit couteraient cher), mais on vide aussi le
+            # tampon toutes les 50 ms pour que la console ne prenne pas de retard
+            # visible sur l'arbre quand les tests sont lents.
+            if (len(emit_buffer) >= 50 or emit_size >= 8192
+                    or time.monotonic() - last_flush >= 0.05):
                 flush_emit_buffer()
 
         flush_emit_buffer()
@@ -362,6 +394,13 @@ class MainWindow(QMainWindow):
         self._console_flush_timer = QTimer(self)
         self._console_flush_timer.setInterval(50)
         self._console_flush_timer.timeout.connect(self._flush_console_output)
+
+        # Regroupe les mises a jour des cartes de resume pendant un run : elles
+        # restent vivantes a l'oeil sans etre reconstruites a chaque test.
+        self._cards_dirty = False
+        self._cards_timer = QTimer(self)
+        self._cards_timer.setInterval(100)
+        self._cards_timer.timeout.connect(self._refresh_summary_cards)
 
         self.tree = TestTreeView()
         self.tree.run_requested.connect(self.run_specific_nodeids)
@@ -618,29 +657,25 @@ class MainWindow(QMainWindow):
     def _on_stdout(self, text: str):
         # Ne pas écrire dans QTextEdit ligne par ligne: sur de gros environnements,
         # cela peut faire planter Qt sous Windows avec 0xC0000409.
+        # L'analyse des resultats se fait dans le thread de lecture (voir
+        # PytestWorker) et arrive par test_status_signal. Ici, que de l'affichage.
         self._queue_console_output(text)
 
-        for line in text.splitlines():
-            self._parse_pytest_output_line(line)
+    def _on_collected(self, count: int):
+        self.total_tests = count
+        self.done_tests = 0
+        self.progress.setMaximum(count)
+        self.progress.setValue(0)
 
-    def _parse_pytest_output_line(self, line: str):
-        # Detect "collected X items"
-        collected_match = re.search(r"collected (\d+) items", line)
-        if collected_match:
-            self.total_tests = int(collected_match.group(1))
-            self.done_tests = 0
-            self.progress.setMaximum(self.total_tests)
-            self.progress.setValue(0)
-            return
+    def _on_test_status(self, nodeid: str, status: str):
+        """Un test vient de se terminer : rafraichissement immediat.
 
-        # Only count/color REAL per-test result lines (gere aussi le format
-        # pytest-xdist quand l'execution parallele est activee).
-        parsed = parse_test_status_line(line)
-        if not parsed:
-            return
-
-        nodeid, status = parsed
-
+        Appele une fois par test, y compris pour chaque cas parametre. L'arbre et
+        la barre de progression sont mis a jour tout de suite (0,04 ms par test).
+        Les cartes de resume passent par un rafraichissement groupe : chacune
+        reconstruit sa feuille de style (0,4 ms), ce qui couterait des secondes
+        sur plusieurs milliers de tests.
+        """
         if status == "FAILED":
             self.failed_nodeids.add(nodeid)
 
@@ -652,6 +687,22 @@ class MainWindow(QMainWindow):
             self.test_counts[status] += 1
 
         self.tree.update_single_test(nodeid, status, self.workspace or "")
+
+        self._cards_dirty = True
+        if not self._cards_timer.isActive():
+            self._cards_timer.start()
+
+    def _refresh_summary_cards(self):
+        if not self._cards_dirty:
+            self._cards_timer.stop()
+            return
+        self._cards_dirty = False
+
+        total = max(self.total_tests, 1)
+        self.card_passed.update_value(self.test_counts["PASSED"], total)
+        self.card_failed.update_value(self.test_counts["FAILED"], total)
+        self.card_skipped.update_value(self.test_counts["SKIPPED"], total)
+        self.card_error.update_value(self.test_counts["ERROR"], total)
 
     def _on_stderr(self, text: str):
         self._queue_console_output(text)
@@ -676,12 +727,9 @@ class MainWindow(QMainWindow):
             if matches:
                 self.test_counts[key] = int(matches[-1])
 
-        total = max(self.total_tests, 1)
-
-        self.card_passed.update_value(self.test_counts["PASSED"], total)
-        self.card_failed.update_value(self.test_counts["FAILED"], total)
-        self.card_skipped.update_value(self.test_counts["SKIPPED"], total)
-        self.card_error.update_value(self.test_counts["ERROR"], total)
+        self._cards_timer.stop()
+        self._cards_dirty = True
+        self._refresh_summary_cards()
 
         self.progress.setValue(self.progress.maximum())
 
@@ -892,6 +940,8 @@ class MainWindow(QMainWindow):
         )
 
         self.worker.stdout_signal.connect(self._on_stdout)
+        self.worker.test_status_signal.connect(self._on_test_status)
+        self.worker.collected_signal.connect(self._on_collected)
         self.worker.stderr_signal.connect(self._on_stderr)
         self.worker.finished_signal.connect(self._on_finished)
 
