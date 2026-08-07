@@ -50,12 +50,47 @@ def discover_config_candidates(workspace: str) -> list[Path]:
     return candidates
 
 
+# Cles acceptees pour designer le dossier des logs. La comparaison se fait sans
+# tenir compte de la casse ni des separateurs : les projets ecrivent aussi bien
+# `LOG_PATH` que `log_directory` ou `log-dir`.
+LOG_PATH_KEYS = (
+    "log_path",
+    "log_directory",
+    "log_dir",
+    "logs_path",
+    "logs_directory",
+    "logdir",
+    "logpath",
+)
+
+
+def normalize_key(key: str) -> str:
+    return str(key).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def find_log_path_setting(data: dict) -> str | None:
+    """Valeur du reglage designant le dossier des logs, quel que soit son nom.
+
+    Retourne None si aucune cle reconnue n'est presente ou si sa valeur est vide.
+    """
+    if not isinstance(data, dict):
+        return None
+
+    for key, value in data.items():
+        if normalize_key(key) in LOG_PATH_KEYS and value:
+            texte = str(value).strip()
+            if texte:
+                return texte
+    return None
+
+
 def resolve_log_root(workspace: str) -> Path:
     """Dossier racine des logs pour ce workspace.
 
-    Lit la cle `log_directory` de config.yml si presente (relative au workspace),
-    sinon `<workspace>/logs`. Utilise a la fois par le conftest (qui ecrit les logs)
-    et par le GUI (clic droit "Ouvrir le log") pour regarder au meme endroit.
+    Lit le reglage du dossier de logs dans config.yml (`LOG_PATH`,
+    `log_directory` et variantes, voir LOG_PATH_KEYS), sinon `<workspace>/logs`.
+    Utilise a la fois par le conftest (qui ecrit les logs) et par le GUI
+    (onglet Log, action "Ouvrir le log") pour regarder au meme endroit.
     """
     root = Path(workspace)
     log_dir = "logs"
@@ -63,10 +98,9 @@ def resolve_log_root(workspace: str) -> Path:
     config_path = find_config_yaml(workspace)
     if config_path is not None:
         try:
-            data = load_yaml(config_path)
-            value = data.get("log_directory")
+            value = find_log_path_setting(load_yaml(config_path))
             if value:
-                log_dir = str(value)
+                log_dir = value
         except Exception:
             pass
 
