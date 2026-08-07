@@ -224,3 +224,95 @@ def test_reloading_discards_unsaved_edits(editor):
     widget.form._fields["LOG_PATH"].widget.setText("jamais_enregistre")
     widget.reload()
     assert widget.form.values()["LOG_PATH"] == "logs"
+
+
+# ------------------------------------------------------- fenetre redimensionnable
+
+@pytest.fixture
+def dialog(qtbot, tmp_path):
+    from gui_qt.config.config_dialog import ConfigDialog
+
+    fichier = tmp_path / "config.yaml"
+    fichier.write_text("LOG_PATH: logs\n", encoding="utf-8")
+    boite = ConfigDialog(fichier)
+    qtbot.addWidget(boite)
+    return boite
+
+
+def test_the_window_can_be_maximized(dialog):
+    """Une QDialog n'a pas ce bouton par defaut, et une configuration fournie
+    se consulte mal dans une petite fenetre."""
+    from PyQt5.QtCore import Qt
+
+    assert dialog.windowFlags() & Qt.WindowMaximizeButtonHint
+
+
+def test_the_window_can_be_resized(dialog):
+    assert dialog.isSizeGripEnabled()
+
+    dialog.resize(1100, 800)
+    assert dialog.size().width() == 1100
+
+
+def test_the_window_has_a_usable_minimum_size(dialog):
+    assert dialog.minimumSize().width() <= 560
+    assert dialog.minimumSize().height() <= 360
+
+
+def test_the_chosen_size_is_remembered(qtbot, tmp_path):
+    """Redimensionner a chaque ouverture serait penible."""
+    from PyQt5.QtCore import QSettings
+    from gui_qt.config.config_dialog import GEOMETRY_KEY, ConfigDialog
+
+    fichier = tmp_path / "config.yaml"
+    fichier.write_text("LOG_PATH: logs\n", encoding="utf-8")
+    settings = QSettings("MyCompany", "PyTestRunner")
+    precedent = settings.value(GEOMETRY_KEY)
+
+    try:
+        settings.remove(GEOMETRY_KEY)
+        premiere = ConfigDialog(fichier)
+        qtbot.addWidget(premiere)
+        premiere.resize(1024, 768)
+        premiere.accept()
+
+        seconde = ConfigDialog(fichier)
+        qtbot.addWidget(seconde)
+        assert seconde.size().width() == 1024
+        assert seconde.size().height() == 768
+    finally:
+        if precedent is None:
+            settings.remove(GEOMETRY_KEY)
+        else:
+            settings.setValue(GEOMETRY_KEY, precedent)
+
+
+# ------------------------------------------------------------ compacite du rendu
+
+def test_a_setting_stays_compact(qtbot):
+    """La hauteur par reglage etait de 84 px : la description se repliait sur
+    quatre lignes dans une colonne etroite, et le libelle occupait deux lignes
+    pour la meme information."""
+    data = {"LOG_PATH": "traces", "python_executable": "", "parallel": False,
+            "timeout": 30, "seuil": 1.5, "pythonpath": [".", "b"],
+            "rapport": {"format": "html", "ouvrir": True}}
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load(data)
+    form.resize(760, 600)
+
+    par_reglage = form.widget().sizeHint().height() / len(data)
+    assert par_reglage < 75, f"{par_reglage:.0f} px par reglage, trop etale"
+
+
+def test_the_label_shows_both_the_name_and_the_real_key(qtbot):
+    """La cle reelle doit rester visible : c'est elle qu'on retrouve dans le
+    fichier et dans la documentation du projet."""
+    from PyQt5.QtWidgets import QLabel
+
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"LOG_PATH": "traces"})
+
+    libelles = [w.text() for w in form.widget().findChildren(QLabel)]
+    assert any("LOG_PATH" in texte and "Log path" in texte for texte in libelles)

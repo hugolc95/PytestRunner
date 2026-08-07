@@ -118,7 +118,7 @@ class _ListField(_Field):
     def build(self, parent) -> QWidget:
         self.widget = QPlainTextEdit()
         self.widget.setPlainText("\n".join(str(v) for v in self.original))
-        self.widget.setMaximumHeight(90)
+        self.widget.setMaximumHeight(72)
         self.widget.setPlaceholderText("Une valeur par ligne")
         return self.widget
 
@@ -204,13 +204,14 @@ class ConfigForm(QScrollArea):
 
         contenu = QWidget()
         layout = QVBoxLayout(contenu)
-        layout.setContentsMargins(12, 12, 12, 12)
-        layout.setSpacing(10)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(6)
 
         simples = QFormLayout()
-        simples.setLabelAlignment(Qt.AlignRight)
+        simples.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
         simples.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
-        simples.setSpacing(8)
+        simples.setHorizontalSpacing(12)
+        simples.setVerticalSpacing(4)
 
         for key, value in self._data.items():
             if isinstance(value, dict):
@@ -218,6 +219,17 @@ class ConfigForm(QScrollArea):
             field = build_field(key, value)
             self._fields[key] = field
             simples.addRow(self._label_for(key), field.build(self))
+
+            # L'explication occupe toute la largeur sous le champ. Placee dans
+            # la colonne des libelles, elle se repliait sur quatre lignes et
+            # faisait tripler la hauteur de chaque reglage.
+            description = DESCRIPTIONS.get(normalize_key(key))
+            if description:
+                aide = QLabel(description)
+                aide.setWordWrap(True)
+                aide.setStyleSheet(styles.muted_label())
+                aide.setContentsMargins(0, 0, 0, 4)
+                simples.addRow("", aide)
 
         if self._fields:
             layout.addLayout(simples)
@@ -229,6 +241,7 @@ class ConfigForm(QScrollArea):
                 continue
             cadre = QGroupBox(humanize(key))
             interne = QVBoxLayout(cadre)
+            interne.setContentsMargins(6, 4, 6, 6)
             sous_formulaire = ConfigForm()
             sous_formulaire.load(value)
             sous_formulaire.setFrameShape(QScrollArea.NoFrame)
@@ -246,30 +259,26 @@ class ConfigForm(QScrollArea):
         self.setWidget(contenu)
 
     def _label_for(self, key: str) -> QWidget:
-        conteneur = QWidget()
-        boite = QVBoxLayout(conteneur)
-        boite.setContentsMargins(0, 0, 0, 0)
-        boite.setSpacing(0)
+        """Libelle sur UNE ligne : nom lisible, puis cle reelle en plus petit.
 
-        titre = QLabel(humanize(key))
-        titre.setStyleSheet("font-weight: 600;")
-        boite.addWidget(titre)
+        Les empiler sur deux lignes doublait la hauteur de chaque reglage pour
+        afficher deux fois la meme information. La cle reelle reste visible
+        parce que c'est elle qu'on retrouve dans le fichier et dans la
+        documentation du projet.
+        """
+        libelle = QLabel(
+            f"<b>{humanize(key)}</b>"
+            f"&nbsp;<span style=\'font-size:10px; color:{styles.palette()['text_muted']}\'>"
+            f"{key}</span>"
+        )
+        libelle.setTextFormat(Qt.RichText)
+        libelle.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
 
         description = DESCRIPTIONS.get(normalize_key(key))
         if description:
-            aide = QLabel(description)
-            aide.setWordWrap(True)
-            aide.setStyleSheet(styles.muted_label())
-            aide.setMaximumWidth(260)
-            boite.addWidget(aide)
+            libelle.setToolTip(description)
 
-        # Le nom reel de la cle reste visible : c'est lui qu'on retrouve dans le
-        # fichier et dans la documentation du projet.
-        brut = QLabel(str(key))
-        brut.setStyleSheet(f"color: {styles.palette()['text_muted']}; font-size: 11px;")
-        boite.addWidget(brut)
-
-        return conteneur
+        return libelle
 
     def values(self) -> dict:
         """Configuration reconstruite, dans l'ordre d'origine des cles."""
