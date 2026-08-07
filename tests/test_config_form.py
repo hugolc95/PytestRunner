@@ -14,6 +14,7 @@ from gui_qt.config.config_form import (
     ConfigForm,
     build_field,
     humanize,
+    key_worth_showing,
     looks_like_directory,
 )
 from gui_qt.config.config_loader import find_log_path_setting, resolve_log_root
@@ -96,10 +97,6 @@ def test_path_like_keys_are_recognized(cle):
     assert looks_like_directory(cle)
 
 
-def test_labels_are_readable():
-    assert humanize("log_path") == "Log path"
-
-
 # ------------------------------------------------------------------- aller-retour
 
 @pytest.fixture
@@ -118,7 +115,7 @@ def test_values_are_returned_unchanged_when_nothing_is_edited(form):
 
 def test_editing_a_field_changes_the_result(form):
     form.load({"LOG_PATH": "logs"})
-    form._fields["LOG_PATH"].widget.setText("traces")
+    form.field("LOG_PATH").widget.setText("traces")
     assert form.values() == {"LOG_PATH": "traces"}
 
 
@@ -137,7 +134,7 @@ def test_nested_sections_are_kept(form):
 
 def test_editing_inside_a_nested_section_works(form):
     form.load({"rapport": {"format": "html"}})
-    form._nested["rapport"]._fields["format"].widget.setText("xml")
+    form.field("format", ("rapport",)).widget.setText("xml")
     assert form.values() == {"rapport": {"format": "xml"}}
 
 
@@ -173,7 +170,7 @@ def test_the_form_tab_is_shown_first(editor):
 
 def test_saving_from_the_form_writes_the_file(editor):
     widget, fichier = editor
-    widget.form._fields["LOG_PATH"].widget.setText("traces_apdu")
+    widget.form.field("LOG_PATH").widget.setText("traces_apdu")
     widget.save()
 
     assert yaml.safe_load(fichier.read_text(encoding="utf-8")) == {
@@ -184,7 +181,7 @@ def test_saving_from_the_form_writes_the_file(editor):
 def test_switching_to_yaml_shows_the_edited_values(editor):
     """Une saisie ne doit pas etre perdue en changeant d'onglet."""
     widget, _ = editor
-    widget.form._fields["LOG_PATH"].widget.setText("traces_apdu")
+    widget.form.field("LOG_PATH").widget.setText("traces_apdu")
     widget.tabs.setCurrentIndex(YAML_TAB)
 
     assert "traces_apdu" in widget.raw_editor.toPlainText()
@@ -221,7 +218,7 @@ def test_yaml_that_is_not_a_mapping_is_refused(editor):
 
 def test_reloading_discards_unsaved_edits(editor):
     widget, _ = editor
-    widget.form._fields["LOG_PATH"].widget.setText("jamais_enregistre")
+    widget.form.field("LOG_PATH").widget.setText("jamais_enregistre")
     widget.reload()
     assert widget.form.values()["LOG_PATH"] == "logs"
 
@@ -294,25 +291,137 @@ def test_a_setting_stays_compact(qtbot):
     quatre lignes dans une colonne etroite, et le libelle occupait deux lignes
     pour la meme information."""
     data = {"LOG_PATH": "traces", "python_executable": "", "parallel": False,
-            "timeout": 30, "seuil": 1.5, "pythonpath": [".", "b"],
-            "rapport": {"format": "html", "ouvrir": True}}
+            "timeout": 30, "seuil": 1.5}
     form = ConfigForm()
     qtbot.addWidget(form)
     form.load(data)
     form.resize(760, 600)
 
-    par_reglage = form.widget().sizeHint().height() / len(data)
+    page = form.pages.currentWidget()
+    par_reglage = page.widget().sizeHint().height() / len(data)
     assert par_reglage < 75, f"{par_reglage:.0f} px par reglage, trop etale"
 
 
-def test_the_label_shows_both_the_name_and_the_real_key(qtbot):
-    """La cle reelle doit rester visible : c'est elle qu'on retrouve dans le
-    fichier et dans la documentation du projet."""
-    from PyQt5.QtWidgets import QLabel
+# ------------------------------------------------------------ libelles lisibles
+
+@pytest.mark.parametrize("cle, attendu", [
+    ("LOG_PATH", "Log path"),
+    ("log_path", "Log path"),
+    ("ChecksumObjConfigAlgo", "Checksum Obj Config Algo"),
+    ("workspace_path", "Workspace path"),
+])
+def test_a_key_is_made_readable_without_losing_its_letters(cle, attendu):
+    """str.capitalize() mettait en minuscules tout ce qui suit la premiere
+    lettre : ChecksumObjConfigAlgo devenait Checksumobjconfigalgo."""
+    assert humanize(cle) == attendu
+
+
+def test_a_key_identical_to_its_label_is_not_repeated():
+    """Afficher LOG_PATH a cote de Log path n'informe personne."""
+    assert not key_worth_showing("LOG_PATH")
+    assert not key_worth_showing("workspace_path")
+
+
+def test_a_camel_case_key_is_shown_next_to_its_label():
+    """Checksum obj config algo se relie mal a ce qu'on lit dans le fichier."""
+    assert key_worth_showing("ChecksumObjConfigAlgo")
+
+
+# --------------------------------------------------- navigation entre sections
+
+def test_a_flat_configuration_has_a_single_section(qtbot):
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"LOG_PATH": "traces", "MODE": "PERSO"})
+
+    assert form.section_titles() == ["General"]
+    assert not form.sections.isVisible(), "un navigateur d'une seule section est inutile"
+
+
+def test_nested_sections_become_navigable_entries(qtbot):
+    """Le cas signale : des sections imbriquees rendaient l'affichage illisible."""
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({
+        "LOG_PATH": "traces",
+        "Modes": {
+            "Debug": {"ChecksumObjConfigAlgo": ["CRC_ISO_3309"]},
+            "Full": {"ChecksumObjConfigAlgo": ["CRC_CCITT"]},
+        },
+    })
+
+    assert form.section_titles() == ["General", "Modes", "Debug", "Full"]
+
+
+def test_each_section_shows_only_its_own_settings(qtbot):
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({
+        "LOG_PATH": "traces",
+        "Modes": {"Debug": {"algo": ["CRC_ISO_3309"]}},
+    })
+
+    assert form.field("LOG_PATH") is not None
+    assert form.field("algo") is None, "le reglage d'une sous-section n'est pas au niveau racine"
+    assert form.field("algo", ("Modes", "Debug")) is not None
+
+
+def test_a_deeply_nested_value_survives_the_round_trip(qtbot):
+    data = {
+        "LOG_PATH": "traces",
+        "Modes": {
+            "Debug": {"algo": ["CRC_ISO_3309", "CRC_CCITT"], "actif": True},
+            "Perso": {"algo": ["CRC_ISO_3309"], "actif": False},
+        },
+    }
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load(data)
+
+    assert form.values() == data
+
+
+def test_editing_deep_inside_a_section_works(qtbot):
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"Modes": {"Debug": {"algo": ["CRC_ISO_3309"]}}})
+
+    form.field("algo", ("Modes", "Debug")).widget.setPlainText("CRC_CCITT\nCRC_32")
+    assert form.values() == {"Modes": {"Debug": {"algo": ["CRC_CCITT", "CRC_32"]}}}
+
+
+# ------------------------------------------------------------ largeur des champs
+
+def test_a_field_does_not_stretch_across_a_wide_window(qtbot):
+    """Etire sur toute la largeur, le bouton Parcourir se retrouvait a l'autre
+    bout de la fenetre."""
+    from gui_qt.config.config_form import MAX_FIELD_WIDTH
 
     form = ConfigForm()
     qtbot.addWidget(form)
     form.load({"LOG_PATH": "traces"})
+    form.resize(1900, 600)
+    form.show()
 
-    libelles = [w.text() for w in form.widget().findChildren(QLabel)]
-    assert any("LOG_PATH" in texte and "Log path" in texte for texte in libelles)
+    assert form.field("LOG_PATH").widget.maximumWidth() <= MAX_FIELD_WIDTH
+
+
+def test_a_list_is_tall_enough_to_show_its_values(qtbot):
+    """Les listes etaient tronquees a deux lignes visibles."""
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"PARAM": ["FULL", "DEBUG", "SANITY", "PERSO"]})
+
+    champ = form.field("PARAM").widget
+    lignes_visibles = champ.height() / champ.fontMetrics().lineSpacing()
+    assert lignes_visibles >= 4, f"{lignes_visibles:.1f} ligne(s) visible(s) pour 4 valeurs"
+
+
+def test_a_very_long_list_stays_bounded(qtbot):
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"PARAM": [f"valeur_{i}" for i in range(200)]})
+
+    champ = form.field("PARAM").widget
+    lignes_visibles = champ.height() / champ.fontMetrics().lineSpacing()
+    assert lignes_visibles <= 12, "une longue liste ne doit pas remplir l'ecran"
