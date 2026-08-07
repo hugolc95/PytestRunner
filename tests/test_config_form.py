@@ -421,18 +421,74 @@ def test_editing_deep_inside_a_section_works(qtbot):
 
 # ------------------------------------------------------------ largeur des champs
 
+CHEMIN_LONG = r"C:\Projets\CryptoWrapper\cryptolib_ifx_wrapper\Test"
+
+
+def _affiche(qtbot, data, largeur=1400):
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load(data)
+    form.resize(largeur, 600)
+    form.show()
+    qtbot.wait(10)
+    return form
+
+
+def test_a_long_value_is_shown_in_full(qtbot):
+    """Le reproche signale : la fenetre agrandie etait aux trois quarts vide et
+    les chemins apparaissaient tronques a `_ifx_wrapper\\Test`.
+
+    La cause n'etait pas le plafond de largeur mais le sizeHint d'un QLineEdit,
+    qui vaut une vingtaine de caracteres quel que soit le contenu.
+    """
+    form = _affiche(qtbot, {"WorkspacePath": CHEMIN_LONG})
+
+    champ = form.field("WorkspacePath").widget
+    necessaire = champ.fontMetrics().horizontalAdvance(CHEMIN_LONG)
+    assert champ.width() >= necessaire, (
+        f"{champ.width()} px pour une valeur qui en demande {necessaire}"
+    )
+
+
+def test_a_short_value_does_not_get_a_giant_field(qtbot):
+    """S'adapter au contenu, c'est aussi ne pas etaler un mot sur un ecran."""
+    form = _affiche(qtbot, {"Mode": "PERSO"})
+    assert form.field("Mode").widget.width() <= 400
+
+
 def test_a_field_does_not_stretch_across_a_wide_window(qtbot):
     """Etire sur toute la largeur, le bouton Parcourir se retrouvait a l'autre
     bout de la fenetre."""
     from gui_qt.config.config_form import MAX_FIELD_WIDTH
 
-    form = ConfigForm()
-    qtbot.addWidget(form)
-    form.load({"LOG_PATH": "traces"})
-    form.resize(1900, 600)
-    form.show()
+    form = _affiche(qtbot, {"LOG_PATH": "x" * 500}, largeur=2400)
 
-    assert form.field("LOG_PATH").widget.maximumWidth() <= MAX_FIELD_WIDTH
+    assert form.field("LOG_PATH").widget.width() <= MAX_FIELD_WIDTH
+
+
+def test_a_narrow_window_shrinks_the_fields_instead_of_overflowing(qtbot):
+    """Le champ s'adapte au contenu sans imposer sa largeur a la fenetre."""
+    form = _affiche(qtbot, {"WorkspacePath": CHEMIN_LONG}, largeur=520)
+    assert form.field("WorkspacePath").widget.width() < 520
+
+
+def test_a_list_is_wide_enough_for_its_longest_value(qtbot):
+    form = _affiche(qtbot, {"PYTHONPATH": ["a", CHEMIN_LONG]})
+
+    champ = form.field("PYTHONPATH").widget
+    necessaire = champ.fontMetrics().horizontalAdvance(CHEMIN_LONG)
+    assert champ.width() >= necessaire
+
+
+def test_the_section_navigator_fits_its_titles(qtbot):
+    """Une largeur fixe tronquait les noms de sections imbriquees."""
+    from gui_qt.config.config_form import NAV_MAX_WIDTH
+
+    court = _affiche(qtbot, {"a": 1, "Modes": {"b": 2}})
+    long = _affiche(qtbot, {"a": 1, "ConfigurationDesAlgorithmesDeChecksum": {"b": 2}})
+
+    assert long.sections.maximumWidth() > court.sections.maximumWidth()
+    assert long.sections.maximumWidth() <= NAV_MAX_WIDTH
 
 
 def test_a_list_is_tall_enough_to_show_its_values(qtbot):

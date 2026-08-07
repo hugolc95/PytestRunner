@@ -29,6 +29,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QStackedWidget,
@@ -46,10 +47,29 @@ from gui_qt.styles.styles import toolbar_button
 DIRECTORY_HINTS = LOG_PATH_KEYS + ("output_dir", "report_path", "workspace", "root")
 FILE_HINTS = ("python_executable", "python", "interpreter", "config_file")
 
-# Largeur maximale d'un champ. Sans plafond, un champ occupe toute la largeur
-# d'une fenetre agrandie et son bouton "Parcourir" se retrouve a un metre de
-# son libelle.
-MAX_FIELD_WIDTH = 560
+# Bornes de largeur d'un champ. Le minimum evite un champ riquiqui pour une
+# valeur courte ; le maximum evite qu'un champ traverse un ecran large et
+# renvoie son bouton "Parcourir" a un metre de son libelle.
+MIN_FIELD_WIDTH = 240
+MAX_FIELD_WIDTH = 900
+
+
+def width_for_content(widget: QWidget, textes, marge: int = 36) -> int:
+    """Largeur permettant d'afficher ces textes en entier, dans les bornes.
+
+    Le sizeHint d'un QLineEdit ne depend pas de son contenu : il vaut toujours
+    une vingtaine de caracteres. Combine a une politique de croissance qui s'y
+    tient, un chemin comme `C:/Projets/CryptoWrapper/cryptolib_ifx_wrapper/Test`
+    apparaissait tronque a `_ifx_wrapper\\Test` alors que la fenetre agrandie
+    etait aux trois quarts vide. On dimensionne donc sur le contenu reel.
+    """
+    metrics = widget.fontMetrics()
+    besoin = max((metrics.horizontalAdvance(str(t)) for t in textes), default=0)
+    return max(MIN_FIELD_WIDTH, min(besoin + marge, MAX_FIELD_WIDTH))
+
+# Bornes de largeur du navigateur de sections, ajuste a ses titres.
+NAV_MIN_WIDTH = 170
+NAV_MAX_WIDTH = 380
 
 # Nom de la section regroupant les reglages qui ne sont pas dans un sous-groupe.
 GENERAL_SECTION = "General"
@@ -155,11 +175,22 @@ class _ListField(_Field):
         self.widget.setPlainText("\n".join(str(v) for v in self.original))
         self.widget.setPlaceholderText("Une valeur par ligne")
         self.widget.setLineWrapMode(QPlainTextEdit.NoWrap)
-        self.widget.setMaximumWidth(MAX_FIELD_WIDTH)
+        # Largeur de la plus longue valeur : sans cela, une liste de modes
+        # s'affichait tronquee alors qu'il restait de la place. Une liste plus
+        # longue que MAX_LINES defile, sa barre prend de la place a son tour.
+        marge = 24 if len(self.original) > self.MAX_LINES else 8
+        self.widget.setMaximumWidth(width_for_content(self.widget, self.original, marge))
 
         lignes = min(max(len(self.original), self.MIN_LINES), self.MAX_LINES)
-        hauteur_ligne = self.widget.fontMetrics().lineSpacing()
-        self.widget.setFixedHeight(lignes * hauteur_ligne + 12)
+        # La hauteur est prise sur la mise en page du document, pas sur
+        # fontMetrics().lineSpacing() : celui-ci sous-estime l'interligne reel
+        # (15 px contre 17 ici), et la derniere valeur se retrouvait coupee en
+        # deux avec une barre de defilement pour quatre elements.
+        document = self.widget.document()
+        bloc = document.documentLayout().blockBoundingRect(document.firstBlock())
+        hauteur_ligne = bloc.height() or self.widget.fontMetrics().lineSpacing()
+        marges = 2 * document.documentMargin() + 2 * self.widget.frameWidth()
+        self.widget.setFixedHeight(int(lignes * hauteur_ligne + marges) + 2)
         return self.widget
 
     def value(self):
@@ -180,18 +211,23 @@ class _TextField(_Field):
 
         self.widget = QLineEdit("" if self.original is None else str(self.original))
         self.widget.setClearButtonEnabled(True)
-        self.widget.setMaximumWidth(MAX_FIELD_WIDTH)
-        ligne.addWidget(self.widget)
+        # Le champ s'etire jusqu'a montrer sa valeur entiere, puis s'arrete : le
+        # bouton reste a portee du libelle sur une fenetre large.
+        self.widget.setMaximumWidth(
+            width_for_content(self.widget, [self.original], marge=48)
+        )
+        ligne.addWidget(self.widget, 1)
 
         if self.browse:
             bouton = QPushButton("Parcourir...")
             bouton.setStyleSheet(toolbar_button())
+            bouton.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
             bouton.clicked.connect(lambda: self._choisir(parent))
             ligne.addWidget(bouton)
 
-        # Occupe la place restante, pour que le champ et son bouton restent
-        # groupes a gauche au lieu de s'etirer sur toute la fenetre.
-        ligne.addStretch(1)
+        # Absorbe ce qui depasse une fois le champ a sa largeur utile, pour que
+        # le champ et son bouton restent groupes a gauche.
+        ligne.addStretch(0)
         return conteneur
 
     def _choisir(self, parent):
@@ -246,7 +282,10 @@ class _SectionForm(QScrollArea):
 
         formulaire = QFormLayout()
         formulaire.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        formulaire.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
+        # Les champs prennent la largeur disponible, chacun jusqu'a son propre
+        # plafond calcule sur son contenu. Rester au sizeHint donnait des champs
+        # de vingt caracteres, identiques pour un mot et pour un chemin complet.
+        formulaire.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
         formulaire.setHorizontalSpacing(14)
         formulaire.setVerticalSpacing(6)
 
@@ -261,6 +300,7 @@ class _SectionForm(QScrollArea):
             if description:
                 aide = QLabel(description)
                 aide.setWordWrap(True)
+                aide.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
                 aide.setStyleSheet(styles.muted_label())
                 aide.setContentsMargins(0, 0, 0, 4)
                 formulaire.addRow("", aide)
@@ -309,7 +349,7 @@ class ConfigForm(QWidget):
 
         self.sections = QTreeWidget()
         self.sections.setHeaderHidden(True)
-        self.sections.setMaximumWidth(260)
+        self.sections.setMaximumWidth(NAV_MAX_WIDTH)
         self.sections.currentItemChanged.connect(self._on_section_changed)
 
         self.pages = QStackedWidget()
@@ -339,6 +379,31 @@ class ConfigForm(QWidget):
         # La liste des sections ne sert a rien quand il n'y en a qu'une.
         self.sections.setVisible(self.sections.topLevelItem(0).childCount() > 0)
         self.sections.setCurrentItem(racine)
+        self._adjust_navigator_width()
+
+    def _adjust_navigator_width(self):
+        """Ajuste le navigateur au plus long titre, sans le laisser deborder.
+
+        Une largeur fixe tronquait les noms de sections imbriquees, alors qu'un
+        fichier a deux sections en gaspillait la moitie.
+        """
+        metrics = self.sections.fontMetrics()
+        plus_large = 0
+
+        def parcourir(item, profondeur: int):
+            nonlocal plus_large
+            largeur = metrics.horizontalAdvance(item.text(0))
+            largeur += profondeur * self.sections.indentation()
+            plus_large = max(plus_large, largeur)
+            for i in range(item.childCount()):
+                parcourir(item.child(i), profondeur + 1)
+
+        for i in range(self.sections.topLevelItemCount()):
+            parcourir(self.sections.topLevelItem(i), 1)
+
+        largeur = max(NAV_MIN_WIDTH, min(plus_large + 24, NAV_MAX_WIDTH))
+        self.sections.setMaximumWidth(largeur)
+        self.splitter.setSizes([largeur, max(largeur, self.width() - largeur)])
 
     def _add_section(self, chemin: tuple, titre: str, data: dict, parent) -> QTreeWidgetItem:
         page = _SectionForm(data)

@@ -218,6 +218,11 @@ class PytestWorker(QThread):
         exit_code = -1 if self._stopped else self._process.returncode
         self.finished_signal.emit(exit_code, "".join(stdout_buffer))
 
+    @property
+    def stopped(self) -> bool:
+        """Vrai si le run a ete interrompu par l'utilisateur."""
+        return self._stopped
+
     def stop(self):
         """Stop pytest execution."""
 
@@ -331,6 +336,7 @@ class MainWindow(QMainWindow):
         # Resultats renvoyes par pytest sans equivalent dans l'arbre : signe
         # que la collecte n'est pas reproductible d'un lancement a l'autre.
         self._unmatched_results: list[str] = []
+        self._replaced_cases = 0
         self.settings = QSettings("MyCompany", "PyTestRunner")
         styles.set_theme(self.settings.value("theme", "light", type=str))
         # main_qt.py pose la feuille de style avant de connaitre le theme
@@ -780,8 +786,9 @@ class MainWindow(QMainWindow):
     def _warn_about_unmatched_results(self):
         """Note les tests executes qui ne figuraient pas dans l'arbre.
 
-        Ils y ont ete ajoutes au fil du run : l'arbre montre donc bien ce qui a
-        tourne. Le signaler reste utile, car cela veut dire que la collecte
+        Ils y ont ete ajoutes au fil du run, et les cas de l'ancienne collecte
+        qu'ils remplacent en ont ete retires : l'arbre montre donc exactement ce
+        qui a tourne. Le signaler reste utile, car cela veut dire que la collecte
         n'est pas reproductible d'un lancement a l'autre (identifiants de
         parametres calcules a chaque collecte), et donc que la selection faite
         avant le lancement ne portait pas sur ces tests-la.
@@ -794,9 +801,18 @@ class MainWindow(QMainWindow):
         if reste > 0:
             exemples += f"\n  ... et {reste} autre(s)"
 
+        if self._replaced_cases:
+            remplacement = (
+                f" ; ils y ont ete ajoutes, en remplacement des "
+                f"{self._replaced_cases} cas de l'ancienne collecte qui n'ont pas ete "
+                "executes.\n"
+            )
+        else:
+            remplacement = " ; ils y ont ete ajoutes.\n"
+
         self._queue_console_output(
             f"\n{len(self._unmatched_results)} test(s) executes ne figuraient pas dans "
-            "l'arbre ; ils y ont ete ajoutes.\n"
+            f"l'arbre{remplacement}"
             "La collecte n'est donc pas reproductible : les identifiants de parametres "
             "changent\nd'une collecte a l'autre. Pour que la selection porte sur les "
             "memes tests que l'execution,\nfixez-les avec ids= dans parametrize, ou tirez "
@@ -842,6 +858,13 @@ class MainWindow(QMainWindow):
         self._cards_timer.stop()
         self._cards_dirty = True
         self._refresh_summary_cards()
+
+        # L'arbre ne doit pas garder, a cote des cas qui viennent de tourner, les
+        # cas d'une collecte que pytest a lui-meme remplacee : ils ne seront
+        # jamais executes sous ce nom. Un run interrompu laisse forcement des cas
+        # sans resultat, on n'y touche donc pas.
+        if not getattr(getattr(self, "worker", None), "stopped", False):
+            self._replaced_cases = self.tree.prune_replaced_cases()
         self._warn_about_unmatched_results()
 
         self.progress.setValue(self.progress.maximum())
@@ -1073,6 +1096,8 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(True)
         self.failed_nodeids.clear()
         self._unmatched_results.clear()
+        self._replaced_cases = 0
+        self.tree.start_run()
 
         self.worker.start()
 

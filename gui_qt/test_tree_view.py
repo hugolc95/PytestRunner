@@ -54,6 +54,10 @@ class TestTreeView(QTreeView):
         self._id_to_item: dict[str, QStandardItem] = {}
         self._nodeid_to_item: dict[str, QStandardItem] = {}
         self._updating = False
+        # Fonctions parametrees ayant recu un cas absent de la collecte initiale
+        # pendant le run en cours. Leurs autres cas sont alors suspects : voir
+        # prune_replaced_cases().
+        self._functions_with_new_cases: list[QStandardItem] = []
         # Sortie console complete du dernier run, utilisee pour retrouver la trace
         # d'echec d'un test precis (menu contextuel "Voir la trace d'echec").
         self._last_output: str = ""
@@ -105,6 +109,7 @@ class TestTreeView(QTreeView):
             self.model.setHorizontalHeaderLabels(["Tests"])
             self._id_to_item.clear()
             self._nodeid_to_item.clear()
+            self._functions_with_new_cases.clear()
 
             root_item = self.model.invisibleRootItem()
             for root in roots:
@@ -186,6 +191,12 @@ class TestTreeView(QTreeView):
         if existant is None:
             # _build_item cree toute la chaine restante et l'enregistre.
             parent_item.appendRow(self._build_item(node))
+            # Un cas ajoute sous une fonction parametree deja connue signifie que
+            # la collecte du chargement ne decrivait pas les memes cas que le run.
+            # Les cas restes de cette collecte-la sont donc perimes.
+            if node.kind == "case" and parent_item.data(KIND_ROLE) == "function" \
+                    and parent_item not in self._functions_with_new_cases:
+                self._functions_with_new_cases.append(parent_item)
             return
 
         if node.nodeid and not existant.data(NODEID_ROLE):
@@ -196,6 +207,60 @@ class TestTreeView(QTreeView):
 
         for enfant_node in node.children:
             self._merge_node(existant, enfant_node)
+
+    def start_run(self):
+        """Ouvre un run : on repart sans cas en attente de remplacement."""
+        self._functions_with_new_cases.clear()
+
+    def prune_replaced_cases(self) -> int:
+        """Retire les cas parametres laisses par une collecte perimee.
+
+        Quand pytest recollecte au lancement et calcule d'autres identifiants de
+        parametres (valeurs aleatoires, date, compteur), les cas etablis au
+        chargement ne correspondent a rien : ils ne seront jamais executes sous
+        ce nom. Les garder a cote des cas reellement executes donne un arbre deux
+        fois trop long ou seule une minorite de lignes porte un resultat, ce qui
+        se lit comme un arbre non mis a jour.
+
+        On ne touche qu'aux fonctions parametrees ayant recu un cas inconnu
+        pendant ce run, et seulement a leurs cas restes sans resultat : une
+        selection partielle d'une fonction aux identifiants stables n'est jamais
+        concernee, puisqu'elle ne cree aucun cas.
+
+        Retourne le nombre de cas retires.
+        """
+        if not self._functions_with_new_cases:
+            return 0
+
+        supprimes = 0
+        self.setUpdatesEnabled(False)
+        self.model.blockSignals(True)
+        try:
+            for fonction in self._functions_with_new_cases:
+                for row in range(fonction.rowCount() - 1, -1, -1):
+                    enfant = fonction.child(row)
+                    if enfant is None or enfant.data(KIND_ROLE) != "case":
+                        continue
+                    if enfant.data(STATUS_ROLE):
+                        continue
+                    nodeid = enfant.data(NODEID_ROLE)
+                    if nodeid:
+                        self._nodeid_to_item.pop(self._norm(nodeid), None)
+                    self._id_to_item.pop(enfant.data(ID_ROLE), None)
+                    fonction.removeRow(row)
+                    supprimes += 1
+                # Retirer des cas decoches peut rendre la fonction entierement
+                # cochee : les cases des parents doivent suivre.
+                if fonction.rowCount():
+                    self._update_parents(fonction.child(0))
+        finally:
+            self._functions_with_new_cases.clear()
+            self.model.blockSignals(False)
+            self.setUpdatesEnabled(True)
+            self.viewport().update()
+
+        self._emit_selection_changed()
+        return supprimes
 
     # -----------------------------
     # Checkbox state management
