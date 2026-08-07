@@ -120,14 +120,16 @@ def save_yaml(path: Path, data: dict) -> None:
         yaml.safe_dump(data, f, sort_keys=False)
 
 
-def find_test_log(workspace: str, nodeid: str) -> Path | None:
-    """Retrouve le fichier .log du dernier run pour un nodeid, via le manifeste
-    `<log_root>/last_run_index.json` ecrit par le conftest. Retourne None si aucun
-    log (test jamais lance, ou manifeste absent).
+def find_test_log_from_manifest(workspace: str, nodeid: str) -> Path | None:
+    """Retrouve le .log via le manifeste `<log_root>/last_run_index.json`.
 
-    Le matching est souple (normalisation des slashs + endswith dans les deux sens),
-    car le nodeid stocke dans l'arbre du GUI peut avoir un prefixe de dossier que la
-    cle du manifeste n'a pas (selon le rootdir pytest), comme dans _find_item_for_nodeid.
+    Ce manifeste est ecrit par le conftest livre en exemple. Un workspace reel a
+    son propre conftest, qui ecrit ses .log sans forcement tenir ce manifeste :
+    voir find_test_log_by_search() pour ce cas.
+
+    Le matching est souple (normalisation des slashs + endswith dans les deux
+    sens), car le nodeid de l'arbre peut avoir un prefixe de dossier que la cle du
+    manifeste n'a pas, selon le rootdir de pytest.
     """
     manifest_path = resolve_log_root(workspace) / "last_run_index.json"
     if not manifest_path.is_file():
@@ -154,3 +156,108 @@ def find_test_log(workspace: str, nodeid: str) -> Path | None:
     if path and Path(path).is_file():
         return Path(path)
     return None
+
+
+# Plafond de fichiers examines : un dossier de logs accumule les runs, et
+# parcourir des dizaines de milliers de fichiers bloquerait l'interface.
+MAX_LOG_FILES_SCANNED = 4000
+
+LOG_SUFFIXES = (".log", ".txt")
+
+
+def _match_key(value: str) -> str:
+    """Reduit une chaine a ses caracteres alphanumeriques, en minuscules.
+
+    Les conftest assainissent les nodeids chacun a leur facon : `cas-1`, `cas_1`
+    et `cas.1` doivent tous se reconnaitre dans un nom de fichier.
+    """
+    return "".join(c for c in str(value).lower() if c.isalnum())
+
+
+def nodeid_tokens(nodeid: str) -> list[str]:
+    """Morceaux identifiants d'un nodeid, du fichier au parametre.
+
+    'a/b/test_x.py::TestC::test_f[cas-1]' donne
+    ['test_x', 'TestC', 'test_f', 'cas-1'].
+    """
+    nodeid = str(nodeid).replace("\\", "/").strip()
+    chemin, _, reste = nodeid.partition("::")
+
+    tokens = [Path(chemin).stem] if chemin else []
+    for morceau in reste.split("::"):
+        if not morceau:
+            continue
+        base, _, parametre = morceau.partition("[")
+        if base:
+            tokens.append(base)
+        if parametre:
+            tokens.append(parametre.rstrip("]"))
+    return tokens
+
+
+def find_test_log_by_search(workspace: str, nodeid: str) -> Path | None:
+    """Cherche le .log d'un test directement dans le dossier des logs.
+
+    Utilise quand aucun manifeste n'est tenu, ce qui est le cas des workspaces
+    dont le conftest se contente d'ecrire des fichiers. Les logs etant ranges
+    dans un sous-dossier par run, on retient le fichier le plus recent parmi les
+    meilleurs candidats : c'est celui du run qui vient d'avoir lieu.
+    """
+    racine = resolve_log_root(workspace)
+    if not racine.is_dir():
+        return None
+
+    tokens = nodeid_tokens(nodeid)
+    if not tokens:
+        return None
+
+    # Le nom de la fonction ne suffit pas : normalise, `test_pso` se retrouve
+    # dans `test_PSO_CDS_RSA`, donc tout log du meme fichier passerait. On exige
+    # donc aussi l'identifiant du parametre, bien plus discriminant.
+    parametre = str(nodeid).strip().endswith("]")
+    if parametre and len(tokens) >= 2:
+        obligatoires = [_match_key(tokens[-2]), _match_key(tokens[-1])]
+    else:
+        obligatoires = [_match_key(tokens[-1])]
+    obligatoires = [t for t in obligatoires if t]
+
+    recherches = [_match_key(t) for t in tokens if _match_key(t)]
+
+    meilleur: tuple[int, float, Path] | None = None
+    examines = 0
+
+    for fichier in racine.rglob("*"):
+        if examines >= MAX_LOG_FILES_SCANNED:
+            break
+        if not fichier.is_file() or fichier.suffix.lower() not in LOG_SUFFIXES:
+            continue
+        examines += 1
+
+        nom = _match_key(fichier.stem)
+        if any(t not in nom for t in obligatoires):
+            continue
+
+        score = sum(1 for t in recherches if t and t in nom)
+        try:
+            date = fichier.stat().st_mtime
+        except OSError:
+            continue
+
+        candidat = (score, date, fichier)
+        if meilleur is None or candidat[:2] > meilleur[:2]:
+            meilleur = candidat
+
+    return meilleur[2] if meilleur else None
+
+
+def find_test_log(workspace: str, nodeid: str) -> Path | None:
+    """Fichier .log du dernier run pour ce test, ou None.
+
+    Le manifeste est prioritaire quand il existe : il est exact et immediat. A
+    defaut, on cherche dans le dossier des logs, ce qui fonctionne avec
+    n'importe quel conftest.
+    """
+    return (
+        find_test_log_from_manifest(workspace, nodeid)
+        or find_test_log_by_search(workspace, nodeid)
+    )

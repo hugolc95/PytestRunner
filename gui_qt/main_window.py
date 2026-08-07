@@ -328,6 +328,9 @@ class MainWindow(QMainWindow):
         self._current_junit_path = None
         self._run_started_at = None
         self._current_run_nodeids: list[str] = []
+        # Resultats renvoyes par pytest sans equivalent dans l'arbre : signe
+        # que la collecte n'est pas reproductible d'un lancement a l'autre.
+        self._unmatched_results: list[str] = []
         self.settings = QSettings("MyCompany", "PyTestRunner")
         styles.set_theme(self.settings.value("theme", "light", type=str))
         # main_qt.py pose la feuille de style avant de connaitre le theme
@@ -762,11 +765,46 @@ class MainWindow(QMainWindow):
         if status in self.test_counts:
             self.test_counts[status] += 1
 
-        self.tree.update_single_test(nodeid, status, self.workspace or "")
+        if not self.tree.update_single_test(nodeid, status, self.workspace or ""):
+            self._unmatched_results.append(nodeid)
 
         self._cards_dirty = True
         if not self._cards_timer.isActive():
             self._cards_timer.start()
+
+    def _warn_about_unmatched_results(self):
+        """Signale les resultats que l'arbre n'a pas pu rattacher.
+
+        Le cas typique : des identifiants de parametres calcules a chaque
+        collecte (valeurs aleatoires, date, compteur). L'arbre est une photo
+        prise au chargement, alors que pytest recollecte au lancement : les
+        nodeids different, donc les tests executes ne sont pas ceux affiches.
+        Aucun rattrapage cote interface ne peut corriger cela, seul le jeu de
+        tests le peut, d'ou un message qui dit quoi changer.
+        """
+        if not self._unmatched_results:
+            return
+
+        exemples = "\n".join(f"  {nodeid}" for nodeid in self._unmatched_results[:5])
+        reste = len(self._unmatched_results) - 5
+        if reste > 0:
+            exemples += f"\n  ... et {reste} autre(s)"
+
+        self._queue_console_output(
+            f"\nATTENTION : {len(self._unmatched_results)} resultat(s) sans correspondance "
+            "dans l'arbre.\n"
+            "Les tests executes ne sont donc pas exactement ceux affiches.\n\n"
+            "Cause habituelle : les identifiants de parametres changent d'une collecte "
+            "a l'autre\n(valeurs aleatoires, date, compteur). L'arbre est etabli au "
+            "chargement du workspace,\net pytest recollecte au lancement : les deux ne "
+            "peuvent alors pas coincider.\n\n"
+            "Corriger cote tests, avec des identifiants stables :\n"
+            "  @pytest.mark.parametrize(\"valeur\", donnees, ids=[\"cas_1\", \"cas_2\"])\n"
+            "ou en tirant les valeurs aleatoires DANS le test plutot que dans le "
+            "parametrage.\n\n"
+            f"Exemples non rattaches :\n{exemples}\n"
+        )
+        self.details.show_console()
 
     def _refresh_summary_cards(self):
         if not self._cards_dirty:
@@ -806,6 +844,7 @@ class MainWindow(QMainWindow):
         self._cards_timer.stop()
         self._cards_dirty = True
         self._refresh_summary_cards()
+        self._warn_about_unmatched_results()
 
         self.progress.setValue(self.progress.maximum())
 
@@ -1035,6 +1074,7 @@ class MainWindow(QMainWindow):
         self.rerun_failed_button.setEnabled(False)
         self.stop_button.setEnabled(True)
         self.failed_nodeids.clear()
+        self._unmatched_results.clear()
 
         self.worker.start()
 

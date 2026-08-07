@@ -393,10 +393,12 @@ class TestTreeView(QTreeView):
             self.setUpdatesEnabled(True)
             self.viewport().update()
 
-    def update_single_test(self, nodeid: str, status: str, workspace: str = ""):
+    def update_single_test(self, nodeid: str, status: str, workspace: str = "") -> bool:
+        """Applique le statut au test correspondant. Retourne False si aucun item
+        ne correspond, ce qui signale une collecte non reproductible."""
         item = self._find_item_for_nodeid(nodeid)
         if item is None:
-            return
+            return False
 
         # Meme raison que dans reset_result_colors, mais le cout est ici paye a
         # CHAQUE resultat de test recu : sans blocage, un run sur un gros
@@ -409,6 +411,7 @@ class TestTreeView(QTreeView):
             self.model.blockSignals(False)
 
         self.viewport().update()
+        return True
 
     def color_tests(self, results: dict[str, str]):
         self.reset_result_colors()

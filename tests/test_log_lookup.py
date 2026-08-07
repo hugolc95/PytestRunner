@@ -1,0 +1,185 @@
+"""Recherche du fichier .log d'un test.
+
+Le manifeste `last_run_index.json` n'est ecrit que par le conftest livre en
+exemple. Un workspace reel a son propre conftest, qui ecrit ses .log dans un
+sous-dossier par run sans forcement tenir ce manifeste : sans repli, l'onglet
+Log restait vide.
+"""
+
+import json
+import os
+import time
+
+import pytest
+
+from gui_qt.config.config_loader import (
+    find_test_log,
+    find_test_log_by_search,
+    nodeid_tokens,
+    resolve_log_root,
+)
+
+NODEID = "NIST/TestSuiteCDS/test_PSO_CDS_RSA.py::TestSuite::test_pso[nom-RSA-mod2048-tg1-tc11]"
+
+
+def make_workspace(tmp_path, log_key="LOG_PATH", log_dir="traces_apdu"):
+    (tmp_path / "config.yaml").write_text(f"{log_key}: {log_dir}\n", encoding="utf-8")
+    return tmp_path
+
+
+def write_log(dossier, nom, contenu="trace", age_secondes=0):
+    dossier.mkdir(parents=True, exist_ok=True)
+    fichier = dossier / f"{nom}.log"
+    fichier.write_text(contenu, encoding="utf-8")
+    if age_secondes:
+        ancien = time.time() - age_secondes
+        os.utime(fichier, (ancien, ancien))
+    return fichier
+
+
+# ------------------------------------------------------------------- decoupage
+
+def test_a_nodeid_is_split_into_its_parts():
+    assert nodeid_tokens(NODEID) == [
+        "test_PSO_CDS_RSA", "TestSuite", "test_pso", "nom-RSA-mod2048-tg1-tc11",
+    ]
+
+
+def test_a_nodeid_without_class_is_handled():
+    assert nodeid_tokens("a/test_x.py::test_f") == ["test_x", "test_f"]
+
+
+def test_a_parametrized_nodeid_without_class_is_handled():
+    assert nodeid_tokens("test_x.py::test_f[cas]") == ["test_x", "test_f", "cas"]
+
+
+# ------------------------------------------------------- recherche sans manifeste
+
+def test_the_log_is_found_without_any_manifest(tmp_path):
+    """Le cas d'un workspace reel : des .log, pas de manifeste."""
+    ws = make_workspace(tmp_path)
+    attendu = write_log(
+        ws / "traces_apdu" / "20260807_120000",
+        "test_PSO_CDS_RSA_test_pso_nom-RSA-mod2048-tg1-tc11",
+    )
+
+    assert find_test_log(str(ws), NODEID) == attendu
+
+
+def test_the_log_of_the_most_recent_run_wins(tmp_path):
+    """Les logs sont ranges par run : c'est celui qui vient de tourner qui
+    interesse l'utilisateur."""
+    ws = make_workspace(tmp_path)
+    nom = "test_PSO_CDS_RSA_test_pso_nom-RSA-mod2048-tg1-tc11"
+    write_log(ws / "traces_apdu" / "20260101_000000", nom, "ancien", age_secondes=86400)
+    recent = write_log(ws / "traces_apdu" / "20260807_120000", nom, "recent")
+
+    assert find_test_log(str(ws), NODEID) == recent
+    assert find_test_log(str(ws), NODEID).read_text(encoding="utf-8") == "recent"
+
+
+def test_the_right_parameter_is_picked_among_siblings(tmp_path):
+    ws = make_workspace(tmp_path)
+    dossier = ws / "traces_apdu" / "run"
+    write_log(dossier, "test_PSO_CDS_RSA_test_pso_nom-RSA-mod2048-tg1-tc10")
+    attendu = write_log(dossier, "test_PSO_CDS_RSA_test_pso_nom-RSA-mod2048-tg1-tc11")
+    write_log(dossier, "test_PSO_CDS_RSA_test_pso_nom-RSA-mod2048-tg1-tc12")
+
+    assert find_test_log(str(ws), NODEID) == attendu
+
+
+@pytest.mark.parametrize("separateur", ["-", "_", "."])
+def test_the_sanitizing_style_of_the_conftest_does_not_matter(tmp_path, separateur):
+    """Chaque conftest assainit les nodeids a sa facon."""
+    ws = make_workspace(tmp_path)
+    nom = f"test_pso{separateur}nom{separateur}RSA{separateur}mod2048{separateur}tg1{separateur}tc11"
+    attendu = write_log(ws / "traces_apdu" / "run", nom)
+
+    assert find_test_log(str(ws), NODEID) == attendu
+
+
+def test_a_log_of_another_test_is_not_returned(tmp_path):
+    """Sans exigence sur le nom de la fonction, n'importe quel log du meme
+    fichier passerait pour le bon."""
+    ws = make_workspace(tmp_path)
+    write_log(ws / "traces_apdu" / "run", "test_PSO_CDS_RSA_test_autre_chose")
+
+    assert find_test_log(str(ws), NODEID) is None
+
+
+def test_nothing_is_returned_when_the_log_directory_is_empty(tmp_path):
+    ws = make_workspace(tmp_path)
+    (ws / "traces_apdu").mkdir()
+    assert find_test_log(str(ws), NODEID) is None
+
+
+def test_nothing_is_returned_when_the_log_directory_does_not_exist(tmp_path):
+    ws = make_workspace(tmp_path)
+    assert find_test_log(str(ws), NODEID) is None
+
+
+def test_txt_logs_are_accepted_too(tmp_path):
+    ws = make_workspace(tmp_path)
+    dossier = ws / "traces_apdu" / "run"
+    dossier.mkdir(parents=True)
+    attendu = dossier / "test_pso_nom-RSA-mod2048-tg1-tc11.txt"
+    attendu.write_text("trace", encoding="utf-8")
+
+    assert find_test_log_by_search(str(ws), NODEID) == attendu
+
+
+# ------------------------------------------------------------- avec un manifeste
+
+def test_the_manifest_is_used_when_present(tmp_path):
+    """Il est exact et immediat : il reste prioritaire sur la recherche."""
+    ws = make_workspace(tmp_path)
+    racine = ws / "traces_apdu"
+    vise = write_log(racine, "peu_importe_le_nom")
+    # Un fichier que la recherche prefererait, pour prouver que le manifeste gagne.
+    write_log(racine / "run", "test_PSO_CDS_RSA_test_pso_nom-RSA-mod2048-tg1-tc11")
+    (racine / "last_run_index.json").write_text(
+        json.dumps({NODEID: str(vise)}), encoding="utf-8"
+    )
+
+    assert find_test_log(str(ws), NODEID) == vise
+
+
+def test_a_manifest_without_this_test_falls_back_to_searching(tmp_path):
+    ws = make_workspace(tmp_path)
+    racine = ws / "traces_apdu"
+    racine.mkdir()
+    (racine / "last_run_index.json").write_text(
+        json.dumps({"autre/test_y.py::test_z": "/nulle/part.log"}), encoding="utf-8"
+    )
+    attendu = write_log(racine / "run", "test_pso_nom-RSA-mod2048-tg1-tc11")
+
+    assert find_test_log(str(ws), NODEID) == attendu
+
+
+def test_a_broken_manifest_falls_back_to_searching(tmp_path):
+    ws = make_workspace(tmp_path)
+    racine = ws / "traces_apdu"
+    racine.mkdir()
+    (racine / "last_run_index.json").write_text("{ pas du json", encoding="utf-8")
+    attendu = write_log(racine / "run", "test_pso_nom-RSA-mod2048-tg1-tc11")
+
+    assert find_test_log(str(ws), NODEID) == attendu
+
+
+# ------------------------------------------------- le chemin vient bien du yml
+
+def test_the_search_uses_the_directory_from_the_configuration(tmp_path):
+    ws = make_workspace(tmp_path, log_dir="mes_traces")
+    assert resolve_log_root(str(ws)) == ws / "mes_traces"
+
+    attendu = write_log(ws / "mes_traces" / "run", "test_pso_nom-RSA-mod2048-tg1-tc11")
+    assert find_test_log(str(ws), NODEID) == attendu
+
+
+def test_logs_outside_the_configured_directory_are_ignored(tmp_path):
+    """Chercher partout ferait remonter les logs d'un autre outil."""
+    ws = make_workspace(tmp_path, log_dir="mes_traces")
+    (ws / "mes_traces").mkdir()
+    write_log(ws / "ailleurs", "test_pso_nom-RSA-mod2048-tg1-tc11")
+
+    assert find_test_log(str(ws), NODEID) is None
