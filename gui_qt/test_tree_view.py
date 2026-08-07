@@ -35,6 +35,10 @@ class TestTreeView(QTreeView):
     open_log_requested = pyqtSignal(str)
     # Emis (nb coches, total) a chaque changement de selection des cases a cocher.
     selection_changed = pyqtSignal(int, int)
+    # Emis (target, nodeid) quand un element est clique. `nodeid` est vide pour
+    # les dossiers, fichiers et fonctions parametrees : seules les feuilles
+    # executables en ont un.
+    item_clicked = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -57,6 +61,17 @@ class TestTreeView(QTreeView):
 
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+
+        self.clicked.connect(self._on_index_clicked)
+
+    def _on_index_clicked(self, index: QModelIndex):
+        item = self.model.itemFromIndex(index)
+        if item is None:
+            return
+        self.item_clicked.emit(
+            item.data(TARGET_ROLE) or "",
+            item.data(NODEID_ROLE) or "",
+        )
 
     def _norm(self, value: str) -> str:
         return str(value).replace("\\", "/").strip()
@@ -300,6 +315,29 @@ class TestTreeView(QTreeView):
                 font = item.font()
                 font.setBold(False)
                 item.setFont(font)
+                for row in range(item.rowCount()):
+                    stack.append(item.child(row))
+        finally:
+            self.model.blockSignals(False)
+            self.setUpdatesEnabled(True)
+            self.viewport().update()
+
+    def recolor_statuses(self):
+        """Reapplique les couleurs de statut avec la palette courante.
+
+        Les couleurs sont posees sur les items au moment du resultat ; apres un
+        changement de theme elles resteraient sinon dans l'ancienne palette. Le
+        statut lui-meme est relu depuis STATUS_ROLE, donc rien n'est perdu.
+        """
+        self.setUpdatesEnabled(False)
+        self.model.blockSignals(True)
+        try:
+            stack = [self.model.item(row) for row in range(self.model.rowCount())]
+            while stack:
+                item = stack.pop()
+                status = item.data(STATUS_ROLE)
+                if status:
+                    self._apply_status(item, status)
                 for row in range(item.rowCount()):
                     stack.append(item.child(row))
         finally:

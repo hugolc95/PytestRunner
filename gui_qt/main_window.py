@@ -5,7 +5,8 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QFileDialog,
     QMessageBox,
-    QTextEdit, QSplitter, QComboBox, QSizePolicy, QTabWidget, QCheckBox, QDialog
+    QTextEdit, QSplitter, QComboBox, QSizePolicy, QTabWidget, QCheckBox, QDialog,
+    QToolButton, QApplication
 )
 
 from PyQt5.QtCore import Qt, QThread, pyqtSignal, QSettings, QTimer
@@ -25,6 +26,7 @@ from gui_qt.campaign_window import CampaignPanel
 from gui_qt.history_window import HistoryWindow
 from gui_qt.flaky_window import FlakyTestsDialog
 from gui_qt.dialogs import show_scrollable_error, open_test_log_for, open_config_editor
+from gui_qt.detail_panel import DetailPanel
 
 
 from core.test_discovery import collect_tests
@@ -40,7 +42,10 @@ from core.python_interpreter import (
 )
 from gui_qt.interpreter_dialog import InterpreterDialog
 
+from gui_qt.styles import styles
+from gui_qt.status_icons import forget_status_icons
 from gui_qt.styles.styles import (
+    theme_toggle_button,
     primary_button,
     neutral_button,
     success_button,
@@ -250,13 +255,15 @@ class WorkspaceLoadWorker(QThread):
 class SummaryCard(QLabel):
     clicked = pyqtSignal(str)
 
-    def __init__(self, title: str, base_color: str, strong_color: str):
+    def __init__(self, title: str):
         super().__init__()
 
         self.title = title
-        self.base_color = base_color
-        self.strong_color = strong_color
         self.status = title.lower()  # "passed", "failed", "skipped", "error"
+        # Derniere valeur affichee, pour pouvoir se redessiner apres un
+        # changement de theme sans que l'appelant ait a la fournir.
+        self._value = 0
+        self._max_value = 100
 
         self.setAlignment(Qt.AlignCenter)
         self.setMinimumWidth(110)
@@ -276,25 +283,29 @@ class SummaryCard(QLabel):
         self.setStyle(self.style())
         self.update()
 
-    def update_value(self, value: int, max_value: int = 100):
-        ratio = min(value / max_value, 1.0)
+    def restyle(self):
+        """Redessine la carte avec la palette courante."""
+        self.update_value(self._value, self._max_value)
 
-        background = blend_color(
-            self.base_color,
-            self.strong_color,
-            ratio
-        )
+    def update_value(self, value: int, max_value: int = 100):
+        self._value = value
+        self._max_value = max_value
+
+        base_color, strong_color = styles.card_colors(self.title.upper())
+        ratio = min(value / max_value, 1.0) if max_value else 0.0
+        background = blend_color(base_color, strong_color, ratio)
+        palette = styles.palette()
 
         self.setStyleSheet(f"""
         QLabel {{
             background-color: {background};
             border-radius: 10px;
-            color: #222;
+            color: {palette['card_text']};
             border: 1px solid transparent;
         }}
 
         QLabel[active="true"] {{
-            border: 2px solid #333;
+            border: 2px solid {palette['card_active_border']};
         }}
         """)
 
@@ -316,9 +327,19 @@ class MainWindow(QMainWindow):
         self._current_junit_path = None
         self._run_started_at = None
         self._current_run_nodeids: list[str] = []
+        self.settings = QSettings("MyCompany", "PyTestRunner")
+        styles.set_theme(self.settings.value("theme", "light", type=str))
+        # main_qt.py pose la feuille de style avant de connaitre le theme
+        # memorise : on la repose ici avec la bonne palette.
+        _app = QApplication.instance()
+        if _app is not None:
+            _app.setStyleSheet(styles.app_stylesheet())
+        forget_status_icons()
+
         self._build_mode_menu()
         self._build_reports_menu()
         self._build_settings_menu()
+        self._build_theme_button()
 
         self.resize(900, 700)
         self.total_tests = 0
@@ -331,8 +352,6 @@ class MainWindow(QMainWindow):
             "SKIPPED": 0,
             "ERROR": 0,
         }
-        self.settings = QSettings("MyCompany", "PyTestRunner")
-
         # ---- Workspace selection ----
         self.workspace_combo = QComboBox()
         self.workspace_combo.setEditable(True)
@@ -387,9 +406,11 @@ class MainWindow(QMainWindow):
         self.stop_button.clicked.connect(self.stop_tests)
         self.rerun_failed_button.clicked.connect(self.run_failed_tests)
 
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
-        self.console.document().setMaximumBlockCount(12000)
+        # Console, Source et Log dans un meme panneau. self.console reste le
+        # QTextEdit de l'onglet Console : tout le code d'affichage existant
+        # continue de fonctionner sans changement.
+        self.details = DetailPanel()
+        self.console = self.details.console
         self._console_pending: list[str] = []
         self._console_flush_timer = QTimer(self)
         self._console_flush_timer.setInterval(50)
@@ -408,7 +429,7 @@ class MainWindow(QMainWindow):
         self.tree.open_log_requested.connect(self.open_test_log)
 
         self.tree.setStyleSheet(tree_style())
-        self.console.setStyleSheet(console_style())
+        self.tree.item_clicked.connect(self._on_tree_item_clicked)
 
         central = QWidget()
         workspace_bar = QHBoxLayout()
@@ -496,7 +517,7 @@ class MainWindow(QMainWindow):
         self.tree.setMinimumWidth(250)
 
         splitter.addWidget(left_widget)
-        splitter.addWidget(self.console)
+        splitter.addWidget(self.details)
 
         splitter.setStretchFactor(0, 2)  # tree
         splitter.setStretchFactor(1, 3)  # console
@@ -511,29 +532,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.progress)
 
         # ---- Modern Summary Cards ----
-        self.card_passed = SummaryCard(
-            "PASSED",
-            base_color="#c8e6c9",  # soft green
-            strong_color="#2e7d32"
-        )
-
-        self.card_failed = SummaryCard(
-            "FAILED",
-            base_color="#ffcdd2",  # soft red
-            strong_color="#c62828"
-        )
-
-        self.card_skipped = SummaryCard(
-            "SKIPPED",
-            base_color="#ffe0b2",  # soft orange
-            strong_color="#ef6c00"
-        )
-
-        self.card_error = SummaryCard(
-            "ERROR",
-            base_color="#e1bee7",  # soft purple
-            strong_color="#6a1b9a"
-        )
+        self.card_passed = SummaryCard("PASSED")
+        self.card_failed = SummaryCard("FAILED")
+        self.card_skipped = SummaryCard("SKIPPED")
+        self.card_error = SummaryCard("ERROR")
 
         self.active_summary_filter = None
 
@@ -569,6 +571,78 @@ class MainWindow(QMainWindow):
         self.workspace_combo.setFocus()
 
         self.workspace: str | None = None
+
+    def _build_theme_button(self):
+        """Bascule clair/sombre, discrete, dans le coin haut-gauche.
+
+        QMenuBar accepte un widget dans son coin : le bouton se place donc avant
+        les menus, sans occuper de place dans la fenetre elle-meme.
+        """
+        self.theme_button = QToolButton()
+        self.theme_button.setAutoRaise(True)
+        self.theme_button.setCursor(Qt.PointingHandCursor)
+        self.theme_button.clicked.connect(self.toggle_theme)
+        self._refresh_theme_button()
+        self.menuBar().setCornerWidget(self.theme_button, Qt.TopLeftCorner)
+
+    def _refresh_theme_button(self):
+        # L'icone montre le theme vers lequel le clic bascule.
+        if styles.is_dark():
+            self.theme_button.setText("\u2600")   # soleil : revenir au clair
+            self.theme_button.setToolTip("Passer en theme clair")
+        else:
+            self.theme_button.setText("\u263d")   # lune : passer au sombre
+            self.theme_button.setToolTip("Passer en theme sombre")
+        self.theme_button.setStyleSheet(theme_toggle_button())
+
+    def toggle_theme(self):
+        self.apply_theme("light" if styles.is_dark() else "dark")
+
+    def apply_theme(self, name: str):
+        """Change de theme a chaud et memorise le choix.
+
+        Les feuilles de style posees widget par widget ne suivent pas
+        automatiquement : chaque zone doit etre repeinte, d'ou les appels a
+        restyle().
+        """
+        styles.set_theme(name)
+        self.settings.setValue("theme", styles.current_theme())
+
+        # Les icones de statut sont dessinees puis mises en cache : sans purge,
+        # elles garderaient les couleurs de l'ancienne palette.
+        forget_status_icons()
+
+        app = QApplication.instance()
+        if app is not None:
+            app.setStyleSheet(styles.app_stylesheet())
+
+        self._refresh_theme_button()
+        self.restyle()
+        self.campaign_panel.restyle()
+
+    def restyle(self):
+        """Reapplique les styles de l'onglet Workspace avec la palette courante."""
+        self.load_button.setStyleSheet(primary_button())
+        self.browse_button.setStyleSheet(neutral_button())
+        self.open_config_button.setStyleSheet(neutral_button())
+        self.run_button.setStyleSheet(success_button())
+        self.stop_button.setStyleSheet(danger_button())
+        self.rerun_failed_button.setStyleSheet(danger_button())
+
+        for button in (self.btn_select_all, self.btn_select_none, self.btn_failed_only,
+                       self.btn_expand_all, self.btn_collapse_all):
+            button.setStyleSheet(toolbar_button())
+
+        self.tree.setStyleSheet(tree_style())
+        self.tree.item_clicked.connect(self._on_tree_item_clicked)
+        self.selection_label.setStyleSheet(styles.muted_label())
+
+        for card in (self.card_passed, self.card_failed, self.card_skipped, self.card_error):
+            card.restyle()
+
+        # Les couleurs de statut deja posees sur les items de l'arbre viennent de
+        # l'ancienne palette : on les recalcule a partir des statuts memorises.
+        self.tree.recolor_statuses()
 
     def _build_mode_menu(self):
         mode_menu = self.menuBar().addMenu("Mode")
@@ -861,8 +935,18 @@ class MainWindow(QMainWindow):
         self.workspace_loader.error_signal.connect(self._on_workspace_load_error)
         self.workspace_loader.start()
 
+    def _on_tree_item_clicked(self, target: str, nodeid: str):
+        """Clic dans l'arbre : charge la source et le log de l'element.
+
+        On ne change pas d'onglet de force : si l'utilisateur regarde la console
+        pendant un run, il n'est pas ejecte vers la source a chaque clic.
+        """
+        self.details.show_for(target or None, nodeid or None)
+
     def _on_workspace_loaded(self, roots, count: int, workspace: str):
         self.workspace = workspace
+        self.details.set_workspace(workspace)
+        self.details.clear_details()
         self.tree.load_tree(roots)
         self.run_button.setEnabled(count > 0)
         self.load_button.setEnabled(True)

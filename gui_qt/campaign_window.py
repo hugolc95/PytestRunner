@@ -39,6 +39,8 @@ from core.python_interpreter import (
     subprocess_flags,
 )
 from gui_qt.dialogs import show_scrollable_error, open_test_log_for, open_config_editor
+from gui_qt.detail_panel import DetailPanel
+from gui_qt.styles import styles
 from gui_qt.styles.styles import primary_button, neutral_button, success_button, danger_button, toolbar_button, tree_style, console_style
 from gui_qt.status_icons import STATUS_PRIORITY, STATUS_COLORS, status_icon
 
@@ -64,6 +66,9 @@ class CampaignTreeView(QTreeView):
     selection_changed = pyqtSignal(int, int)
     # Emis avec le nodeid d'un test dont on veut ouvrir le fichier .log.
     open_log_requested = pyqtSignal(str)
+    # Emis (target, nodeid) quand un element est clique, pour alimenter les
+    # onglets Source et Log.
+    item_clicked = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -85,6 +90,17 @@ class CampaignTreeView(QTreeView):
 
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+
+        self.clicked.connect(self._on_index_clicked)
+
+    def _on_index_clicked(self, index: QModelIndex):
+        item = self.model.itemFromIndex(index)
+        if item is None:
+            return
+        nodeid = item.data(NODEID_ROLE) or ""
+        # Un scenario ou un setup n'a pas de nodeid : seule la source du test a
+        # un sens ici, donc la cible se deduit du nodeid quand il existe.
+        self.item_clicked.emit(nodeid, nodeid)
 
     def _norm(self, value: str) -> str:
         # Sous Windows, pytest affiche parfois les nodeids avec des antislashs
@@ -294,6 +310,24 @@ class CampaignTreeView(QTreeView):
                 font = item.font()
                 font.setBold(False)
                 item.setFont(font)
+                for row in range(item.rowCount()):
+                    stack.append(item.child(row))
+        finally:
+            self.model.blockSignals(False)
+            self.setUpdatesEnabled(True)
+            self.viewport().update()
+
+    def recolor_statuses(self):
+        """Reapplique les couleurs de statut avec la palette courante."""
+        self.setUpdatesEnabled(False)
+        self.model.blockSignals(True)
+        try:
+            stack = [self.model.item(row) for row in range(self.model.rowCount())]
+            while stack:
+                item = stack.pop()
+                status = item.data(STATUS_ROLE)
+                if status:
+                    self._apply_status(item, status)
                 for row in range(item.rowCount()):
                     stack.append(item.child(row))
         finally:
@@ -857,6 +891,7 @@ class CampaignPanel(QWidget):
         self.tree.setStyleSheet(tree_style())
         self.tree.selection_changed.connect(self.on_selection_changed)
         self.tree.open_log_requested.connect(self.open_test_log)
+        self.tree.item_clicked.connect(self._on_tree_item_clicked)
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter tests...")
@@ -866,10 +901,9 @@ class CampaignPanel(QWidget):
         self.selection_label.setAlignment(Qt.AlignRight)
         self.selection_label.setStyleSheet("color: #616161; font-size: 12px;")
 
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
+        self.details = DetailPanel()
+        self.console = self.details.console
         self.console.document().setMaximumBlockCount(12000)
-        self.console.setStyleSheet(console_style())
         self._console_pending: list[str] = []
         self._console_flush_timer = QTimer(self)
         self._console_flush_timer.setInterval(50)
@@ -914,7 +948,7 @@ class CampaignPanel(QWidget):
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left)
-        splitter.addWidget(self.console)
+        splitter.addWidget(self.details)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
 
@@ -972,6 +1006,8 @@ class CampaignPanel(QWidget):
         try:
             self.campaign = load_campaign(path)
             self.tree.load_campaign(self.campaign)
+            self.details.set_workspace(self.campaign.workspace)
+            self.details.clear_details()
             self._add_recent_campaign(path)
             self.settings.setValue("last_campaign", path)
             self.console.clear()
@@ -998,6 +1034,9 @@ class CampaignPanel(QWidget):
             return
 
         open_config_editor(self, self.campaign.workspace, self.settings)
+
+    def _on_tree_item_clicked(self, target: str, nodeid: str):
+        self.details.show_for(target or None, nodeid or None)
 
     def open_test_log(self, nodeid: str):
         if not self.campaign:
@@ -1063,6 +1102,24 @@ class CampaignPanel(QWidget):
             return
 
         self._launch_worker(selections, f"Re-running {len(selections)} failed test(s)...\n")
+
+    def restyle(self):
+        """Reapplique les styles de l'onglet Campaign avec la palette courante."""
+        self.browse_button.setStyleSheet(neutral_button())
+        self.load_button.setStyleSheet(primary_button())
+        self.open_config_button.setStyleSheet(neutral_button())
+        self.run_button.setStyleSheet(success_button())
+        self.stop_button.setStyleSheet(danger_button())
+        self.rerun_failed_button.setStyleSheet(danger_button())
+
+        for button in (self.all_button, self.none_button, self.failed_only_button,
+                       self.expand_all_button, self.collapse_all_button):
+            button.setStyleSheet(toolbar_button())
+
+        self.tree.setStyleSheet(tree_style())
+        self.details.restyle()
+        self.selection_label.setStyleSheet(styles.muted_label())
+        self.tree.recolor_statuses()
 
     def current_interpreter(self) -> str:
         """Interpreteur effectif pour cette campagne.

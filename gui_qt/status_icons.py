@@ -6,6 +6,8 @@
 from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QColor, QIcon, QPixmap, QPainter
 
+from gui_qt.styles import styles
+
 STATUS_PRIORITY = {
     "ERROR": 4,
     "FAILED": 3,
@@ -13,12 +15,28 @@ STATUS_PRIORITY = {
     "PASSED": 1,
 }
 
-STATUS_COLORS = {
-    "PASSED": QColor("#2e7d32"),
-    "FAILED": QColor("#c62828"),
-    "SKIPPED": QColor("#ef6c00"),
-    "ERROR": QColor("#6a1b9a"),
-}
+
+class _ThemedStatusColors:
+    """Couleurs de statut suivant le theme actif.
+
+    Reste indexable comme l'ancien dictionnaire (STATUS_COLORS[status]) pour ne
+    rien casser chez les appelants, mais relit la palette a chaque acces : un
+    vert fonce lisible sur fond blanc devient illisible sur fond sombre.
+    """
+
+    def __getitem__(self, status: str) -> QColor:
+        return QColor(styles.status_color(status))
+
+    def get(self, status: str, default=None):
+        if status in STATUS_PRIORITY:
+            return QColor(styles.status_color(status))
+        return default
+
+    def __contains__(self, status: str) -> bool:
+        return status in STATUS_PRIORITY
+
+
+STATUS_COLORS = _ThemedStatusColors()
 
 # Un symbole par statut en plus de la couleur : la couleur seule n'est pas
 # lisible pour un utilisateur daltonien.
@@ -32,11 +50,17 @@ STATUS_ICON_CHARS = {
 _status_icon_cache: dict[str, QIcon] = {}
 
 
+def forget_status_icons() -> None:
+    """Vide le cache d'icones : a appeler apres un changement de theme, sinon
+    les icones gardent les couleurs de l'ancienne palette."""
+    _status_icon_cache.clear()
+
+
 def status_icon(status: str) -> QIcon:
     if status in _status_icon_cache:
         return _status_icon_cache[status]
 
-    color = STATUS_COLORS.get(status, QColor("#616161"))
+    color = QColor(styles.status_color(status))
     char = STATUS_ICON_CHARS.get(status, "?")
 
     pixmap = QPixmap(14, 14)
