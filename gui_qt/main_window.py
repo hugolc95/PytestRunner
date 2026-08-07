@@ -645,8 +645,14 @@ class MainWindow(QMainWindow):
             button.setStyleSheet(toolbar_button())
 
         self.tree.setStyleSheet(tree_style())
-        self.tree.item_clicked.connect(self._on_tree_item_clicked)
         self.selection_label.setStyleSheet(styles.muted_label())
+
+        # Console, Source et Log posent leurs couleurs widget par widget et
+        # reconstruisent leurs coloriseurs : sans cet appel, ces trois zones
+        # gardaient l'ancienne palette jusqu'au prochain run, d'ou une source
+        # sombre dans une fenetre claire et une ligne courante surlignee en
+        # blanc sur fond noir.
+        self.details.restyle()
 
         for card in (self.card_passed, self.card_failed, self.card_skipped, self.card_error):
             card.restyle()
@@ -1054,6 +1060,11 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # pytest relit les fichiers a chaque lancement : ecrire la frappe encore
+        # en attente suffit pour que le run parte du code affiche, sans recharger
+        # le workspace.
+        self.details.save_source()
+
         self.console.clear()
         self.console.append(intro_message)
 
@@ -1166,3 +1177,12 @@ class MainWindow(QMainWindow):
 
 
 
+
+    def closeEvent(self, event):
+        """Ecrit la frappe encore en attente avant de fermer.
+
+        L'enregistrement automatique attend une pause de saisie : fermer juste
+        apres une correction la perdrait sans cela.
+        """
+        self.details.save_source()
+        super().closeEvent(event)

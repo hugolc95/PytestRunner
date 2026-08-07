@@ -11,18 +11,28 @@ du workspace ecrit un fichier par test dans le dossier indique par la cle
 
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QTextCursor
-from PyQt5.QtWidgets import QLabel, QPlainTextEdit, QTabWidget, QTextEdit, QVBoxLayout, QWidget
+from PyQt5.QtWidgets import (
+    QHBoxLayout,
+    QLabel,
+    QPlainTextEdit,
+    QTabWidget,
+    QTextEdit,
+    QToolButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 from gui_qt.code_view import CodeView
 from gui_qt.config.config_loader import find_test_log, resolve_log_root
 from gui_qt.highlighters import LogHighlighter, PythonHighlighter, PytestOutputHighlighter
 from gui_qt.styles import styles
-from gui_qt.styles.styles import console_style
+from gui_qt.styles.styles import console_style, theme_toggle_button
 
 CONSOLE_TAB = 0
 SOURCE_TAB = 1
@@ -31,6 +41,11 @@ LOG_TAB = 2
 # Taille au-dela de laquelle on n'affiche que le debut du fichier : ouvrir un log
 # de plusieurs dizaines de Mo figerait l'interface.
 MAX_DISPLAY_BYTES = 2_000_000
+
+# Delai apres la derniere frappe avant enregistrement. Assez court pour qu'un
+# lancement de tests juste apres une correction parte du bon fichier, assez long
+# pour ne pas ecrire a chaque caractere.
+AUTOSAVE_DELAY_MS = 700
 
 
 def function_name_from_nodeid(nodeid: str) -> str | None:
@@ -72,6 +87,72 @@ def read_text_file(path: Path) -> tuple[str, str | None]:
     return content, warning
 
 
+def read_source_file(path: Path) -> tuple[str, str | None, str, bool]:
+    """Contenu d'un fichier source, avec de quoi le reecrire fidelement.
+
+    Retourne (contenu, avertissement, fin_de_ligne, modifiable). Un fichier
+    tronque ou qui ne se decode pas en UTF-8 n'est pas modifiable : le
+    reecrire depuis ce qui est affiche detruirait ce qui n'a pas ete lu.
+
+    La fin de ligne d'origine est retenue pour ne pas convertir tout un
+    fichier CRLF en LF (ou l'inverse) a la premiere frappe, ce qui ferait un
+    diff de plusieurs milliers de lignes.
+    """
+    try:
+        brut = path.read_bytes()
+    except OSError as exc:
+        return "", f"Lecture impossible : {exc}", "\n", False
+
+    tronque = len(brut) > MAX_DISPLAY_BYTES
+    if tronque:
+        brut = brut[:MAX_DISPLAY_BYTES]
+
+    try:
+        texte = brut.decode("utf-8")
+        modifiable = not tronque
+    except UnicodeDecodeError:
+        texte = brut.decode("utf-8", errors="replace")
+        modifiable = False
+
+    crlf = texte.count("\r\n")
+    fin_de_ligne = "\r\n" if crlf > texte.count("\n") - crlf else "\n"
+    texte = texte.replace("\r\n", "\n").replace("\r", "\n")
+
+    avertissement = None
+    if tronque:
+        avertissement = (
+            f"Fichier tronque a {MAX_DISPLAY_BYTES // 1_000_000} Mo : lecture seule."
+        )
+    elif not modifiable:
+        avertissement = "Fichier non decodable en UTF-8 : lecture seule."
+
+    return texte, avertissement, fin_de_ligne, modifiable
+
+
+def write_source_file(path: Path, texte: str, fin_de_ligne: str) -> str | None:
+    """Ecrit le fichier source. Retourne un message d'erreur, ou None.
+
+    L'ecriture passe par un fichier temporaire du meme dossier, remplace
+    ensuite d'un seul coup : un disque plein ou un verrou en cours de route
+    laisserait sinon le fichier de test a moitie ecrit.
+    """
+    contenu = texte.replace("\n", fin_de_ligne) if fin_de_ligne != "\n" else texte
+    temporaire = path.with_name(path.name + ".pytestrunner.tmp")
+
+    try:
+        with open(temporaire, "w", encoding="utf-8", newline="") as f:
+            f.write(contenu)
+        os.replace(temporaire, path)
+    except OSError as exc:
+        try:
+            temporaire.unlink()
+        except OSError:
+            pass
+        return f"Enregistrement impossible : {exc}"
+
+    return None
+
+
 class DetailPanel(QWidget):
     """Onglets Console / Source / Log affiches a droite de l'arbre."""
 
@@ -80,6 +161,12 @@ class DetailPanel(QWidget):
 
         self.workspace: str | None = None
         self._current_source: Path | None = None
+        self._source_newline = "\n"
+        self._source_editable = False
+        self._dirty = False
+        # Vrai pendant le remplissage de la vue : le textChanged provoque par
+        # setPlainText ne doit pas passer pour une modification de l'utilisateur.
+        self._loading = False
 
         self.console = QTextEdit()
         self.console.setReadOnly(True)
@@ -102,24 +189,55 @@ class DetailPanel(QWidget):
         for header in (self.source_header, self.log_header):
             header.setWordWrap(True)
 
+        # Bouton discret : la modification est un geste volontaire, on ne tape
+        # pas par megarde dans un fichier de test en le consultant.
+        self.edit_button = QToolButton()
+        self.edit_button.setText("✎")
+        self.edit_button.setCheckable(True)
+        self.edit_button.setAutoRaise(True)
+        self.edit_button.setCursor(Qt.PointingHandCursor)
+        self.edit_button.setEnabled(False)
+        self.edit_button.toggled.connect(self.set_source_editable)
+
+        self.source_status = QLabel("")
+
+        self._save_timer = QTimer(self)
+        self._save_timer.setSingleShot(True)
+        self._save_timer.setInterval(AUTOSAVE_DELAY_MS)
+        self._save_timer.timeout.connect(self.save_source)
+        self.source_view.textChanged.connect(self._on_source_edited)
+
         self.tabs = QTabWidget()
         self.tabs.addTab(self.console, "Console")
-        self.tabs.addTab(self._wrap(self.source_header, self.source_view), "Source")
+        self.tabs.addTab(
+            self._wrap(self.source_header, self.source_view,
+                       self.source_status, self.edit_button),
+            "Source",
+        )
         self.tabs.addTab(self._wrap(self.log_header, self.log_view), "Log")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.tabs)
 
+        self._refresh_edit_button()
         self.restyle()
 
     @staticmethod
-    def _wrap(header: QLabel, view: QPlainTextEdit) -> QWidget:
+    def _wrap(header: QLabel, view: QPlainTextEdit, *extras: QWidget) -> QWidget:
         container = QWidget()
         box = QVBoxLayout(container)
         box.setContentsMargins(6, 6, 6, 6)
         box.setSpacing(4)
-        box.addWidget(header)
+
+        ligne = QHBoxLayout()
+        ligne.setContentsMargins(0, 0, 0, 0)
+        ligne.setSpacing(6)
+        ligne.addWidget(header, 1)
+        for extra in extras:
+            ligne.addWidget(extra)
+
+        box.addLayout(ligne)
         box.addWidget(view)
         return container
 
@@ -129,6 +247,8 @@ class DetailPanel(QWidget):
         self.log_view.setStyleSheet(console_style())
         self.source_header.setStyleSheet(styles.muted_label())
         self.log_header.setStyleSheet(styles.muted_label())
+        self.source_status.setStyleSheet(styles.muted_label())
+        self.edit_button.setStyleSheet(theme_toggle_button())
 
         # Les couleurs de coloration viennent de la palette : elles doivent etre
         # reconstruites, pas seulement reappliquees.
@@ -137,13 +257,70 @@ class DetailPanel(QWidget):
             highlighter.refresh()
         self.source_view.restyle()
 
+    # ------------------------------------------------------------------
+    # Modification du fichier source
+    # ------------------------------------------------------------------
+
+    def _refresh_edit_button(self):
+        modifiable = self._source_editable and self._current_source is not None
+        self.edit_button.setEnabled(modifiable)
+        if not modifiable:
+            self.edit_button.setToolTip(
+                "Ce fichier n'est pas modifiable ici." if self._current_source
+                else "Choisissez un fichier de test pour le modifier."
+            )
+        elif self.edit_button.isChecked():
+            self.edit_button.setToolTip("Revenir en lecture seule (enregistre)")
+        else:
+            self.edit_button.setToolTip("Modifier ce fichier (enregistrement automatique)")
+
+    def set_source_editable(self, editable: bool):
+        """Bascule l'onglet Source entre lecture seule et edition."""
+        if editable and not (self._source_editable and self._current_source):
+            self.edit_button.setChecked(False)
+            return
+
+        self.source_view.setReadOnly(not editable)
+        if editable:
+            self.source_view.setFocus()
+            self.source_status.setText("Modification activee")
+        else:
+            self.save_source()
+
+        self._refresh_edit_button()
+
+    def _on_source_edited(self):
+        if self._loading or self.source_view.isReadOnly():
+            return
+        self._dirty = True
+        self.source_status.setText("Modifie...")
+        self._save_timer.start()
+
+    def save_source(self) -> bool:
+        """Ecrit les modifications en attente. Retourne True si un test relance
+        maintenant partira bien du fichier affiche."""
+        self._save_timer.stop()
+        if not self._dirty or self._current_source is None:
+            return True
+
+        erreur = write_source_file(
+            self._current_source, self.source_view.toPlainText(), self._source_newline
+        )
+        if erreur:
+            self.source_status.setText(erreur)
+            return False
+
+        self._dirty = False
+        self.source_status.setText("Enregistre")
+        return True
+
     def set_workspace(self, workspace: str | None):
         self.workspace = workspace
 
     def clear_details(self):
-        self.source_view.clear()
+        self.save_source()
+        self._show_no_source("Cliquez un test dans l'arbre pour voir son code source.")
         self.log_view.clear()
-        self.source_header.setText("Cliquez un test dans l'arbre pour voir son code source.")
         self.log_header.setText("Cliquez un test dans l'arbre pour voir son log.")
 
     # ------------------------------------------------------------------
@@ -160,28 +337,39 @@ class DetailPanel(QWidget):
         self._load_log(nodeid)
 
     def _load_source(self, target: str | None, nodeid: str | None):
+        # Changer de fichier ne doit jamais perdre une frappe en attente.
+        self.save_source()
+
         if not self.workspace or not target:
-            self.source_header.setText("Aucun workspace charge.")
-            self.source_view.clear()
+            self._show_no_source("Aucun workspace charge.")
             return
 
         relative = target.split("::", 1)[0]
         if not relative.endswith(".py"):
-            self.source_header.setText(
+            self._show_no_source(
                 f"{relative} est un dossier : choisissez un fichier ou un test."
             )
-            self.source_view.clear()
             return
 
         path = Path(self.workspace) / relative
         if not path.is_file():
-            self.source_header.setText(f"Fichier source introuvable : {path}")
-            self.source_view.clear()
+            self._show_no_source(f"Fichier source introuvable : {path}")
             return
 
-        content, warning = read_text_file(path)
-        self.source_view.setPlainText(content)
+        content, warning, newline, editable = read_source_file(path)
+
+        self._loading = True
+        try:
+            self.source_view.setPlainText(content)
+        finally:
+            self._loading = False
+
         self._current_source = path
+        self._source_newline = newline
+        self._source_editable = editable
+        self._dirty = False
+        self._set_editing(False)
+        self.source_status.setText("")
 
         header = str(path)
         if warning:
@@ -191,6 +379,27 @@ class DetailPanel(QWidget):
         function = function_name_from_nodeid(nodeid or target or "")
         if function:
             self._scroll_to_function(content, function)
+
+    def _show_no_source(self, message: str):
+        self._current_source = None
+        self._source_editable = False
+        self._dirty = False
+        self._set_editing(False)
+        self._loading = True
+        try:
+            self.source_view.clear()
+        finally:
+            self._loading = False
+        self.source_header.setText(message)
+        self.source_status.setText("")
+
+    def _set_editing(self, editing: bool):
+        """Repositionne le bouton sans repasser par son gestionnaire."""
+        self.edit_button.blockSignals(True)
+        self.edit_button.setChecked(editing)
+        self.edit_button.blockSignals(False)
+        self.source_view.setReadOnly(not editing)
+        self._refresh_edit_button()
 
     def _scroll_to_function(self, content: str, function: str):
         """Place le curseur sur la definition du test, pour ne pas atterrir en

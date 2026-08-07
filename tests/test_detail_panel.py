@@ -210,3 +210,177 @@ def test_switching_tabs(panel):
     assert panel.tabs.currentIndex() == 2
     panel.show_console()
     assert panel.tabs.currentIndex() == 0
+
+
+# --------------------------------------------- modification du fichier source
+
+SOURCE = "import pytest\n\n\ndef test_f():\n    assert True\n"
+
+
+@pytest.fixture
+def source(panel, tmp_path):
+    """Un workspace d'un fichier, affiche dans l'onglet Source."""
+    fichier = tmp_path / "test_x.py"
+    fichier.write_text(SOURCE, encoding="utf-8")
+    panel.set_workspace(str(tmp_path))
+    panel.show_for("test_x.py", "test_x.py::test_f")
+    return panel, fichier
+
+
+def test_the_source_is_read_only_until_the_button_is_pressed(source):
+    """On consulte un fichier de test bien plus souvent qu'on le corrige : il ne
+    doit pas se modifier sous les doigts."""
+    panel, _ = source
+    assert panel.source_view.isReadOnly()
+    assert not panel.edit_button.isChecked()
+    assert panel.edit_button.isEnabled()
+
+
+def test_pressing_the_button_allows_editing(source):
+    panel, _ = source
+    panel.edit_button.setChecked(True)
+    assert not panel.source_view.isReadOnly()
+
+
+def test_an_edit_is_saved_on_its_own(source, qtbot):
+    """Le point demande : pas de bouton Enregistrer a penser."""
+    panel, fichier = source
+    panel.edit_button.setChecked(True)
+    panel.source_view.setPlainText(SOURCE.replace("assert True", "assert 1 == 1"))
+
+    qtbot.waitUntil(lambda: "assert 1 == 1" in fichier.read_text(encoding="utf-8"),
+                    timeout=3000)
+
+
+def test_leaving_edit_mode_saves_immediately(source):
+    panel, fichier = source
+    panel.edit_button.setChecked(True)
+    panel.source_view.setPlainText("# corrige\n")
+    panel.edit_button.setChecked(False)
+
+    assert fichier.read_text(encoding="utf-8") == "# corrige\n"
+    assert panel.source_view.isReadOnly()
+
+
+def test_looking_at_a_file_never_rewrites_it(source):
+    """Le seul echec inacceptable : abimer un fichier qu'on ne fait que lire."""
+    panel, fichier = source
+    avant = fichier.stat().st_mtime_ns
+
+    panel.show_for("test_x.py", "test_x.py::test_f")
+    panel.save_source()
+
+    assert fichier.stat().st_mtime_ns == avant
+    assert fichier.read_text(encoding="utf-8") == SOURCE
+
+
+def test_switching_file_saves_the_pending_edit(panel, tmp_path):
+    premier = tmp_path / "test_a.py"
+    premier.write_text(SOURCE, encoding="utf-8")
+    (tmp_path / "test_b.py").write_text(SOURCE, encoding="utf-8")
+    panel.set_workspace(str(tmp_path))
+
+    panel.show_for("test_a.py", "test_a.py::test_f")
+    panel.edit_button.setChecked(True)
+    panel.source_view.setPlainText("# a corrige\n")
+    panel.show_for("test_b.py", "test_b.py::test_f")
+
+    assert premier.read_text(encoding="utf-8") == "# a corrige\n"
+
+
+def test_the_new_file_opens_read_only_again(panel, tmp_path):
+    """Sinon on croirait consulter alors qu'on modifie encore."""
+    for nom in ("test_a.py", "test_b.py"):
+        (tmp_path / nom).write_text(SOURCE, encoding="utf-8")
+    panel.set_workspace(str(tmp_path))
+
+    panel.show_for("test_a.py", None)
+    panel.edit_button.setChecked(True)
+    panel.show_for("test_b.py", None)
+
+    assert panel.source_view.isReadOnly()
+    assert not panel.edit_button.isChecked()
+
+
+def test_windows_line_endings_are_preserved(panel, tmp_path):
+    """Sans cela, la premiere frappe reecrirait tout le fichier en LF et le diff
+    porterait sur chaque ligne."""
+    fichier = tmp_path / "test_crlf.py"
+    fichier.write_bytes(b"import pytest\r\n\r\ndef test_f():\r\n    pass\r\n")
+    panel.set_workspace(str(tmp_path))
+    panel.show_for("test_crlf.py", None)
+
+    panel.edit_button.setChecked(True)
+    panel.source_view.setPlainText("import pytest\n\ndef test_f():\n    assert True\n")
+    panel.edit_button.setChecked(False)
+
+    assert fichier.read_bytes() == b"import pytest\r\n\r\ndef test_f():\r\n    assert True\r\n"
+
+
+def test_an_undecodable_file_cannot_be_edited(panel, tmp_path):
+    """Le reecrire depuis l'affichage remplacerait les octets bruts par des
+    points d'interrogation."""
+    fichier = tmp_path / "test_binaire.py"
+    fichier.write_bytes(b"# \xff\xfe\ndef test_f(): pass\n")
+    panel.set_workspace(str(tmp_path))
+    panel.show_for("test_binaire.py", None)
+
+    assert not panel.edit_button.isEnabled()
+    panel.edit_button.setChecked(True)
+    assert panel.source_view.isReadOnly()
+
+
+def test_the_button_is_disabled_without_a_file(panel):
+    assert not panel.edit_button.isEnabled()
+
+
+def test_a_failed_save_is_reported_and_not_forgotten(source, monkeypatch):
+    """Un fichier verrouille ne doit pas faire croire que c'est enregistre."""
+    panel, _ = source
+    panel.edit_button.setChecked(True)
+    panel.source_view.setPlainText("# essai\n")
+
+    monkeypatch.setattr("gui_qt.detail_panel.write_source_file",
+                        lambda *a, **k: "Enregistrement impossible : verrouille")
+
+    assert panel.save_source() is False
+    assert "impossible" in panel.source_status.text().lower()
+    assert panel._dirty, "la modification reste en attente, elle n'est pas perdue"
+
+
+def test_the_saved_file_is_never_left_half_written(tmp_path):
+    """L'ecriture passe par un temporaire : une erreur ne laisse pas un fichier
+    de test tronque."""
+    from gui_qt.detail_panel import write_source_file
+
+    fichier = tmp_path / "test_x.py"
+    fichier.write_text(SOURCE, encoding="utf-8")
+
+    erreur = write_source_file(tmp_path, "peu importe", "\n")  # un dossier
+    assert erreur is not None
+    assert fichier.read_text(encoding="utf-8") == SOURCE
+    assert list(tmp_path.glob("*.pytestrunner.tmp")) == []
+
+
+def test_a_run_starts_from_the_edited_file(qtbot, tmp_path):
+    """"pas besoin de reloader le workspace" : pytest relit le fichier, il faut
+    seulement que la frappe en attente soit ecrite avant le lancement."""
+    from gui_qt.main_window import MainWindow
+
+    fichier = tmp_path / "test_x.py"
+    fichier.write_text(SOURCE, encoding="utf-8")
+
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    fenetre.workspace = str(tmp_path)
+    fenetre.details.set_workspace(str(tmp_path))
+    fenetre.details.show_for("test_x.py", "test_x.py::test_f")
+    fenetre.details.edit_button.setChecked(True)
+    fenetre.details.source_view.setPlainText("# avant le run\n")
+
+    fenetre._launch_worker(["test_x.py::test_f"], "run\n")
+    try:
+        assert fichier.read_text(encoding="utf-8") == "# avant le run\n"
+    finally:
+        fenetre.worker.stop()
+        fenetre.worker.wait(5000)

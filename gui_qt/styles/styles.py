@@ -332,6 +332,7 @@ def app_stylesheet() -> str:
         padding: 5px 8px;
         color: {p['text']};
         selection-background-color: {p['tree_selected']};
+        selection-color: {p['tree_selected_text']};
     }}
     QLineEdit:focus, QComboBox:focus {{
         border: 1px solid {p['primary']};
@@ -345,6 +346,7 @@ def app_stylesheet() -> str:
         color: {p['text']};
         border: 1px solid {p['border']};
         selection-background-color: {p['tree_selected']};
+        selection-color: {p['tree_selected_text']};
         outline: none;
     }}
 
@@ -583,5 +585,9 @@ def console_style():
         font-family: {p['mono_font']};
         font-size: 12px;
         selection-background-color: {p['tree_selected']};
+        /* Sans couleur de texte explicite, Qt garde le blanc de sa palette
+           systeme : selectionner du texte dans la console le faisait
+           disparaitre sur le bleu tres pale du theme clair (contraste 1,1:1). */
+        selection-color: {p['tree_selected_text']};
     }}
     """

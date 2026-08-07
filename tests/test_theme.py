@@ -223,3 +223,80 @@ def test_recoloring_leaves_checkboxes_alone(qtbot):
     tree.recolor_statuses()
 
     assert tree.get_selected_nodeids() == avant
+
+
+# ------------------------------- propagation du theme au panneau de details
+
+def _fenetre_en_clair(qtbot):
+    from PyQt5.QtCore import QSettings
+    from gui_qt.main_window import MainWindow
+
+    QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    return fenetre
+
+
+def test_the_detail_panel_follows_the_theme_immediately(qtbot):
+    """Le reproche signale : la console, la source et le log gardaient l'ancien
+    theme jusqu'au run suivant, d'ou une source noire dans une fenetre claire."""
+    fenetre = _fenetre_en_clair(qtbot)
+    avant = [w.styleSheet() for w in (fenetre.details.console,
+                                      fenetre.details.source_view,
+                                      fenetre.details.log_view)]
+
+    fenetre.toggle_theme()
+
+    apres = [w.styleSheet() for w in (fenetre.details.console,
+                                      fenetre.details.source_view,
+                                      fenetre.details.log_view)]
+    assert apres != avant, "les trois zones doivent etre repeintes tout de suite"
+
+
+def test_the_current_line_highlight_follows_the_theme(qtbot):
+    """C'est ce decalage qui donnait une bande blanche illisible sur fond noir :
+    le surlignage etait recalcule avec la nouvelle palette, pas le fond."""
+    from PyQt5.QtGui import QColor
+
+    fenetre = _fenetre_en_clair(qtbot)
+    vue = fenetre.details.source_view
+    vue.setPlainText("un\ndeux\ntrois\n")
+    vue.highlight_current_line()
+    clair = vue.extraSelections()[0].format.background().color().name()
+
+    fenetre.toggle_theme()
+
+    sombre = vue.extraSelections()[0].format.background().color().name()
+    assert sombre != clair
+
+    # Et le surlignage doit rester proche du fond, pas l'ecraser.
+    fond = QColor(styles.palette()["console_bg"])
+    surligne = QColor(sombre)
+    ecart = max(abs(fond.red() - surligne.red()),
+                abs(fond.green() - surligne.green()),
+                abs(fond.blue() - surligne.blue()))
+    assert ecart < 80, f"bande trop contrastee ({ecart}) : le texte devient illisible"
+
+
+def test_the_syntax_colors_are_rebuilt_on_theme_change(qtbot):
+    fenetre = _fenetre_en_clair(qtbot)
+    coloriseur = fenetre.details.source_highlighter
+    premiere = coloriseur.rules[0][1].foreground().color().name()
+
+    fenetre.toggle_theme()
+
+    assert coloriseur.rules[0][1].foreground().color().name() != premiere
+
+
+def test_clicking_a_test_stays_a_single_load_after_theme_changes(qtbot):
+    """restyle() reconnectait item_clicked : apres trois bascules de theme, un
+    clic rechargeait le fichier quatre fois."""
+    fenetre = _fenetre_en_clair(qtbot)
+    appels = []
+    fenetre.details.show_for = lambda target, nodeid: appels.append(target)
+
+    for _ in range(3):
+        fenetre.toggle_theme()
+    fenetre.tree.item_clicked.emit("test_x.py", "")
+
+    assert len(appels) == 1

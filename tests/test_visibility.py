@@ -122,3 +122,27 @@ def test_the_tree_draws_its_own_arrows(qtbot):
         vue = classe()
         qtbot.addWidget(vue)
         assert "drawBranches" in vars(classe), f"{classe.__name__} n'a pas sa propre methode"
+
+
+# ---------------------------------------------- texte selectionne a la souris
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_selected_text_stays_readable(theme):
+    """Le defaut signale : selectionner du texte dans la console le faisait
+    disparaitre. La feuille de style fixait le fond de selection sans la couleur
+    du texte, donc Qt gardait le blanc de sa palette systeme : blanc sur le bleu
+    tres pale du theme clair, soit un rapport de 1,1:1."""
+    styles.set_theme(theme)
+    palette = styles.palette()
+    mesure = contraste(palette["tree_selected_text"], palette["tree_selected"])
+    assert mesure >= SEUIL_TEXTE, f"{theme} : {mesure:.2f}:1 sur une selection"
+
+
+@pytest.mark.parametrize("theme", ["light", "dark"])
+def test_every_selection_background_sets_its_text_color(theme):
+    """La regle qui manquait : declarer l'un sans l'autre laisse Qt choisir."""
+    styles.set_theme(theme)
+    for feuille in (styles.app_stylesheet(), styles.console_style(), styles.tree_style()):
+        assert feuille.count("selection-background-color") \
+            <= feuille.count("selection-color"), \
+            "un fond de selection est declare sans couleur de texte"
