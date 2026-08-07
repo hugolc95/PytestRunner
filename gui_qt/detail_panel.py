@@ -18,7 +18,9 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import QLabel, QPlainTextEdit, QTabWidget, QTextEdit, QVBoxLayout, QWidget
 
+from gui_qt.code_view import CodeView
 from gui_qt.config.config_loader import find_test_log, resolve_log_root
+from gui_qt.highlighters import LogHighlighter, PythonHighlighter, PytestOutputHighlighter
 from gui_qt.styles import styles
 from gui_qt.styles.styles import console_style
 
@@ -82,14 +84,18 @@ class DetailPanel(QWidget):
         self.console = QTextEdit()
         self.console.setReadOnly(True)
         self.console.document().setMaximumBlockCount(12000)
+        self.console.setLineWrapMode(QTextEdit.NoWrap)
 
-        self.source_view = QPlainTextEdit()
-        self.source_view.setReadOnly(True)
-        self.source_view.setLineWrapMode(QPlainTextEdit.NoWrap)
-
+        self.source_view = CodeView()
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setLineWrapMode(QPlainTextEdit.NoWrap)
+
+        # Coloration a l'affichage : la sortie brute reste intacte pour
+        # l'historique, les traces d'echec et la detection des statuts.
+        self.console_highlighter = PytestOutputHighlighter(self.console.document())
+        self.source_highlighter = PythonHighlighter(self.source_view.document())
+        self.log_highlighter = LogHighlighter(self.log_view.document())
 
         self.source_header = QLabel("Cliquez un test dans l'arbre pour voir son code source.")
         self.log_header = QLabel("Cliquez un test dans l'arbre pour voir son log.")
@@ -123,6 +129,13 @@ class DetailPanel(QWidget):
         self.log_view.setStyleSheet(console_style())
         self.source_header.setStyleSheet(styles.muted_label())
         self.log_header.setStyleSheet(styles.muted_label())
+
+        # Les couleurs de coloration viennent de la palette : elles doivent etre
+        # reconstruites, pas seulement reappliquees.
+        for highlighter in (self.console_highlighter, self.source_highlighter,
+                            self.log_highlighter):
+            highlighter.refresh()
+        self.source_view.restyle()
 
     def set_workspace(self, workspace: str | None):
         self.workspace = workspace
@@ -197,7 +210,9 @@ class DetailPanel(QWidget):
         cursor = self.source_view.textCursor()
         cursor.movePosition(QTextCursor.Start)
         cursor.movePosition(QTextCursor.Down, QTextCursor.MoveAnchor, line)
-        cursor.movePosition(QTextCursor.EndOfLine, QTextCursor.KeepAnchor)
+        # On place le curseur sans selectionner la ligne : une selection posee
+        # son fond bleu par-dessus le texte, illisible en theme clair. La
+        # surbrillance discrete de la ligne courante suffit a la reperer.
         self.source_view.setTextCursor(cursor)
         self.source_view.centerCursor()
 

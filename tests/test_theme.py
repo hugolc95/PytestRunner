@@ -118,12 +118,34 @@ def test_both_palettes_define_the_same_keys():
     assert set(styles.LIGHT) == set(styles.DARK)
 
 
+# Seules entrees textuelles qui ne sont pas des couleurs.
+NON_COULEURS = {"name", "mono_font"}
+
+
 def test_every_color_is_a_valid_hex_value():
+    """Une couleur mal formee ne fait pas planter Qt, elle est ignoree
+    silencieusement : le defaut ne se verrait qu'a l'oeil."""
     for nom, palette in (("light", styles.LIGHT), ("dark", styles.DARK)):
         for cle, valeur in palette.items():
-            if cle == "name" or not isinstance(valeur, str):
+            if cle in NON_COULEURS or not isinstance(valeur, str):
                 continue
             assert valeur.startswith("#") and len(valeur) in (4, 7), f"{nom}.{cle} = {valeur}"
+
+
+def test_nested_color_groups_are_valid_too():
+    """Les couleurs de statut, de cartes, de syntaxe et de sortie sont dans des
+    sous-dictionnaires, que la boucle ci-dessus ne parcourt pas."""
+    for nom, palette in (("light", styles.LIGHT), ("dark", styles.DARK)):
+        for groupe in ("status", "syntax", "output"):
+            for cle, valeur in palette[groupe].items():
+                assert valeur.startswith("#") and len(valeur) in (4, 7), f"{nom}.{groupe}.{cle}"
+        for cle, (base, fort) in palette["cards"].items():
+            assert base.startswith("#") and fort.startswith("#"), f"{nom}.cards.{cle}"
+
+
+def test_nested_color_groups_define_the_same_keys():
+    for groupe in ("status", "cards", "syntax", "output"):
+        assert set(styles.LIGHT[groupe]) == set(styles.DARK[groupe]), groupe
 
 
 def test_status_colors_differ_between_themes():

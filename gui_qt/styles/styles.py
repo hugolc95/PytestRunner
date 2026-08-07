@@ -34,9 +34,9 @@ LIGHT = {
     "checkbox_checked": "#607d8b",
     "checkbox_partial": "#b0bec5",
 
-    "console_bg": "#1e1e1e",
-    "console_text": "#dcdcdc",
-    "console_border": "#444444",
+    "console_bg": "#ffffff",
+    "console_text": "#1f2328",
+    "console_border": "#e0e4e9",
 
     "toolbar_bg": "#e9ecef",
     "toolbar_border": "#ced4da",
@@ -62,6 +62,41 @@ LIGHT = {
     },
     "card_text": "#222222",
     "card_active_border": "#333333",
+
+    # Police des zones de code et de sortie : l'alignement des colonnes de
+    # pytest n'a de sens qu'en chasse fixe.
+    "mono_font": "Consolas, 'DejaVu Sans Mono', 'Courier New', monospace",
+    "gutter_bg": "#f6f8fa",
+    "gutter_text": "#8c959f",
+    "current_line": "#f2f7fd",
+
+    # Coloration du code Python (teintes proches de celles d'un IDE clair).
+    "syntax": {
+        "keyword": "#0033b3",
+        "builtin": "#0033b3",
+        "string": "#a31515",
+        "docstring": "#8a8a3a",
+        "comment": "#3d8a3d",
+        "number": "#098658",
+        "decorator": "#7a5c1e",
+        "function": "#795e26",
+        "classname": "#267f99",
+        "self": "#8250df",
+    },
+    # Coloration de la sortie pytest et des logs.
+    "output": {
+        "passed": "#1a7f37",
+        "failed": "#c62828",
+        "skipped": "#bf5b00",
+        "error": "#7b1fa2",
+        "separator": "#6b7480",
+        "nodeid": "#0969da",
+        "percent": "#8c959f",
+        "traceback": "#c62828",
+        "info": "#0969da",
+        "warning": "#bf5b00",
+        "timestamp": "#8c959f",
+    },
 }
 
 DARK = {
@@ -119,6 +154,37 @@ DARK = {
     },
     "card_text": "#e4e7ec",
     "card_active_border": "#8b939d",
+
+    "mono_font": "Consolas, 'DejaVu Sans Mono', 'Courier New', monospace",
+    "gutter_bg": "#1a1d23",
+    "gutter_text": "#5f6875",
+    "current_line": "#232833",
+
+    "syntax": {
+        "keyword": "#c586c0",
+        "builtin": "#569cd6",
+        "string": "#ce9178",
+        "docstring": "#b58a63",
+        "comment": "#6a9955",
+        "number": "#b5cea8",
+        "decorator": "#dcdcaa",
+        "function": "#dcdcaa",
+        "classname": "#4ec9b0",
+        "self": "#569cd6",
+    },
+    "output": {
+        "passed": "#6bbf6e",
+        "failed": "#ef5350",
+        "skipped": "#ffa726",
+        "error": "#ba68c8",
+        "separator": "#7f8c9b",
+        "nodeid": "#6bb3e8",
+        "percent": "#7f8c9b",
+        "traceback": "#ef5350",
+        "info": "#6bb3e8",
+        "warning": "#ffa726",
+        "timestamp": "#7f8c9b",
+    },
 }
 
 _THEMES = {"light": LIGHT, "dark": DARK}
@@ -149,6 +215,20 @@ def status_color(status: str) -> str:
 
 def card_colors(status: str) -> tuple[str, str]:
     return _active["cards"].get(status, (_active["surface"], _active["neutral"]))
+
+
+def syntax_color(role: str) -> str:
+    """Couleur de coloration syntaxique Python pour ce role."""
+    return _active["syntax"].get(role, _active["text"])
+
+
+def output_color(role: str) -> str:
+    """Couleur de coloration de la sortie pytest / des logs pour ce role."""
+    return _active["output"].get(role, _active["console_text"])
+
+
+def mono_font() -> str:
+    return _active["mono_font"]
 
 
 def muted_label() -> str:
@@ -492,5 +572,8 @@ def console_style():
         background-color: {p['console_bg']};
         color: {p['console_text']};
         border: 1px solid {p['console_border']};
+        font-family: {p['mono_font']};
+        font-size: 12px;
+        selection-background-color: {p['tree_selected']};
     }}
     """
