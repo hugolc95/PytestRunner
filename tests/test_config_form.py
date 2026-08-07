@@ -45,9 +45,16 @@ def test_the_configured_log_directory_is_used(tmp_path):
 
 
 def test_an_absolute_log_directory_is_respected(tmp_path):
-    (tmp_path / "config.yaml").write_text("LOG_PATH: /var/log/cartes\n", encoding="utf-8")
-    from pathlib import Path
-    assert resolve_log_root(str(tmp_path)) == Path("/var/log/cartes")
+    """Un chemin absolu ne doit pas etre colle derriere le workspace.
+
+    Le chemin est construit a partir de tmp_path : `/var/log/cartes` n'est pas
+    absolu sous Windows, faute de lettre de lecteur, et le test echouait la.
+    """
+    ailleurs = tmp_path.parent / "traces_ailleurs"
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump({"LOG_PATH": str(ailleurs)}), encoding="utf-8"
+    )
+    assert resolve_log_root(str(tmp_path)) == ailleurs
 
 
 def test_without_configuration_the_default_applies(tmp_path):
@@ -491,15 +498,25 @@ def test_the_section_navigator_fits_its_titles(qtbot):
     assert long.sections.maximumWidth() <= NAV_MAX_WIDTH
 
 
+def _lignes_visibles(champ) -> float:
+    """Nombre de valeurs affichables, mesure sur la mise en page du document.
+
+    fontMetrics().lineSpacing() sous-estime l'interligne reel : s'en servir
+    faisait croire qu'une valeur de plus tenait dans la boite.
+    """
+    document = champ.document()
+    hauteur = document.documentLayout().blockBoundingRect(document.firstBlock()).height()
+    return champ.height() / hauteur
+
+
 def test_a_list_is_tall_enough_to_show_its_values(qtbot):
     """Les listes etaient tronquees a deux lignes visibles."""
-    form = ConfigForm()
-    qtbot.addWidget(form)
-    form.load({"PARAM": ["FULL", "DEBUG", "SANITY", "PERSO"]})
+    form = _affiche(qtbot, {"PARAM": ["FULL", "DEBUG", "SANITY", "PERSO"]})
 
     champ = form.field("PARAM").widget
-    lignes_visibles = champ.height() / champ.fontMetrics().lineSpacing()
-    assert lignes_visibles >= 4, f"{lignes_visibles:.1f} ligne(s) visible(s) pour 4 valeurs"
+    lignes = _lignes_visibles(champ)
+    assert lignes >= 4, f"{lignes:.1f} ligne(s) visible(s) pour 4 valeurs"
+    assert champ.verticalScrollBar().maximum() == 0, "quatre valeurs tiennent sans defilement"
 
 
 def test_a_very_long_list_stays_bounded(qtbot):
@@ -508,5 +525,4 @@ def test_a_very_long_list_stays_bounded(qtbot):
     form.load({"PARAM": [f"valeur_{i}" for i in range(200)]})
 
     champ = form.field("PARAM").widget
-    lignes_visibles = champ.height() / champ.fontMetrics().lineSpacing()
-    assert lignes_visibles <= 12, "une longue liste ne doit pas remplir l'ecran"
+    assert _lignes_visibles(champ) <= 12, "une longue liste ne doit pas remplir l'ecran"
