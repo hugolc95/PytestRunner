@@ -322,3 +322,121 @@ def test_a_conftest_that_does_not_timestamp_still_works(tmp_path):
                         "test_PSO_CDS_RSA_STD_err-RSA-AFT-mod3072-tg2-tc25")
 
     assert find_test_log(str(tmp_path), NODEID_ARBRE) == attendu
+
+
+# ----------------- structure reelle : __LOGS__/projet/horodatage/arbre
+
+CAS_HASH = [
+    "datalen==2034_bytes-HashAlg==SHA1",
+    "datalen==2034_bytes-HashAlg==SHA224",
+    "datalen==2048_bytes-HashAlg==SHA512",
+    "datalen==2048_bytes-HashAlg==SHA512_256",
+    "datalen==4096_bytes-HashAlg==SHA384",
+]
+
+SOUS_ARBRE = "Test_Suite_CryptoLib/Tests/TestSuitePSOHash/ErrCases"
+
+
+def nodeid_hash(cas):
+    return ("Test_Suite_CryptoLib/Tests/TestSuitePSOHash/test_pso_hash.py"
+            f"::TestSuitePSOHash::test_ComputeHash_Update_HighLimitLength[{cas}]")
+
+
+def ecrire_run(racine_logs, horodatage, age=0):
+    dossier = racine_logs / horodatage / SOUS_ARBRE
+    for cas in CAS_HASH:
+        write_log(dossier, f"test_ComputeHash_Update_HighLimitLength[{cas}]",
+                  f"{horodatage} / {cas}", age_secondes=age)
+    return dossier
+
+
+def test_the_real_layout_is_handled(tmp_path):
+    """La structure observee : LOG_PATH hors du workspace, un dossier horodate
+    par run, et l'arborescence des tests recreee dedans."""
+    logs = tmp_path / "__LOGS__" / "CryptoWrapper"
+    (tmp_path / "configWorkspace.yml").write_text(f"LOG_PATH: {logs}\n", encoding="utf-8")
+    ecrire_run(logs, "20260810_112653")
+
+    trouve = find_test_log(str(tmp_path), nodeid_hash(CAS_HASH[0]))
+    assert trouve is not None
+    assert trouve.read_text(encoding="utf-8") == f"20260810_112653 / {CAS_HASH[0]}"
+
+
+def test_a_case_that_prefixes_another_is_not_confused(tmp_path):
+    """Piege present dans les donnees reelles : normalise, le parametre
+    `HashAlg==SHA512` est un prefixe de `HashAlg==SHA512_256`. Le comptage de
+    morceaux les mettait a egalite et la date tranchait au hasard."""
+    logs = tmp_path / "__LOGS__" / "CryptoWrapper"
+    (tmp_path / "configWorkspace.yml").write_text(f"LOG_PATH: {logs}\n", encoding="utf-8")
+    ecrire_run(logs, "20260810_112653")
+
+    for cas in ("datalen==2048_bytes-HashAlg==SHA512",
+                "datalen==2048_bytes-HashAlg==SHA512_256"):
+        trouve = find_test_log(str(tmp_path), nodeid_hash(cas))
+        assert trouve.read_text(encoding="utf-8").endswith(cas), cas
+
+
+def test_the_timestamped_folder_can_be_nested_under_a_project(tmp_path):
+    """LOG_PATH peut designer le dossier parent : l'horodatage est alors un
+    cran plus bas, sous un dossier de projet."""
+    base = tmp_path / "__LOGS__"
+    (tmp_path / "configWorkspace.yml").write_text(f"LOG_PATH: {base}\n", encoding="utf-8")
+    ecrire_run(base / "CryptoWrapper", "20260810_112653")
+
+    trouve = find_test_log(str(tmp_path), nodeid_hash(CAS_HASH[0]))
+    assert trouve is not None
+    assert "20260810_112653" in str(trouve)
+
+
+@pytest.mark.parametrize("horodatage", [
+    "20260810_112653", "2026-08-10_11-26-53", "2026-08-10T11-26-53", "run_20260810",
+])
+def test_the_timestamp_style_of_the_conftest_does_not_matter(tmp_path, horodatage):
+    base = tmp_path / "__LOGS__"
+    (tmp_path / "configWorkspace.yml").write_text(f"LOG_PATH: {base}\n", encoding="utf-8")
+    ecrire_run(base / "CryptoWrapper", horodatage)
+
+    trouve = find_test_log(str(tmp_path), nodeid_hash(CAS_HASH[0]))
+    assert trouve is not None and horodatage in str(trouve)
+
+
+def test_the_newest_run_wins_in_the_real_layout(tmp_path):
+    logs = tmp_path / "__LOGS__" / "CryptoWrapper"
+    (tmp_path / "configWorkspace.yml").write_text(f"LOG_PATH: {logs}\n", encoding="utf-8")
+    ecrire_run(logs, "20260810_101500", age=3600)
+    ecrire_run(logs, "20260810_112653")
+
+    trouve = find_test_log(str(tmp_path), nodeid_hash(CAS_HASH[0]))
+    assert "20260810_112653" in str(trouve)
+
+
+def test_descending_stops_at_the_run_folder(tmp_path):
+    """La descente ne doit pas plonger dans l'arborescence des tests recreee :
+    seuls les dossiers dates sont retenus comme dossiers de run."""
+    from gui_qt.config.config_loader import run_directories
+
+    logs = tmp_path / "__LOGS__" / "CryptoWrapper"
+    (tmp_path / "configWorkspace.yml").write_text(f"LOG_PATH: {logs}\n", encoding="utf-8")
+    ecrire_run(logs, "20260810_112653")
+
+    dossiers = run_directories(resolve_log_root(str(tmp_path)))
+    assert [d.name for d in dossiers] == ["20260810_112653"]
+
+
+def test_an_old_nested_run_does_not_starve_the_recent_one(tmp_path):
+    """La raison d'etre de la descente : sans elle, tout le dossier de projet
+    forme une seule zone, et l'historique consomme le budget de fichiers avant
+    d'atteindre le run du jour."""
+    from gui_qt.config.config_loader import MAX_LOG_FILES_SCANNED
+
+    base = tmp_path / "__LOGS__"
+    (tmp_path / "configWorkspace.yml").write_text(f"LOG_PATH: {base}\n", encoding="utf-8")
+
+    vieux = base / "CryptoWrapper" / "20260101_000000" / SOUS_ARBRE
+    for i in range(MAX_LOG_FILES_SCANNED + 50):
+        write_log(vieux, f"bruit_{i}", age_secondes=86400)
+    ecrire_run(base / "CryptoWrapper", "20260810_112653")
+
+    trouve = find_test_log(str(tmp_path), nodeid_hash(CAS_HASH[0]))
+    assert trouve is not None, "le run du jour doit rester atteignable"
+    assert "20260810_112653" in str(trouve)

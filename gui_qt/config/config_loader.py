@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import re
 import yaml
 
 
@@ -203,6 +204,15 @@ MAX_LOG_FILES_SCANNED = 4000
 # Nombre de dossiers de run explores, du plus recent au plus ancien.
 MAX_RUN_DIRS_SCANNED = 12
 
+# Le dossier horodate n'est pas toujours un enfant direct de LOG_PATH : il peut
+# etre range sous un dossier de projet (`<LOG_PATH>/CryptoWrapper/20260810_112653`).
+MAX_RUN_DIR_DEPTH = 3
+MAX_DIRS_VISITED = 500
+
+# Un dossier de run porte une date : 20260810_112653, 2026-08-10_11-26-53,
+# 2026-08-10T11:26:53... On reconnait la date, le reste varie trop.
+_RUN_DIR_RE = re.compile(r"\d{4}[-_.]?\d{2}[-_.]?\d{2}")
+
 LOG_SUFFIXES = (".log", ".txt")
 
 
@@ -213,21 +223,46 @@ def _mtime(path: Path) -> float:
         return 0.0
 
 
-def run_directories(log_root: Path) -> list[Path]:
-    """Dossiers de run sous la racine des logs, du plus recent au plus ancien.
-
-    Les conftest horodatent le dossier de chaque run (`2026-08-07_18-11-23`) et y
-    recreent l'arborescence des tests. Le log cherche est presque toujours dans
-    le plus recent : commencer par la evite de parcourir tout l'historique, et
-    surtout evite de repondre avec le log d'un run precedent.
-    """
+def _subdirs(path: Path) -> list[Path]:
     try:
-        dossiers = [p for p in log_root.iterdir() if p.is_dir()]
+        return [p for p in path.iterdir() if p.is_dir()]
     except OSError:
         return []
 
-    dossiers.sort(key=_mtime, reverse=True)
-    return dossiers[:MAX_RUN_DIRS_SCANNED]
+
+def run_directories(log_root: Path) -> list[Path]:
+    """Dossiers de run sous la racine des logs, du plus recent au plus ancien.
+
+    Les conftest horodatent le dossier de chaque run (`20260810_112653`) et y
+    recreent l'arborescence des tests. Le log cherche est presque toujours dans
+    le plus recent : commencer par la evite de parcourir tout l'historique, et
+    surtout evite de repondre avec le log d'un run precedent.
+
+    Ce dossier n'est pas forcement un enfant direct de LOG_PATH : il est souvent
+    range sous un dossier de projet. On descend donc jusqu'a MAX_RUN_DIR_DEPTH
+    en s'arretant des qu'un nom porte une date, ce qui evite de plonger dans
+    l'arborescence des tests recreee en dessous.
+    """
+    horodates: list[Path] = []
+    a_explorer: list[tuple[Path, int]] = [(log_root, 0)]
+    visites = 0
+
+    while a_explorer and visites < MAX_DIRS_VISITED:
+        dossier, profondeur = a_explorer.pop(0)
+        for enfant in _subdirs(dossier):
+            visites += 1
+            if _RUN_DIR_RE.search(enfant.name):
+                horodates.append(enfant)
+            elif profondeur + 1 < MAX_RUN_DIR_DEPTH:
+                a_explorer.append((enfant, profondeur + 1))
+
+    if not horodates:
+        # Conftest qui ne date pas ses dossiers : on retombe sur les enfants
+        # directs, qui restent une decoupe plus fine que la racine entiere.
+        horodates = _subdirs(log_root)
+
+    horodates.sort(key=_mtime, reverse=True)
+    return horodates[:MAX_RUN_DIRS_SCANNED]
 
 
 def _match_key(value: str) -> str:
@@ -274,7 +309,15 @@ def _required_tokens(nodeid: str, tokens: list[str]) -> list[str]:
     return [t for t in obligatoires if t]
 
 
-def _best_log_under(zone: Path, obligatoires: list[str], recherches: list[str]) -> Path | None:
+# Prime accordee au fichier dont le nom se TERMINE par l'identifiant du
+# parametre. Elle doit l'emporter sur tout comptage de morceaux : c'est le seul
+# moyen de distinguer `[...HashAlg==SHA512]` de `[...HashAlg==SHA512_256]`, dont
+# le premier est un prefixe du second.
+EXACT_PARAM_BONUS = 100
+
+
+def _best_log_under(zone: Path, obligatoires: list[str], recherches: list[str],
+                    parametre: str = "") -> Path | None:
     """Meilleur fichier de log sous ce dossier, ou None.
 
     Le rapprochement porte sur le chemin RELATIF au dossier de run, pas sur le
@@ -307,6 +350,8 @@ def _best_log_under(zone: Path, obligatoires: list[str], recherches: list[str]) 
         nom = _match_key(fichier.stem)
         score = sum(1 for t in recherches if t in chemin)
         score += sum(1 for t in recherches if t in nom)
+        if parametre and (nom.endswith(parametre) or chemin.endswith(parametre)):
+            score += EXACT_PARAM_BONUS
 
         candidat = (score, _mtime(fichier), fichier)
         if meilleur is None or candidat[:2] > meilleur[:2]:
@@ -338,8 +383,13 @@ def find_test_log_by_search(workspace: str, nodeid: str,
         return None
     recherches = [_match_key(t) for t in tokens if _match_key(t)]
 
+    # L'identifiant du parametre termine le nom du fichier quand le conftest le
+    # nomme d'apres le nodeid : s'en servir departage les cas dont l'un est le
+    # prefixe de l'autre.
+    parametre = _match_key(tokens[-1]) if str(nodeid).strip().endswith("]") else ""
+
     for zone in run_directories(racine) + [racine]:
-        trouve = _best_log_under(zone, obligatoires, recherches)
+        trouve = _best_log_under(zone, obligatoires, recherches, parametre)
         if trouve is not None:
             return trouve
 
