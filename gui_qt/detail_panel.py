@@ -29,7 +29,12 @@ from PyQt5.QtWidgets import (
 )
 
 from gui_qt.code_view import CodeView
-from gui_qt.config.config_loader import find_test_log, resolve_log_root
+from gui_qt.config.config_loader import (
+    find_config_declaring_log_path,
+    find_test_log,
+    resolve_log_root,
+    run_directories,
+)
 from gui_qt.highlighters import LogHighlighter, PythonHighlighter, PytestOutputHighlighter
 from gui_qt.styles import styles
 from gui_qt.styles.styles import console_style, theme_toggle_button
@@ -160,6 +165,9 @@ class DetailPanel(QWidget):
         super().__init__(parent)
 
         self.workspace: str | None = None
+        # Fichier de configuration retenu pour ce workspace : il porte le
+        # LOG_PATH quand il ne s'appelle pas config.yml.
+        self.config_path: str | None = None
         self._current_source: Path | None = None
         self._source_newline = "\n"
         self._source_editable = False
@@ -314,8 +322,12 @@ class DetailPanel(QWidget):
         self.source_status.setText("Enregistre")
         return True
 
-    def set_workspace(self, workspace: str | None):
+    def set_workspace(self, workspace: str | None, config_path: str | None = None):
+        """`config_path` est le fichier de configuration retenu pour ce
+        workspace : c'est lui qui porte LOG_PATH quand il ne s'appelle pas
+        config.yml."""
         self.workspace = workspace
+        self.config_path = config_path
 
     def clear_details(self):
         self.save_source()
@@ -425,6 +437,35 @@ class DetailPanel(QWidget):
         self.source_view.setTextCursor(cursor)
         self.source_view.centerCursor()
 
+    def _explain_missing_log(self) -> str:
+        """Dit ou l'on a cherche et d'ou vient ce chemin.
+
+        Sans cela, un LOG_PATH non lu (fichier de configuration au nom
+        inhabituel) donnait un onglet vide, sans aucun moyen de comprendre que
+        le GUI regardait dans `<workspace>/logs`.
+        """
+        racine = resolve_log_root(self.workspace, self.config_path)
+        declarant = find_config_declaring_log_path(self.workspace, self.config_path)
+
+        lignes = ["Aucun log pour ce test.", f"Cherche dans : {racine}"]
+        if declarant is not None:
+            lignes.append(f"Chemin lu dans : {declarant.name}")
+        else:
+            lignes.append(
+                "Aucun fichier de configuration du workspace ne declare de "
+                "LOG_PATH : dossier par defaut."
+            )
+        if not racine.is_dir():
+            lignes.append("Ce dossier n'existe pas encore.")
+        else:
+            runs = run_directories(racine)
+            lignes.append(
+                f"{len(runs)} dossier(s) de run examine(s), du plus recent au plus ancien."
+                if runs else "Ce dossier ne contient aucun sous-dossier de run."
+            )
+        lignes.append("Lancez le test, ou verifiez la cle LOG_PATH de la configuration.")
+        return "\n".join(lignes)
+
     def _load_log(self, nodeid: str | None):
         if not self.workspace:
             self.log_header.setText("Aucun workspace charge.")
@@ -438,14 +479,9 @@ class DetailPanel(QWidget):
             self.log_view.clear()
             return
 
-        path = find_test_log(self.workspace, nodeid)
+        path = find_test_log(self.workspace, nodeid, self.config_path)
         if path is None:
-            log_root = resolve_log_root(self.workspace)
-            self.log_header.setText(
-                f"Aucun log pour ce test.\n"
-                f"Les logs sont lus dans : {log_root}\n"
-                "Lancez le test, ou ajustez la cle log_directory du config.yml du workspace."
-            )
+            self.log_header.setText(self._explain_missing_log())
             self.log_view.clear()
             return
 

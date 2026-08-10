@@ -165,7 +165,7 @@ def test_a_test_without_log_says_where_it_looked(panel, tmp_path):
 
     assert panel.log_view.toPlainText() == ""
     message = panel.log_header.text()
-    assert "log_directory" in message, "le message doit indiquer le reglage a ajuster"
+    assert "LOG_PATH" in message, "le message doit indiquer le reglage a ajuster"
     assert "logs" in message, "le message doit indiquer ou le log est cherche"
 
 

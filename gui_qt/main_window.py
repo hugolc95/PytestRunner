@@ -25,7 +25,8 @@ from gui_qt.config.config_editor import ConfigEditor
 from gui_qt.campaign_window import CampaignPanel
 from gui_qt.history_window import HistoryWindow
 from gui_qt.flaky_window import FlakyTestsDialog
-from gui_qt.dialogs import show_scrollable_error, open_test_log_for, open_config_editor
+from gui_qt.dialogs import (show_scrollable_error, open_test_log_for, open_config_editor,
+                            remembered_config_path)
 from gui_qt.detail_panel import DetailPanel
 
 
@@ -952,6 +953,13 @@ class MainWindow(QMainWindow):
             return
 
         open_config_editor(self, self.workspace, self.settings)
+        # Le fichier retenu vient peut-etre de changer, et c'est lui qui porte
+        # LOG_PATH : l'onglet Log doit repartir du bon endroit.
+        self.details.set_workspace(self.workspace, self.config_path())
+
+    def config_path(self, workspace: str | None = None) -> str:
+        """Fichier de configuration retenu pour ce workspace."""
+        return remembered_config_path(workspace or self.workspace or "", self.settings)
 
     def select_all_tests(self):
         self.tree.set_all_checked(True)
@@ -1044,7 +1052,7 @@ class MainWindow(QMainWindow):
 
     def _on_workspace_loaded(self, roots, count: int, workspace: str):
         self.workspace = workspace
-        self.details.set_workspace(workspace)
+        self.details.set_workspace(workspace, self.config_path(workspace))
         self.details.clear_details()
         self.tree.load_tree(roots)
         self.run_button.setEnabled(count > 0)
@@ -1201,7 +1209,7 @@ class MainWindow(QMainWindow):
         dossier racine des logs, sinon informe qu'aucun log n'existe encore."""
         if not self.workspace:
             return
-        open_test_log_for(self, self.workspace, nodeid)
+        open_test_log_for(self, self.workspace, nodeid, self.config_path())
 
 
 

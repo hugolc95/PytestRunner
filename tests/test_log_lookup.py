@@ -183,3 +183,142 @@ def test_logs_outside_the_configured_directory_are_ignored(tmp_path):
     write_log(ws / "ailleurs", "test_pso_nom-RSA-mod2048-tg1-tc11")
 
     assert find_test_log(str(ws), NODEID) is None
+
+
+# ------------------------- fichier de configuration au nom non standard
+
+def test_the_log_path_is_read_from_a_config_with_another_name(tmp_path):
+    """Le defaut signale : l'onglet Log restait vide.
+
+    resolve_log_root() ne lisait que config.yml / config.yaml. Un projet dont la
+    configuration s'appelle configWorkspace.yml voyait son LOG_PATH ignore, et
+    les logs cherches dans `<workspace>/logs`, qui n'existe pas.
+    """
+    (tmp_path / "configWorkspace.yml").write_text("LOG_PATH: Traces\n", encoding="utf-8")
+    assert resolve_log_root(str(tmp_path)) == tmp_path / "Traces"
+
+
+def test_a_yaml_without_log_path_does_not_shadow_the_right_one(tmp_path):
+    """Le premier YAML venu ne doit pas faire conclure a une absence de reglage."""
+    (tmp_path / "aaa_autre.yml").write_text("Mode: PERSO\n", encoding="utf-8")
+    (tmp_path / "configWorkspace.yml").write_text("LOG_PATH: Traces\n", encoding="utf-8")
+
+    assert resolve_log_root(str(tmp_path)) == tmp_path / "Traces"
+
+
+def test_the_chosen_config_file_takes_precedence(tmp_path):
+    """Celui que l'utilisateur a designe dans "Ouvrir la configuration"."""
+    (tmp_path / "config.yml").write_text("LOG_PATH: mauvais\n", encoding="utf-8")
+    choisi = tmp_path / "configWorkspace.yml"
+    choisi.write_text("LOG_PATH: bon\n", encoding="utf-8")
+
+    assert resolve_log_root(str(tmp_path), str(choisi)) == tmp_path / "bon"
+
+
+def test_a_log_path_inside_a_section_is_found(tmp_path):
+    """Les configurations reelles rangent leurs reglages par section."""
+    (tmp_path / "config.yml").write_text(
+        "General:\n  LOG_PATH: Traces\n", encoding="utf-8")
+    assert resolve_log_root(str(tmp_path)) == tmp_path / "Traces"
+
+
+def test_a_root_log_path_wins_over_a_sections_one(tmp_path):
+    (tmp_path / "config.yml").write_text(
+        "LOG_PATH: racine\nDebug:\n  LOG_PATH: section\n", encoding="utf-8")
+    assert resolve_log_root(str(tmp_path)) == tmp_path / "racine"
+
+
+# ------------------- dossier horodate et arborescence recreee dedans
+
+ARBRE = "Test_Suite_CryptoLib/NIST_Tests/TestSuiteCDS/test_PSO_CDS_RSA/TestSuitePSOCDS_RSA"
+NODEID_ARBRE = ("Test_Suite_CryptoLib/NIST_Tests/TestSuiteCDS/test_PSO_CDS_RSA.py"
+                "::TestSuitePSOCDS_RSA::test_PSO_CDS_RSA_STD[err-RSA-AFT-mod3072-tg2-tc25]")
+
+
+def _run_horodate(racine, horodatage, cas, contenu="trace", age=0):
+    """Reproduit ce que fait le conftest : un dossier par run, et dedans
+    l'arborescence des tests."""
+    dossier = racine / horodatage / ARBRE
+    return write_log(dossier, f"test_PSO_CDS_RSA_STD_{cas}", contenu, age)
+
+
+def test_a_log_inside_the_recreated_tree_is_found(tmp_path):
+    """Le rapprochement ne portait que sur le nom du fichier. Or le conftest
+    recree l'arborescence des tests, donc une partie de l'identite du test est
+    portee par les dossiers."""
+    make_workspace(tmp_path, log_dir="Traces")
+    attendu = _run_horodate(tmp_path / "Traces", "2026-08-07_18-11-23",
+                            "err-RSA-AFT-mod3072-tg2-tc25")
+
+    assert find_test_log(str(tmp_path), NODEID_ARBRE) == attendu
+
+
+def test_the_most_recent_timestamped_run_wins(tmp_path):
+    """Deux runs contiennent le meme test : c'est celui qui vient de tourner
+    qu'on veut lire, pas celui d'hier."""
+    make_workspace(tmp_path, log_dir="Traces")
+    _run_horodate(tmp_path / "Traces", "2026-08-06_09-00-00",
+                  "err-RSA-AFT-mod3072-tg2-tc25", "vieux", age=86400)
+    recent = _run_horodate(tmp_path / "Traces", "2026-08-07_18-11-23",
+                           "err-RSA-AFT-mod3072-tg2-tc25", "recent")
+
+    assert find_test_log(str(tmp_path), NODEID_ARBRE) == recent
+
+
+def test_a_neighbour_case_is_not_returned(tmp_path):
+    """Tout le dossier partage le nom de la fonction : seul le parametre
+    distingue les cas."""
+    make_workspace(tmp_path, log_dir="Traces")
+    attendu = _run_horodate(tmp_path / "Traces", "2026-08-07_18-11-23",
+                            "err-RSA-AFT-mod3072-tg2-tc25")
+    _run_horodate(tmp_path / "Traces", "2026-08-07_18-11-23",
+                  "nom-RSA-AFT-mod2048-tg1-tc4")
+
+    assert find_test_log(str(tmp_path), NODEID_ARBRE) == attendu
+
+
+def test_a_generic_log_beside_the_case_is_not_preferred(tmp_path):
+    """Un setup.log voisin partage tout le chemin : c'est le nom du fichier qui
+    doit departager."""
+    make_workspace(tmp_path, log_dir="Traces")
+    attendu = _run_horodate(tmp_path / "Traces", "2026-08-07_18-11-23",
+                            "err-RSA-AFT-mod3072-tg2-tc25")
+    write_log(tmp_path / "Traces" / "2026-08-07_18-11-23" / ARBRE, "setup")
+
+    assert find_test_log(str(tmp_path), NODEID_ARBRE) == attendu
+
+
+def test_the_case_can_be_a_directory_of_its_own(tmp_path):
+    """Certains conftest poussent l'arborescence jusqu'au cas, et nomment le
+    fichier de facon generique."""
+    make_workspace(tmp_path, log_dir="Traces")
+    dossier = (tmp_path / "Traces" / "2026-08-07_18-11-23" / ARBRE
+               / "test_PSO_CDS_RSA_STD" / "err-RSA-AFT-mod3072-tg2-tc25")
+    attendu = write_log(dossier, "test")
+
+    assert find_test_log(str(tmp_path), NODEID_ARBRE) == attendu
+
+
+def test_an_old_run_does_not_exhaust_the_scan(tmp_path):
+    """Un plafond global de fichiers laissait des mois d'historique consommer le
+    budget avant meme d'atteindre le run du jour."""
+    from gui_qt.config.config_loader import MAX_LOG_FILES_SCANNED
+
+    make_workspace(tmp_path, log_dir="Traces")
+    vieux = tmp_path / "Traces" / "2026-01-01_00-00-00"
+    for i in range(MAX_LOG_FILES_SCANNED + 50):
+        write_log(vieux, f"bruit_{i}", age_secondes=86400)
+
+    recent = _run_horodate(tmp_path / "Traces", "2026-08-07_18-11-23",
+                           "err-RSA-AFT-mod3072-tg2-tc25")
+
+    assert find_test_log(str(tmp_path), NODEID_ARBRE) == recent
+
+
+def test_a_conftest_that_does_not_timestamp_still_works(tmp_path):
+    """La racine elle-meme est examinee en dernier."""
+    make_workspace(tmp_path, log_dir="Traces")
+    attendu = write_log(tmp_path / "Traces",
+                        "test_PSO_CDS_RSA_STD_err-RSA-AFT-mod3072-tg2-tc25")
+
+    assert find_test_log(str(tmp_path), NODEID_ARBRE) == attendu

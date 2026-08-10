@@ -172,17 +172,28 @@ def _startfile(parent, path) -> bool:
         return True
 
 
-def open_test_log_for(parent, workspace: str, nodeid: str):
+def remembered_config_path(workspace: str, settings) -> str:
+    """Fichier de configuration deja retenu pour ce workspace, ou "".
+
+    C'est lui qui porte LOG_PATH dans les projets dont la configuration ne
+    s'appelle pas config.yml.
+    """
+    if settings is None or not workspace:
+        return ""
+    return settings.value(f"config_file/{workspace}", "", type=str)
+
+
+def open_test_log_for(parent, workspace: str, nodeid: str, config_path: str | None = None):
     """Ouvre le fichier .log du dernier run pour ce test (via le manifeste ecrit par
     le conftest). A defaut : ouvre le dossier racine des logs s'il existe, sinon
     informe qu'aucun log n'a encore ete produit. Partage entre les onglets Workspace
     et Campaign."""
-    log_path = find_test_log(workspace, nodeid)
+    log_path = find_test_log(workspace, nodeid, config_path)
     if log_path is not None:
         _startfile(parent, log_path)
         return
 
-    log_root = resolve_log_root(workspace)
+    log_root = resolve_log_root(workspace, config_path)
     if log_root.is_dir():
         QMessageBox.information(
             parent,

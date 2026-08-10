@@ -38,7 +38,8 @@ from core.python_interpreter import (
     resolve_interpreter,
     subprocess_flags,
 )
-from gui_qt.dialogs import show_scrollable_error, open_test_log_for, open_config_editor
+from gui_qt.dialogs import (show_scrollable_error, open_test_log_for, open_config_editor,
+                            remembered_config_path)
 from gui_qt.detail_panel import DetailPanel
 from gui_qt.styles import styles
 from gui_qt.styles.styles import (primary_button, neutral_button, success_button, danger_button,
@@ -1057,7 +1058,8 @@ class CampaignPanel(QWidget):
         try:
             self.campaign = load_campaign(path)
             self.tree.load_campaign(self.campaign)
-            self.details.set_workspace(self.campaign.workspace)
+            self.details.set_workspace(self.campaign.workspace,
+                                       self._config_path(self.campaign.workspace))
             self.details.clear_details()
             self._add_recent_campaign(path)
             self.settings.setValue("last_campaign", path)
@@ -1092,7 +1094,8 @@ class CampaignPanel(QWidget):
     def open_test_log(self, nodeid: str):
         if not self.campaign:
             return
-        open_test_log_for(self, self.campaign.workspace, nodeid)
+        open_test_log_for(self, self.campaign.workspace, nodeid,
+                          self._config_path(self.campaign.workspace))
 
     def on_selection_changed(self, selected: int, total: int):
         self.selection_label.setText(f"{selected} / {total} selected")
@@ -1153,6 +1156,10 @@ class CampaignPanel(QWidget):
             return
 
         self._launch_worker(selections, f"Re-running {len(selections)} failed test(s)...\n")
+
+    def _config_path(self, workspace: str | None) -> str:
+        """Fichier de configuration retenu pour ce workspace, porteur de LOG_PATH."""
+        return remembered_config_path(workspace or "", self.settings)
 
     def _separator(self) -> QFrame:
         """Trait vertical entre deux groupes d'actions."""
