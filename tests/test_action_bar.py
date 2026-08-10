@@ -81,10 +81,23 @@ def test_the_three_buttons_stay_grouped(window):
         assert suivant - precedent <= 12, "les boutons doivent rester colles"
 
 
-def test_the_group_stays_on_the_left(window):
-    """Le dernier bouton doit finir bien avant le bord droit de la fenetre."""
-    fin = window.rerun_failed_button.x() + window.rerun_failed_button.width()
-    assert fin < window.width() / 2
+def test_widening_the_window_leaves_the_buttons_alone(window, qtbot):
+    """La marque de l'espace extensible en fin de barre : agrandir la fenetre
+    ne doit ni deplacer ni etirer les boutons.
+
+    Mesurer une position absolue ne dirait rien : la largeur d'un bouton depend
+    de la police du systeme, et le groupe finit bien plus loin sous Windows que
+    sous Linux sans que rien ne soit etire pour autant.
+    """
+    avant = [(b.x(), b.width()) for b in (window.run_button, window.stop_button,
+                                          window.rerun_failed_button)]
+
+    window.resize(window.width() + 700, window.height())
+    qtbot.wait(10)
+
+    apres = [(b.x(), b.width()) for b in (window.run_button, window.stop_button,
+                                          window.rerun_failed_button)]
+    assert apres == avant
 
 
 # ------------------------------------------------------------ style des boutons
