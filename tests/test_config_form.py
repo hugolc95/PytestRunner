@@ -518,27 +518,15 @@ def test_a_list_is_tall_enough_to_show_its_values(qtbot):
 
 
 def test_a_very_long_list_stays_bounded(qtbot):
-    form = ConfigForm()
-    qtbot.addWidget(form)
-    form.load({"PARAM": [f"valeur_{i}" for i in range(200)]})
+    """Mesure avec la feuille de style de l'application posee, comme en vrai :
+    elle n'atteint le widget qu'une fois celui-ci integre a la fenetre et elle
+    change l'interligne (21 px avant, 17 apres). Une hauteur figee a la
+    construction donnait une boite de trois lignes de trop."""
+    from PyQt5.QtWidgets import QApplication
+    from gui_qt.styles import styles
+
+    QApplication.instance().setStyleSheet(styles.app_stylesheet())
+    form = _affiche(qtbot, {"PARAM": [f"valeur_{i}" for i in range(200)]})
 
     champ = form.field("PARAM").widget
     assert _lignes_visibles(champ) <= 12, "une longue liste ne doit pas remplir l'ecran"
-
-
-def test_the_list_height_follows_the_application_font(qtbot):
-    """La feuille de style de l'application n'atteint le widget qu'une fois
-    celui-ci integre a la fenetre, et elle change l'interligne. Fixer la hauteur
-    a la construction donnait une boite de trois lignes de trop."""
-    from PyQt5.QtGui import QFont
-
-    form = _affiche(qtbot, {"PARAM": [f"valeur_{i}" for i in range(4)]})
-    champ = form.field("PARAM").widget
-    avant = champ.height()
-
-    police = QFont(champ.font())
-    police.setPointSize(police.pointSize() + 6)
-    champ.setFont(police)
-
-    assert champ.height() > avant, "la boite doit suivre l'agrandissement"
-    assert _lignes_visibles(champ) >= 4, "et toujours montrer ses quatre valeurs"
