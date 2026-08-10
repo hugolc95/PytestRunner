@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QFileDialog,
     QMessageBox,
-    QTextEdit, QSplitter, QComboBox, QSizePolicy, QTabWidget, QCheckBox, QDialog,
+    QTextEdit, QSplitter, QComboBox, QSizePolicy, QTabWidget, QFrame, QDialog,
     QToolButton, QApplication
 )
 
@@ -50,6 +50,8 @@ from gui_qt.styles.styles import (
     neutral_button,
     success_button,
     danger_button,
+    info_button,
+    separator_style,
     toolbar_button,
     tree_style,
     console_style,
@@ -399,14 +401,20 @@ class MainWindow(QMainWindow):
         self.load_button.clicked.connect(self.load_workspace)
         self.open_config_button.clicked.connect(self.open_config)
 
-        self.run_button = QPushButton("Run Selected Tests")
-        self.stop_button = QPushButton("Stop Test")
-        self.rerun_failed_button = QPushButton("Re-run Failed")
-        self.parallel_checkbox = QCheckBox("Parallel (-n auto)")
+        self.run_button = QPushButton("▶  Run Selected")
+        self.stop_button = QPushButton("■  Stop")
+        self.rerun_failed_button = QPushButton("↻  Re-run Failed")
 
+        # Un seul bouton plein par barre : celui qu'on vient chercher. Les deux
+        # autres restent en contour, reconnaissables a leur couleur sans
+        # monopoliser l'attention quand ils ne servent pas.
         self.run_button.setStyleSheet(success_button())
         self.stop_button.setStyleSheet(danger_button())
-        self.rerun_failed_button.setStyleSheet(danger_button())
+        self.rerun_failed_button.setStyleSheet(info_button())
+
+        for bouton in (self.run_button, self.stop_button, self.rerun_failed_button,
+                       self.load_button, self.open_config_button, self.browse_button):
+            bouton.setCursor(Qt.PointingHandCursor)
 
         self.rerun_failed_button.setEnabled(False)
         self.stop_button.setEnabled(False)
@@ -458,15 +466,18 @@ class MainWindow(QMainWindow):
         action_bar.addWidget(self.load_button)
         action_bar.addWidget(self.open_config_button)
 
-        action_bar.addSpacing(90)  # séparation visuelle |
+        action_bar.addWidget(self._separator())
 
         # Test actions
         action_bar.addWidget(self.run_button)
         action_bar.addWidget(self.stop_button)
         action_bar.addWidget(self.rerun_failed_button)
-        action_bar.addWidget(self.parallel_checkbox)
 
-        # action_bar.addStretch()
+        # Sans cet espace final, la barre repartit toute la largeur de la
+        # fenetre entre les boutons : ils s'etiraient sur 250 px chacun et
+        # flottaient au milieu. Ils gardent maintenant leur taille naturelle et
+        # restent groupes a gauche.
+        action_bar.addStretch(1)
 
         layout.addLayout(workspace_bar)
         layout.addLayout(action_bar)
@@ -582,6 +593,23 @@ class MainWindow(QMainWindow):
 
         self.workspace: str | None = None
 
+    def _separator(self) -> QFrame:
+        """Trait vertical entre deux groupes d'actions.
+
+        Remplace l'espace fixe de 90 px, qui se voyait comme un trou plutot que
+        comme une separation et decalait les boutons vers le milieu.
+        """
+        trait = QFrame()
+        trait.setFrameShape(QFrame.VLine)
+        trait.setFixedWidth(1)
+        # Un peu plus haut que le texte, moins haut que les boutons : le trait
+        # separe sans dessiner une colonne dans la barre.
+        trait.setFixedHeight(22)
+        trait.setStyleSheet(separator_style())
+        self._separators = getattr(self, "_separators", [])
+        self._separators.append(trait)
+        return trait
+
     def _build_theme_button(self):
         """Bascule clair/sombre, discrete, dans le coin haut-droit.
 
@@ -638,11 +666,14 @@ class MainWindow(QMainWindow):
         self.open_config_button.setStyleSheet(neutral_button())
         self.run_button.setStyleSheet(success_button())
         self.stop_button.setStyleSheet(danger_button())
-        self.rerun_failed_button.setStyleSheet(danger_button())
+        self.rerun_failed_button.setStyleSheet(info_button())
 
         for button in (self.btn_select_all, self.btn_select_none, self.btn_failed_only,
                        self.btn_expand_all, self.btn_collapse_all):
             button.setStyleSheet(toolbar_button())
+
+        for trait in getattr(self, "_separators", []):
+            trait.setStyleSheet(separator_style())
 
         self.tree.setStyleSheet(tree_style())
         self.selection_label.setStyleSheet(styles.muted_label())
@@ -1045,12 +1076,11 @@ class MainWindow(QMainWindow):
         l'arbre). Centraliser ce code evite de reintroduire le bug deja corrige
         une fois (compteurs/cartes non remis a zero entre deux runs).
         """
-        parallel = self.parallel_checkbox.isChecked()
         interpreter = self.current_interpreter()
 
         # Verifie l'interpreteur AVANT de reinitialiser l'UI : sinon on efface les
         # resultats precedents pour finalement ne rien lancer.
-        problem = check_ready_to_run(interpreter, parallel=parallel)
+        problem = check_ready_to_run(interpreter)
         if problem:
             show_scrollable_error(
                 self,
@@ -1091,7 +1121,6 @@ class MainWindow(QMainWindow):
             nodeids=nodeids,
             workspace=self.workspace,
             junit_xml_path=self._current_junit_path,
-            parallel=parallel,
             interpreter=interpreter,
             targets=targets,
         )

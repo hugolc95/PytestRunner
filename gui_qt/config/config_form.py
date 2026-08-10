@@ -17,7 +17,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QEvent, Qt
 from PyQt5.QtWidgets import (
     QCheckBox,
     QDoubleSpinBox,
@@ -160,6 +160,44 @@ class _FloatField(_Field):
         return self.widget.value()
 
 
+class _ValueList(QPlainTextEdit):
+    """Zone de saisie qui se donne la hauteur d'un nombre de lignes fixe.
+
+    La hauteur suit la police, au lieu d'etre figee a la construction : la
+    feuille de style de l'application n'est appliquee au widget qu'une fois
+    celui-ci integre a la fenetre, et elle change l'interligne (21 px avant,
+    17 apres). Mesuree trop tot, la boite faisait trois lignes de trop.
+    """
+
+    def __init__(self, lignes: int):
+        super().__init__()
+        self._lignes = lignes
+
+    def line_height(self) -> float:
+        """Interligne reel du document.
+
+        fontMetrics().lineSpacing() le sous-estime (15 px contre 17 ici) et la
+        derniere valeur se retrouvait coupee en deux, avec une barre de
+        defilement pour quatre elements.
+        """
+        document = self.document()
+        bloc = document.documentLayout().blockBoundingRect(document.firstBlock())
+        return bloc.height() or self.fontMetrics().lineSpacing()
+
+    def adjust_height(self):
+        marges = 2 * self.document().documentMargin() + 2 * self.frameWidth()
+        self.setFixedHeight(int(self._lignes * self.line_height() + marges) + 2)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.adjust_height()
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        if event.type() == QEvent.FontChange:
+            self.adjust_height()
+
+
 class _ListField(_Field):
     """Liste de valeurs simples : une par ligne, plus simple a saisir et a relire
     qu'une syntaxe YAML a puces."""
@@ -171,7 +209,8 @@ class _ListField(_Field):
     MAX_LINES = 10
 
     def build(self, parent) -> QWidget:
-        self.widget = QPlainTextEdit()
+        lignes = min(max(len(self.original), self.MIN_LINES), self.MAX_LINES)
+        self.widget = _ValueList(lignes)
         self.widget.setPlainText("\n".join(str(v) for v in self.original))
         self.widget.setPlaceholderText("Une valeur par ligne")
         self.widget.setLineWrapMode(QPlainTextEdit.NoWrap)
@@ -180,17 +219,7 @@ class _ListField(_Field):
         # longue que MAX_LINES defile, sa barre prend de la place a son tour.
         marge = 24 if len(self.original) > self.MAX_LINES else 8
         self.widget.setMaximumWidth(width_for_content(self.widget, self.original, marge))
-
-        lignes = min(max(len(self.original), self.MIN_LINES), self.MAX_LINES)
-        # La hauteur est prise sur la mise en page du document, pas sur
-        # fontMetrics().lineSpacing() : celui-ci sous-estime l'interligne reel
-        # (15 px contre 17 ici), et la derniere valeur se retrouvait coupee en
-        # deux avec une barre de defilement pour quatre elements.
-        document = self.widget.document()
-        bloc = document.documentLayout().blockBoundingRect(document.firstBlock())
-        hauteur_ligne = bloc.height() or self.widget.fontMetrics().lineSpacing()
-        marges = 2 * document.documentMargin() + 2 * self.widget.frameWidth()
-        self.widget.setFixedHeight(int(lignes * hauteur_ligne + marges) + 2)
+        self.widget.adjust_height()
         return self.widget
 
     def value(self):

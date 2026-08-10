@@ -25,7 +25,7 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QMenu,
     QDialog,
-    QCheckBox,
+    QFrame,
 )
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QBrush, QColor, QCursor, QPainter, QPolygonF
 
@@ -41,7 +41,9 @@ from core.python_interpreter import (
 from gui_qt.dialogs import show_scrollable_error, open_test_log_for, open_config_editor
 from gui_qt.detail_panel import DetailPanel
 from gui_qt.styles import styles
-from gui_qt.styles.styles import primary_button, neutral_button, success_button, danger_button, toolbar_button, tree_style, console_style
+from gui_qt.styles.styles import (primary_button, neutral_button, success_button, danger_button,
+                                  info_button, separator_style, toolbar_button, tree_style,
+                                  console_style)
 from gui_qt.status_icons import STATUS_PRIORITY, STATUS_COLORS, status_icon
 
 
@@ -908,10 +910,9 @@ class CampaignPanel(QWidget):
         self.browse_button = QPushButton("Browse")
         self.load_button = QPushButton("Load Campaign")
         self.open_config_button = QPushButton("Open Config")
-        self.run_button = QPushButton("Run Selected")
-        self.stop_button = QPushButton("Stop")
-        self.rerun_failed_button = QPushButton("Re-run Failed")
-        self.parallel_checkbox = QCheckBox("Parallel (-n auto)")
+        self.run_button = QPushButton("▶  Run Selected")
+        self.stop_button = QPushButton("■  Stop")
+        self.rerun_failed_button = QPushButton("↻  Re-run Failed")
         self.all_button = QPushButton("All")
         self.none_button = QPushButton("None")
         self.failed_only_button = QPushButton("Failed only")
@@ -924,7 +925,7 @@ class CampaignPanel(QWidget):
         self.open_config_button.setStyleSheet(neutral_button())
         self.run_button.setStyleSheet(success_button())
         self.stop_button.setStyleSheet(danger_button())
-        self.rerun_failed_button.setStyleSheet(danger_button())
+        self.rerun_failed_button.setStyleSheet(info_button())
         self.all_button.setStyleSheet(toolbar_button())
         self.none_button.setStyleSheet(toolbar_button())
         self.failed_only_button.setStyleSheet(toolbar_button())
@@ -970,11 +971,13 @@ class CampaignPanel(QWidget):
         action_bar.setSpacing(8)
         action_bar.addWidget(self.load_button)
         action_bar.addWidget(self.open_config_button)
-        action_bar.addSpacing(90)
+        action_bar.addWidget(self._separator())
         action_bar.addWidget(self.run_button)
         action_bar.addWidget(self.stop_button)
         action_bar.addWidget(self.rerun_failed_button)
-        action_bar.addWidget(self.parallel_checkbox)
+        # Sans espace final, la barre etirait chaque bouton sur toute la
+        # largeur ; ils gardent leur taille et restent groupes a gauche.
+        action_bar.addStretch(1)
 
         tree_toolbar = QHBoxLayout()
         tree_toolbar.setSpacing(6)
@@ -1151,6 +1154,19 @@ class CampaignPanel(QWidget):
 
         self._launch_worker(selections, f"Re-running {len(selections)} failed test(s)...\n")
 
+    def _separator(self) -> QFrame:
+        """Trait vertical entre deux groupes d'actions."""
+        trait = QFrame()
+        trait.setFrameShape(QFrame.VLine)
+        trait.setFixedWidth(1)
+        # Un peu plus haut que le texte, moins haut que les boutons : le trait
+        # separe sans dessiner une colonne dans la barre.
+        trait.setFixedHeight(22)
+        trait.setStyleSheet(separator_style())
+        self._separators = getattr(self, "_separators", [])
+        self._separators.append(trait)
+        return trait
+
     def restyle(self):
         """Reapplique les styles de l'onglet Campaign avec la palette courante."""
         self.browse_button.setStyleSheet(neutral_button())
@@ -1158,11 +1174,14 @@ class CampaignPanel(QWidget):
         self.open_config_button.setStyleSheet(neutral_button())
         self.run_button.setStyleSheet(success_button())
         self.stop_button.setStyleSheet(danger_button())
-        self.rerun_failed_button.setStyleSheet(danger_button())
+        self.rerun_failed_button.setStyleSheet(info_button())
 
         for button in (self.all_button, self.none_button, self.failed_only_button,
                        self.expand_all_button, self.collapse_all_button):
             button.setStyleSheet(toolbar_button())
+
+        for trait in getattr(self, "_separators", []):
+            trait.setStyleSheet(separator_style())
 
         self.tree.setStyleSheet(tree_style())
         self.details.restyle()
@@ -1183,12 +1202,11 @@ class CampaignPanel(QWidget):
         return resolve_interpreter(configured=configured, workspace=workspace)
 
     def _launch_worker(self, selections: list[CampaignSelection], intro_message: str):
-        parallel = self.parallel_checkbox.isChecked()
         interpreter = self.current_interpreter()
 
         # Verifie avant de reinitialiser l'UI, pour ne pas effacer les resultats
         # precedents si finalement rien ne peut etre lance.
-        problem = check_ready_to_run(interpreter, parallel=parallel)
+        problem = check_ready_to_run(interpreter)
         if problem:
             show_scrollable_error(
                 self,
@@ -1219,7 +1237,6 @@ class CampaignPanel(QWidget):
             self.campaign,
             selections,
             junit_xml_path=self._current_junit_path,
-            parallel=parallel,
             interpreter=interpreter,
         )
         self.worker.stdout_signal.connect(self._on_stdout)

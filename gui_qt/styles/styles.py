@@ -217,6 +217,41 @@ def palette() -> dict:
     return _active
 
 
+def shade(couleur: str, facteur: float) -> str:
+    """Eclaircit (facteur > 1) ou assombrit (facteur < 1) une couleur.
+
+    Sert aux etats de survol et d'appui des boutons. La feuille de style
+    precedente les demandait avec `opacity`, propriete que Qt ignore : les
+    boutons ne reagissaient donc pas du tout au survol.
+    """
+    c = str(couleur).lstrip("#")
+    canaux = [int(c[i:i + 2], 16) for i in (0, 2, 4)]
+    ajuste = [max(0, min(255, round(v * facteur))) for v in canaux]
+    return "#{:02x}{:02x}{:02x}".format(*ajuste)
+
+
+def _luminance(couleur: str) -> float:
+    c = str(couleur).lstrip("#")
+    canaux = [int(c[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+    lineaire = [v / 12.92 if v <= 0.03928 else ((v + 0.055) / 1.055) ** 2.4 for v in canaux]
+    return 0.2126 * lineaire[0] + 0.7152 * lineaire[1] + 0.0722 * lineaire[2]
+
+
+def _contrast(a: str, b: str) -> float:
+    la, lb = _luminance(a), _luminance(b)
+    return (max(la, lb) + 0.05) / (min(la, lb) + 0.05)
+
+
+def mix(a: str, b: str, ratio: float) -> str:
+    """Melange deux couleurs, `ratio` etant la part de `b`."""
+    ca, cb = str(a).lstrip("#"), str(b).lstrip("#")
+    canaux = []
+    for i in (0, 2, 4):
+        va, vb = int(ca[i:i + 2], 16), int(cb[i:i + 2], 16)
+        canaux.append(round(va + (vb - va) * ratio))
+    return "#{:02x}{:02x}{:02x}".format(*canaux)
+
+
 def status_color(status: str) -> str:
     return _active["status"].get(status, _active["neutral"])
 
@@ -440,48 +475,105 @@ def app_stylesheet() -> str:
 
 
 # ---------- BUTTONS ----------
-def _base_button() -> str:
+# Geometrie commune a tous les boutons d'action, pour qu'un plein et un contour
+# poses cote a cote fassent exactement la meme hauteur.
+BUTTON_RADIUS = 7
+BUTTON_PADDING = "8px 16px"
+
+
+def filled_button(color: str) -> str:
+    """Bouton plein : reserve a l'action principale d'une barre.
+
+    Une barre ou tout est plein et colore ne hierarchise rien ; l'oeil ne sait
+    pas ou aller et le rouge d'un bouton d'arret crie en permanence, meme
+    desactive. Un seul bouton plein par groupe, donc.
+    """
     p = _active
+    texte = "#ffffff" if _contrast(color, "#ffffff") >= 3.0 else "#101418"
     return f"""
     QPushButton {{
-        border: none;
-        border-radius: 6px;
-        padding: 8px 14px;
-        font-weight: bold;
-        color: white;
+        background-color: {color};
+        border: 1px solid {shade(color, 0.90)};
+        border-radius: {BUTTON_RADIUS}px;
+        padding: {BUTTON_PADDING};
+        font-size: 12px;
+        font-weight: 600;
+        color: {texte};
     }}
     QPushButton:hover {{
-        opacity: 0.85;
+        background-color: {shade(color, 1.12)};
+    }}
+    QPushButton:pressed {{
+        background-color: {shade(color, 0.88)};
     }}
     QPushButton:disabled {{
         background-color: {p['disabled_bg']};
+        border: 1px solid {p['disabled_bg']};
         color: {p['disabled_text']};
     }}
     """
 
 
-def _colored_button(color: str) -> str:
-    return _base_button() + f"""
+def outline_button(color: str) -> str:
+    """Bouton en contour : action secondaire.
+
+    Il garde sa couleur d'identite dans le texte et la bordure, mais ne se
+    remplit qu'au survol. Un bouton d'arret reste ainsi reconnaissable sans
+    monopoliser l'attention pendant qu'il ne sert pas.
+    """
+    p = _active
+    return f"""
     QPushButton {{
-        background-color: {color};
+        background-color: transparent;
+        border: 1px solid {mix(p['border'], color, 0.45)};
+        border-radius: {BUTTON_RADIUS}px;
+        padding: {BUTTON_PADDING};
+        font-size: 12px;
+        font-weight: 600;
+        color: {color};
+    }}
+    QPushButton:hover {{
+        background-color: {mix(p['surface'], color, 0.12)};
+        border: 1px solid {color};
+    }}
+    QPushButton:pressed {{
+        background-color: {mix(p['surface'], color, 0.22)};
+    }}
+    QPushButton:disabled {{
+        background-color: transparent;
+        border: 1px solid {p['border']};
+        color: {p['disabled_text']};
     }}
     """
 
 
 def primary_button():
-    return _colored_button(_active["primary"])
-
-
-def neutral_button():
-    return _colored_button(_active["neutral"])
+    """Action principale d'un ecran : charger le workspace."""
+    return filled_button(_active["primary"])
 
 
 def success_button():
-    return _colored_button(_active["success"])
+    """Action principale d'un run : lancer les tests."""
+    return filled_button(_active["success"])
+
+
+def neutral_button():
+    return outline_button(_active["neutral"])
 
 
 def danger_button():
-    return _colored_button(_active["danger"])
+    return outline_button(_active["danger"])
+
+
+def info_button():
+    """Action secondaire liee au lancement : relancer les echecs."""
+    return outline_button(_active["primary"])
+
+
+def separator_style() -> str:
+    """Trait vertical entre deux groupes d'une barre d'actions."""
+    p = _active
+    return f"background-color: {mix(p['border'], p['text_muted'], 0.35)}; border: none;"
 
 
 # ---------- TOOLBAR BUTTON ----------
@@ -491,17 +583,26 @@ def toolbar_button():
     QPushButton {{
         background-color: {p['toolbar_bg']};
         border: 1px solid {p['toolbar_border']};
-        border-radius: 5px;
-        padding: 4px 10px;
+        border-radius: {BUTTON_RADIUS - 1}px;
+        padding: 5px 12px;
         font-size: 12px;
+        font-weight: 500;
         color: {p['text']};
     }}
     QPushButton:hover {{
         background-color: {p['toolbar_hover']};
+        border: 1px solid {mix(p['toolbar_border'], p['primary'], 0.5)};
+    }}
+    QPushButton:pressed {{
+        background-color: {mix(p['toolbar_bg'], p['primary'], 0.18)};
     }}
     QPushButton:checked {{
         background-color: {p['toolbar_checked']};
         border: 1px solid {p['primary']};
+    }}
+    QPushButton:disabled {{
+        color: {p['disabled_text']};
+        border: 1px solid {p['border']};
     }}
     """
 
