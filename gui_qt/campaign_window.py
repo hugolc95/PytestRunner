@@ -33,6 +33,7 @@ from core.campaign import Campaign, CampaignScenario, CampaignTest, load_campaig
 from core.failure_report import extract_failure_traceback
 from core.pytest_executor import PytestOutputParser, pytest_nodeid_args
 from core.run_history import RunHistoryManager, new_run_id, history_dir
+from core.workspace_config import import_mode_args, pythonpath_for
 from core.python_interpreter import (
     check_ready_to_run,
     resolve_interpreter,
@@ -669,6 +670,9 @@ class CampaignWorker(QThread):
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
         entries = [str(path) for path in self.campaign.pythonpath if str(path).strip()]
+        # Le workspace peut declarer ses propres chemins : un framework externe
+        # doit etre importable que l'on passe par une campagne ou non.
+        entries.extend(pythonpath_for(self.campaign.workspace))
         old_pythonpath = env.get("PYTHONPATH")
         if old_pythonpath:
             entries.append(old_pythonpath)
@@ -707,7 +711,7 @@ class CampaignWorker(QThread):
                     "-m",
                     "pytest",
                     command,
-                    "--import-mode=importlib",
+                    *import_mode_args(self.campaign.workspace),
                     "--tb=short",
                     "-v",
                 ]
@@ -773,7 +777,8 @@ class CampaignWorker(QThread):
                 "pytest",
                 *nodeid_args,
                 "--keep-duplicates",
-                "--import-mode=importlib",
+                # Pas de --import-mode impose : voir core/workspace_config.py.
+                *import_mode_args(self.campaign.workspace),
                 "--tb=short",
                 "-v",
             ]

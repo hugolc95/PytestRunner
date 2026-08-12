@@ -7,7 +7,7 @@ precisement ce qui permet de piloter depuis une interface 32 bits des tests qui
 ont besoin d'un Python 64 bits (par exemple pour charger des DLL natives).
 
 Ordre de priorite applique par resolve_interpreter() :
-  1. la cle `python_executable` du config.yml du workspace (specifique au projet)
+  1. la cle `python_executable` de la configuration du workspace (specifique au projet)
   2. le reglage global de l'application (QSettings, fourni par l'appelant)
   3. le Python courant
 
@@ -24,7 +24,6 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
 
 
 def is_frozen() -> bool:
@@ -63,36 +62,16 @@ def default_interpreter() -> str:
     return ""
 
 
-def _find_config_file(workspace: str) -> Path | None:
-    root = Path(workspace)
-    for name in ("config.yaml", "config.yml"):
-        path = root / name
-        if path.is_file():
-            return path
-    return None
-
-
 def interpreter_from_config(workspace: str | None) -> str | None:
-    """Lit la cle `python_executable` du config.yml du workspace, si presente."""
-    if not workspace:
-        return None
+    """Lit la cle `python_executable` de la configuration du workspace.
 
-    config_path = _find_config_file(workspace)
-    if config_path is None:
-        return None
+    Cherche dans les memes fichiers que les autres reglages, et pas seulement
+    dans config.yml : un projet dont la configuration s'appelle autrement voyait
+    sinon son interpreteur ignore sans le moindre message.
+    """
+    from core.workspace_config import INTERPRETER_KEYS as _cles, setting_for
 
-    try:
-        import yaml  # type: ignore
-
-        with open(config_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-    except Exception:
-        return None
-
-    if not isinstance(data, dict):
-        return None
-
-    value = data.get("python_executable") or data.get("python")
+    value = setting_for(workspace, _cles)
     if not value:
         return None
 
@@ -120,7 +99,7 @@ def resolve_interpreter(configured: str | None = None, workspace: str | None = N
 def interpreter_source(configured: str | None = None, workspace: str | None = None) -> str:
     """Origine lisible de l'interpreteur resolu, pour l'afficher dans le GUI."""
     if interpreter_from_config(workspace):
-        return "config.yml du workspace"
+        return "configuration du workspace"
     if configured and str(configured).strip():
         return "reglage de l'application"
     if is_frozen():

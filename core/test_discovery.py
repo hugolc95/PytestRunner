@@ -1,6 +1,7 @@
 import subprocess
 
 from core.python_interpreter import resolve_interpreter, subprocess_flags
+from core.workspace_config import import_mode_args, pytest_env
 
 
 def collect_tests(workspace: str, interpreter: str | None = None) -> list[str]:
@@ -31,7 +32,11 @@ def collect_tests(workspace: str, interpreter: str | None = None) -> list[str]:
         "-m", "pytest",
         "--collect-only",
         "-q",
-        "--import-mode=importlib",
+        # Pas de --import-mode impose : le defaut de pytest (prepend) insere le
+        # dossier du fichier de test en tete de sys.path, ce dont dependent les
+        # suites dont le conftest importe un module voisin. Un workspace qui a
+        # besoin d'importlib le declare dans sa configuration.
+        *import_mode_args(workspace),
     ]
 
     try:
@@ -40,6 +45,7 @@ def collect_tests(workspace: str, interpreter: str | None = None) -> list[str]:
             cwd=workspace,
             capture_output=True,
             text=True,
+            env=pytest_env(workspace),
             creationflags=subprocess_flags(),
         )
     except FileNotFoundError as exc:

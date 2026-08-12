@@ -87,7 +87,7 @@ def test_interpreter_source_reports_where_the_value_came_from(tmp_path):
     assert interpreter_source(configured="/opt/py", workspace=str(tmp_path)) == "reglage de l'application"
 
     write_config(tmp_path, "python_executable: /opt/py64\n")
-    assert interpreter_source(configured="/opt/py", workspace=str(tmp_path)) == "config.yml du workspace"
+    assert interpreter_source(configured="/opt/py", workspace=str(tmp_path)) == "configuration du workspace"
 
 
 def test_probe_reports_version_bitness_and_pytest():

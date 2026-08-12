@@ -34,6 +34,7 @@ from core.test_discovery import collect_tests
 from core.test_tree import build_test_tree
 from core.pytest_executor import PytestOutputParser, pytest_nodeid_args
 from core.run_history import RunHistoryManager, history_dir, new_run_id
+from core.workspace_config import import_mode_args, pytest_env
 from core.python_interpreter import (
     check_ready_to_run,
     interpreter_source,
@@ -130,7 +131,8 @@ class PytestWorker(QThread):
             "-u",
             "-m", "pytest",
             *nodeid_args,
-            "--import-mode=importlib",
+            # Pas de --import-mode impose : voir core/workspace_config.py.
+            *import_mode_args(self.workspace),
             "--tb=short",
             "-v",
         ]
@@ -156,6 +158,7 @@ class PytestWorker(QThread):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                env=pytest_env(self.workspace),
                 creationflags=subprocess_flags(),
             )
         except (OSError, ValueError) as exc:
