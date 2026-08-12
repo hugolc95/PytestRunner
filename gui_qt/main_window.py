@@ -35,7 +35,8 @@ from core.test_tree import build_test_tree
 from core.pytest_executor import (PytestOutputParser, compact_output_line,
                                   pytest_nodeid_args)
 from core.run_history import RunHistoryManager, history_dir, new_run_id
-from core.workspace_config import console_path_levels, import_mode_args, pytest_env
+from core.workspace_config import (console_path_levels, import_mode_args, pytest_env,
+                                   show_test_classes)
 from core.python_interpreter import (
     check_ready_to_run,
     interpreter_source,
@@ -183,6 +184,7 @@ class PytestWorker(QThread):
         # garde la sortie brute, dont dependent l'historique, le resume final et
         # l'extraction des traces d'echec.
         niveaux = console_path_levels(self.workspace)
+        avec_classes = show_test_classes(self.workspace)
 
         def flush_emit_buffer():
             nonlocal emit_buffer, emit_size, last_flush
@@ -213,7 +215,7 @@ class PytestWorker(QThread):
             stdout_size += len(line)
             while stdout_size > stdout_limit and stdout_buffer:
                 stdout_size -= len(stdout_buffer.pop(0))
-            affichee = compact_output_line(line, niveaux)
+            affichee = compact_output_line(line, niveaux, avec_classes)
             emit_buffer.append(affichee)
             emit_size += len(affichee)
 
@@ -264,7 +266,8 @@ class WorkspaceLoadWorker(QThread):
                 probe_interpreter(self.interpreter)
 
             nodeids = collect_tests(self.workspace, interpreter=self.interpreter)
-            roots = build_test_tree(nodeids, self.workspace)
+            roots = build_test_tree(nodeids, self.workspace,
+                                    show_classes=show_test_classes(self.workspace))
             self.loaded_signal.emit(roots, len(nodeids), self.workspace)
         except Exception as exc:
             self.error_signal.emit(str(exc))

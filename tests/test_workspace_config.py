@@ -249,8 +249,25 @@ def test_the_number_of_kept_folders_is_adjustable(niveaux, attendu):
     assert compact_path("TSu/JC_API/Int/BioLockTestSuite/test_x.py", niveaux) == attendu
 
 
-def test_full_paths_can_be_kept():
-    assert compact_output_line(LIGNE, -1) == LIGNE
+def test_the_original_line_can_be_kept_whole():
+    assert compact_output_line(LIGNE, -1, show_classes=True) == LIGNE
+
+
+def test_the_class_is_dropped_by_default():
+    """Dans ces suites, la classe reprend le nom du fichier : trois fois le meme
+    mot sur une ligne."""
+    court = compact_output_line(LIGNE)
+    assert "::TestSuiteBioLock::" not in court
+    assert "::test_ComputeHash[datalen==2048_bytes]" in court
+
+
+def test_the_class_can_be_kept():
+    assert "::TestSuiteBioLock::" in compact_output_line(LIGNE, show_classes=True)
+
+
+def test_a_test_without_class_is_unaffected():
+    ligne = "…/suite/test_x.py::test_ok PASSED"
+    assert compact_output_line(ligne, 1) == ligne
 
 
 def test_a_short_path_is_left_alone():
@@ -306,3 +323,110 @@ def test_the_raw_output_survives_for_traces_and_history(qtbot, tmp_path):
     assert "…/MaSuite/test_x.py::test_ko" in console, "l'affichage est raccourci"
     assert "TSu/JC_API/Int/MaSuite/test_x.py::test_ko" in sortie.replace("\\", "/"), \
         "la sortie brute garde le chemin complet"
+
+
+# ------------------------------------------------- le niveau de classe dans l'arbre
+
+from core.test_tree import build_test_tree  # noqa: E402
+
+
+def noms(noeuds):
+    return [n.name for n in noeuds]
+
+
+def test_a_lone_class_disappears_from_the_tree():
+    """Elle ne distingue rien et reprend souvent le nom du fichier."""
+    arbre = build_test_tree(["suite/test_x.py::TestSuiteX::test_a",
+                             "suite/test_x.py::TestSuiteX::test_b"])
+    fichier = arbre[0].children[0]
+
+    assert fichier.name == "test_x.py"
+    assert noms(fichier.children) == ["test_a", "test_b"]
+
+
+def test_several_classes_keep_their_level():
+    """La garde essentielle : sans elle, deux tests de meme nom se retrouveraient
+    cote a cote sans plus rien pour les distinguer."""
+    arbre = build_test_tree(["suite/test_x.py::TestA::test_f",
+                             "suite/test_x.py::TestB::test_f"])
+    fichier = arbre[0].children[0]
+
+    assert noms(fichier.children) == ["TestA", "TestB"]
+
+
+def test_a_class_beside_module_level_tests_keeps_its_level():
+    arbre = build_test_tree(["suite/test_x.py::test_f",
+                             "suite/test_x.py::TestA::test_f"])
+    fichier = arbre[0].children[0]
+
+    assert "TestA" in noms(fichier.children)
+
+
+def test_nested_lone_classes_are_all_removed():
+    arbre = build_test_tree(["suite/test_x.py::TestA::TestB::test_f"])
+    fichier = arbre[0].children[0]
+
+    assert noms(fichier.children) == ["test_f"]
+
+
+def test_parametrized_cases_keep_their_function_level():
+    """Seule la classe part : la fonction reste, elle regroupe ses cas."""
+    arbre = build_test_tree(["suite/test_x.py::TestSuiteX::test_f[cas1]",
+                             "suite/test_x.py::TestSuiteX::test_f[cas2]"])
+    fichier = arbre[0].children[0]
+
+    assert noms(fichier.children) == ["test_f"]
+    assert noms(fichier.children[0].children) == ["[cas1]", "[cas2]"]
+
+
+def test_the_target_still_names_the_class():
+    """L'affichage change, pas ce qui est passe a pytest."""
+    arbre = build_test_tree(["suite/test_x.py::TestSuiteX::test_f[cas1]"])
+    fonction = arbre[0].children[0].children[0]
+
+    assert fonction.target == "suite/test_x.py::TestSuiteX::test_f"
+    assert fonction.children[0].nodeid == "suite/test_x.py::TestSuiteX::test_f[cas1]"
+
+
+def test_the_class_can_be_kept_in_the_tree():
+    arbre = build_test_tree(["suite/test_x.py::TestSuiteX::test_a"], show_classes=True)
+    fichier = arbre[0].children[0]
+
+    assert noms(fichier.children) == ["TestSuiteX"]
+
+
+def test_a_test_added_during_a_run_lands_at_the_same_level(qtbot):
+    """Un cas inconnu ajoute en cours de run ne doit pas recreer la classe que
+    l'arbre a masquee, sinon la meme fonction apparaitrait deux fois."""
+    from gui_qt.test_tree_view import TestTreeView
+
+    tree = TestTreeView()
+    qtbot.addWidget(tree)
+    tree.load_tree(build_test_tree(["suite/test_x.py::TestSuiteX::test_f[cas1]"]))
+
+    tree.update_single_test("suite/test_x.py::TestSuiteX::test_f[cas2]",
+                            "PASSED", create_missing=True)
+
+    fichier = tree.model.item(0).child(0)
+    assert [fichier.child(r).text() for r in range(fichier.rowCount())] == ["test_f"]
+    fonction = fichier.child(0)
+    assert [fonction.child(r).text() for r in range(fonction.rowCount())] == ["[cas1]", "[cas2]"]
+
+
+def test_a_run_respects_a_tree_that_shows_its_classes(qtbot):
+    """Quand l'arbre affiche ses classes, l'ajout doit s'y ranger aussi."""
+    from gui_qt.test_tree_view import TestTreeView
+
+    tree = TestTreeView()
+    qtbot.addWidget(tree)
+    tree.load_tree(build_test_tree(["suite/test_x.py::TestA::test_f[cas1]",
+                                    "suite/test_x.py::TestB::test_g"]))
+
+    tree.update_single_test("suite/test_x.py::TestA::test_f[cas2]",
+                            "PASSED", create_missing=True)
+
+    fichier = tree.model.item(0).child(0)
+    classes = [fichier.child(r).text() for r in range(fichier.rowCount())]
+    assert classes == ["TestA", "TestB"]
+    fonction = fichier.child(0).child(0)
+    assert [fonction.child(r).text() for r in range(fonction.rowCount())] == ["[cas1]", "[cas2]"]

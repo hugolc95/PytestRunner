@@ -45,13 +45,38 @@ def _split_param(test_name: str) -> tuple[str, str | None]:
     return func, "[" + param
 
 
-def build_test_tree(nodeids: list[str], workspace: str | None = None) -> list[TestNode]:
+def collapse_lone_classes(node: TestNode) -> None:
+    """Retire le niveau de classe d'un fichier qui n'en contient qu'une.
+
+    Une classe unique ne distingue rien : elle ajoute un cran de profondeur, et
+    souvent le nom du fichier repete une troisieme fois. Elle disparait donc de
+    l'arbre, ses tests remontant sous le fichier.
+
+    Le niveau est conserve des qu'un fichier contient plusieurs classes, ou une
+    classe a cote de tests de module : le supprimer ferait alors apparaitre deux
+    fonctions de meme nom cote a cote, sans plus rien pour les distinguer.
+    """
+    for child in node.children:
+        collapse_lone_classes(child)
+
+    if node.kind != "file":
+        return
+
+    while len(node.children) == 1 and node.children[0].kind == "class":
+        node.children = node.children[0].children
+
+
+def build_test_tree(nodeids: list[str], workspace: str | None = None,
+                    show_classes: bool = False) -> list[TestNode]:
     """
     Construit un arbre stable a partir de nodeids pytest RELATIFS.
 
     Le nodeid pytest complet est stocke uniquement sur les feuilles executables.
     Les dossiers, fichiers, classes et fonctions parametrees sont des groupes.
     L'UI utilise ensuite des UUID internes, pas les nodeids, pour identifier les items.
+
+    `show_classes` conserve le niveau de classe meme quand il n'apporte rien ;
+    par defaut une classe unique par fichier est repliee.
     """
     roots: dict[str, TestNode] = {}
 
@@ -101,4 +126,10 @@ def build_test_tree(nodeids: list[str], workspace: str | None = None) -> list[Te
                 param_label, nodeid=nodeid, kind="case", target=nodeid
             )
 
-    return list(roots.values())
+    arbre = list(roots.values())
+
+    if not show_classes:
+        for racine in arbre:
+            collapse_lone_classes(racine)
+
+    return arbre

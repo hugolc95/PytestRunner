@@ -100,11 +100,11 @@ def parse_test_status_line(line: str) -> tuple[str, str] | None:
     return None
 
 
-# Chemin de fichier de test suivi de `::`, c'est-a-dire la partie chemin d'un
-# nodeid. Le `(?=::)` garantit qu'on ne touche ni aux lignes de trace
+# Un nodeid complet : chemin de fichier .py suivi d'au moins un `::`. Exiger le
+# `::` garantit qu'on ne touche ni aux lignes de trace
 # (`chemin/test_x.py:34: AssertionError`) ni aux messages de collecte : la ou le
 # chemin complet sert a retrouver le fichier, il reste entier.
-_NODEID_PATH_RE = re.compile(r"(?P<chemin>[^\s:]+(?:[/\\][^\s:]+)*\.py)(?=::)")
+_NODEID_RE = re.compile(r"(?P<chemin>[^\s:]+(?:[/\\][^\s:]+)*\.py)(?P<reste>(?:::[^\s]+)+)")
 
 # Marque de troncature. Un caractere unique, pour ne pas reprendre en largeur ce
 # qu'on vient d'economiser.
@@ -130,16 +130,34 @@ def compact_path(chemin: str, levels: int = 1) -> str:
     return ELLIPSIS + separateur + separateur.join(gardes)
 
 
-def compact_output_line(line: str, levels: int = 1) -> str:
-    """Raccourcit les chemins des nodeids d'une ligne de sortie pytest.
+def drop_class(reste: str) -> str:
+    """Ne garde que le dernier segment d'un nodeid : `::Classe::test` -> `::test`.
+
+    Les segments intermediaires sont les classes. Dans les suites ou chaque
+    fichier n'a qu'une classe, son nom reprend celui du fichier et n'apprend
+    rien de plus.
+    """
+    segments = [s for s in reste.split("::") if s]
+    return "::" + segments[-1] if segments else reste
+
+
+def compact_output_line(line: str, levels: int = 1, show_classes: bool = False) -> str:
+    """Raccourcit les nodeids d'une ligne de sortie pytest.
 
     Avec une arborescence profonde, le chemin occupe l'essentiel de la ligne et
-    se repete a chaque test. Seul l'affichage est concerne : la sortie brute est
+    se repete a chaque test ; le nom de la classe s'y ajoute souvent en triple
+    du nom du fichier. Seul l'affichage est concerne : la sortie brute est
     conservee telle quelle pour l'historique et les traces d'echec.
     """
-    if levels < 0:
+    if levels < 0 and show_classes:
         return line
-    return _NODEID_PATH_RE.sub(lambda m: compact_path(m.group("chemin"), levels), line)
+
+    def remplacer(m: "re.Match") -> str:
+        chemin = compact_path(m.group("chemin"), levels)
+        reste = m.group("reste") if show_classes else drop_class(m.group("reste"))
+        return chemin + reste
+
+    return _NODEID_RE.sub(remplacer, line)
 
 
 class PytestOutputParser:

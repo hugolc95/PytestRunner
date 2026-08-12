@@ -160,7 +160,10 @@ class TestTreeView(QTreeView):
         recollecte au lancement, et les nodeids different. Plutot que de perdre
         ces resultats, on complete l'arbre avec ce qui a reellement tourne.
         """
-        racines = build_test_tree([nodeid])
+        # Le niveau de classe est conserve ici, et c'est _merge_node qui decide
+        # de le garder ou non : lui seul voit comment l'arbre deja charge est
+        # organise, alors qu'un nodeid isole ne le dit pas.
+        racines = build_test_tree([nodeid], show_classes=True)
         if not racines:
             return None
 
@@ -177,16 +180,36 @@ class TestTreeView(QTreeView):
         self._emit_selection_changed()
         return self._nodeid_to_item.get(self._norm(nodeid))
 
+    def _has_class_children(self, parent_item: QStandardItem) -> bool:
+        for row in range(parent_item.rowCount()):
+            enfant = self._child_at(parent_item, row)
+            if enfant is not None and enfant.data(KIND_ROLE) == "class":
+                return True
+        return False
+
+    def _child_at(self, parent_item: QStandardItem, row: int) -> QStandardItem | None:
+        """L'item racine ne repond pas a child() : il faut passer par le modele."""
+        if parent_item is self.model.invisibleRootItem():
+            return self.model.item(row)
+        return parent_item.child(row)
+
     def _merge_node(self, parent_item: QStandardItem, node: TestNode):
         """Fusionne un noeud dans l'arbre existant, sans dupliquer les parents."""
         existant = None
         for row in range(parent_item.rowCount()):
-            enfant = parent_item.child(row) if parent_item is not self.model.invisibleRootItem() \
-                else self.model.item(row)
+            enfant = self._child_at(parent_item, row)
             if enfant is not None and enfant.text() == node.name \
                     and enfant.data(KIND_ROLE) == node.kind:
                 existant = enfant
                 break
+
+        if existant is None and node.kind == "class" and not self._has_class_children(parent_item):
+            # Ce fichier n'affiche pas ses classes : y ajouter ce niveau ferait
+            # apparaitre la meme fonction deux fois, une fois sous sa classe et
+            # une fois sans. Les tests remontent donc directement sous le fichier.
+            for enfant_node in node.children:
+                self._merge_node(parent_item, enfant_node)
+            return
 
         if existant is None:
             # _build_item cree toute la chaine restante et l'enregistre.

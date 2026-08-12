@@ -141,6 +141,25 @@ def import_mode_args(workspace: str | None, config_path: str | None = None) -> l
 # ------------------------------------------------------------------ console
 
 CONSOLE_PATH_KEYS = ("console_path_levels", "console_paths", "console_path")
+CLASS_DISPLAY_KEYS = ("show_test_class", "show_class", "show_classes")
+
+VRAI = ("true", "vrai", "oui", "yes", "1", "always", "toujours")
+
+
+def show_test_classes(workspace: str | None, config_path: str | None = None) -> bool:
+    """Faut-il garder le niveau de classe a l'affichage ?
+
+    Non par defaut : dans les suites ou chaque fichier n'a qu'une classe, son
+    nom reprend celui du fichier et occupe une ligne de l'arbre pour rien.
+    L'arbre garde tout de meme ce niveau des qu'un fichier contient plusieurs
+    classes, sans quoi deux tests de meme nom se retrouveraient cote a cote.
+    """
+    valeur = setting_for(workspace, CLASS_DISPLAY_KEYS, config_path)
+    if valeur is None:
+        return False
+    if isinstance(valeur, bool):
+        return valeur
+    return str(valeur).strip().lower() in VRAI
 
 # Dossiers conserves devant le nom du fichier dans la console. Un seul suffit :
 # il porte le nom de la suite, et ce qui precede se repete a chaque ligne.
