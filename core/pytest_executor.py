@@ -100,6 +100,48 @@ def parse_test_status_line(line: str) -> tuple[str, str] | None:
     return None
 
 
+# Chemin de fichier de test suivi de `::`, c'est-a-dire la partie chemin d'un
+# nodeid. Le `(?=::)` garantit qu'on ne touche ni aux lignes de trace
+# (`chemin/test_x.py:34: AssertionError`) ni aux messages de collecte : la ou le
+# chemin complet sert a retrouver le fichier, il reste entier.
+_NODEID_PATH_RE = re.compile(r"(?P<chemin>[^\s:]+(?:[/\\][^\s:]+)*\.py)(?=::)")
+
+# Marque de troncature. Un caractere unique, pour ne pas reprendre en largeur ce
+# qu'on vient d'economiser.
+ELLIPSIS = "…"
+
+
+def compact_path(chemin: str, levels: int = 1) -> str:
+    """Ne garde que les `levels` derniers dossiers d'un chemin de fichier.
+
+    `TSu/JC_API/Int/BioLockTestSuite/test_x.py` devient
+    `…/BioLockTestSuite/test_x.py`. Le dossier conserve porte le nom de la suite,
+    qui est l'information utile ; ce qui precede se repete a chaque ligne.
+    """
+    if levels < 0:
+        return chemin
+
+    separateur = "\\" if "\\" in chemin and "/" not in chemin else "/"
+    morceaux = re.split(r"[/\\]", chemin)
+    if len(morceaux) <= levels + 1:
+        return chemin
+
+    gardes = morceaux[-(levels + 1):] if levels else morceaux[-1:]
+    return ELLIPSIS + separateur + separateur.join(gardes)
+
+
+def compact_output_line(line: str, levels: int = 1) -> str:
+    """Raccourcit les chemins des nodeids d'une ligne de sortie pytest.
+
+    Avec une arborescence profonde, le chemin occupe l'essentiel de la ligne et
+    se repete a chaque test. Seul l'affichage est concerne : la sortie brute est
+    conservee telle quelle pour l'historique et les traces d'echec.
+    """
+    if levels < 0:
+        return line
+    return _NODEID_PATH_RE.sub(lambda m: compact_path(m.group("chemin"), levels), line)
+
+
 class PytestOutputParser:
     """Suit la sortie de pytest -v ligne par ligne et en extrait les resultats.
 

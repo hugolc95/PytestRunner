@@ -31,9 +31,10 @@ from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QBrush, QColor
 
 from core.campaign import Campaign, CampaignScenario, CampaignTest, load_campaign, command_to_display
 from core.failure_report import extract_failure_traceback
-from core.pytest_executor import PytestOutputParser, pytest_nodeid_args
+from core.pytest_executor import (PytestOutputParser, compact_output_line,
+                                  pytest_nodeid_args)
 from core.run_history import RunHistoryManager, new_run_id, history_dir
-from core.workspace_config import import_mode_args, pythonpath_for
+from core.workspace_config import console_path_levels, import_mode_args, pythonpath_for
 from core.python_interpreter import (
     check_ready_to_run,
     resolve_interpreter,
@@ -863,8 +864,10 @@ class CampaignWorker(QThread):
             while self._output_size > self._output_limit and self._output_buffer:
                 self._output_size -= len(self._output_buffer.pop(0))
 
-            emit_buffer.append(line)
-            emit_size += len(line)
+            # Raccourci a l'affichage seulement : _output_buffer garde le brut.
+            affichee = compact_output_line(line, console_path_levels(self.campaign.workspace))
+            emit_buffer.append(affichee)
+            emit_size += len(affichee)
             if (len(emit_buffer) >= 50 or emit_size >= 8192
                     or time.monotonic() - last_flush >= 0.05):
                 flush_emit_buffer()

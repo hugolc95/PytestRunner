@@ -32,9 +32,10 @@ from gui_qt.detail_panel import DetailPanel
 
 from core.test_discovery import collect_tests
 from core.test_tree import build_test_tree
-from core.pytest_executor import PytestOutputParser, pytest_nodeid_args
+from core.pytest_executor import (PytestOutputParser, compact_output_line,
+                                  pytest_nodeid_args)
 from core.run_history import RunHistoryManager, history_dir, new_run_id
-from core.workspace_config import import_mode_args, pytest_env
+from core.workspace_config import console_path_levels, import_mode_args, pytest_env
 from core.python_interpreter import (
     check_ready_to_run,
     interpreter_source,
@@ -178,6 +179,10 @@ class PytestWorker(QThread):
         emit_size = 0
         last_flush = time.monotonic()
         parser = PytestOutputParser()
+        # Raccourcissement des chemins a l'AFFICHAGE seulement : stdout_buffer
+        # garde la sortie brute, dont dependent l'historique, le resume final et
+        # l'extraction des traces d'echec.
+        niveaux = console_path_levels(self.workspace)
 
         def flush_emit_buffer():
             nonlocal emit_buffer, emit_size, last_flush
@@ -208,8 +213,9 @@ class PytestWorker(QThread):
             stdout_size += len(line)
             while stdout_size > stdout_limit and stdout_buffer:
                 stdout_size -= len(stdout_buffer.pop(0))
-            emit_buffer.append(line)
-            emit_size += len(line)
+            affichee = compact_output_line(line, niveaux)
+            emit_buffer.append(affichee)
+            emit_size += len(affichee)
 
             # Le texte de la console reste groupe (des milliers de signaux Qt et
             # d'insertions QTextEdit couteraient cher), mais on vide aussi le

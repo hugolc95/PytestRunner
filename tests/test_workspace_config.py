@@ -197,3 +197,112 @@ def test_the_interpreter_is_read_from_any_config_name(tmp_path):
         "python_executable: C:\\Python313x32\\python.exe\n", encoding="utf-8")
 
     assert interpreter_from_config(str(tmp_path)) == "C:\\Python313x32\\python.exe"
+
+
+# ------------------------------------------------- longueur des lignes console
+
+from core.pytest_executor import compact_output_line, compact_path  # noqa: E402
+
+LIGNE = ("TSu/JC_API/Int/BioLockTestSuite/test_BioLockTestSuite.py::TestSuiteBioLock::"
+         "test_ComputeHash[datalen==2048_bytes] PASSED [ 12%]")
+
+
+def test_a_test_line_keeps_its_suite_but_loses_the_climb():
+    """Le reproche : avec une arborescence profonde, le chemin occupe
+    l'essentiel de la ligne et se repete a chaque test."""
+    court = compact_output_line(LIGNE)
+
+    assert court.startswith("…/BioLockTestSuite/test_BioLockTestSuite.py::")
+    assert "TSu/JC_API/Int" not in court
+    assert court.endswith("PASSED [ 12%]"), "le statut reste intact"
+    assert len(court) < len(LIGNE)
+
+
+def test_a_traceback_line_keeps_its_full_path():
+    """C'est le chemin complet qui permet de retrouver le fichier fautif."""
+    ligne = "TSu/RA/Int/FlexiDep/test_flexi.py:34: AssertionError"
+    assert compact_output_line(ligne) == ligne
+
+
+def test_a_collection_error_keeps_its_full_path():
+    ligne = "ERROR collecting TSu/JC_API/Int/BioLockTestSuite"
+    assert compact_output_line(ligne) == ligne
+
+
+def test_the_rootdir_header_is_untouched():
+    ligne = "rootdir: C:\\Projets\\COSMO11_ADD_TST_CI\\testEnv\\test_insi"
+    assert compact_output_line(ligne) == ligne
+
+
+def test_the_summary_line_is_shortened_too():
+    ligne = "FAILED TSu/RA/Int/FlexiDep/test_flexi.py::TestFlexi::test_deploy[cas-3] - Err"
+    court = compact_output_line(ligne)
+    assert court.startswith("FAILED …/FlexiDep/test_flexi.py::")
+
+
+@pytest.mark.parametrize("niveaux, attendu", [
+    (0, "…/test_x.py"),
+    (1, "…/BioLockTestSuite/test_x.py"),
+    (2, "…/Int/BioLockTestSuite/test_x.py"),
+])
+def test_the_number_of_kept_folders_is_adjustable(niveaux, attendu):
+    assert compact_path("TSu/JC_API/Int/BioLockTestSuite/test_x.py", niveaux) == attendu
+
+
+def test_full_paths_can_be_kept():
+    assert compact_output_line(LIGNE, -1) == LIGNE
+
+
+def test_a_short_path_is_left_alone():
+    """Rien a gagner, et une ellipse serait un mensonge."""
+    ligne = "test_x.py::test_ok PASSED"
+    assert compact_output_line(ligne) == ligne
+    assert compact_path("dossier/test_x.py", 1) == "dossier/test_x.py"
+
+
+def test_windows_separators_survive():
+    assert compact_path("TSu\\Int\\Suite\\test_x.py", 1) == "…\\Suite\\test_x.py"
+
+
+def test_the_workspace_chooses_the_level(tmp_path):
+    (tmp_path / "config.yml").write_text("console_path_levels: 0\n", encoding="utf-8")
+    from core.workspace_config import console_path_levels
+    assert console_path_levels(str(tmp_path)) == 0
+
+
+@pytest.mark.parametrize("valeur, attendu", [("full", -1), ("complet", -1), ("short", 0), ("3", 3)])
+def test_the_level_accepts_words_as_well_as_numbers(tmp_path, valeur, attendu):
+    (tmp_path / "config.yml").write_text(f'console_path_levels: "{valeur}"\n', encoding="utf-8")
+    from core.workspace_config import console_path_levels
+    assert console_path_levels(str(tmp_path)) == attendu
+
+
+def test_an_unreadable_level_falls_back_to_the_default(tmp_path):
+    """Mieux vaut le defaut qu'une information qui disparait."""
+    (tmp_path / "config.yml").write_text("console_path_levels: beaucoup\n", encoding="utf-8")
+    from core.workspace_config import DEFAULT_CONSOLE_PATH_LEVELS, console_path_levels
+    assert console_path_levels(str(tmp_path)) == DEFAULT_CONSOLE_PATH_LEVELS
+
+
+def test_the_raw_output_survives_for_traces_and_history(qtbot, tmp_path):
+    """Le raccourcissement ne concerne QUE l'affichage : la trace d'echec et
+    l'historique se lisent dans la sortie brute, ou les chemins sont entiers."""
+    from gui_qt.main_window import PytestWorker
+
+    suite = tmp_path / "TSu" / "JC_API" / "Int" / "MaSuite"
+    suite.mkdir(parents=True)
+    (suite / "test_x.py").write_text("def test_ko():\n    assert False\n", encoding="utf-8")
+
+    worker = PytestWorker(nodeids=[], workspace=str(tmp_path), targets=["."])
+    affiche: list[str] = []
+    brut: list[str] = []
+    worker.stdout_signal.connect(affiche.append)
+    worker.finished_signal.connect(lambda code, sortie: brut.append(sortie))
+
+    worker.run()
+
+    console = "".join(affiche)
+    sortie = brut[0]
+    assert "…/MaSuite/test_x.py::test_ko" in console, "l'affichage est raccourci"
+    assert "TSu/JC_API/Int/MaSuite/test_x.py::test_ko" in sortie.replace("\\", "/"), \
+        "la sortie brute garde le chemin complet"

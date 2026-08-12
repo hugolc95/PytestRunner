@@ -138,6 +138,42 @@ def import_mode_args(workspace: str | None, config_path: str | None = None) -> l
     return [f"--import-mode={mode}"] if mode else []
 
 
+# ------------------------------------------------------------------ console
+
+CONSOLE_PATH_KEYS = ("console_path_levels", "console_paths", "console_path")
+
+# Dossiers conserves devant le nom du fichier dans la console. Un seul suffit :
+# il porte le nom de la suite, et ce qui precede se repete a chaque ligne.
+DEFAULT_CONSOLE_PATH_LEVELS = 1
+
+
+def console_path_levels(workspace: str | None, config_path: str | None = None) -> int:
+    """Nombre de dossiers a garder devant le nom du fichier dans la console.
+
+    `full` (ou -1) desactive le raccourcissement, `0` ne laisse que le nom du
+    fichier. Une valeur incomprise retombe sur le defaut plutot que de faire
+    disparaitre l'information.
+    """
+    valeur = setting_for(workspace, CONSOLE_PATH_KEYS, config_path)
+    if valeur is None:
+        return DEFAULT_CONSOLE_PATH_LEVELS
+
+    if isinstance(valeur, bool):
+        return DEFAULT_CONSOLE_PATH_LEVELS
+    if isinstance(valeur, int):
+        return valeur
+
+    texte = str(valeur).strip().lower()
+    if texte in ("full", "complet", "long"):
+        return -1
+    if texte in ("court", "short"):
+        return 0
+    try:
+        return int(texte)
+    except ValueError:
+        return DEFAULT_CONSOLE_PATH_LEVELS
+
+
 # --------------------------------------------------------------------- PYTHONPATH
 
 def looks_absolute(chemin: str) -> bool:
