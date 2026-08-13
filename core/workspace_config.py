@@ -172,30 +172,25 @@ DEFAULT_READER_ENV = "PYTESTRUNNER_READER"
 
 READER_MODE_KEYS = ("reader_mode", "readers_mode", "mode_lecteurs")
 
-# Par defaut les lecteurs sont joues l'un apres l'autre, en ecrivant chacun dans
-# la cle `Reader` du fichier de configuration avant son run. C'est le seul mode
-# qui ne demande RIEN au code de test : celui-ci continue de lire un lecteur
-# unique, comme il l'a toujours fait.
+# Deux facons d'enchainer plusieurs lecteurs.
+#
+# `sequential` les joue l'un apres l'autre, en ecrivant chacun dans la cle
+# `Reader` du fichier de configuration avant son run. C'est le seul mode qui ne
+# demande RIEN au code de test : celui-ci continue de lire un lecteur unique,
+# comme il l'a toujours fait. Filet de securite quand aucun autre moyen n'est
+# declare de distinguer les lecteurs entre processus simultanes.
 #
 # `parallel` lance tout en meme temps. Le lecteur ne peut alors pas passer par
 # le fichier, que tous les processus partagent : il passe par un plugin injecte
 # qui remplace la fonction du workspace, designee par `reader_getter` :
-#     reader_mode: parallel
 #     reader_getter: config_getters.getConfigReader
-# Sans cette cle, le lecteur n'arrive que par la variable d'environnement
-# PYTESTRUNNER_READER, que le workspace doit alors lire lui-meme.
+# C'est un choix SANS DANGER des que cette cle est presente (le plugin echoue
+# bruyamment plutot que de laisser tous les lecteurs lire la meme valeur), donc
+# c'est le mode retenu automatiquement quand elle est declaree. `reader_mode`
+# permet de forcer l'un ou l'autre explicitement, y compris pour revenir au
+# sequentiel malgre un reader_getter present.
 READER_MODES = ("sequential", "parallel")
 DEFAULT_READER_MODE = "sequential"
-
-
-def reader_mode_for(workspace: str | None, config_path: str | None = None) -> str:
-    """Comment enchainer les lecteurs : l'un apres l'autre, ou tous a la fois."""
-    valeur = setting_for(workspace, READER_MODE_KEYS, config_path)
-    if valeur is None:
-        return DEFAULT_READER_MODE
-    mode = str(valeur).strip().lower()
-    return mode if mode in READER_MODES else DEFAULT_READER_MODE
-
 
 READER_GETTER_KEYS = ("reader_getter", "reader_function", "getter_reader")
 
@@ -209,6 +204,24 @@ def reader_getter_for(workspace: str | None, config_path: str | None = None) -> 
     """
     valeur = setting_for(workspace, READER_GETTER_KEYS, config_path)
     return str(valeur).strip() if valeur is not None else ""
+
+
+def reader_mode_for(workspace: str | None, config_path: str | None = None) -> str:
+    """Comment enchainer les lecteurs : l'un apres l'autre, ou tous a la fois.
+
+    Sans reglage explicite, le parallele est choisi des qu'un reader_getter est
+    declare -- c'est alors sans risque -- et le sequentiel sinon, puisque c'est
+    le seul mode qui ne demande rien au code de test.
+    """
+    valeur = setting_for(workspace, READER_MODE_KEYS, config_path)
+    if valeur is not None:
+        mode = str(valeur).strip().lower()
+        if mode in READER_MODES:
+            return mode
+
+    if reader_getter_for(workspace, config_path):
+        return "parallel"
+    return DEFAULT_READER_MODE
 
 
 def reader_env_var(workspace: str | None, config_path: str | None = None) -> str:

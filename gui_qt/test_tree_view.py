@@ -12,21 +12,29 @@ from gui_qt.styles.styles import console_style
 
 # Longueur au-dela de laquelle un nom de lecteur est raccourci en en-tete de
 # colonne. Le nom complet reste dans l'infobulle et sur la console.
-MAX_READER_LABEL = 14
+MAX_READER_LABEL = 24
 
 
 def short_reader_label(nom: str) -> str:
-    """Nom court d'un lecteur pour un en-tete de colonne.
+    """Nom court d'un lecteur, raccourci par MOTS entiers.
 
-    `Infineon CryptoWrapperTU Reader 0` devient `Reader 0` : ecrit en entier,
-    l'en-tete imposait sa largeur a une colonne qui n'affiche qu'une icone.
+    Des lecteurs s'appellent `Infineon CryptoWrapperTU Reader` et
+    `Infineon TestBiosWrapperTU Reader` : ce qui les distingue est au milieu.
+    Couper a un nombre de caracteres donnait `apperTU Reader`, illisible et
+    identique d'un lecteur a l'autre. On retire donc les mots de tete, un a un,
+    jusqu'a tenir -- et si le dernier mot depasse a lui seul, on le garde
+    entier plutot que de le mutiler.
     """
     nom = str(nom).strip()
     if len(nom) <= MAX_READER_LABEL:
         return nom
+
     mots = nom.split()
-    court = " ".join(mots[-2:]) if len(mots) >= 2 else nom[-MAX_READER_LABEL:]
-    return court if len(court) <= MAX_READER_LABEL else court[-MAX_READER_LABEL:]
+    for depart in range(1, len(mots)):
+        court = " ".join(mots[depart:])
+        if len(court) <= MAX_READER_LABEL:
+            return court
+    return mots[-1] if mots else nom
 
 
 ID_ROLE = Qt.UserRole

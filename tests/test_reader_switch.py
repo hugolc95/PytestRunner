@@ -158,6 +158,23 @@ def test_parallel_can_be_asked_for(tmp_path):
     assert reader_mode_for(str(tmp_path)) == "parallel"
 
 
+def test_declaring_a_getter_switches_to_parallel_on_its_own(tmp_path):
+    """Le point demande : des que le plugin peut prendre en charge le lecteur
+    sans risque, le parallele devient automatique -- une seule ligne a
+    ajouter, et pas la peine de connaitre en plus la cle reader_mode."""
+    (tmp_path / "config.yml").write_text(
+        "reader_getter: config_getters.getConfigReader\n", encoding="utf-8")
+    assert reader_mode_for(str(tmp_path)) == "parallel"
+
+
+def test_an_explicit_mode_overrides_the_inference(tmp_path):
+    """On doit pouvoir revenir au sequentiel malgre un reader_getter present."""
+    (tmp_path / "config.yml").write_text(
+        "reader_getter: config_getters.getConfigReader\n"
+        "reader_mode: sequential\n", encoding="utf-8")
+    assert reader_mode_for(str(tmp_path)) == "sequential"
+
+
 READERS = ["Lecteur A", "Lecteur B"]
 
 
@@ -201,6 +218,37 @@ def test_the_tests_see_each_reader_in_turn(window, qtbot):
         for worker in window.workers:
             worker.stop()
             worker.wait(5000)
+
+
+def test_the_sequential_fallback_explains_how_to_go_parallel(window, qtbot):
+    """Le sequentiel sans reader_getter est un choix par defaut, pas une
+    limite : la console doit dire comment en sortir, sans obliger a revenir
+    demander comment faire."""
+    window._launch_worker(["test_x.py::test_f"], "run\n")
+    try:
+        window._flush_console_output()
+        assert "reader_getter" in window.console.toPlainText()
+        assert "l'un apres l'autre" in window.console.toPlainText()
+    finally:
+        qtbot.waitUntil(lambda: window._runs_left == 0, timeout=120000)
+        for worker in window.workers:
+            worker.stop()
+            worker.wait(5000)
+
+
+def test_no_fallback_note_once_a_getter_is_declared(parallele, qtbot):
+    """Une fois le parallele possible, l'avertissement n'a plus lieu d'etre."""
+    parallele._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
+    try:
+        parallele._flush_console_output()
+        sortie = "".join(parallele.details.console_for(i).toPlainText()
+                         for i in range(3))
+        assert "reader_getter" not in sortie
+    finally:
+        qtbot.waitUntil(lambda: parallele._runs_left == 0, timeout=120000)
+        for worker in parallele.workers:
+            worker.stop()
+            worker.wait(10000)
 
 
 def test_the_configuration_is_left_as_it_was(window, qtbot):
@@ -447,10 +495,11 @@ def parallele(qtbot, tmp_path):
     from gui_qt.main_window import MainWindow
 
     QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
+    # Pas de reader_mode ici : declarer reader_getter doit suffire a lui seul a
+    # faire choisir le parallele, c'est le scenario que l'utilisateur attend.
     (tmp_path / "config.yml").write_text(
         "Reader: Lecteur A\n"
         "Readers:\n  - Lecteur B\n  - Lecteur C\n"
-        "reader_mode: parallel\n"
         "reader_getter: config_getters.getConfigReader\n",
         encoding="utf-8")
 
@@ -487,7 +536,8 @@ def parallele(qtbot, tmp_path):
 
 def test_three_readers_run_at_once_each_with_its_own(parallele, qtbot):
     """Le but : trois pytest en meme temps, chacun voyant son lecteur, sans
-    qu'une seule ligne du code de test ait change."""
+    qu'une seule ligne du code de test ait change, et sans meme avoir eu a
+    ecrire reader_mode: parallel -- reader_getter suffit."""
     parallele._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
     try:
         assert len(parallele.workers) == 3

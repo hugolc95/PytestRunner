@@ -197,6 +197,12 @@ class DetailPanel(QWidget):
         self.console_tabs = QTabBar()
         self.console_tabs.setDrawBase(False)
         self.console_tabs.setExpanding(False)
+        # Fenetre etroite + plusieurs lecteurs : les onglets peuvent quand meme
+        # manquer de place. Une ellipse et des fleches de defilement valent
+        # mieux qu'un texte tronque sans le dire ; le nom complet reste de
+        # toute facon dans l'infobulle.
+        self.console_tabs.setElideMode(Qt.ElideRight)
+        self.console_tabs.setUsesScrollButtons(True)
         self.console_tabs.setVisible(False)
         self.console_tabs.currentChanged.connect(self._on_console_tab_changed)
 
@@ -411,8 +417,10 @@ class DetailPanel(QWidget):
             vue.setStyleSheet(console_style())
             entete = self.console_headers[index]
             couleur = styles.reader_color(index)
+            # Ni gras ni gros : l'en-tete nomme la console, il ne doit pas
+            # peser plus que ce qu'elle contient.
             entete.setStyleSheet(
-                f"color:{couleur}; font-weight:700; font-size:12px; padding:3px 6px;"
+                f"color:{couleur}; font-weight:500; font-size:11px; padding:2px 6px;"
                 f"border-left:3px solid {couleur};"
                 f"background:{styles.mix(styles.palette()['surface'], couleur, 0.07)};"
             )

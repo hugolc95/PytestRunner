@@ -100,16 +100,40 @@ def tree(qtbot):
 def test_each_reader_gets_its_column(tree):
     assert tree.model.columnCount() == 3
     entetes = [tree.model.headerData(c, Qt.Horizontal) for c in range(3)]
-    assert entetes == ["Tests", "Reader 0", "Reader 1"]
+    # "Infineon Reader 0" tient dans le budget : rien a raccourcir.
+    assert entetes == ["Tests", "Infineon Reader 0", "Infineon Reader 1"]
 
 
-def test_a_long_reader_name_is_shortened_in_the_header():
-    """Ecrit en entier, l'en-tete imposait sa largeur a une colonne qui
-    n'affiche qu'une icone, et le nom des tests se retrouvait tronque."""
+def test_a_long_reader_name_is_shortened_by_whole_words():
+    """Le raccourcissement retire des MOTS entiers, pas des caracteres.
+
+    Couper a un nombre fixe de caracteres donnait 'apperTU Reader' au milieu
+    d'un mot -- illisible, et rien qui distingue ce lecteur d'un autre.
+    """
     from gui_qt.test_tree_view import short_reader_label
 
-    assert short_reader_label("Infineon CryptoWrapperTU Reader 0") == "Reader 0"
+    assert short_reader_label("Infineon CryptoWrapperTU Reader 0") == "CryptoWrapperTU Reader 0"
     assert short_reader_label("Reader 1") == "Reader 1"
+
+
+def test_the_real_reader_names_are_not_cut_mid_word():
+    """Les noms observes en pratique : le prefixe commun 'Infineon' part,
+    la partie qui distingue les lecteurs entre eux reste entiere."""
+    from gui_qt.test_tree_view import short_reader_label
+
+    assert short_reader_label("Infineon WSLC26G Reader") == "Infineon WSLC26G Reader"
+    assert short_reader_label("Infineon TestBiosWrapperTU Reader") == "TestBiosWrapperTU Reader"
+    # Le defaut signale : le crop precedent coupait au milieu du mot et
+    # donnait "apperTU Reader", sans le "Wr" ni le "T" qui le precedaient.
+    assert short_reader_label("Infineon TestBiosWrapperTU Reader").startswith("TestBiosWrapperTU")
+
+
+def test_a_single_long_word_is_kept_whole_rather_than_mutilated():
+    from gui_qt.test_tree_view import short_reader_label
+
+    long_mot = "Un" + "x" * 40 + "Reader"
+    resultat = short_reader_label(long_mot)
+    assert resultat == long_mot, "un seul mot ne doit pas etre coupe au milieu"
 
 
 def test_the_full_name_stays_in_the_tooltip(tree):
@@ -251,9 +275,9 @@ def window(qtbot, tmp_path):
 
 
 def test_the_readers_appear_in_the_action_bar(window):
-    """Nom court sur la case, nom complet dans l'infobulle : cinq lecteurs
-    ecrits en entier deborderaient la barre."""
-    assert [c.text() for c in window.reader_checkboxes] == ["Reader 0", "Reader 1"]
+    """Le nom complet reste dans l'infobulle ; sur la case, il n'est raccourci
+    que s'il depasse le budget -- "Infineon Reader 0" y tient tel quel."""
+    assert [c.text() for c in window.reader_checkboxes] == READERS
     assert [c.toolTip() for c in window.reader_checkboxes] == READERS
 
 
@@ -400,7 +424,7 @@ def test_one_tab_per_reader(panel):
     panel.set_readers(CINQ)
 
     assert panel.console_tabs.count() == 5
-    assert panel.console_tabs.tabText(0) == "Reader 0"
+    assert panel.console_tabs.tabText(0) == "CryptoWrapperTU Reader 0"
     assert panel.console_tabs.tabToolTip(4) == CINQ[4]
 
 

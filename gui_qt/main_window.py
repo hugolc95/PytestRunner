@@ -728,8 +728,7 @@ class MainWindow(QMainWindow):
                 case.setToolTip(nom)
                 case.setChecked(True)
                 case.setCursor(Qt.PointingHandCursor)
-                case.setStyleSheet(
-                    f"color:{styles.reader_color(index)}; font-weight:600;")
+                case.setStyleSheet(f"color:{styles.reader_color(index)};")
                 self.reader_bar.addWidget(case)
                 self.reader_checkboxes.append(case)
 
@@ -868,7 +867,7 @@ class MainWindow(QMainWindow):
 
         self.diff_button.setStyleSheet(toolbar_button())
         for index, case in enumerate(self.reader_checkboxes):
-            case.setStyleSheet(f"color:{styles.reader_color(index)}; font-weight:600;")
+            case.setStyleSheet(f"color:{styles.reader_color(index)};")
 
         for trait in getattr(self, "_separators", []):
             trait.setStyleSheet(separator_style())
@@ -1397,8 +1396,20 @@ class MainWindow(QMainWindow):
         # Sequentiel par defaut : le lecteur est ecrit dans la configuration le
         # temps de son run, ce qui ne demande rien au code de test. Deux
         # processus a la fois se disputeraient ce fichier, d'ou l'enchainement.
+        # Des qu'un reader_getter est declare, le parallele devient automatique
+        # (voir core/workspace_config.reader_mode_for) : un plugin injecte le
+        # remplace alors, sans risque de melanger les lecteurs entre processus.
         self._reader_mode = reader_mode_for(self.workspace, self.config_path())
         sequentiel = self._reader_mode != "parallel" and len(lecteurs) > 1
+
+        if sequentiel and len(lecteurs) > 1 and not reader_getter_for(
+                self.workspace, self.config_path()):
+            self._queue_console_output(
+                f"{len(lecteurs)} lecteurs seront testes l'un apres l'autre.\n"
+                "Pour les lancer en parallele, declarez dans la configuration :\n"
+                "  reader_getter: <module>.<fonction>   "
+                "(celle qui renvoie le lecteur actif)\n"
+            )
 
         self.workers: list[PytestWorker] = []
         self._runs_left = len(lecteurs)
