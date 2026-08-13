@@ -213,9 +213,9 @@ class PytestWorker(QThread):
             )
         except (OSError, ValueError) as exc:
             message = (
-                f"Impossible de lancer l'interpreteur des tests :\n  {python}\n"
+                f"Could not start the test interpreter:\n  {python}\n"
                 f"{type(exc).__name__}: {exc}\n"
-                "Verifiez le menu Configuration > Interpreteur Python des tests...\n"
+                "Check the Settings > Test Python interpreter... menu.\n"
             )
             self.stderr_signal.emit(message)
             self.finished_signal.emit(-1, message)
@@ -595,12 +595,12 @@ class MainWindow(QMainWindow):
         action_bar.addLayout(self.reader_bar)
         self.reader_checkboxes: list[QCheckBox] = []
 
-        self.diff_button = QPushButton("Differences seulement")
+        self.diff_button = QPushButton("Differences only")
         self.diff_button.setCheckable(True)
         self.diff_button.setCursor(Qt.PointingHandCursor)
         self.diff_button.setStyleSheet(toolbar_button())
         self.diff_button.setToolTip(
-            "N'afficher que les tests sur lesquels les lecteurs ne s'accordent pas.")
+            "Only show tests where the readers disagree.")
         self.diff_button.toggled.connect(self.tree.filter_divergences)
         action_bar.addWidget(self.diff_button)
         self._show_reader_controls(False)
@@ -925,16 +925,16 @@ class MainWindow(QMainWindow):
         campaign_action.triggered.connect(lambda: self.tabs.setCurrentIndex(1))
 
     def _build_reports_menu(self):
-        reports_menu = self.menuBar().addMenu("Rapports")
-        history_action = reports_menu.addAction("Historique des executions...")
+        reports_menu = self.menuBar().addMenu("Reports")
+        history_action = reports_menu.addAction("Run history...")
         history_action.triggered.connect(self.open_history_window)
 
-        flaky_action = reports_menu.addAction("Tests instables (flaky)...")
+        flaky_action = reports_menu.addAction("Flaky tests...")
         flaky_action.triggered.connect(self.open_flaky_window)
 
     def _build_settings_menu(self):
-        settings_menu = self.menuBar().addMenu("Configuration")
-        interpreter_action = settings_menu.addAction("Interpreteur Python des tests...")
+        settings_menu = self.menuBar().addMenu("Settings")
+        interpreter_action = settings_menu.addAction("Test Python interpreter...")
         interpreter_action.triggered.connect(self.open_interpreter_dialog)
 
     def current_interpreter(self, workspace: str | None = None) -> str:
@@ -960,11 +960,11 @@ class MainWindow(QMainWindow):
         source = interpreter_source(configured=configured, workspace=self.workspace)
 
         if python:
-            self._queue_console_output(f"Interpreteur des tests : {python}  [{source}]\n")
+            self._queue_console_output(f"Test interpreter: {python}  [{source}]\n")
         else:
             self._queue_console_output(
-                "Aucun interpreteur Python configure pour les tests "
-                "(menu Configuration > Interpreteur Python des tests...).\n"
+                "No Python interpreter configured for the tests "
+                "(Settings > Test Python interpreter... menu).\n"
             )
 
     def open_history_window(self):
@@ -1069,24 +1069,23 @@ class MainWindow(QMainWindow):
         exemples = "\n".join(f"  {nodeid}" for nodeid in self._unmatched_results[:3])
         reste = len(self._unmatched_results) - 3
         if reste > 0:
-            exemples += f"\n  ... et {reste} autre(s)"
+            exemples += f"\n  ... and {reste} more"
 
         if self._replaced_cases:
             remplacement = (
-                f" ; ils y ont ete ajoutes, en remplacement des "
-                f"{self._replaced_cases} cas de l'ancienne collecte qui n'ont pas ete "
-                "executes.\n"
+                f", added to the tree in place of the "
+                f"{self._replaced_cases} case(s) from the previous collection that did "
+                "not run.\n"
             )
         else:
-            remplacement = " ; ils y ont ete ajoutes.\n"
+            remplacement = ", added to the tree.\n"
 
         self._queue_console_output(
-            f"\n{len(self._unmatched_results)} test(s) executes ne figuraient pas dans "
-            f"l'arbre{remplacement}"
-            "La collecte n'est donc pas reproductible : les identifiants de parametres "
-            "changent\nd'une collecte a l'autre. Pour que la selection porte sur les "
-            "memes tests que l'execution,\nfixez-les avec ids= dans parametrize, ou tirez "
-            "les valeurs aleatoires dans le test.\n"
+            f"\n{len(self._unmatched_results)} test(s) ran but were not in the tree"
+            f"{remplacement}"
+            "Collection is therefore not reproducible: parameter ids change\n"
+            "from one collection to the next. For the selection to match what actually "
+            "ran,\nfix them with ids= in parametrize, or seed random values in the test.\n"
             f"{exemples}\n"
         )
 
@@ -1338,8 +1337,8 @@ class MainWindow(QMainWindow):
         restaure = restore_interrupted_reader(self.reader_config_path())
         if restaure:
             self._queue_console_output(
-                f"Lecteur remis a '{restaure}' : un lancement precedent avait ete "
-                "interrompu avant d'avoir pu le retablir.\n")
+                f"Reader reset to '{restaure}': a previous run was interrupted "
+                "before it could be restored.\n")
         self.details.clear_details()
         self.tree.load_tree(roots)
         self.run_button.setEnabled(count > 0)
@@ -1352,9 +1351,9 @@ class MainWindow(QMainWindow):
         self._queue_console_output("Workspace load failed.\n")
         show_scrollable_error(
             self,
-            "Erreur de chargement du workspace",
+            "Workspace load error",
             message,
-            intro="pytest n'a pas pu collecter les tests de ce workspace :",
+            intro="pytest could not collect the tests in this workspace:",
         )
 
     def stop_tests(self):
@@ -1384,9 +1383,9 @@ class MainWindow(QMainWindow):
         if problem:
             show_scrollable_error(
                 self,
-                "Interpreteur des tests inutilisable",
+                "Test interpreter unusable",
                 problem,
-                intro="Les tests n'ont pas pu etre lances :",
+                intro="The tests could not be started:",
             )
             return
 
@@ -1446,7 +1445,7 @@ class MainWindow(QMainWindow):
 
         if sequentiel:
             self._queue_console_output(
-                f"{len(lecteurs)} lecteurs seront testes l'un apres l'autre "
+                f"{len(lecteurs)} readers will be tested one after another "
                 "(reader_mode: sequential).\n"
             )
 
@@ -1532,7 +1531,7 @@ class MainWindow(QMainWindow):
 
     def run_failed_tests(self):
         if not self.failed_nodeids:
-            QMessageBox.information(self, "Info", "Aucun test en echec a relancer.")
+            QMessageBox.information(self, "Info", "No failed test to re-run.")
             return
 
         nodeids = sorted(self.failed_nodeids)
@@ -1545,10 +1544,10 @@ class MainWindow(QMainWindow):
             return
 
         if not nodeids:
-            QMessageBox.information(self, "Info", "Aucun test executable trouve sous cet element.")
+            QMessageBox.information(self, "Info", "No runnable test found under this item.")
             return
 
-        self._launch_worker(nodeids, f"Running {len(nodeids)} test(s) selectionne(s) via le menu contextuel...\n")
+        self._launch_worker(nodeids, f"Running {len(nodeids)} test(s) selected from the context menu...\n")
 
     def open_test_file(self, relative_path: str):
         """Ouvre le fichier source d'un test avec l'application par defaut de Windows."""
@@ -1557,7 +1556,7 @@ class MainWindow(QMainWindow):
 
         full_path = os.path.join(self.workspace, relative_path)
         if not os.path.isfile(full_path):
-            QMessageBox.warning(self, "Fichier introuvable", f"Impossible de trouver :\n{full_path}")
+            QMessageBox.warning(self, "File not found", f"Could not find:\n{full_path}")
             return
 
         try:
@@ -1567,11 +1566,11 @@ class MainWindow(QMainWindow):
             # exclusivement pour Windows 32 bits, mais on securise quand meme.
             QMessageBox.information(
                 self,
-                "Non supporte",
-                f"Ouverture automatique non disponible sur cette plateforme.\nChemin : {full_path}",
+                "Not supported",
+                f"Automatic opening is not available on this platform.\nPath: {full_path}",
             )
         except OSError as exc:
-            QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le fichier :\n{exc}")
+            QMessageBox.critical(self, "Error", f"Could not open the file:\n{exc}")
 
     def open_test_log(self, nodeid: str):
         """Ouvre le fichier .log du dernier run pour ce test. A defaut, ouvre le

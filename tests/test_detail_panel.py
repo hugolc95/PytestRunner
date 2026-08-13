@@ -36,7 +36,7 @@ def test_function_name_is_none_without_a_node_separator():
 def test_reading_a_missing_file_reports_the_error(tmp_path):
     contenu, avertissement = read_text_file(tmp_path / "absent.txt")
     assert contenu == ""
-    assert "impossible" in avertissement.lower()
+    assert "could not read" in avertissement.lower()
 
 
 def test_reading_undecodable_bytes_does_not_crash(tmp_path):
@@ -55,7 +55,7 @@ def test_a_huge_file_is_truncated(tmp_path, monkeypatch):
 
     contenu, avertissement = read_text_file(fichier)
     assert len(contenu) == 100
-    assert "tronque" in avertissement.lower()
+    assert "truncated" in avertissement.lower()
 
 
 # ---------------------------------------------------------------------- source
@@ -115,14 +115,14 @@ def test_clicking_a_folder_explains_instead_of_showing_nothing(panel, tmp_path):
     panel.show_for("module", "")
 
     assert panel.source_view.toPlainText() == ""
-    assert "dossier" in panel.source_header.text()
+    assert "folder" in panel.source_header.text()
 
 
 def test_a_missing_source_file_is_reported(panel, tmp_path):
     panel.set_workspace(str(tmp_path))
     panel.show_for("module/disparu.py::test_x", "module/disparu.py::test_x")
 
-    assert "introuvable" in panel.source_header.text()
+    assert "not found" in panel.source_header.text()
 
 
 def test_without_a_workspace_nothing_explodes(panel):
@@ -186,7 +186,7 @@ def test_a_node_without_nodeid_asks_for_a_precise_test(panel, tmp_path):
 
     panel.show_for("module/test_exemple.py", "")
 
-    assert "test precis" in panel.log_header.text()
+    assert "specific test" in panel.log_header.text()
 
 
 # ----------------------------------------------------------------------- onglets
@@ -341,10 +341,10 @@ def test_a_failed_save_is_reported_and_not_forgotten(source, monkeypatch):
     panel.source_view.setPlainText("# essai\n")
 
     monkeypatch.setattr("gui_qt.detail_panel.write_source_file",
-                        lambda *a, **k: "Enregistrement impossible : verrouille")
+                        lambda *a, **k: "Could not save: locked")
 
     assert panel.save_source() is False
-    assert "impossible" in panel.source_status.text().lower()
+    assert "could not save" in panel.source_status.text().lower()
     assert panel._dirty, "la modification reste en attente, elle n'est pas perdue"
 
 

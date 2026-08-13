@@ -50,7 +50,7 @@ def test_matching_results_raise_no_note(window):
     assert window._unmatched_results == []
     window._warn_about_unmatched_results()
     window._flush_console_output()
-    assert "ne figuraient pas" not in window.console.toPlainText()
+    assert "were not in the tree" not in window.console.toPlainText()
 
 
 def test_unknown_results_are_collected(window):
@@ -188,7 +188,7 @@ def test_the_note_mentions_the_replacement(window):
     window._warn_about_unmatched_results()
     window._flush_console_output()
 
-    assert "en remplacement des 2 cas" in window.console.toPlainText()
+    assert "in place of the 2 case(s)" in window.console.toPlainText()
 
 
 def test_the_note_explains_the_cause_and_the_fix(window):
@@ -197,8 +197,8 @@ def test_the_note_explains_the_cause_and_the_fix(window):
     window._flush_console_output()
 
     message = window.console.toPlainText()
-    assert "ils y ont ete ajoutes" in message, "dire ce qui a ete fait"
-    assert "reproductible" in message, "la cause doit etre nommee"
+    assert "added to the tree" in message, "dire ce qui a ete fait"
+    assert "reproducible" in message, "la cause doit etre nommee"
     assert "ids=" in message, "la correction doit etre montree"
     assert "test_x.py::test_f[7391]" in message, "l'exemple concret doit apparaitre"
 
@@ -210,7 +210,7 @@ def test_the_note_does_not_list_hundreds_of_examples(window):
     window._flush_console_output()
 
     message = window.console.toPlainText()
-    assert "et 47 autre(s)" in message
+    assert "and 47 more" in message
     assert message.count("test_x.py::test_f[") <= 4
 
 

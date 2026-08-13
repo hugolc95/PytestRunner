@@ -221,7 +221,7 @@ def test_the_sequential_choice_is_explained_in_the_console(window, qtbot):
     window._launch_worker(["test_x.py::test_f"], "run\n")
     try:
         window._flush_console_output()
-        assert "l'un apres l'autre" in window.console.toPlainText()
+        assert "one after another" in window.console.toPlainText()
         assert "reader_mode: sequential" in window.console.toPlainText()
     finally:
         qtbot.waitUntil(lambda: window._runs_left == 0, timeout=120000)
@@ -237,7 +237,7 @@ def test_no_sequential_note_in_parallel_mode(parallele, qtbot):
         parallele._flush_console_output()
         sortie = "".join(parallele.details.console_for(i).toPlainText()
                          for i in range(3))
-        assert "l'un apres l'autre" not in sortie
+        assert "one after another" not in sortie
     finally:
         qtbot.waitUntil(lambda: parallele._runs_left == 0, timeout=120000)
         for worker in parallele.workers:
@@ -477,7 +477,7 @@ def test_loading_a_workspace_repairs_an_interrupted_run(qtbot, tmp_path):
     fenetre._flush_console_output()
 
     assert read_active_reader(config) == "Lecteur A"
-    assert "Lecteur remis a 'Lecteur A'" in fenetre.console.toPlainText()
+    assert "Reader reset to 'Lecteur A'" in fenetre.console.toPlainText()
 
 
 # ------------------------------- parallele, sans toucher au code de test

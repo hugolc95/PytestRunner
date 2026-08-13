@@ -27,13 +27,13 @@ from gui_qt.styles.styles import primary_button, neutral_button, danger_button, 
 from gui_qt.status_icons import status_icon, STATUS_COLORS
 
 
-COLUMNS = ["Date", "Mode", "Workspace", "Reader", "Total", "Passed", "Failed", "Skipped", "Error", "Duree (s)"]
+COLUMNS = ["Date", "Mode", "Workspace", "Reader", "Total", "Passed", "Failed", "Skipped", "Error", "Duration (s)"]
 
 
 class HistoryWindow(QDialog):
     def __init__(self, history_manager: RunHistoryManager, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Historique des executions")
+        self.setWindowTitle("Run history")
         self.resize(1200, 600)
 
         self.history_manager = history_manager
@@ -52,17 +52,17 @@ class HistoryWindow(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self.table.doubleClicked.connect(self.view_output)
 
-        layout.addWidget(QLabel("Double-cliquez sur une ligne pour voir la sortie console du run."))
+        layout.addWidget(QLabel("Double-click a row to see the run's console output."))
         layout.addWidget(self.table)
 
         button_bar = QHBoxLayout()
 
-        self.btn_view = QPushButton("Voir la sortie")
-        self.btn_export_html = QPushButton("Exporter en HTML")
-        self.btn_export_junit = QPushButton("Exporter JUnit XML")
-        self.btn_compare = QPushButton("Comparer 2 runs")
-        self.btn_refresh = QPushButton("Rafraichir")
-        self.btn_clear = QPushButton("Effacer l'historique")
+        self.btn_view = QPushButton("View output")
+        self.btn_export_html = QPushButton("Export as HTML")
+        self.btn_export_junit = QPushButton("Export JUnit XML")
+        self.btn_compare = QPushButton("Compare 2 runs")
+        self.btn_refresh = QPushButton("Refresh")
+        self.btn_clear = QPushButton("Clear history")
 
         self.btn_view.setStyleSheet(neutral_button())
         self.btn_export_html.setStyleSheet(primary_button())
@@ -138,20 +138,20 @@ class HistoryWindow(QDialog):
     def view_output(self):
         entry = self._selected_entry()
         if not entry:
-            QMessageBox.information(self, "Info", "Selectionnez d'abord un run dans la liste.")
+            QMessageBox.information(self, "Info", "Select a run in the list first.")
             return
 
         output_text = self.history_manager.get_output(entry)
 
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Sortie console - {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(entry.get('timestamp', 0)))}")
+        dialog.setWindowTitle(f"Console output - {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(entry.get('timestamp', 0)))}")
         dialog.resize(800, 600)
         v = QVBoxLayout(dialog)
 
         text_edit = QTextEdit()
         text_edit.setReadOnly(True)
         text_edit.setStyleSheet(console_style())
-        text_edit.setPlainText(output_text or "(sortie non disponible)")
+        text_edit.setPlainText(output_text or "(output not available)")
 
         v.addWidget(text_edit)
         dialog.exec_()
@@ -159,47 +159,47 @@ class HistoryWindow(QDialog):
     def export_html(self):
         entry = self._selected_entry()
         if not entry:
-            QMessageBox.information(self, "Info", "Selectionnez d'abord un run dans la liste.")
+            QMessageBox.information(self, "Info", "Select a run in the list first.")
             return
 
-        default_name = f"rapport_{entry.get('id', 'run')}.html"
-        dest_path, _ = QFileDialog.getSaveFileName(self, "Exporter le rapport HTML", default_name, "Fichiers HTML (*.html)")
+        default_name = f"report_{entry.get('id', 'run')}.html"
+        dest_path, _ = QFileDialog.getSaveFileName(self, "Export HTML report", default_name, "HTML files (*.html)")
         if not dest_path:
             return
 
         output_text = self.history_manager.get_output(entry)
         try:
             export_html_report(entry, output_text, dest_path)
-            QMessageBox.information(self, "Export termine", f"Rapport HTML enregistre :\n{dest_path}")
+            QMessageBox.information(self, "Export complete", f"HTML report saved:\n{dest_path}")
         except Exception as exc:
-            QMessageBox.critical(self, "Erreur", f"Echec de l'export HTML :\n{exc}")
+            QMessageBox.critical(self, "Error", f"HTML export failed:\n{exc}")
 
     def export_junit(self):
         entry = self._selected_entry()
         if not entry:
-            QMessageBox.information(self, "Info", "Selectionnez d'abord un run dans la liste.")
+            QMessageBox.information(self, "Info", "Select a run in the list first.")
             return
 
         junit_path = entry.get("junit_xml_path", "")
         if not junit_path or not os.path.isfile(junit_path):
             QMessageBox.warning(
                 self,
-                "Indisponible",
-                "Aucun rapport JUnit XML n'a ete conserve pour ce run "
-                "(il a peut-etre ete supprime, ou le run est trop ancien).",
+                "Not available",
+                "No JUnit XML report was kept for this run "
+                "(it may have been deleted, or the run is too old).",
             )
             return
 
         default_name = f"junit_{entry.get('id', 'run')}.xml"
-        dest_path, _ = QFileDialog.getSaveFileName(self, "Exporter le rapport JUnit XML", default_name, "Fichiers XML (*.xml)")
+        dest_path, _ = QFileDialog.getSaveFileName(self, "Export JUnit XML report", default_name, "XML files (*.xml)")
         if not dest_path:
             return
 
         try:
             shutil.copyfile(junit_path, dest_path)
-            QMessageBox.information(self, "Export termine", f"Rapport JUnit XML enregistre :\n{dest_path}")
+            QMessageBox.information(self, "Export complete", f"JUnit XML report saved:\n{dest_path}")
         except Exception as exc:
-            QMessageBox.critical(self, "Erreur", f"Echec de l'export JUnit XML :\n{exc}")
+            QMessageBox.critical(self, "Error", f"JUnit XML export failed:\n{exc}")
 
     def compare_runs(self):
         entries = self._selected_entries()
@@ -207,7 +207,7 @@ class HistoryWindow(QDialog):
             QMessageBox.information(
                 self,
                 "Info",
-                "Selectionnez exactement 2 runs (Ctrl+clic ou Maj+clic) pour les comparer.",
+                "Select exactly 2 runs (Ctrl+click or Shift+click) to compare them.",
             )
             return
 
@@ -225,24 +225,24 @@ class HistoryWindow(QDialog):
             return f"{entry.get('passed', 0)} passed, {entry.get('failed', 0)} failed, {entry.get('skipped', 0)} skipped"
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Comparaison de deux runs")
+        dialog.setWindowTitle("Comparing two runs")
         dialog.resize(700, 550)
         v = QVBoxLayout(dialog)
 
         header = QLabel(
             f"<b>Reference</b> &nbsp; {fmt(older)} &nbsp; <span style='color:#888'>({summary(older)})</span><br>"
-            f"<b>Compare a</b> &nbsp;&nbsp; {fmt(newer)} &nbsp; <span style='color:#888'>({summary(newer)})</span>"
+            f"<b>Compared to</b> &nbsp;&nbsp; {fmt(newer)} &nbsp; <span style='color:#888'>({summary(newer)})</span>"
         )
         v.addWidget(header)
 
         v.addWidget(self._build_diff_section(
-            f"Nouveaux echecs ({len(newly_failed)})", newly_failed, "FAILED", "Aucun nouvel echec."
+            f"New failures ({len(newly_failed)})", newly_failed, "FAILED", "No new failure."
         ))
         v.addWidget(self._build_diff_section(
-            f"Tests corriges ({len(newly_fixed)})", newly_fixed, "PASSED", "Aucun test corrige."
+            f"Fixed tests ({len(newly_fixed)})", newly_fixed, "PASSED", "No fixed test."
         ))
 
-        close_button = QPushButton("Fermer")
+        close_button = QPushButton("Close")
         close_button.setStyleSheet(neutral_button())
         close_button.clicked.connect(dialog.accept)
         v.addWidget(close_button)
@@ -274,8 +274,8 @@ class HistoryWindow(QDialog):
     def clear_history(self):
         confirm = QMessageBox.question(
             self,
-            "Confirmer",
-            "Effacer tout l'historique des executions ? Cette action est irreversible.",
+            "Confirm",
+            "Clear the entire run history? This action cannot be undone.",
             QMessageBox.Yes | QMessageBox.No,
         )
         if confirm == QMessageBox.Yes:

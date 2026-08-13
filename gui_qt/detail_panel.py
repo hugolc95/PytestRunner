@@ -76,7 +76,7 @@ def read_text_file(path: Path) -> tuple[str, str | None]:
     try:
         size = path.stat().st_size
     except OSError as exc:
-        return "", f"Lecture impossible : {exc}"
+        return "", f"Could not read: {exc}"
 
     warning = None
     try:
@@ -84,13 +84,13 @@ def read_text_file(path: Path) -> tuple[str, str | None]:
             if size > MAX_DISPLAY_BYTES:
                 content = f.read(MAX_DISPLAY_BYTES)
                 warning = (
-                    f"Fichier tronque a {MAX_DISPLAY_BYTES // 1_000_000} Mo "
-                    f"(taille reelle : {size / 1_000_000:.1f} Mo)."
+                    f"File truncated to {MAX_DISPLAY_BYTES // 1_000_000} MB "
+                    f"(actual size: {size / 1_000_000:.1f} MB)."
                 )
             else:
                 content = f.read()
     except OSError as exc:
-        return "", f"Lecture impossible : {exc}"
+        return "", f"Could not read: {exc}"
 
     return content, warning
 
@@ -109,7 +109,7 @@ def read_source_file(path: Path) -> tuple[str, str | None, str, bool]:
     try:
         brut = path.read_bytes()
     except OSError as exc:
-        return "", f"Lecture impossible : {exc}", "\n", False
+        return "", f"Could not read: {exc}", "\n", False
 
     tronque = len(brut) > MAX_DISPLAY_BYTES
     if tronque:
@@ -129,10 +129,10 @@ def read_source_file(path: Path) -> tuple[str, str | None, str, bool]:
     avertissement = None
     if tronque:
         avertissement = (
-            f"Fichier tronque a {MAX_DISPLAY_BYTES // 1_000_000} Mo : lecture seule."
+            f"File truncated to {MAX_DISPLAY_BYTES // 1_000_000} MB: read-only."
         )
     elif not modifiable:
-        avertissement = "Fichier non decodable en UTF-8 : lecture seule."
+        avertissement = "File not decodable as UTF-8: read-only."
 
     return texte, avertissement, fin_de_ligne, modifiable
 
@@ -156,7 +156,7 @@ def write_source_file(path: Path, texte: str, fin_de_ligne: str) -> str | None:
             temporaire.unlink()
         except OSError:
             pass
-        return f"Enregistrement impossible : {exc}"
+        return f"Could not save: {exc}"
 
     return None
 
@@ -211,7 +211,7 @@ class DetailPanel(QWidget):
         self.compare_button.setCheckable(True)
         self.compare_button.setAutoRaise(True)
         self.compare_button.setCursor(Qt.PointingHandCursor)
-        self.compare_button.setToolTip("Afficher toutes les consoles cote a cote")
+        self.compare_button.setToolTip("Show all consoles side by side")
         self.compare_button.setVisible(False)
         self.compare_button.toggled.connect(self._on_compare_toggled)
 
@@ -243,8 +243,8 @@ class DetailPanel(QWidget):
         self.source_highlighter = PythonHighlighter(self.source_view.document())
         self.log_highlighter = LogHighlighter(self.log_view.document())
 
-        self.source_header = QLabel("Cliquez un test dans l'arbre pour voir son code source.")
-        self.log_header = QLabel("Cliquez un test dans l'arbre pour voir son log.")
+        self.source_header = QLabel("Click a test in the tree to see its source code.")
+        self.log_header = QLabel("Click a test in the tree to see its log.")
         for header in (self.source_header, self.log_header):
             header.setWordWrap(True)
 
@@ -274,7 +274,7 @@ class DetailPanel(QWidget):
         self.detach_button.setAutoRaise(True)
         self.detach_button.setCursor(Qt.PointingHandCursor)
         self.detach_button.setToolTip(
-            "Detacher ce panneau dans sa propre fenetre (second ecran, plein ecran...)")
+            "Detach this panel into its own window (second screen, full screen...)")
         self.detach_button.toggled.connect(self._on_detach_toggled)
 
         self.tabs = QTabWidget()
@@ -373,14 +373,14 @@ class DetailPanel(QWidget):
 
     def _on_compare_toggled(self, actif: bool):
         self.compare_button.setToolTip(
-            "Revenir a une console a la fois" if actif
-            else "Afficher toutes les consoles cote a cote")
+            "Back to one console at a time" if actif
+            else "Show all consoles side by side")
         self._apply_console_layout()
 
     def _on_detach_toggled(self, detache: bool):
         self.detach_button.setToolTip(
-            "Remettre ce panneau dans la fenetre principale" if detache
-            else "Detacher ce panneau dans sa propre fenetre (second ecran, plein ecran...)")
+            "Put this panel back in the main window" if detache
+            else "Detach this panel into its own window (second screen, full screen...)")
         self.detach_requested.emit(detache)
 
     def show_reader(self, reader_index: int):
@@ -452,13 +452,13 @@ class DetailPanel(QWidget):
         self.edit_button.setEnabled(modifiable)
         if not modifiable:
             self.edit_button.setToolTip(
-                "Ce fichier n'est pas modifiable ici." if self._current_source
-                else "Choisissez un fichier de test pour le modifier."
+                "This file cannot be edited here." if self._current_source
+                else "Choose a test file to edit it."
             )
         elif self.edit_button.isChecked():
-            self.edit_button.setToolTip("Revenir en lecture seule (enregistre)")
+            self.edit_button.setToolTip("Back to read-only (saved)")
         else:
-            self.edit_button.setToolTip("Modifier ce fichier (enregistrement automatique)")
+            self.edit_button.setToolTip("Edit this file (auto-saved)")
 
     def set_source_editable(self, editable: bool):
         """Bascule l'onglet Source entre lecture seule et edition."""
@@ -469,7 +469,7 @@ class DetailPanel(QWidget):
         self.source_view.setReadOnly(not editable)
         if editable:
             self.source_view.setFocus()
-            self.source_status.setText("Modification activee")
+            self.source_status.setText("Editing enabled")
         else:
             self.save_source()
 
@@ -479,7 +479,7 @@ class DetailPanel(QWidget):
         if self._loading or self.source_view.isReadOnly():
             return
         self._dirty = True
-        self.source_status.setText("Modifie...")
+        self.source_status.setText("Modified...")
         self._save_timer.start()
 
     def save_source(self) -> bool:
@@ -497,7 +497,7 @@ class DetailPanel(QWidget):
             return False
 
         self._dirty = False
-        self.source_status.setText("Enregistre")
+        self.source_status.setText("Saved")
         return True
 
     def set_workspace(self, workspace: str | None, config_path: str | None = None):
@@ -509,9 +509,9 @@ class DetailPanel(QWidget):
 
     def clear_details(self):
         self.save_source()
-        self._show_no_source("Cliquez un test dans l'arbre pour voir son code source.")
+        self._show_no_source("Click a test in the tree to see its source code.")
         self.log_view.clear()
-        self.log_header.setText("Cliquez un test dans l'arbre pour voir son log.")
+        self.log_header.setText("Click a test in the tree to see its log.")
 
     # ------------------------------------------------------------------
     # Chargement
@@ -531,19 +531,19 @@ class DetailPanel(QWidget):
         self.save_source()
 
         if not self.workspace or not target:
-            self._show_no_source("Aucun workspace charge.")
+            self._show_no_source("No workspace loaded.")
             return
 
         relative = target.split("::", 1)[0]
         if not relative.endswith(".py"):
             self._show_no_source(
-                f"{relative} est un dossier : choisissez un fichier ou un test."
+                f"{relative} is a folder: choose a file or a test."
             )
             return
 
         path = Path(self.workspace) / relative
         if not path.is_file():
-            self._show_no_source(f"Fichier source introuvable : {path}")
+            self._show_no_source(f"Source file not found: {path}")
             return
 
         content, warning, newline, editable = read_source_file(path)
@@ -625,34 +625,34 @@ class DetailPanel(QWidget):
         racine = resolve_log_root(self.workspace, self.config_path)
         declarant = find_config_declaring_log_path(self.workspace, self.config_path)
 
-        lignes = ["Aucun log pour ce test.", f"Cherche dans : {racine}"]
+        lignes = ["No log for this test.", f"Searched in: {racine}"]
         if declarant is not None:
-            lignes.append(f"Chemin lu dans : {declarant.name}")
+            lignes.append(f"Path read from: {declarant.name}")
         else:
             lignes.append(
-                "Aucun fichier de configuration du workspace ne declare de "
-                "LOG_PATH : dossier par defaut."
+                "No workspace configuration file declares a "
+                "LOG_PATH: using the default folder."
             )
         if not racine.is_dir():
-            lignes.append("Ce dossier n'existe pas encore.")
+            lignes.append("This folder does not exist yet.")
         else:
             runs = run_directories(racine)
             lignes.append(
-                f"{len(runs)} dossier(s) de run examine(s), du plus recent au plus ancien."
-                if runs else "Ce dossier ne contient aucun sous-dossier de run."
+                f"{len(runs)} run folder(s) examined, most recent first."
+                if runs else "This folder has no run subfolder."
             )
-        lignes.append("Lancez le test, ou verifiez la cle LOG_PATH de la configuration.")
+        lignes.append("Run the test, or check the configuration's LOG_PATH key.")
         return "\n".join(lignes)
 
     def _load_log(self, nodeid: str | None):
         if not self.workspace:
-            self.log_header.setText("Aucun workspace charge.")
+            self.log_header.setText("No workspace loaded.")
             self.log_view.clear()
             return
 
         if not nodeid:
             self.log_header.setText(
-                "Selectionnez un test precis (une feuille de l'arbre) pour voir son log."
+                "Select a specific test (a leaf of the tree) to see its log."
             )
             self.log_view.clear()
             return
