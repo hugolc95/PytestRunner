@@ -30,6 +30,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from core.pytest_executor import compact_path
 from gui_qt.code_view import CodeView
 from gui_qt.config.config_loader import (
     find_config_declaring_log_path,
@@ -737,10 +738,14 @@ class DetailPanel(QWidget):
 
         content, warning = read_text_file(Path(path))
         vue.setPlainText(content)
-        header = prefixe + str(path)
+        # Chemin raccourci : en entier, un chemin de log reel tenait sur quatre
+        # lignes et mangeait la moitie de la hauteur laissee au log lui-meme.
+        # Le chemin complet reste dans l'infobulle.
+        header = prefixe + compact_path(str(path), levels=1)
         if warning:
             header += f"    ({warning})"
         entete.setText(header)
+        entete.setToolTip(str(path))
         vue.moveCursor(QTextCursor.End)
 
     # ------------------------------------------------------------------

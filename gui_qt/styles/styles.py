@@ -7,7 +7,7 @@
 # Changer de theme a chaud demande de reappliquer les feuilles de style posees
 # widget par widget. C'est le role de restyle() cote fenetres.
 
-from gui_qt.styles.checkbox_icons import checkbox_icons
+from gui_qt.styles.checkbox_icons import checkbox_icons, chevron_icon
 
 LIGHT = {
     "name": "light",
@@ -382,20 +382,15 @@ def app_stylesheet() -> str:
         subcontrol-origin: padding;
         subcontrol-position: center right;
     }}
-    /* Triangle dessine en bordures : sans cette regle, Qt n'affichait aucune
-       fleche des lors qu'un style perso touche au combo, et rien n'indiquait
-       que le champ du workspace deroulait les chemins recents. */
+    /* Chevron dessine en SVG : sans cette regle Qt n'affichait aucune fleche
+       des lors qu'un style perso touche au combo, et rien n'indiquait que le
+       champ du workspace deroulait les chemins recents. Un triangle en
+       bordures CSS ne marche pas ici -- Qt le rend comme un simple tiret. */
     QComboBox::down-arrow {{
-        image: none;
-        width: 0;
-        height: 0;
-        border-left: 4px solid transparent;
-        border-right: 4px solid transparent;
-        border-top: 5px solid {p['text_muted']};
+        image: url({chevron_icon(p['text_muted'])});
+        width: 12px;
+        height: 12px;
         margin-right: 8px;
-    }}
-    QComboBox::down-arrow:hover {{
-        border-top-color: {p['primary']};
     }}
     QComboBox QAbstractItemView {{
         background-color: {p['surface']};

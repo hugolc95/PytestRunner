@@ -57,6 +57,26 @@ def _tiret(couleur: str) -> str:
     )
 
 
+def _chevron(couleur: str) -> str:
+    return (
+        '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" '
+        'viewBox="0 0 12 12">'
+        f'<path d="M2.5 4.5 L6 8 L9.5 4.5" fill="none" stroke="{couleur}" '
+        'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>'
+        '</svg>'
+    )
+
+
+def chevron_icon(couleur: str) -> str:
+    """Chevron du menu deroulant d'un QComboBox, ou "" si l'ecriture echoue.
+
+    Une image, et non un triangle en bordures CSS : Qt ne rend pas le
+    `border-*: solid transparent` d'un sous-controle comme un navigateur, et la
+    fleche apparaissait comme un simple tiret.
+    """
+    return _ecrire("chevron.svg", _chevron(couleur))
+
+
 def checkbox_icons(couleur_coche: str) -> dict:
     """Chemins des icones coche/partiel, dessinees dans cette couleur.
 

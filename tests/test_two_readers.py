@@ -606,3 +606,57 @@ def test_the_counters_are_still_clickable_filters(fenetre):
     fenetre.card_failed.mousePressEvent(None) if False else \
         fenetre.card_failed.clicked.emit("failed")
     assert recus == ["failed"]
+
+
+# ------------------------- en-tete de colonne : le plus court possible
+
+def test_a_column_header_drops_the_generic_reader_word():
+    """`Reader` termine presque tous les noms de lecteurs PC/SC : il ne
+    distingue rien et prenait pourtant la moitie de la largeur de la colonne."""
+    from gui_qt.test_tree_view import column_reader_label
+
+    assert column_reader_label("Cosmo11Secured Reader") == "Cosmo11Secured"
+    assert column_reader_label("TestBiosWrapperTU Reader") == "TestBiosWrapperTU"
+
+
+def test_a_column_header_keeps_a_name_that_is_only_that_word():
+    """Retirer le mot laisserait une colonne sans titre."""
+    from gui_qt.test_tree_view import column_reader_label
+
+    assert column_reader_label("Reader") == "Reader"
+    assert column_reader_label("Lecteur") == "Lecteur"
+
+
+def test_a_column_header_still_shortens_what_is_left():
+    from gui_qt.test_tree_view import column_reader_label
+
+    court = column_reader_label("Infineon CryptoWrapperTU Contactless Reader")
+    assert "Reader" not in court
+    assert len(court) <= 24
+
+
+def test_the_full_reader_name_stays_in_the_tooltip(qtbot):
+    """Le nom complet ne doit pas etre perdu : c'est lui qui identifie le
+    lecteur branche."""
+    from gui_qt.test_tree_view import TestTreeView
+
+    tree = TestTreeView()
+    qtbot.addWidget(tree)
+    tree.set_readers(["Cosmo11Secured Reader", "TestBiosWrapperTU Reader"])
+
+    assert tree.model.horizontalHeaderItem(1).toolTip() == "Cosmo11Secured Reader"
+    assert tree.model.horizontalHeaderItem(2).toolTip() == "TestBiosWrapperTU Reader"
+
+
+def test_the_column_header_font_is_smaller_than_the_tests_one(qtbot):
+    """Un en-tete de colonne de coches ne doit pas peser autant que les tests."""
+    from gui_qt.test_tree_view import TestTreeView
+
+    tree = TestTreeView()
+    qtbot.addWidget(tree)
+    tree.set_readers(["Lecteur A", "Lecteur B"])
+
+    tests = tree.model.horizontalHeaderItem(0).font()
+    lecteur = tree.model.horizontalHeaderItem(1).font()
+    assert lecteur.pointSize() < tests.pointSize()
+    assert not lecteur.bold()

@@ -37,6 +37,25 @@ def short_reader_label(nom: str) -> str:
     return mots[-1] if mots else nom
 
 
+# Mots qui ne distinguent aucun lecteur d'un autre : ils terminent presque tous
+# les noms de lecteurs PC/SC.
+_MOTS_GENERIQUES = ("reader", "lecteur")
+
+
+def column_reader_label(nom: str) -> str:
+    """Nom d'un lecteur pour un EN-TETE de colonne : le plus court possible.
+
+    Une colonne de coches n'a pas besoin d'un titre plus large que ce qu'elle
+    contient. Le mot final `Reader`, commun a tous les lecteurs, ne distingue
+    rien et prenait pourtant la moitie de la largeur : on le retire, le nom
+    complet restant dans l'infobulle.
+    """
+    mots = str(nom).strip().split()
+    while len(mots) > 1 and mots[-1].lower() in _MOTS_GENERIQUES:
+        mots = mots[:-1]
+    return short_reader_label(" ".join(mots)) if mots else str(nom).strip()
+
+
 ID_ROLE = Qt.UserRole
 NODEID_ROLE = Qt.UserRole + 1
 STATUS_ROLE = Qt.UserRole + 2
@@ -589,7 +608,7 @@ class TestTreeView(QTreeView):
 
         self.model.setColumnCount(colonnes)
         self.model.setHorizontalHeaderLabels(
-            ["Tests"] + [short_reader_label(n) for n in self._readers[:colonnes - 1]])
+            ["Tests"] + [column_reader_label(n) for n in self._readers[:colonnes - 1]])
 
         entete = self.header()
         # Le nom du test prend la place restante : un en-tete de lecteur ecrivait
@@ -608,7 +627,7 @@ class TestTreeView(QTreeView):
                 # a peser autant que les tests eux-memes. En petit et sans gras,
                 # il rend a la colonne la largeur que son nom lui prenait.
                 police = cellule.font()
-                police.setPointSize(max(6, police.pointSize() - 2))
+                police.setPointSize(max(7, police.pointSize() - 3))
                 police.setBold(False)
                 cellule.setFont(police)
 
