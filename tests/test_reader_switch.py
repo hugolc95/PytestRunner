@@ -286,7 +286,40 @@ def test_the_reader_field_is_a_dropdown(qtbot):
     assert propositions == ["Lecteur A", "Lecteur B"]
 
 
-def test_adding_a_reader_never_touches_the_reader_key(qtbot):
+def test_adding_opens_an_empty_field_below(qtbot):
+    """"+" ouvre une place pour un AUTRE lecteur, il ne duplique pas celui qui
+    est deja choisi."""
+    from gui_qt.config.config_form import ConfigForm
+
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"Reader": "Lecteur A", "Mode": "PERSO"})
+
+    form.field("Reader").add_button.click()
+
+    champ = form.field("Readers")
+    assert champ is not None, "un champ de lecteur supplementaire est apparu"
+    assert len(champ.rows) == 1
+    assert champ.rows[0].currentText() == ""
+    assert champ.rows[0].isEditable(), "un champ comme le lecteur principal"
+
+
+def test_the_added_field_is_a_dropdown_too(qtbot, monkeypatch):
+    from gui_qt.config import config_form
+
+    monkeypatch.setattr(config_form, "available_readers",
+                        lambda connus=None: ["Detecte 0", "Detecte 1"])
+    form = config_form.ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"Reader": "Detecte 0"})
+
+    form.field("Reader").add_button.click()
+    combo = form.field("Readers").rows[0]
+
+    assert [combo.itemText(i) for i in range(combo.count())] == ["Detecte 0", "Detecte 1"]
+
+
+def test_the_reader_key_is_never_touched(qtbot):
     """C'est `Reader` que lisent les tests : l'ecraser casserait le workspace."""
     from gui_qt.config.config_form import ConfigForm
 
@@ -294,39 +327,62 @@ def test_adding_a_reader_never_touches_the_reader_key(qtbot):
     qtbot.addWidget(form)
     form.load({"Reader": "Lecteur A", "Mode": "PERSO"})
 
-    form.field("Reader").widget.setCurrentText("Lecteur B")
     form.field("Reader").add_button.click()
+    form.field("Readers").rows[0].setCurrentText("Lecteur B")
 
     valeurs = form.values()
-    assert valeurs["Reader"] == "Lecteur B" or valeurs["Reader"] == "Lecteur A"
+    assert valeurs["Reader"] == "Lecteur A"
     assert valeurs["Readers"] == ["Lecteur B"]
     assert valeurs["Mode"] == "PERSO", "le reste de la configuration est intact"
 
 
-def test_adding_appends_to_an_existing_list(qtbot):
+def test_each_added_reader_gets_its_own_field(qtbot):
     from gui_qt.config.config_form import ConfigForm
 
     form = ConfigForm()
     qtbot.addWidget(form)
-    form.load({"Reader": "A", "Readers": ["A"]})
+    form.load({"Reader": "A", "Readers": ["B"]})
 
-    form.field("Reader").widget.setCurrentText("B")
     form.field("Reader").add_button.click()
+    form.field("Readers").rows[-1].setCurrentText("C")
 
-    assert form.values()["Readers"] == ["A", "B"]
+    assert form.values()["Readers"] == ["B", "C"]
 
 
-def test_adding_the_same_reader_twice_changes_nothing(qtbot):
+def test_an_empty_field_is_not_written(qtbot):
+    """Un lecteur sans nom ne designe rien et ferait un run de plus sans objet."""
     from gui_qt.config.config_form import ConfigForm
 
     form = ConfigForm()
     qtbot.addWidget(form)
-    form.load({"Reader": "A", "Readers": ["A", "B"]})
+    form.load({"Reader": "A", "Readers": ["B"]})
 
-    form.field("Reader").widget.setCurrentText("B")
     form.field("Reader").add_button.click()
 
-    assert form.values()["Readers"] == ["A", "B"]
+    assert form.values()["Readers"] == ["B"]
+
+
+def test_a_reader_can_be_removed(qtbot):
+    from gui_qt.config.config_form import ConfigForm
+
+    form = ConfigForm()
+    qtbot.addWidget(form)
+    form.load({"Reader": "A", "Readers": ["B", "C"]})
+
+    champ = form.field("Readers")
+    champ._retirer(champ.rows[0].parentWidget(), champ.rows[0])
+
+    assert form.values()["Readers"] == ["C"]
+
+
+def test_the_extra_readers_come_after_the_main_one(tmp_path):
+    """`Readers` liste ceux qu'on veut EN PLUS de celui de la configuration."""
+    from core.workspace_config import readers_for
+
+    (tmp_path / "config.yml").write_text(
+        "Reader: Lecteur A\nReaders:\n  - Lecteur B\n", encoding="utf-8")
+
+    assert readers_for(str(tmp_path)) == ["Lecteur A", "Lecteur B"]
 
 
 def test_the_detection_hook_feeds_the_dropdown(qtbot, monkeypatch):
@@ -380,3 +436,155 @@ def test_loading_a_workspace_repairs_an_interrupted_run(qtbot, tmp_path):
 
     assert read_active_reader(config) == "Lecteur A"
     assert "Lecteur remis a 'Lecteur A'" in fenetre.console.toPlainText()
+
+
+# ------------------------------- parallele, sans toucher au code de test
+
+@pytest.fixture
+def parallele(qtbot, tmp_path):
+    """Un workspace calque sur le votre : un config_getters.getConfigReader()
+    qui lit la cle Reader, et une classe de test qui l'appelle dans son setup."""
+    from gui_qt.main_window import MainWindow
+
+    QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
+    (tmp_path / "config.yml").write_text(
+        "Reader: Lecteur A\n"
+        "Readers:\n  - Lecteur B\n  - Lecteur C\n"
+        "reader_mode: parallel\n"
+        "reader_getter: config_getters.getConfigReader\n",
+        encoding="utf-8")
+
+    (tmp_path / "config_getters.py").write_text(textwrap.dedent('''
+        import pathlib
+        import yaml
+
+        def getConfigReader():
+            config = pathlib.Path(__file__).with_name("config.yml")
+            return yaml.safe_load(config.read_text(encoding="utf-8"))["Reader"]
+    '''), encoding="utf-8")
+
+    (tmp_path / "test_x.py").write_text(textwrap.dedent('''
+        import pathlib
+
+        from config_getters import getConfigReader
+
+        class TestSuite:
+            def setup_method(self):
+                self.reader = getConfigReader()
+
+            def test_f(self):
+                pathlib.Path(__file__).with_name(
+                    "vu_" + self.reader.replace(" ", "_")).touch()
+    '''), encoding="utf-8")
+
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    fenetre.workspace = str(tmp_path)
+    fenetre.details.set_workspace(str(tmp_path))
+    fenetre.refresh_readers()
+    return fenetre
+
+
+def test_three_readers_run_at_once_each_with_its_own(parallele, qtbot):
+    """Le but : trois pytest en meme temps, chacun voyant son lecteur, sans
+    qu'une seule ligne du code de test ait change."""
+    parallele._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
+    try:
+        assert len(parallele.workers) == 3
+        assert len([w for w in parallele.workers if w.isRunning()]) >= 2, \
+            "les processus doivent tourner ensemble, pas l'un apres l'autre"
+
+        qtbot.waitUntil(lambda: parallele._runs_left == 0, timeout=120000)
+
+        temoins = sorted(p.name for p in Path(parallele.workspace).glob("vu_*"))
+        assert temoins == ["vu_Lecteur_A", "vu_Lecteur_B", "vu_Lecteur_C"]
+    finally:
+        for worker in parallele.workers:
+            worker.stop()
+            worker.wait(10000)
+
+
+def test_the_configuration_is_never_written_in_parallel(parallele, qtbot):
+    """Trois processus s'y disputeraient : le lecteur passe par le plugin."""
+    parallele._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
+    try:
+        assert all(not w.write_reader_to_config for w in parallele.workers)
+        qtbot.waitUntil(lambda: parallele._runs_left == 0, timeout=120000)
+        assert read_active_reader(Path(parallele.workspace) / "config.yml") == "Lecteur A"
+    finally:
+        for worker in parallele.workers:
+            worker.stop()
+            worker.wait(10000)
+
+
+def test_a_wrong_getter_stops_the_run_loudly(qtbot, tmp_path):
+    """Continuer serait pire : tous les lecteurs liraient le meme et les
+    resultats se ressembleraient sans que rien ne le signale."""
+    from gui_qt.main_window import MainWindow
+
+    (tmp_path / "config.yml").write_text(
+        "Reader: A\nReaders:\n  - B\n"
+        "reader_mode: parallel\n"
+        "reader_getter: module_qui_nexiste_pas.getReader\n", encoding="utf-8")
+    (tmp_path / "test_x.py").write_text(
+        "def test_f():\n    pass\n", encoding="utf-8")
+
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    fenetre.workspace = str(tmp_path)
+    fenetre.details.set_workspace(str(tmp_path))
+    fenetre.refresh_readers()
+
+    fenetre._launch_worker(["test_x.py::test_f"], "run\n")
+    try:
+        qtbot.waitUntil(lambda: fenetre._runs_left == 0, timeout=120000)
+        fenetre._flush_console_output()
+
+        sortie = "".join(fenetre.details.console_for(i).toPlainText() for i in range(2))
+        assert "n'a pas pu imposer le lecteur" in sortie
+        assert "reader_mode: sequential" in sortie, "la sortie de secours est indiquee"
+    finally:
+        for worker in fenetre.workers:
+            worker.stop()
+            worker.wait(10000)
+
+
+def test_without_a_getter_parallel_falls_back_to_the_variable(qtbot, tmp_path):
+    """Le mode parallele reste utilisable pour qui a deja adapte son getter."""
+    from gui_qt.main_window import MainWindow
+
+    (tmp_path / "config.yml").write_text(
+        "Reader: A\nReaders:\n  - B\nreader_mode: parallel\n", encoding="utf-8")
+    (tmp_path / "test_x.py").write_text(
+        "def test_f():\n    pass\n", encoding="utf-8")
+
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    fenetre.workspace = str(tmp_path)
+    fenetre.refresh_readers()
+    fenetre._launch_worker(["test_x.py::test_f"], "run\n")
+    try:
+        assert all(not w._plugin_args for w in fenetre.workers)
+        assert fenetre.workers[1]._env()["PYTESTRUNNER_READER"] == "B"
+    finally:
+        for worker in fenetre.workers:
+            worker.stop()
+            worker.wait(10000)
+
+
+def test_the_generated_plugin_is_cleaned_up(parallele, qtbot):
+    import tempfile
+
+    avant = set(Path(tempfile.gettempdir()).glob("pytestrunner_plugin_*"))
+    parallele._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
+    try:
+        qtbot.waitUntil(lambda: parallele._runs_left == 0, timeout=120000)
+        for worker in parallele.workers:
+            worker.wait(10000)
+
+        apres = set(Path(tempfile.gettempdir()).glob("pytestrunner_plugin_*"))
+        assert apres == avant
+    finally:
+        for worker in parallele.workers:
+            worker.stop()
+            worker.wait(10000)

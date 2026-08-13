@@ -34,11 +34,12 @@ from core.test_discovery import collect_tests
 from core.test_tree import build_test_tree
 from core.pytest_executor import (PytestOutputParser, compact_output_line,
                                   pytest_nodeid_args)
+from core.reader_plugin import GETTER_ENV, reader_plugin
 from core.reader_switch import ActiveReader, restore_interrupted_reader
 from core.run_history import RunHistoryManager, history_dir, new_run_id
 from core.workspace_config import (READER_KEYS, config_file_declaring, console_path_levels,
-                                   import_mode_args, reader_env, reader_mode_for,
-                                   readers_for, show_test_classes)
+                                   import_mode_args, reader_env, reader_getter_for,
+                                   reader_mode_for, readers_for, show_test_classes)
 from core.python_interpreter import (
     check_ready_to_run,
     interpreter_source,
@@ -103,7 +104,7 @@ class PytestWorker(QThread):
 
     def __init__(self, nodeids, workspace, junit_xml_path=None, parallel=False,
                  interpreter=None, targets=None, reader="", config_path="",
-                 write_reader_to_config=False):
+                 write_reader_to_config=False, reader_getter=""):
         super().__init__()
         # Lecteur de ce run, et comment le transmettre aux tests. Par defaut il
         # est ecrit dans la cle `Reader` de la configuration le temps du run :
@@ -113,6 +114,9 @@ class PytestWorker(QThread):
         self.reader = reader
         self.config_path = config_path
         self.write_reader_to_config = write_reader_to_config
+        self.reader_getter = reader_getter
+        self._plugin_args: list[str] = []
+        self._plugin_dir = ""
         self.nodeids = nodeids
         # Cibles reellement passees a pytest : repliees en chemins de dossier ou
         # de fichier quand tout le sous-arbre est selectionne. Beaucoup plus
@@ -135,7 +139,15 @@ class PytestWorker(QThread):
         # d'origine ; en mode parallele il ne fait rien, le lecteur passant alors
         # par l'environnement.
         config = self.config_path if self.write_reader_to_config else None
-        with ActiveReader(config, self.reader), pytest_nodeid_args(self.targets) as nodeid_args:
+        # En parallele, le lecteur ne peut pas passer par le fichier : un plugin
+        # injecte remplace la fonction que le workspace designe.
+        getter = "" if self.write_reader_to_config else self.reader_getter
+
+        with ActiveReader(config, self.reader), \
+                reader_plugin(getter) as (plugin_args, plugin_dir), \
+                pytest_nodeid_args(self.targets) as nodeid_args:
+            self._plugin_args = plugin_args
+            self._plugin_dir = plugin_dir
             self._run_pytest(python, nodeid_args)
 
     def _run_pytest(self, python, nodeid_args):
@@ -148,6 +160,7 @@ class PytestWorker(QThread):
             "-u",
             "-m", "pytest",
             *nodeid_args,
+            *self._plugin_args,
             # Pas de --import-mode impose : voir core/workspace_config.py.
             *import_mode_args(self.workspace),
             "--tb=short",
@@ -175,7 +188,7 @@ class PytestWorker(QThread):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                env=reader_env(self.workspace, self.reader),
+                env=self._env(),
                 creationflags=subprocess_flags(),
             )
         except (OSError, ValueError) as exc:
@@ -246,6 +259,17 @@ class PytestWorker(QThread):
         self._process.wait()
         exit_code = -1 if self._stopped else self._process.returncode
         self.finished_signal.emit(exit_code, "".join(stdout_buffer))
+
+    def _env(self) -> dict:
+        """Environnement du processus : lecteur, et plugin s'il y en a un."""
+        env = reader_env(self.workspace, self.reader, self.config_path or None)
+        if self.reader_getter:
+            env[GETTER_ENV] = self.reader_getter
+        if self._plugin_dir:
+            ancien = env.get("PYTHONPATH", "")
+            env["PYTHONPATH"] = (
+                self._plugin_dir + (os.pathsep + ancien if ancien else ""))
+        return env
 
     @property
     def stopped(self) -> bool:
@@ -1398,6 +1422,7 @@ class MainWindow(QMainWindow):
                 reader=lecteur,
                 config_path=self.reader_config_path(),
                 write_reader_to_config=sequentiel,
+                reader_getter=reader_getter_for(self.workspace, self.config_path()),
             )
             worker.stdout_signal.connect(
                 lambda texte, i=index: self._on_stdout(texte, i))

@@ -340,8 +340,90 @@ class _ReaderField(_Field):
         return texte
 
 
+class _ReaderListField(_Field):
+    """Les lecteurs supplementaires, un champ par lecteur.
+
+    Une zone de texte a plusieurs lignes obligeait a retaper le nom exact d'un
+    lecteur. Chaque entree a donc son propre champ, identique a celui du lecteur
+    principal : meme liste deroulante, meme detection.
+    """
+
+    def __init__(self, key, value, known: list[str] | None = None):
+        super().__init__(key, list(value or []))
+        self.known = list(known or [])
+        self.rows: list[QComboBox] = []
+
+    def build(self, parent) -> QWidget:
+        self.widget = QWidget()
+        self._layout = QVBoxLayout(self.widget)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(4)
+        self.rows = []
+
+        for nom in self.original:
+            self.add_row(str(nom))
+        if not self.original:
+            self._vide = QLabel("Aucun lecteur supplementaire.")
+            self._vide.setStyleSheet(styles.muted_label())
+            self._layout.addWidget(self._vide)
+
+        return self.widget
+
+    def add_row(self, nom: str = ""):
+        """Ajoute un champ de lecteur, vide par defaut."""
+        vide = getattr(self, "_vide", None)
+        if vide is not None:
+            vide.setParent(None)
+            self._vide = None
+
+        ligne = QWidget()
+        boite = QHBoxLayout(ligne)
+        boite.setContentsMargins(0, 0, 0, 0)
+        boite.setSpacing(6)
+
+        propositions = available_readers([*self.known, *self.values(), nom])
+        combo = QComboBox()
+        combo.setEditable(True)
+        combo.addItems(propositions)
+        combo.setCurrentText(nom)
+        combo.setMaximumWidth(
+            width_for_content(combo, propositions + [nom], marge=64))
+        if not nom and not propositions:
+            combo.lineEdit().setPlaceholderText("Nom du lecteur")
+        boite.addWidget(combo, 1)
+
+        retirer = QPushButton("−")
+        retirer.setStyleSheet(toolbar_button())
+        retirer.setFixedWidth(30)
+        retirer.setToolTip("Retirer ce lecteur")
+        retirer.clicked.connect(lambda: self._retirer(ligne, combo))
+        boite.addWidget(retirer)
+        boite.addStretch(0)
+
+        self._layout.addWidget(ligne)
+        self.rows.append(combo)
+        combo.setFocus()
+
+    def _retirer(self, ligne: QWidget, combo: QComboBox):
+        if combo in self.rows:
+            self.rows.remove(combo)
+        ligne.setParent(None)
+
+    def values(self) -> list[str]:
+        return [c.currentText().strip() for c in self.rows if c.currentText().strip()]
+
+    def value(self):
+        # Les champs laisses vides ne sont pas ecrits : un lecteur sans nom ne
+        # designe rien et ferait un run de plus sans objet.
+        return self.values()
+
+
 def looks_like_reader(key: str) -> bool:
     return normalize_key(key) in READER_KEYS
+
+
+def looks_like_reader_list(key: str) -> bool:
+    return normalize_key(key) in READERS_KEYS
 
 
 def build_field(key: str, value, known_readers: list[str] | None = None,
@@ -350,6 +432,8 @@ def build_field(key: str, value, known_readers: list[str] | None = None,
 
     Le booleen est teste avant l'entier : en Python, True est un int.
     """
+    if looks_like_reader_list(key):
+        return _ReaderListField(key, list(value or []), known_readers)
     if isinstance(value, bool):
         return _BoolField(key, value)
     if isinstance(value, int):
@@ -553,34 +637,39 @@ class ConfigForm(QWidget):
         if page is not None:
             self.pages.setCurrentWidget(page)
 
-    def add_reader(self, reader: str):
-        """Ajoute ce lecteur a la liste `Readers`, sans toucher a `Reader`.
+    def add_reader(self, _reader: str = ""):
+        """Ajoute un champ de lecteur supplementaire, vide.
 
-        C'est la cle `Reader` que lisent les tests, et elle ne doit designer
-        qu'un lecteur : l'ecraser avec une liste casserait le workspace.
-        `Readers` est lue par la seule interface, qui joue les lecteurs l'un
-        apres l'autre en ecrivant chacun dans `Reader` le temps de son run.
+        Le champ est vide et non pre-rempli : "+" sert a ouvrir une place pour
+        un AUTRE lecteur, pas a dupliquer celui qui est deja choisi.
+
+        La cle `Reader` n'est jamais touchee : c'est elle que lisent les tests et
+        elle ne doit designer qu'un lecteur. Les ajouts vont dans `Readers`, que
+        seule l'interface lit.
         """
-        reader = str(reader).strip()
-        if not reader:
+        champ = self._reader_list_field()
+        if champ is not None:
+            champ.add_row("")
+            self.reader_added.emit("", True)
             return
 
+        # Pas encore de cle `Readers` dans ce fichier : on la cree, ce qui
+        # demande de reconstruire la page.
         valeurs = self.values()
-        cle = next((k for k in valeurs if normalize_key(k) in READERS_KEYS), None)
-        if cle is None:
-            cle = READERS_LABEL
-            valeurs[cle] = []
-
-        liste = valeurs.get(cle)
-        liste = [str(v) for v in liste] if isinstance(liste, (list, tuple)) else []
-        if reader in liste:
-            self.reader_added.emit(reader, False)
-            return
-
-        liste.append(reader)
-        valeurs[cle] = liste
+        valeurs[READERS_LABEL] = [""]
         self.load(valeurs)
-        self.reader_added.emit(reader, True)
+
+        champ = self._reader_list_field()
+        if champ is not None and not champ.rows:
+            champ.add_row("")
+        self.reader_added.emit("", True)
+
+    def _reader_list_field(self):
+        for chemin, page in self._pages.items():
+            for cle, champ in page.fields.items():
+                if normalize_key(cle) in READERS_KEYS:
+                    return champ
+        return None
 
     # ------------------------------------------------------------------- relecture
 

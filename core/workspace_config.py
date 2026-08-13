@@ -177,10 +177,13 @@ READER_MODE_KEYS = ("reader_mode", "readers_mode", "mode_lecteurs")
 # qui ne demande RIEN au code de test : celui-ci continue de lire un lecteur
 # unique, comme il l'a toujours fait.
 #
-# `parallel` lance tout en meme temps et transmet le lecteur par variable
-# d'environnement. Plus rapide, mais le workspace doit lire cette variable :
-#     def getConfigReader():
-#         return os.environ.get("PYTESTRUNNER_READER") or config["Reader"]
+# `parallel` lance tout en meme temps. Le lecteur ne peut alors pas passer par
+# le fichier, que tous les processus partagent : il passe par un plugin injecte
+# qui remplace la fonction du workspace, designee par `reader_getter` :
+#     reader_mode: parallel
+#     reader_getter: config_getters.getConfigReader
+# Sans cette cle, le lecteur n'arrive que par la variable d'environnement
+# PYTESTRUNNER_READER, que le workspace doit alors lire lui-meme.
 READER_MODES = ("sequential", "parallel")
 DEFAULT_READER_MODE = "sequential"
 
@@ -194,6 +197,20 @@ def reader_mode_for(workspace: str | None, config_path: str | None = None) -> st
     return mode if mode in READER_MODES else DEFAULT_READER_MODE
 
 
+READER_GETTER_KEYS = ("reader_getter", "reader_function", "getter_reader")
+
+
+def reader_getter_for(workspace: str | None, config_path: str | None = None) -> str:
+    """Fonction du workspace qui donne le lecteur, sous la forme module.fonction.
+
+    Declaree, elle permet le mode parallele sans modifier le code de test : un
+    plugin injecte la remplace le temps du run. Absente, le lecteur ne passe que
+    par la variable d'environnement, que le workspace doit alors lire lui-meme.
+    """
+    valeur = setting_for(workspace, READER_GETTER_KEYS, config_path)
+    return str(valeur).strip() if valeur is not None else ""
+
+
 def reader_env_var(workspace: str | None, config_path: str | None = None) -> str:
     """Nom de la variable d'environnement portant le lecteur."""
     valeur = setting_for(workspace, READER_ENV_KEYS, config_path)
@@ -202,22 +219,23 @@ def reader_env_var(workspace: str | None, config_path: str | None = None) -> str
 
 
 def readers_for(workspace: str | None, config_path: str | None = None) -> list[str]:
-    """Lecteurs declares par le workspace, dans l'ordre du fichier.
+    """Lecteurs a tester, le lecteur principal en tete.
 
-    `readers` liste les lecteurs disponibles ; a defaut on retombe sur la cle
-    `reader` seule, ce qui donne une liste d'un element et le comportement
-    actuel.
+    `Reader` est celui que les tests lisent, et il reste le premier. `Readers`
+    liste ceux qu'on veut tester EN PLUS : le bouton "+" de la configuration
+    ajoute la, sans jamais toucher a `Reader`.
     """
-    valeur = setting_for(workspace, READERS_KEYS, config_path)
-    if valeur is None:
-        valeur = setting_for(workspace, READER_KEYS, config_path)
+    principal = setting_for(workspace, READER_KEYS, config_path)
+    supplement = setting_for(workspace, READERS_KEYS, config_path)
 
-    if valeur is None:
-        return []
-    if isinstance(valeur, (list, tuple)):
-        noms = [str(v).strip() for v in valeur]
-    else:
-        noms = [str(valeur).strip()]
+    noms: list[str] = []
+    if principal is not None:
+        noms.append(str(principal).strip())
+
+    if isinstance(supplement, (list, tuple)):
+        noms.extend(str(v).strip() for v in supplement)
+    elif supplement is not None:
+        noms.append(str(supplement).strip())
 
     # Un meme lecteur deux fois donnerait deux runs identiques et deux colonnes
     # indiscernables.
