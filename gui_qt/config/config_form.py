@@ -17,9 +17,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from PyQt5.QtCore import QEvent, Qt
+from PyQt5.QtCore import QEvent, Qt, pyqtSignal
 from PyQt5.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
@@ -39,7 +40,9 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from core.workspace_config import READER_KEYS, READERS_KEYS, find_setting
 from gui_qt.config.config_loader import LOG_PATH_KEYS, normalize_key
+from gui_qt.config.reader_sources import available_readers
 from gui_qt.styles import styles
 from gui_qt.styles.styles import toolbar_button
 
@@ -275,7 +278,74 @@ class _TextField(_Field):
         return texte
 
 
-def build_field(key: str, value) -> _Field:
+class _ReaderField(_Field):
+    """Le lecteur actif, avec la liste des lecteurs disponibles et un bouton
+    pour en ajouter un a la campagne.
+
+    La zone reste librement editable : un lecteur momentanement debranche doit
+    pouvoir etre saisi a la main, et la detection peut tres bien ne rien
+    retourner (voir gui_qt/config/reader_sources.py).
+
+    Le bouton "+" n'ecrase JAMAIS `Reader` : il ajoute le lecteur a la liste
+    `Readers`, que seule l'interface lit. Les tests continuent de lire `Reader`,
+    un lecteur unique, exactement comme avant.
+    """
+
+    def __init__(self, key, value, known: list[str] | None = None,
+                 on_add=None):
+        super().__init__(key, value)
+        self.known = list(known or [])
+        self._on_add = on_add
+
+    def build(self, parent) -> QWidget:
+        conteneur = QWidget()
+        ligne = QHBoxLayout(conteneur)
+        ligne.setContentsMargins(0, 0, 0, 0)
+        ligne.setSpacing(6)
+
+        actuel = "" if self.original is None else str(self.original)
+        propositions = available_readers([actuel, *self.known])
+
+        self.widget = QComboBox()
+        self.widget.setEditable(True)
+        self.widget.addItems(propositions)
+        self.widget.setCurrentText(actuel)
+        self.widget.setMaximumWidth(
+            width_for_content(self.widget, propositions + [actuel], marge=64))
+        if not propositions:
+            self.widget.lineEdit().setPlaceholderText(
+                "Aucun lecteur detecte : saisissez son nom")
+        ligne.addWidget(self.widget, 1)
+
+        self.add_button = QPushButton("+")
+        self.add_button.setStyleSheet(toolbar_button())
+        self.add_button.setFixedWidth(30)
+        self.add_button.setToolTip(
+            "Ajouter ce lecteur a la liste des lecteurs a tester.\n"
+            "La cle Reader que lisent vos tests n'est pas modifiee.")
+        self.add_button.clicked.connect(self._ajouter)
+        ligne.addWidget(self.add_button)
+
+        ligne.addStretch(0)
+        return conteneur
+
+    def _ajouter(self):
+        if self._on_add:
+            self._on_add(self.widget.currentText().strip())
+
+    def value(self):
+        texte = self.widget.currentText().strip()
+        if texte == "" and self.original is None:
+            return None
+        return texte
+
+
+def looks_like_reader(key: str) -> bool:
+    return normalize_key(key) in READER_KEYS
+
+
+def build_field(key: str, value, known_readers: list[str] | None = None,
+                on_add_reader=None) -> _Field:
     """Choisit le widget adapte au type de la valeur.
 
     Le booleen est teste avant l'entier : en Python, True est un int.
@@ -289,6 +359,8 @@ def build_field(key: str, value) -> _Field:
     if isinstance(value, (list, tuple)):
         return _ListField(key, list(value))
 
+    if looks_like_reader(key):
+        return _ReaderField(key, value, known_readers, on_add_reader)
     if looks_like_directory(key):
         return _TextField(key, value, browse="dir")
     if looks_like_file(key):
@@ -299,7 +371,7 @@ def build_field(key: str, value) -> _Field:
 class _SectionForm(QScrollArea):
     """Les reglages simples d'un niveau : une page du navigateur."""
 
-    def __init__(self, data: dict, parent=None):
+    def __init__(self, data: dict, parent=None, known_readers=None, on_add_reader=None):
         super().__init__(parent)
         self.setWidgetResizable(True)
         self.setFrameShape(QScrollArea.NoFrame)
@@ -321,7 +393,7 @@ class _SectionForm(QScrollArea):
         for key, value in data.items():
             if isinstance(value, dict):
                 continue  # c'est une sous-section, elle a sa propre page
-            champ = build_field(key, value)
+            champ = build_field(key, value, known_readers, on_add_reader)
             self.fields[key] = champ
             formulaire.addRow(self._label_for(key), champ.build(self))
 
@@ -366,8 +438,25 @@ class _SectionForm(QScrollArea):
         return {key: champ.value() for key, champ in self.fields.items()}
 
 
+def readers_for_form(data: dict) -> list[str]:
+    """Lecteurs deja connus de cette configuration, pour la liste deroulante."""
+    valeur = find_setting(data, READERS_KEYS) or find_setting(data, READER_KEYS)
+    if valeur is None:
+        return []
+    if isinstance(valeur, (list, tuple)):
+        return [str(v).strip() for v in valeur if str(v).strip()]
+    return [str(valeur).strip()] if str(valeur).strip() else []
+
+
+# Nom donne a la liste quand la configuration n'en a pas encore.
+READERS_LABEL = "Readers"
+
+
 class ConfigForm(QWidget):
     """Navigateur de sections a gauche, reglages de la section a droite."""
+
+    # Emis (lecteur, ajoute) quand le bouton "+" du champ Reader est utilise.
+    reader_added = pyqtSignal(str, bool)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -435,7 +524,8 @@ class ConfigForm(QWidget):
         self.splitter.setSizes([largeur, max(largeur, self.width() - largeur)])
 
     def _add_section(self, chemin: tuple, titre: str, data: dict, parent) -> QTreeWidgetItem:
-        page = _SectionForm(data)
+        page = _SectionForm(data, known_readers=readers_for_form(self._data),
+                            on_add_reader=self.add_reader)
         self._pages[chemin] = page
         self.pages.addWidget(page)
 
@@ -462,6 +552,35 @@ class ConfigForm(QWidget):
         page = self._pages.get(chemin)
         if page is not None:
             self.pages.setCurrentWidget(page)
+
+    def add_reader(self, reader: str):
+        """Ajoute ce lecteur a la liste `Readers`, sans toucher a `Reader`.
+
+        C'est la cle `Reader` que lisent les tests, et elle ne doit designer
+        qu'un lecteur : l'ecraser avec une liste casserait le workspace.
+        `Readers` est lue par la seule interface, qui joue les lecteurs l'un
+        apres l'autre en ecrivant chacun dans `Reader` le temps de son run.
+        """
+        reader = str(reader).strip()
+        if not reader:
+            return
+
+        valeurs = self.values()
+        cle = next((k for k in valeurs if normalize_key(k) in READERS_KEYS), None)
+        if cle is None:
+            cle = READERS_LABEL
+            valeurs[cle] = []
+
+        liste = valeurs.get(cle)
+        liste = [str(v) for v in liste] if isinstance(liste, (list, tuple)) else []
+        if reader in liste:
+            self.reader_added.emit(reader, False)
+            return
+
+        liste.append(reader)
+        valeurs[cle] = liste
+        self.load(valeurs)
+        self.reader_added.emit(reader, True)
 
     # ------------------------------------------------------------------- relecture
 

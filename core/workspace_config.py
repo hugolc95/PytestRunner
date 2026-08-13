@@ -113,6 +113,26 @@ def setting_for(workspace: str | None, keys: tuple[str, ...],
     return None
 
 
+def config_file_declaring(workspace: str | None, keys: tuple[str, ...],
+                          config_path: str | None = None) -> Path | None:
+    """Fichier de configuration qui porte l'une de ces cles, ou None.
+
+    Sert quand il faut ECRIRE dans la configuration : encore faut-il savoir
+    laquelle. Le fichier designe par l'utilisateur est examine en premier.
+    """
+    candidats: list[Path] = []
+    if config_path:
+        chemin = Path(config_path)
+        if chemin.is_file():
+            candidats.append(chemin)
+    candidats.extend(discover_config_files(workspace))
+
+    for chemin in candidats:
+        if find_setting(load_config(chemin), keys) is not None:
+            return chemin
+    return None
+
+
 # ------------------------------------------------------------------ mode d'import
 
 def import_mode_for(workspace: str | None, config_path: str | None = None) -> str:
@@ -149,6 +169,29 @@ READER_ENV_KEYS = ("reader_env", "reader_env_var", "reader_variable")
 # config.yml, donc y ecrire le lecteur du moment est impossible. Les tests lisent
 # donc cette variable, avec repli sur la cle Reader du fichier.
 DEFAULT_READER_ENV = "PYTESTRUNNER_READER"
+
+READER_MODE_KEYS = ("reader_mode", "readers_mode", "mode_lecteurs")
+
+# Par defaut les lecteurs sont joues l'un apres l'autre, en ecrivant chacun dans
+# la cle `Reader` du fichier de configuration avant son run. C'est le seul mode
+# qui ne demande RIEN au code de test : celui-ci continue de lire un lecteur
+# unique, comme il l'a toujours fait.
+#
+# `parallel` lance tout en meme temps et transmet le lecteur par variable
+# d'environnement. Plus rapide, mais le workspace doit lire cette variable :
+#     def getConfigReader():
+#         return os.environ.get("PYTESTRUNNER_READER") or config["Reader"]
+READER_MODES = ("sequential", "parallel")
+DEFAULT_READER_MODE = "sequential"
+
+
+def reader_mode_for(workspace: str | None, config_path: str | None = None) -> str:
+    """Comment enchainer les lecteurs : l'un apres l'autre, ou tous a la fois."""
+    valeur = setting_for(workspace, READER_MODE_KEYS, config_path)
+    if valeur is None:
+        return DEFAULT_READER_MODE
+    mode = str(valeur).strip().lower()
+    return mode if mode in READER_MODES else DEFAULT_READER_MODE
 
 
 def reader_env_var(workspace: str | None, config_path: str | None = None) -> str:

@@ -34,8 +34,10 @@ from core.test_discovery import collect_tests
 from core.test_tree import build_test_tree
 from core.pytest_executor import (PytestOutputParser, compact_output_line,
                                   pytest_nodeid_args)
+from core.reader_switch import ActiveReader, restore_interrupted_reader
 from core.run_history import RunHistoryManager, history_dir, new_run_id
-from core.workspace_config import (console_path_levels, import_mode_args, reader_env,
+from core.workspace_config import (READER_KEYS, config_file_declaring, console_path_levels,
+                                   import_mode_args, reader_env, reader_mode_for,
                                    readers_for, show_test_classes)
 from core.python_interpreter import (
     check_ready_to_run,
@@ -100,12 +102,17 @@ class PytestWorker(QThread):
     collected_signal = pyqtSignal(int)
 
     def __init__(self, nodeids, workspace, junit_xml_path=None, parallel=False,
-                 interpreter=None, targets=None, reader=""):
+                 interpreter=None, targets=None, reader="", config_path="",
+                 write_reader_to_config=False):
         super().__init__()
-        # Lecteur de ce run. Deux processus lances en meme temps partagent le
-        # meme config.yml : le lecteur ne peut donc pas y etre ecrit, il passe
-        # par une variable d'environnement que les tests lisent.
+        # Lecteur de ce run, et comment le transmettre aux tests. Par defaut il
+        # est ecrit dans la cle `Reader` de la configuration le temps du run :
+        # c'est le seul moyen qui ne demande rien au code de test, qui continue
+        # de lire un lecteur unique. En mode parallele il passe par
+        # l'environnement, mais le workspace doit alors le lire.
         self.reader = reader
+        self.config_path = config_path
+        self.write_reader_to_config = write_reader_to_config
         self.nodeids = nodeids
         # Cibles reellement passees a pytest : repliees en chemins de dossier ou
         # de fichier quand tout le sous-arbre est selectionne. Beaucoup plus
@@ -123,8 +130,12 @@ class PytestWorker(QThread):
         python = self.interpreter or resolve_interpreter(workspace=self.workspace)
 
         # Le fichier d'arguments doit survivre jusqu'a la fin du processus pytest :
-        # tout le run se deroule donc dans ce bloc.
-        with pytest_nodeid_args(self.targets) as nodeid_args:
+        # tout le run se deroule donc dans ce bloc. ActiveReader ecrit le lecteur
+        # dans la configuration pour la duree du run et remet ensuite la valeur
+        # d'origine ; en mode parallele il ne fait rien, le lecteur passant alors
+        # par l'environnement.
+        config = self.config_path if self.write_reader_to_config else None
+        with ActiveReader(config, self.reader), pytest_nodeid_args(self.targets) as nodeid_args:
             self._run_pytest(python, nodeid_args)
 
     def _run_pytest(self, python, nodeid_args):
@@ -700,6 +711,19 @@ class MainWindow(QMainWindow):
 
         self._show_reader_controls(len(lecteurs) > 1)
 
+    def reader_config_path(self) -> str:
+        """Fichier de configuration ou ecrire le lecteur actif.
+
+        Celui que l'utilisateur a designe s'il porte la cle, sinon celui du
+        workspace qui la declare. Se contenter du fichier memorise ne suffisait
+        pas : tant que "Ouvrir la configuration" n'avait jamais servi, rien
+        n'etait memorise et le lecteur n'etait ecrit nulle part -- tous les runs
+        voyaient alors le meme.
+        """
+        chemin = config_file_declaring(
+            self.workspace, READER_KEYS, self.config_path())
+        return str(chemin) if chemin else ""
+
     def selected_readers(self) -> list[str]:
         """Lecteurs coches, ou [] quand le workspace n'en declare pas plusieurs.
 
@@ -1045,6 +1069,8 @@ class MainWindow(QMainWindow):
             self._queue_console_output(
                 f"\nPytest finished with exit code {exit_code}\n", reader_index)
             self._flush_console_output()
+            if getattr(self, "_sequential", False):
+                self._start_next_worker()
             return
 
         self._on_finished(exit_code, "\n".join(self._run_outputs), reader_index)
@@ -1242,6 +1268,16 @@ class MainWindow(QMainWindow):
         self.workspace = workspace
         self.details.set_workspace(workspace, self.config_path(workspace))
         self.refresh_readers()
+
+        # Un run precedent interrompu (coupure, plantage) a pu laisser la
+        # configuration sur le dernier lecteur essaye. On la remet d'aplomb au
+        # chargement, en le disant : le lecteur affiche aurait sinon change sans
+        # que personne ne l'ait demande.
+        restaure = restore_interrupted_reader(self.reader_config_path())
+        if restaure:
+            self._queue_console_output(
+                f"Lecteur remis a '{restaure}' : un lancement precedent avait ete "
+                "interrompu avant d'avoir pu le retablir.\n")
         self.details.clear_details()
         self.tree.load_tree(roots)
         self.run_button.setEnabled(count > 0)
@@ -1260,10 +1296,12 @@ class MainWindow(QMainWindow):
         )
 
     def stop_tests(self):
-        workers = [w for w in getattr(self, "workers", []) if w.isRunning()]
-        if not workers:
+        tous = getattr(self, "workers", [])
+        if not any(w.isRunning() for w in tous):
             return
-        for worker in workers:
+        # Tous sont marques, y compris ceux qui n'ont pas encore demarre : en
+        # sequentiel, arreter le lecteur courant ne doit pas lancer le suivant.
+        for worker in tous:
             worker.stop()
         self.console.append("\n⛔ Test execution stopped by user. ⛔\n")
         self.stop_button.setEnabled(False)
@@ -1332,9 +1370,17 @@ class MainWindow(QMainWindow):
         self._replaced_cases = 0
         self.tree.start_run()
 
+        # Sequentiel par defaut : le lecteur est ecrit dans la configuration le
+        # temps de son run, ce qui ne demande rien au code de test. Deux
+        # processus a la fois se disputeraient ce fichier, d'ou l'enchainement.
+        self._reader_mode = reader_mode_for(self.workspace, self.config_path())
+        sequentiel = self._reader_mode != "parallel" and len(lecteurs) > 1
+
         self.workers: list[PytestWorker] = []
         self._runs_left = len(lecteurs)
         self._run_outputs: list[str] = [""] * len(lecteurs)
+        self._sequential = sequentiel
+        self._next_worker = 0
 
         for index, lecteur in enumerate(lecteurs):
             # Un rapport JUnit par lecteur : un seul chemin verrait les deux
@@ -1350,6 +1396,8 @@ class MainWindow(QMainWindow):
                 interpreter=interpreter,
                 targets=targets,
                 reader=lecteur,
+                config_path=self.reader_config_path(),
+                write_reader_to_config=sequentiel,
             )
             worker.stdout_signal.connect(
                 lambda texte, i=index: self._on_stdout(texte, i))
@@ -1365,8 +1413,35 @@ class MainWindow(QMainWindow):
         # Le dernier worker reste accessible sous `self.worker` : le reste du
         # code (arret, tests) n'a pas a savoir combien il y en a.
         self.worker = self.workers[-1]
-        for worker in self.workers:
+        if sequentiel:
+            self._start_next_worker()
+        else:
+            for worker in self.workers:
+                worker.start()
+
+    def _start_next_worker(self):
+        """Lance le lecteur suivant. Utilise en mode sequentiel uniquement.
+
+        Le worker precedent est attendu avant tout : son signal de fin part de
+        l'interieur du bloc qui remet le lecteur d'origine dans la
+        configuration. Enchainer sans attendre ferait ecrire au lecteur sortant
+        SA restauration par-dessus le lecteur que le suivant vient d'ecrire, et
+        les deux runs porteraient le meme lecteur.
+        """
+        if self._next_worker > 0:
+            self.workers[self._next_worker - 1].wait(5000)
+
+        while self._next_worker < len(self.workers):
+            worker = self.workers[self._next_worker]
+            self._next_worker += 1
+            if worker.stopped:
+                # Arret demande avant meme d'avoir demarre : on ne relance rien,
+                # mais son resultat doit quand meme etre compte comme termine.
+                self._on_run_finished(-1, "", self._next_worker - 1)
+                return
+            self.details.show_reader(self._next_worker - 1)
             worker.start()
+            return
 
     def run_selected_tests(self):
         if not self.workspace:
