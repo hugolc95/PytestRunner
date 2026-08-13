@@ -20,7 +20,7 @@ import os
 import re
 import time
 
-from gui_qt.test_tree_view import TestTreeView
+from gui_qt.test_tree_view import TestTreeView, short_reader_label
 from gui_qt.config.config_editor import ConfigEditor
 from gui_qt.campaign_window import CampaignPanel
 from gui_qt.history_window import HistoryWindow
@@ -651,7 +651,9 @@ class MainWindow(QMainWindow):
         lecteurs = readers_for(self.workspace, self.config_path())
         if len(lecteurs) > 1:
             for index, nom in enumerate(lecteurs):
-                case = QCheckBox(nom)
+                # Nom court : cinq lecteurs ecrits en entier debordent la barre.
+                case = QCheckBox(short_reader_label(nom))
+                case.setToolTip(nom)
                 case.setChecked(True)
                 case.setCursor(Qt.PointingHandCursor)
                 case.setStyleSheet(
@@ -662,8 +664,11 @@ class MainWindow(QMainWindow):
         self._show_reader_controls(len(lecteurs) > 1)
 
     def selected_readers(self) -> list[str]:
-        """Lecteurs coches, ou [] quand le workspace n'en declare pas plusieurs."""
-        coches = [c.text() for c in self.reader_checkboxes if c.isChecked()]
+        """Lecteurs coches, ou [] quand le workspace n'en declare pas plusieurs.
+
+        Le nom complet vient de l'infobulle : la case n'affiche qu'un nom court.
+        """
+        coches = [c.toolTip() for c in self.reader_checkboxes if c.isChecked()]
         if self.reader_checkboxes and not coches:
             # Tout decocher ne doit pas empecher de lancer : on retombe sur le
             # comportement d'un workspace sans lecteurs.

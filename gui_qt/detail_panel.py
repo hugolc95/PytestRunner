@@ -16,10 +16,11 @@ import re
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer
-from PyQt5.QtGui import QTextCursor
+from PyQt5.QtGui import QColor, QTextCursor
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QSplitter,
+    QTabBar,
     QLabel,
     QPlainTextEdit,
     QTabWidget,
@@ -39,6 +40,7 @@ from gui_qt.config.config_loader import (
 from gui_qt.highlighters import LogHighlighter, PythonHighlighter, PytestOutputHighlighter
 from gui_qt.styles import styles
 from gui_qt.styles.styles import console_style, theme_toggle_button
+from gui_qt.test_tree_view import short_reader_label
 
 CONSOLE_TAB = 0
 SOURCE_TAB = 1
@@ -184,10 +186,35 @@ class DetailPanel(QWidget):
         self.console_headers: list[QLabel] = [QLabel()]
         self.console_headers[0].setVisible(False)
 
+        # Un onglet par lecteur au-dessus, les consoles en dessous. En mode
+        # onglets une seule est visible, ce qui tient a n'importe quel nombre de
+        # lecteurs ; le bouton "Comparer" les montre toutes a la fois.
+        self.console_tabs = QTabBar()
+        self.console_tabs.setDrawBase(False)
+        self.console_tabs.setExpanding(False)
+        self.console_tabs.setVisible(False)
+        self.console_tabs.currentChanged.connect(self._on_console_tab_changed)
+
+        self.compare_button = QToolButton()
+        self.compare_button.setText("⊞")
+        self.compare_button.setCheckable(True)
+        self.compare_button.setAutoRaise(True)
+        self.compare_button.setCursor(Qt.PointingHandCursor)
+        self.compare_button.setToolTip("Afficher toutes les consoles cote a cote")
+        self.compare_button.setVisible(False)
+        self.compare_button.toggled.connect(self._on_compare_toggled)
+
+        barre = QHBoxLayout()
+        barre.setContentsMargins(0, 0, 0, 0)
+        barre.setSpacing(4)
+        barre.addWidget(self.console_tabs, 1)
+        barre.addWidget(self.compare_button)
+
         self.console_area = QWidget()
         self._console_layout = QVBoxLayout(self.console_area)
         self._console_layout.setContentsMargins(0, 0, 0, 0)
-        self._console_layout.setSpacing(4)
+        self._console_layout.setSpacing(2)
+        self._console_layout.addLayout(barre)
         self.console_split = QSplitter(Qt.Vertical)
         self._console_layout.addWidget(self.console_split)
         self.console_split.addWidget(
@@ -263,10 +290,12 @@ class DetailPanel(QWidget):
         return boite
 
     def set_readers(self, labels: list[str]):
-        """Une console par lecteur, empilees, chacune avec son en-tete colore.
+        """Une console par lecteur, atteignable par onglet.
 
-        Une console unique melangeant deux runs simultanes serait illisible : les
-        lignes des deux lecteurs s'y entrelaceraient au rythme des cartes.
+        Une console unique melangeant des runs simultanes serait illisible : les
+        lignes s'y entrelaceraient au rythme des cartes. Les empiler toutes ne
+        tient qu'a deux lecteurs, d'ou les onglets, et le bouton "Comparer" pour
+        les remettre cote a cote quand on veut les lire ensemble.
         """
         labels = list(labels)
         multi = len(labels) > 1
@@ -279,18 +308,56 @@ class DetailPanel(QWidget):
             self.console_highlighters.append(PytestOutputHighlighter(vue.document()))
             self.console_split.addWidget(self._console_box(entete, vue))
 
-        for index, vue in enumerate(self.consoles):
-            visible = index == 0 or index < len(labels)
-            vue.parentWidget().setVisible(visible)
-            entete = self.console_headers[index]
+        self._reader_labels = labels
+
+        self.console_tabs.blockSignals(True)
+        while self.console_tabs.count():
+            self.console_tabs.removeTab(0)
+        for index, nom in enumerate(labels if multi else []):
+            self.console_tabs.addTab(short_reader_label(nom))
+            self.console_tabs.setTabToolTip(index, nom)
+            self.console_tabs.setTabTextColor(index, QColor(styles.reader_color(index)))
+        self.console_tabs.blockSignals(False)
+
+        self.console_tabs.setVisible(multi)
+        self.compare_button.setVisible(multi)
+
+        for index, entete in enumerate(self.console_headers):
             if multi and index < len(labels):
                 entete.setText(labels[index])
                 entete.setVisible(True)
             else:
                 entete.setVisible(False)
 
-        self._reader_labels = labels
+        self._apply_console_layout()
         self.restyle()
+
+    def _apply_console_layout(self):
+        """Montre la console de l'onglet courant, ou toutes en mode comparaison."""
+        nombre = max(1, len(getattr(self, "_reader_labels", [])))
+        comparer = self.compare_button.isChecked()
+        courant = max(0, self.console_tabs.currentIndex())
+
+        for index, vue in enumerate(self.consoles):
+            boite = vue.parentWidget()
+            if index >= nombre:
+                boite.setVisible(False)
+            else:
+                boite.setVisible(comparer or nombre == 1 or index == courant)
+
+    def _on_console_tab_changed(self, _index: int):
+        self._apply_console_layout()
+
+    def _on_compare_toggled(self, actif: bool):
+        self.compare_button.setToolTip(
+            "Revenir a une console a la fois" if actif
+            else "Afficher toutes les consoles cote a cote")
+        self._apply_console_layout()
+
+    def show_reader(self, reader_index: int):
+        """Amene la console de ce lecteur au premier plan."""
+        if 0 <= reader_index < self.console_tabs.count():
+            self.console_tabs.setCurrentIndex(reader_index)
 
     def console_for(self, reader_index: int) -> QTextEdit:
         """Console de ce lecteur, la premiere a defaut."""
@@ -326,6 +393,9 @@ class DetailPanel(QWidget):
                 f"border-left:3px solid {couleur};"
                 f"background:{styles.mix(styles.palette()['surface'], couleur, 0.07)};"
             )
+        self.compare_button.setStyleSheet(theme_toggle_button())
+        for index in range(self.console_tabs.count()):
+            self.console_tabs.setTabTextColor(index, QColor(styles.reader_color(index)))
         self.source_view.setStyleSheet(console_style())
         self.log_view.setStyleSheet(console_style())
         self.source_header.setStyleSheet(styles.muted_label())

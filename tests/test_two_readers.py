@@ -251,8 +251,10 @@ def window(qtbot, tmp_path):
 
 
 def test_the_readers_appear_in_the_action_bar(window):
-    assert [c.text() for c in window.reader_checkboxes] == READERS
-    assert window.diff_button.isVisible() or not window.isVisible()
+    """Nom court sur la case, nom complet dans l'infobulle : cinq lecteurs
+    ecrits en entier deborderaient la barre."""
+    assert [c.text() for c in window.reader_checkboxes] == ["Reader 0", "Reader 1"]
+    assert [c.toolTip() for c in window.reader_checkboxes] == READERS
 
 
 def test_a_workspace_without_readers_shows_no_control(qtbot, tmp_path):
@@ -335,3 +337,134 @@ def test_the_summary_covers_both_readers(window, qtbot):
         for worker in window.workers:
             worker.stop()
             worker.wait(5000)
+
+
+# ------------------------------------------------- au-dela de deux lecteurs
+
+CINQ = [f"Infineon CryptoWrapperTU Reader {i}" for i in range(5)]
+
+
+def test_any_number_of_readers_gets_a_column(qtbot):
+    vue = TestTreeView()
+    qtbot.addWidget(vue)
+    vue.load_tree(build_test_tree(NODEIDS))
+    vue.set_readers(CINQ)
+
+    assert vue.model.columnCount() == 6
+    for index in range(5):
+        assert vue.reader_column(index) == 1 + index
+
+
+def test_five_readers_each_write_their_own_column(qtbot):
+    vue = TestTreeView()
+    qtbot.addWidget(vue)
+    vue.load_tree(build_test_tree(NODEIDS))
+    vue.set_readers(CINQ)
+
+    for index in range(5):
+        statut = "FAILED" if index == 3 else "PASSED"
+        vue.update_single_test(NODEIDS[0], statut, reader_index=index)
+
+    item = vue._find_item_for_nodeid(NODEIDS[0])
+    statuts = [vue._status_cell(item, vue.reader_column(i)).data(STATUS_ROLE)
+               for i in range(5)]
+    assert statuts == ["PASSED", "PASSED", "PASSED", "FAILED", "PASSED"]
+    assert vue.divergent_nodeids() == [NODEIDS[0]]
+
+
+def test_five_readers_agreeing_is_not_a_divergence(qtbot):
+    vue = TestTreeView()
+    qtbot.addWidget(vue)
+    vue.load_tree(build_test_tree(NODEIDS))
+    vue.set_readers(CINQ)
+
+    for nodeid in NODEIDS:
+        for index in range(5):
+            vue.update_single_test(nodeid, "PASSED", reader_index=index)
+
+    assert vue.divergent_nodeids() == []
+
+
+# --------------------------------------------------- onglets de consoles
+
+@pytest.fixture
+def panel(qtbot):
+    from gui_qt.detail_panel import DetailPanel
+
+    widget = DetailPanel()
+    qtbot.addWidget(widget)
+    return widget
+
+
+def test_one_tab_per_reader(panel):
+    panel.set_readers(CINQ)
+
+    assert panel.console_tabs.count() == 5
+    assert panel.console_tabs.tabText(0) == "Reader 0"
+    assert panel.console_tabs.tabToolTip(4) == CINQ[4]
+
+
+def test_only_the_selected_console_is_shown(panel):
+    """Cinq consoles empilees seraient hautes de trois lignes chacune."""
+    panel.set_readers(CINQ)
+    panel.console_tabs.setCurrentIndex(2)
+
+    visibles = [i for i, v in enumerate(panel.consoles[:5])
+                if v.parentWidget().isVisibleTo(panel)]
+    assert visibles == [2]
+
+
+def test_comparing_shows_them_all(panel):
+    panel.set_readers(CINQ)
+    panel.compare_button.setChecked(True)
+
+    visibles = [i for i, v in enumerate(panel.consoles[:5])
+                if v.parentWidget().isVisibleTo(panel)]
+    assert visibles == [0, 1, 2, 3, 4]
+
+
+def test_leaving_comparison_returns_to_one_console(panel):
+    panel.set_readers(CINQ)
+    panel.compare_button.setChecked(True)
+    panel.compare_button.setChecked(False)
+    panel.console_tabs.setCurrentIndex(1)
+
+    visibles = [i for i, v in enumerate(panel.consoles[:5])
+                if v.parentWidget().isVisibleTo(panel)]
+    assert visibles == [1]
+
+
+def test_a_single_reader_shows_no_tabs(panel):
+    panel.set_readers([])
+
+    assert not panel.console_tabs.isVisibleTo(panel)
+    assert not panel.compare_button.isVisibleTo(panel)
+    assert panel.consoles[0].parentWidget().isVisibleTo(panel)
+
+
+def test_output_still_reaches_a_hidden_console(panel):
+    """Une console masquee doit continuer d'enregistrer : on veut la retrouver
+    complete en changeant d'onglet, pas amputee."""
+    panel.set_readers(CINQ)
+    panel.console_tabs.setCurrentIndex(0)
+
+    panel.console_for(3).append("ligne du lecteur 3")
+
+    assert "lecteur 3" in panel.console_for(3).toPlainText()
+
+
+def test_showing_a_reader_brings_its_tab_forward(panel):
+    panel.set_readers(CINQ)
+    panel.show_reader(4)
+    assert panel.console_tabs.currentIndex() == 4
+
+
+def test_reducing_the_reader_count_hides_the_extra_consoles(panel):
+    """Passer de cinq lecteurs a deux ne doit pas laisser trois consoles vides."""
+    panel.set_readers(CINQ)
+    panel.set_readers(READERS)
+    panel.compare_button.setChecked(True)
+
+    visibles = [i for i, v in enumerate(panel.consoles)
+                if v.parentWidget().isVisibleTo(panel)]
+    assert visibles == [0, 1]
