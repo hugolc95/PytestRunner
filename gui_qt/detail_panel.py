@@ -169,6 +169,11 @@ class DetailPanel(QWidget):
     # splitter d'ou le panneau sort et ou il revient.
     detach_requested = pyqtSignal(bool)
 
+    # Emis avec l'index du lecteur dont la console vient d'etre amenee au
+    # premier plan. Les compteurs de bas de fenetre s'y accrochent pour montrer
+    # le resultat de CE lecteur plutot que le total de tous.
+    reader_selected = pyqtSignal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -232,21 +237,35 @@ class DetailPanel(QWidget):
             self._console_box(self.console_headers[0], self.console))
 
         self.source_view = CodeView()
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setLineWrapMode(QPlainTextEdit.NoWrap)
+
+        # Un log par lecteur, empiles. Le meme test tourne sur chaque lecteur et
+        # y ecrit son propre .log : les mettre l'un au-dessus de l'autre est ce
+        # qui permet de voir d'un coup d'oeil ou les deux divergent, sans
+        # rouvrir deux fenetres.
+        self.log_view = self._new_log_view()
+        self.log_views: list[QPlainTextEdit] = [self.log_view]
+        self.log_header = QLabel("Click a test in the tree to see its log.")
+        self.log_headers: list[QLabel] = [self.log_header]
 
         # Coloration a l'affichage : la sortie brute reste intacte pour
         # l'historique, les traces d'echec et la detection des statuts.
         self.console_highlighters = [PytestOutputHighlighter(self.console.document())]
         self.console_highlighter = self.console_highlighters[0]
         self.source_highlighter = PythonHighlighter(self.source_view.document())
-        self.log_highlighter = LogHighlighter(self.log_view.document())
+        self.log_highlighters = [LogHighlighter(self.log_view.document())]
+        self.log_highlighter = self.log_highlighters[0]
 
         self.source_header = QLabel("Click a test in the tree to see its source code.")
-        self.log_header = QLabel("Click a test in the tree to see its log.")
         for header in (self.source_header, self.log_header):
             header.setWordWrap(True)
+
+        self.log_split = QSplitter(Qt.Vertical)
+        self.log_split.addWidget(self._console_box(self.log_header, self.log_view))
+        self.log_area = QWidget()
+        _log_layout = QVBoxLayout(self.log_area)
+        _log_layout.setContentsMargins(6, 6, 6, 6)
+        _log_layout.setSpacing(4)
+        _log_layout.addWidget(self.log_split)
 
         # Bouton discret : la modification est un geste volontaire, on ne tape
         # pas par megarde dans un fichier de test en le consultant.
@@ -285,7 +304,7 @@ class DetailPanel(QWidget):
                        self.source_status, self.edit_button),
             "Source",
         )
-        self.tabs.addTab(self._wrap(self.log_header, self.log_view), "Log")
+        self.tabs.addTab(self.log_area, "Log")
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -300,6 +319,13 @@ class DetailPanel(QWidget):
         vue.setReadOnly(True)
         vue.document().setMaximumBlockCount(12000)
         vue.setLineWrapMode(QTextEdit.NoWrap)
+        return vue
+
+    @staticmethod
+    def _new_log_view() -> QPlainTextEdit:
+        vue = QPlainTextEdit()
+        vue.setReadOnly(True)
+        vue.setLineWrapMode(QPlainTextEdit.NoWrap)
         return vue
 
     @staticmethod
@@ -330,6 +356,19 @@ class DetailPanel(QWidget):
             self.console_headers.append(entete)
             self.console_highlighters.append(PytestOutputHighlighter(vue.document()))
             self.console_split.addWidget(self._console_box(entete, vue))
+
+        # Un log par lecteur, pour comparer le meme test d'un lecteur a l'autre.
+        while len(self.log_views) < len(labels):
+            vue = self._new_log_view()
+            entete = QLabel()
+            entete.setWordWrap(True)
+            self.log_views.append(vue)
+            self.log_headers.append(entete)
+            self.log_highlighters.append(LogHighlighter(vue.document()))
+            self.log_split.addWidget(self._console_box(entete, vue))
+
+        for index, vue in enumerate(self.log_views):
+            vue.parentWidget().setVisible(index < max(1, len(labels)))
 
         self._reader_labels = labels
 
@@ -368,8 +407,9 @@ class DetailPanel(QWidget):
             else:
                 boite.setVisible(comparer or nombre == 1 or index == courant)
 
-    def _on_console_tab_changed(self, _index: int):
+    def _on_console_tab_changed(self, index: int):
         self._apply_console_layout()
+        self.reader_selected.emit(index)
 
     def _on_compare_toggled(self, actif: bool):
         self.compare_button.setToolTip(
@@ -430,16 +470,29 @@ class DetailPanel(QWidget):
         for index in range(self.console_tabs.count()):
             self.console_tabs.setTabTextColor(index, QColor(styles.reader_color(index)))
         self.source_view.setStyleSheet(console_style())
-        self.log_view.setStyleSheet(console_style())
+        # Les logs par lecteur portent la meme pastille de couleur que leur
+        # console, pour qu'on sache d'un coup d'oeil lequel on lit.
+        multi = len(getattr(self, "_reader_labels", [])) > 1
+        for index, vue in enumerate(self.log_views):
+            vue.setStyleSheet(console_style())
+            entete = self.log_headers[index]
+            if multi:
+                couleur = styles.reader_color(index)
+                entete.setStyleSheet(
+                    f"color:{couleur}; font-weight:500; font-size:11px; padding:2px 6px;"
+                    f"border-left:3px solid {couleur};"
+                    f"background:{styles.mix(styles.palette()['surface'], couleur, 0.07)};"
+                )
+            else:
+                entete.setStyleSheet(styles.muted_label())
         self.source_header.setStyleSheet(styles.muted_label())
-        self.log_header.setStyleSheet(styles.muted_label())
         self.source_status.setStyleSheet(styles.muted_label())
         self.edit_button.setStyleSheet(theme_toggle_button())
 
         # Les couleurs de coloration viennent de la palette : elles doivent etre
         # reconstruites, pas seulement reappliquees.
         for highlighter in [*self.console_highlighters, self.source_highlighter,
-                            self.log_highlighter]:
+                            *self.log_highlighters]:
             highlighter.refresh()
         self.source_view.restyle()
 
@@ -510,8 +563,10 @@ class DetailPanel(QWidget):
     def clear_details(self):
         self.save_source()
         self._show_no_source("Click a test in the tree to see its source code.")
-        self.log_view.clear()
-        self.log_header.setText("Click a test in the tree to see its log.")
+        for vue in self.log_views:
+            vue.clear()
+        for entete in self.log_headers:
+            entete.setText("Click a test in the tree to see its log.")
 
     # ------------------------------------------------------------------
     # Chargement
@@ -645,31 +700,48 @@ class DetailPanel(QWidget):
         return "\n".join(lignes)
 
     def _load_log(self, nodeid: str | None):
+        """Charge le log du test, un par lecteur quand il y en a plusieurs."""
+        lecteurs = list(getattr(self, "_reader_labels", []))
+        if len(lecteurs) > 1:
+            for index, lecteur in enumerate(lecteurs[:len(self.log_views)]):
+                self._load_log_into(index, nodeid, lecteur)
+            return
+
+        self._load_log_into(0, nodeid, "")
+
+    def _load_log_into(self, index: int, nodeid: str | None, reader: str):
+        if index >= len(self.log_views):
+            return
+
+        vue = self.log_views[index]
+        entete = self.log_headers[index]
+        prefixe = f"{reader}  —  " if reader else ""
+
         if not self.workspace:
-            self.log_header.setText("No workspace loaded.")
-            self.log_view.clear()
+            entete.setText(prefixe + "No workspace loaded.")
+            vue.clear()
             return
 
         if not nodeid:
-            self.log_header.setText(
-                "Select a specific test (a leaf of the tree) to see its log."
+            entete.setText(
+                prefixe + "Select a specific test (a leaf of the tree) to see its log."
             )
-            self.log_view.clear()
+            vue.clear()
             return
 
-        path = find_test_log(self.workspace, nodeid, self.config_path)
+        path = find_test_log(self.workspace, nodeid, self.config_path, reader)
         if path is None:
-            self.log_header.setText(self._explain_missing_log())
-            self.log_view.clear()
+            entete.setText(prefixe + self._explain_missing_log())
+            vue.clear()
             return
 
         content, warning = read_text_file(Path(path))
-        self.log_view.setPlainText(content)
-        header = str(path)
+        vue.setPlainText(content)
+        header = prefixe + str(path)
         if warning:
             header += f"    ({warning})"
-        self.log_header.setText(header)
-        self.log_view.moveCursor(QTextCursor.End)
+        entete.setText(header)
+        vue.moveCursor(QTextCursor.End)
 
     # ------------------------------------------------------------------
     # Confort

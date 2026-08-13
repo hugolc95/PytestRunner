@@ -316,8 +316,18 @@ def _required_tokens(nodeid: str, tokens: list[str]) -> list[str]:
 EXACT_PARAM_BONUS = 100
 
 
+def _path_has_component(chemin: Path, cle: str) -> bool:
+    """Vrai si un DOSSIER du chemin porte exactement ce nom (normalise).
+
+    La comparaison porte sur les composants, pas sur le chemin entier : le
+    lecteur `Reader` se retrouve sinon dans `.../Cosmo11Secured Reader/...` et
+    chaque lecteur dont le nom est contenu dans un autre empruntait son log.
+    """
+    return any(_match_key(part) == cle for part in chemin.parts)
+
+
 def _best_log_under(zone: Path, obligatoires: list[str], recherches: list[str],
-                    parametre: str = "") -> Path | None:
+                    parametre: str = "", reader_key: str = "") -> Path | None:
     """Meilleur fichier de log sous ce dossier, ou None.
 
     Le rapprochement porte sur le chemin RELATIF au dossier de run, pas sur le
@@ -343,6 +353,9 @@ def _best_log_under(zone: Path, obligatoires: list[str], recherches: list[str],
             relatif = fichier.relative_to(zone)
         except ValueError:
             relatif = fichier
+        if reader_key and not _path_has_component(fichier, reader_key):
+            continue
+
         chemin = _match_key(str(relatif))
         if any(t not in chemin for t in obligatoires):
             continue
@@ -361,7 +374,8 @@ def _best_log_under(zone: Path, obligatoires: list[str], recherches: list[str],
 
 
 def find_test_log_by_search(workspace: str, nodeid: str,
-                            config_path: str | None = None) -> Path | None:
+                            config_path: str | None = None,
+                            reader: str = "") -> Path | None:
     """Cherche le .log d'un test dans le dossier des logs.
 
     Utilise quand aucun manifeste n'est tenu, ce qui est le cas des workspaces
@@ -381,6 +395,11 @@ def find_test_log_by_search(workspace: str, nodeid: str,
     obligatoires = _required_tokens(nodeid, tokens)
     if not obligatoires:
         return None
+
+    # Le conftest range ses logs par lecteur (`.../20260813/<lecteur>/...`) :
+    # exiger ce dossier est ce qui permet d'ouvrir cote a cote le log du meme
+    # test vu par deux lecteurs differents.
+    cle_lecteur = _match_key(reader) if reader else ""
     recherches = [_match_key(t) for t in tokens if _match_key(t)]
 
     # L'identifiant du parametre termine le nom du fichier quand le conftest le
@@ -389,21 +408,30 @@ def find_test_log_by_search(workspace: str, nodeid: str,
     parametre = _match_key(tokens[-1]) if str(nodeid).strip().endswith("]") else ""
 
     for zone in run_directories(racine) + [racine]:
-        trouve = _best_log_under(zone, obligatoires, recherches, parametre)
+        trouve = _best_log_under(zone, obligatoires, recherches, parametre,
+                                 cle_lecteur)
         if trouve is not None:
             return trouve
 
     return None
 
 
-def find_test_log(workspace: str, nodeid: str, config_path: str | None = None) -> Path | None:
+def find_test_log(workspace: str, nodeid: str, config_path: str | None = None,
+                  reader: str = "") -> Path | None:
     """Fichier .log du dernier run pour ce test, ou None.
 
     Le manifeste est prioritaire quand il existe : il est exact et immediat. A
     defaut, on cherche dans le dossier des logs, ce qui fonctionne avec
     n'importe quel conftest.
+
+    `reader` restreint la recherche aux logs de ce lecteur. Le manifeste ne
+    connait qu'un log par test : quand il en donne un qui n'est pas celui du
+    lecteur demande, on repasse par la recherche plutot que de rendre le log
+    d'un autre lecteur sous son nom.
     """
-    return (
-        find_test_log_from_manifest(workspace, nodeid, config_path)
-        or find_test_log_by_search(workspace, nodeid, config_path)
-    )
+    depuis_manifeste = find_test_log_from_manifest(workspace, nodeid, config_path)
+    if depuis_manifeste is not None:
+        if not reader or _path_has_component(depuis_manifeste, _match_key(reader)):
+            return depuis_manifeste
+
+    return find_test_log_by_search(workspace, nodeid, config_path, reader)

@@ -797,6 +797,45 @@ class TestTreeView(QTreeView):
         for row in range(root.rowCount()):
             self._filter_item(root.child(row), target)
 
+    def find_matches(self, text: str) -> list[QStandardItem]:
+        """Elements dont le nom contient ce texte, dans l'ordre de l'arbre.
+
+        Rechercher plutot que filtrer : masquer tout le reste faisait perdre
+        l'endroit ou l'on etait, et obligeait a vider le champ pour revoir le
+        contexte du test trouve. Ici l'arbre ne bouge pas, on s'y deplace.
+        """
+        query = str(text).strip().lower()
+        if not query:
+            return []
+
+        trouves: list[QStandardItem] = []
+
+        def parcourir(item: QStandardItem):
+            for row in range(item.rowCount()):
+                enfant = item.child(row)
+                if enfant is None:
+                    continue
+                if query in enfant.text().lower():
+                    trouves.append(enfant)
+                parcourir(enfant)
+
+        parcourir(self.model.invisibleRootItem())
+        return trouves
+
+    def reveal_item(self, item: QStandardItem):
+        """Deplie les parents, fait defiler jusqu'a l'element et le selectionne."""
+        if item is None:
+            return
+
+        index = item.index()
+        parent = item.parent()
+        while parent is not None:
+            self.expand(parent.index())
+            parent = parent.parent()
+
+        self.setCurrentIndex(index)
+        self.scrollTo(index, self.PositionAtCenter)
+
     def filter_by_text(self, text: str):
         query = text.lower()
         root = self.model.invisibleRootItem()

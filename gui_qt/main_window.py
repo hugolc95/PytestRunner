@@ -471,6 +471,13 @@ class MainWindow(QMainWindow):
         self._current_junit_paths: list[str] = [""]
         self._failed_nodeids_by_reader: list[set[str]] = [set()]
         self._exit_codes: list[int] = [0]
+        # Compteurs par lecteur, en plus du total : les pastilles de bas de
+        # fenetre montrent celui du lecteur regarde, pas la somme de tous.
+        # Vide tant qu'aucun run n'a demarre : _launch_worker le dimensionne au
+        # nombre de lecteurs, et les lectures passent par .get(cle, 0).
+        self._counts_by_reader: list[dict] = [{}]
+        # Lecteur dont les pastilles montrent le resultat ; None = total.
+        self._summary_scope: int | None = None
 
         self.test_counts = {
             "PASSED": 0,
@@ -563,6 +570,7 @@ class MainWindow(QMainWindow):
         self.tree.setStyleSheet(tree_style())
         self.tree.item_clicked.connect(self._on_tree_item_clicked)
         self.details.detach_requested.connect(self.set_details_detached)
+        self.details.reader_selected.connect(self.set_summary_scope)
         self._detached_window: DetachedPanelWindow | None = None
 
         central = QWidget()
@@ -645,9 +653,32 @@ class MainWindow(QMainWindow):
         self.selection_label.setStyleSheet("color: #616161; font-size: 12px;")
         self.tree.selection_changed.connect(self.on_selection_changed)
 
+        # Recherche, et non filtre : masquer tout le reste faisait perdre
+        # l'endroit ou l'on etait. Le champ amene directement au test trouve,
+        # Entree (ou la fleche) passant au suivant.
         self.filter_edit = QLineEdit()
-        self.filter_edit.setPlaceholderText("Filter tests...")
+        self.filter_edit.setPlaceholderText("Find a test or a file...")
+        self.filter_edit.setClearButtonEnabled(True)
         self.filter_edit.textChanged.connect(self.on_filter_text_changed)
+        self.filter_edit.returnPressed.connect(self.find_next)
+
+        self._find_matches: list = []
+        self._find_index = -1
+
+        self.find_label = QLabel("")
+        self.find_label.setStyleSheet(styles.muted_label())
+
+        self.btn_find_prev = QPushButton("‹")
+        self.btn_find_next = QPushButton("›")
+        for bouton, action in ((self.btn_find_prev, self.find_previous),
+                               (self.btn_find_next, self.find_next)):
+            bouton.setFixedWidth(24)
+            bouton.setCursor(Qt.PointingHandCursor)
+            bouton.setStyleSheet(toolbar_button())
+            bouton.clicked.connect(action)
+            bouton.setEnabled(False)
+        self.btn_find_prev.setToolTip("Previous match (Shift+Enter)")
+        self.btn_find_next.setToolTip("Next match (Enter)")
 
         tree_toolbar.addWidget(self.btn_select_all)
         tree_toolbar.addWidget(self.btn_select_none)
@@ -656,6 +687,9 @@ class MainWindow(QMainWindow):
         tree_toolbar.addWidget(self.btn_collapse_all)
         tree_toolbar.addStretch()
         tree_toolbar.addWidget(self.filter_edit)
+        tree_toolbar.addWidget(self.find_label)
+        tree_toolbar.addWidget(self.btn_find_prev)
+        tree_toolbar.addWidget(self.btn_find_next)
 
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
@@ -711,7 +745,19 @@ class MainWindow(QMainWindow):
         summary_layout.setContentsMargins(4, 3, 4, 3)
         summary_layout.setSpacing(8)
 
+        # Portee des pastilles : le total, ou un lecteur en particulier. Le
+        # bouton n'apparait qu'a plusieurs lecteurs, ou la question se pose.
+        self.scope_button = QPushButton("All readers")
+        self.scope_button.setCursor(Qt.PointingHandCursor)
+        self.scope_button.setStyleSheet(toolbar_button())
+        self.scope_button.setToolTip(
+            "Counters shown: click to go back to the total of every reader.\n"
+            "Clicking a reader's console tab shows that reader's own result.")
+        self.scope_button.clicked.connect(lambda: self.set_summary_scope(None))
+        self.scope_button.setVisible(False)
+
         summary_layout.addWidget(self.progress, 1)
+        summary_layout.addWidget(self.scope_button)
         summary_layout.addWidget(self.card_passed)
         summary_layout.addWidget(self.card_failed)
         summary_layout.addWidget(self.card_skipped)
@@ -889,7 +935,9 @@ class MainWindow(QMainWindow):
         self.stop_button.setStyleSheet(danger_button())
         self.rerun_failed_button.setStyleSheet(info_button())
 
-        for button in (self.btn_select_all, self.btn_select_none, self.btn_failed_only,
+        self.find_label.setStyleSheet(styles.muted_label())
+        for button in (self.btn_find_prev, self.btn_find_next,
+                       self.btn_select_all, self.btn_select_none, self.btn_failed_only,
                        self.btn_expand_all, self.btn_collapse_all):
             button.setStyleSheet(toolbar_button())
 
@@ -1041,6 +1089,9 @@ class MainWindow(QMainWindow):
 
         if status in self.test_counts:
             self.test_counts[status] += 1
+            if reader_index < len(self._counts_by_reader):
+                compteurs = self._counts_by_reader[reader_index]
+                compteurs[status] = compteurs.get(status, 0) + 1
 
         # create_missing : un test execute mais absent de l'arbre y est ajoute,
         # pour que l'arbre montre ce qui a reellement tourne plutot que de perdre
@@ -1091,17 +1142,52 @@ class MainWindow(QMainWindow):
             f"{exemples}\n"
         )
 
+    def set_summary_scope(self, reader_index: int | None):
+        """Choisit ce que comptent les pastilles : un lecteur, ou le total.
+
+        Regarder la console d'un lecteur en lisant les compteurs de tous les
+        autres n'apprend rien sur celui qu'on regarde -- d'ou la portee, qui
+        suit l'onglet de console, et le bouton pour revenir au total.
+        """
+        lecteurs = self._current_readers or [""]
+        if reader_index is not None and not 0 <= reader_index < len(lecteurs):
+            reader_index = None
+        if len(lecteurs) < 2:
+            reader_index = None
+
+        self._summary_scope = reader_index
+        self.scope_button.setVisible(len(lecteurs) > 1)
+        self.scope_button.setText(
+            "All readers" if reader_index is None
+            else short_reader_label(lecteurs[reader_index]))
+
+        self._cards_dirty = True
+        self._refresh_summary_cards()
+
+    def _scoped_counts(self) -> tuple[dict, int]:
+        """Compteurs a afficher et total de reference, selon la portee."""
+        if self._summary_scope is None:
+            return self.test_counts, self.total_tests
+
+        index = self._summary_scope
+        if index >= len(self._counts_by_reader):
+            return self.test_counts, self.total_tests
+
+        lecteurs = max(1, len(self._current_readers or [""]))
+        return self._counts_by_reader[index], self.total_tests // lecteurs
+
     def _refresh_summary_cards(self):
         if not self._cards_dirty:
             self._cards_timer.stop()
             return
         self._cards_dirty = False
 
-        total = max(self.total_tests, 1)
-        self.card_passed.update_value(self.test_counts["PASSED"], total)
-        self.card_failed.update_value(self.test_counts["FAILED"], total)
-        self.card_skipped.update_value(self.test_counts["SKIPPED"], total)
-        self.card_error.update_value(self.test_counts["ERROR"], total)
+        compteurs, reference = self._scoped_counts()
+        total = max(reference, 1)
+        self.card_passed.update_value(compteurs.get("PASSED", 0), total)
+        self.card_failed.update_value(compteurs.get("FAILED", 0), total)
+        self.card_skipped.update_value(compteurs.get("SKIPPED", 0), total)
+        self.card_error.update_value(compteurs.get("ERROR", 0), total)
 
     def _on_stderr(self, text: str, reader_index: int = 0):
         self._queue_console_output(text, reader_index)
@@ -1147,6 +1233,14 @@ class MainWindow(QMainWindow):
             valeurs = [comptes[key] for comptes in comptes_par_sortie if key in comptes]
             if valeurs:
                 self.test_counts[key] = sum(valeurs)
+
+        # Meme priorite au resume pytest pour le detail par lecteur, sans quoi
+        # les pastilles d'un lecteur resteraient sur le comptage a la volee
+        # pendant que le total, lui, aurait ete corrige.
+        for index, sortie in enumerate(self._run_outputs):
+            if index >= len(self._counts_by_reader) or not sortie:
+                continue
+            self._counts_by_reader[index].update(_parse_summary_counts(sortie))
 
         self._cards_timer.stop()
         self._cards_dirty = True
@@ -1296,13 +1390,46 @@ class MainWindow(QMainWindow):
         self.selection_label.setText(f"{selected} / {total} selected")
 
     def on_filter_text_changed(self, text: str):
+        """Recherche a la frappe : l'arbre n'est pas filtre, on s'y deplace.
+
+        La premiere correspondance est atteinte des la saisie ; Entree passe
+        aux suivantes. L'arbre garde tout son contenu visible, donc le contexte
+        du test trouve (son fichier, sa classe) reste sous les yeux.
+        """
         query = text.strip()
-        if query:
-            QTimer.singleShot(0, lambda: self.tree.filter_by_text(query))
-        elif self.active_summary_filter:
-            QTimer.singleShot(0, lambda: self.tree.filter_by_status(self.active_summary_filter))
+        self._find_matches = self.tree.find_matches(query) if query else []
+        self._find_index = 0 if self._find_matches else -1
+
+        if self._find_matches:
+            self.tree.reveal_item(self._find_matches[0])
+
+        self._refresh_find_controls()
+
+    def _refresh_find_controls(self):
+        total = len(self._find_matches)
+        if not self.filter_edit.text().strip():
+            self.find_label.setText("")
+        elif total:
+            self.find_label.setText(f"{self._find_index + 1}/{total}")
         else:
-            QTimer.singleShot(0, self.tree.clear_status_filter)
+            self.find_label.setText("no match")
+
+        self.btn_find_prev.setEnabled(total > 1)
+        self.btn_find_next.setEnabled(total > 1)
+
+    def _goto_match(self, pas: int):
+        """Correspondance suivante (pas=1) ou precedente (pas=-1), en boucle."""
+        if not self._find_matches:
+            return
+        self._find_index = (self._find_index + pas) % len(self._find_matches)
+        self.tree.reveal_item(self._find_matches[self._find_index])
+        self._refresh_find_controls()
+
+    def find_next(self):
+        self._goto_match(1)
+
+    def find_previous(self):
+        self._goto_match(-1)
 
     def browse_workspace(self):
         path = QFileDialog.getExistingDirectory(
@@ -1463,6 +1590,8 @@ class MainWindow(QMainWindow):
         self._current_junit_paths = [""] * len(lecteurs)
         self._failed_nodeids_by_reader = [set() for _ in lecteurs]
         self._exit_codes = [0] * len(lecteurs)
+        self._counts_by_reader = [{k: 0 for k in self.test_counts} for _ in lecteurs]
+        self.set_summary_scope(None)
         self.tree.start_run()
 
         # Parallele par defaut : le fichier de configuration est rendu
