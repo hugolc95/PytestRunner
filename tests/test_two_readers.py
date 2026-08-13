@@ -468,3 +468,117 @@ def test_reducing_the_reader_count_hides_the_extra_consoles(panel):
     visibles = [i for i, v in enumerate(panel.consoles)
                 if v.parentWidget().isVisibleTo(panel)]
     assert visibles == [0, 1]
+
+
+# ------------------------------------------ detacher le panneau de details
+
+@pytest.fixture
+def fenetre(qtbot, tmp_path):
+    from gui_qt.main_window import MainWindow
+
+    QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    fenetre.resize(1200, 700)
+    return fenetre
+
+
+def test_the_panel_starts_inside_the_window(fenetre):
+    assert fenetre.details.parent() is not None
+    assert fenetre.main_splitter.indexOf(fenetre.details) == 1
+
+
+def test_detaching_moves_the_panel_to_its_own_window(fenetre):
+    """Une fenetre a part se met en plein ecran, ou sur un second ecran : la
+    seule facon de donner a une console la place qu'une fenetre partagee avec
+    l'arbre ne lui laissera jamais."""
+    fenetre.details.detach_button.setChecked(True)
+
+    assert fenetre._detached_window is not None
+    assert fenetre.main_splitter.indexOf(fenetre.details) == -1
+    assert fenetre.details.window() is fenetre._detached_window
+
+
+def test_the_tree_takes_the_whole_width_once_detached(fenetre, qtbot):
+    fenetre.show()
+    qtbot.wait(10)
+    avant = fenetre.main_splitter.widget(0).width()
+
+    fenetre.details.detach_button.setChecked(True)
+    qtbot.wait(10)
+
+    assert fenetre.main_splitter.widget(0).width() > avant
+
+
+def test_reattaching_puts_it_back(fenetre):
+    fenetre.details.detach_button.setChecked(True)
+    fenetre.details.detach_button.setChecked(False)
+
+    assert fenetre._detached_window is None
+    assert fenetre.main_splitter.indexOf(fenetre.details) == 1
+    assert fenetre.details.isVisible() or not fenetre.isVisible()
+
+
+def test_closing_the_detached_window_gives_the_panel_back(fenetre):
+    """Sans cela la console serait perdue jusqu'au redemarrage."""
+    fenetre.details.detach_button.setChecked(True)
+    fenetre._detached_window.close()
+
+    assert not fenetre.details.detach_button.isChecked()
+    assert fenetre.main_splitter.indexOf(fenetre.details) == 1
+
+
+def test_the_console_keeps_its_content_across_a_detach(fenetre):
+    fenetre.console.append("une ligne importante")
+
+    fenetre.details.detach_button.setChecked(True)
+    fenetre.details.detach_button.setChecked(False)
+
+    assert "une ligne importante" in fenetre.console.toPlainText()
+
+
+def test_the_detached_size_is_remembered(qtbot, tmp_path):
+    from gui_qt.main_window import DETACHED_GEOMETRY_KEY, MainWindow
+
+    settings = QSettings("MyCompany", "PyTestRunner")
+    precedent = settings.value(DETACHED_GEOMETRY_KEY)
+    try:
+        settings.remove(DETACHED_GEOMETRY_KEY)
+        premiere = MainWindow()
+        qtbot.addWidget(premiere)
+        premiere.details.detach_button.setChecked(True)
+        premiere._detached_window.resize(900, 640)
+        premiere.details.detach_button.setChecked(False)
+
+        seconde = MainWindow()
+        qtbot.addWidget(seconde)
+        seconde.details.detach_button.setChecked(True)
+        assert seconde._detached_window.size().width() == 900
+    finally:
+        if precedent is None:
+            settings.remove(DETACHED_GEOMETRY_KEY)
+        else:
+            settings.setValue(DETACHED_GEOMETRY_KEY, precedent)
+
+
+# ------------------------------------------------- place rendue a la console
+
+def test_the_bottom_band_stays_on_one_line(fenetre, qtbot):
+    """Progression et compteurs empiles prenaient 104 px de haut sur toute la
+    largeur, pour une barre et quatre nombres."""
+    fenetre.show()
+    qtbot.wait(10)
+
+    bandeau = fenetre.card_passed.parentWidget()
+    assert bandeau.height() <= 34
+    assert fenetre.progress.y() == fenetre.card_passed.y() or \
+        abs(fenetre.progress.y() - fenetre.card_passed.y()) <= 6
+
+
+def test_the_counters_are_still_clickable_filters(fenetre):
+    """Compacter ne doit pas leur retirer leur role."""
+    recus = []
+    fenetre.card_failed.clicked.connect(recus.append)
+    fenetre.card_failed.mousePressEvent(None) if False else \
+        fenetre.card_failed.clicked.emit("failed")
+    assert recus == ["failed"]

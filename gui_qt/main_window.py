@@ -291,8 +291,10 @@ class SummaryCard(QLabel):
         self._max_value = 100
 
         self.setAlignment(Qt.AlignCenter)
-        self.setMinimumWidth(110)
-        self.setMaximumHeight(56)  # 🔥 empêche l’étirement vertical
+        self.setMinimumWidth(96)
+        # Une pastille sur une ligne : quatre nombres n'ont pas besoin de la
+        # hauteur de quatre lignes de console.
+        self.setFixedHeight(26)
 
         self.setProperty("active", False)
 
@@ -324,9 +326,10 @@ class SummaryCard(QLabel):
         self.setStyleSheet(f"""
         QLabel {{
             background-color: {background};
-            border-radius: 10px;
+            border-radius: 6px;
             color: {palette['card_text']};
             border: 1px solid transparent;
+            padding: 0px 10px;
         }}
 
         QLabel[active="true"] {{
@@ -335,9 +338,37 @@ class SummaryCard(QLabel):
         """)
 
         self.setText(
-            f"<div style='font-size:18px; font-weight:bold'>{value}</div>"
-            f"<div style='font-size:11px; opacity:0.8'>{self.title}</div>"
+            f"<span style='font-size:13px; font-weight:bold'>{value}</span>"
+            f"<span style='font-size:11px; opacity:0.75'>&nbsp;&nbsp;{self.title}</span>"
         )
+
+
+DETACHED_GEOMETRY_KEY = "detail_panel_geometry"
+
+
+class DetachedPanelWindow(QWidget):
+    """Fenetre d'accueil du panneau Console / Source / Log une fois detache.
+
+    Une fenetre a part se met en plein ecran, ou sur un second ecran : c'est la
+    seule facon de donner a une console la place qu'une fenetre partagee avec
+    l'arbre ne lui laissera jamais.
+    """
+
+    closed = pyqtSignal()
+
+    def __init__(self, contenu: QWidget, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Console, Source et Log - PyTest Runner")
+        self.setWindowFlags(Qt.Window)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(6, 6, 6, 6)
+        layout.addWidget(contenu)
+
+    def closeEvent(self, event):
+        # Fermer la fenetre detachee doit rendre le panneau, pas le faire
+        # disparaitre : sans cela la console serait perdue jusqu'au redemarrage.
+        self.closed.emit()
+        super().closeEvent(event)
 
 
 class MainWindow(QMainWindow):
@@ -468,6 +499,8 @@ class MainWindow(QMainWindow):
 
         self.tree.setStyleSheet(tree_style())
         self.tree.item_clicked.connect(self._on_tree_item_clicked)
+        self.details.detach_requested.connect(self.set_details_detached)
+        self._detached_window: DetachedPanelWindow | None = None
 
         central = QWidget()
         workspace_bar = QHBoxLayout()
@@ -577,6 +610,7 @@ class MainWindow(QMainWindow):
 
         splitter.addWidget(left_widget)
         splitter.addWidget(self.details)
+        self.main_splitter = splitter
 
         splitter.setStretchFactor(0, 2)  # tree
         splitter.setStretchFactor(1, 3)  # console
@@ -587,8 +621,7 @@ class MainWindow(QMainWindow):
         self.progress.setMinimum(0)
         self.progress.setValue(0)
         self.progress.setTextVisible(True)
-
-        layout.addWidget(self.progress)
+        self.progress.setFixedHeight(20)
 
         # ---- Modern Summary Cards ----
         self.card_passed = SummaryCard("PASSED")
@@ -603,15 +636,19 @@ class MainWindow(QMainWindow):
         self.card_skipped.clicked.connect(self.on_summary_clicked)
         self.card_error.clicked.connect(self.on_summary_clicked)
 
-        # ---- Compact Summary Container ----
+        # ---- Bandeau de bas de fenetre ----
+        # Progression et compteurs sur UNE ligne. Empiles, ils prenaient 104 px
+        # de haut sur toute la largeur pour une barre et quatre nombres, autant
+        # de moins pour la console.
         summary_widget = QWidget()
-        summary_widget.setFixedHeight(70)
+        summary_widget.setFixedHeight(32)
         summary_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
         summary_layout = QHBoxLayout(summary_widget)
-        summary_layout.setContentsMargins(6, 6, 6, 6)
-        summary_layout.setSpacing(10)
+        summary_layout.setContentsMargins(4, 3, 4, 3)
+        summary_layout.setSpacing(8)
 
+        summary_layout.addWidget(self.progress, 1)
         summary_layout.addWidget(self.card_passed)
         summary_layout.addWidget(self.card_failed)
         summary_layout.addWidget(self.card_skipped)
@@ -674,6 +711,33 @@ class MainWindow(QMainWindow):
             # comportement d'un workspace sans lecteurs.
             return []
         return coches
+
+    def set_details_detached(self, detache: bool):
+        """Sort le panneau de details dans sa propre fenetre, ou l'y remet."""
+        if detache and self._detached_window is None:
+            self._detached_window = DetachedPanelWindow(self.details, self)
+            self._detached_window.closed.connect(
+                lambda: self.details.detach_button.setChecked(False))
+
+            geometrie = self.settings.value(DETACHED_GEOMETRY_KEY)
+            if geometrie is not None:
+                self._detached_window.restoreGeometry(geometrie)
+            else:
+                self._detached_window.resize(1100, 700)
+            self._detached_window.show()
+            self._detached_window.raise_()
+
+        elif not detache and self._detached_window is not None:
+            self.settings.setValue(
+                DETACHED_GEOMETRY_KEY, self._detached_window.saveGeometry())
+            fenetre = self._detached_window
+            self._detached_window = None
+            # Reinserer AVANT de detruire la fenetre : le panneau serait sinon
+            # detruit avec elle, en tant qu'enfant.
+            self.main_splitter.insertWidget(1, self.details)
+            self.details.show()
+            fenetre.close()
+            fenetre.deleteLater()
 
     def _separator(self) -> QFrame:
         """Trait vertical entre deux groupes d'actions.
@@ -1377,4 +1441,8 @@ class MainWindow(QMainWindow):
         apres une correction la perdrait sans cela.
         """
         self.details.save_source()
+        if self._detached_window is not None:
+            self.settings.setValue(
+                DETACHED_GEOMETRY_KEY, self._detached_window.saveGeometry())
+            self._detached_window.close()
         super().closeEvent(event)

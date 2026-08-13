@@ -15,7 +15,7 @@ import os
 import re
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QTimer
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QTextCursor
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -164,6 +164,11 @@ def write_source_file(path: Path, texte: str, fin_de_ligne: str) -> str | None:
 class DetailPanel(QWidget):
     """Onglets Console / Source / Log affiches a droite de l'arbre."""
 
+    # Emis quand l'utilisateur demande a detacher (True) ou rattacher (False) le
+    # panneau. La fenetre principale s'en charge : elle seule connait le
+    # splitter d'ou le panneau sort et ou il revient.
+    detach_requested = pyqtSignal(bool)
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
@@ -255,7 +260,19 @@ class DetailPanel(QWidget):
         self._save_timer.timeout.connect(self.save_source)
         self.source_view.textChanged.connect(self._on_source_edited)
 
+        # Bouton de detachement, loge dans le coin des onglets : il doit rester
+        # atteignable depuis Console, Source et Log.
+        self.detach_button = QToolButton()
+        self.detach_button.setText("⧉")
+        self.detach_button.setCheckable(True)
+        self.detach_button.setAutoRaise(True)
+        self.detach_button.setCursor(Qt.PointingHandCursor)
+        self.detach_button.setToolTip(
+            "Detacher ce panneau dans sa propre fenetre (second ecran, plein ecran...)")
+        self.detach_button.toggled.connect(self._on_detach_toggled)
+
         self.tabs = QTabWidget()
+        self.tabs.setCornerWidget(self.detach_button, Qt.TopRightCorner)
         self.tabs.addTab(self.console_area, "Console")
         self.tabs.addTab(
             self._wrap(self.source_header, self.source_view,
@@ -354,6 +371,12 @@ class DetailPanel(QWidget):
             else "Afficher toutes les consoles cote a cote")
         self._apply_console_layout()
 
+    def _on_detach_toggled(self, detache: bool):
+        self.detach_button.setToolTip(
+            "Remettre ce panneau dans la fenetre principale" if detache
+            else "Detacher ce panneau dans sa propre fenetre (second ecran, plein ecran...)")
+        self.detach_requested.emit(detache)
+
     def show_reader(self, reader_index: int):
         """Amene la console de ce lecteur au premier plan."""
         if 0 <= reader_index < self.console_tabs.count():
@@ -394,6 +417,7 @@ class DetailPanel(QWidget):
                 f"background:{styles.mix(styles.palette()['surface'], couleur, 0.07)};"
             )
         self.compare_button.setStyleSheet(theme_toggle_button())
+        self.detach_button.setStyleSheet(theme_toggle_button())
         for index in range(self.console_tabs.count()):
             self.console_tabs.setTabTextColor(index, QColor(styles.reader_color(index)))
         self.source_view.setStyleSheet(console_style())
