@@ -51,15 +51,15 @@ def show_scrollable_error(parent, title: str, message: str, intro: str | None = 
     text_edit = QTextEdit()
     text_edit.setReadOnly(True)
     text_edit.setLineWrapMode(QTextEdit.NoWrap)
-    text_edit.setPlainText(message or "(aucun detail)")
+    text_edit.setPlainText(message or "(no detail)")
     layout.addWidget(text_edit)
 
     button_bar = QHBoxLayout()
-    copy_button = QPushButton("Copier")
+    copy_button = QPushButton("Copy")
     copy_button.setStyleSheet(neutral_button())
     copy_button.clicked.connect(lambda: QApplication.clipboard().setText(message or ""))
 
-    close_button = QPushButton("Fermer")
+    close_button = QPushButton("Close")
     close_button.setStyleSheet(primary_button())
     close_button.clicked.connect(dialog.accept)
 
@@ -113,9 +113,9 @@ def resolve_config_to_open(parent, workspace: str, remembered: str | None = None
         names = [path.name for path in candidates]
         choice, accepted = QInputDialog.getItem(
             parent,
-            "Choisir la configuration",
-            f"Aucun fichier {STANDARD_CONFIG_NAMES[0]} dans ce workspace.\n"
-            "Fichiers YAML trouves a la racine :",
+            "Choose the configuration",
+            f"No {STANDARD_CONFIG_NAMES[0]} file in this workspace.\n"
+            "YAML files found at the root:",
             names,
             0,
             False,
@@ -126,9 +126,9 @@ def resolve_config_to_open(parent, workspace: str, remembered: str | None = None
 
     path, _ = QFileDialog.getOpenFileName(
         parent,
-        "Choisir le fichier de configuration",
+        "Choose the configuration file",
         workspace,
-        "Fichiers YAML (*.yml *.yaml);;Tous les fichiers (*)",
+        "YAML files (*.yml *.yaml);;All files (*)",
     )
     return Path(path) if path else None
 
@@ -163,12 +163,12 @@ def _startfile(parent, path) -> bool:
     except AttributeError:
         QMessageBox.information(
             parent,
-            "Non supporte",
-            f"Ouverture automatique non disponible sur cette plateforme.\nChemin : {path}",
+            "Not supported",
+            f"Automatic opening is not available on this platform.\nPath: {path}",
         )
         return False
     except OSError as exc:
-        QMessageBox.critical(parent, "Erreur", f"Impossible d'ouvrir :\n{exc}")
+        QMessageBox.critical(parent, "Error", f"Could not open:\n{exc}")
         return True
 
 
@@ -197,15 +197,15 @@ def open_test_log_for(parent, workspace: str, nodeid: str, config_path: str | No
     if log_root.is_dir():
         QMessageBox.information(
             parent,
-            "Log introuvable",
-            "Aucun log pour ce test precis dans le dernier run.\n"
-            f"Ouverture du dossier des logs :\n{log_root}",
+            "Log not found",
+            "No log for this specific test in the last run.\n"
+            f"Opening the logs folder:\n{log_root}",
         )
         _startfile(parent, log_root)
     else:
         QMessageBox.information(
             parent,
-            "Aucun log",
-            "Aucun log n'a encore ete produit pour ce workspace.\n"
-            "Lancez d'abord ce test (le conftest cree un .log par test execute).",
+            "No log",
+            "No log has been produced yet for this workspace.\n"
+            "Run this test first (the conftest creates a .log per test run).",
         )

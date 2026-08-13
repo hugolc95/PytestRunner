@@ -528,9 +528,9 @@ class CampaignTreeView(QTreeView):
         own_status = item.data(STATUS_ROLE)
 
         menu = QMenu(self)
-        open_log_action = menu.addAction("Ouvrir le log de ce test")
+        open_log_action = menu.addAction("Open this test's log")
         open_log_action.setEnabled(bool(own_nodeid))
-        view_trace_action = menu.addAction("Voir la trace d'echec")
+        view_trace_action = menu.addAction("View failure traceback")
         view_trace_action.setEnabled(bool(own_nodeid) and own_status in ("FAILED", "ERROR"))
 
         chosen = menu.exec_(self.viewport().mapToGlobal(pos))
@@ -544,13 +544,13 @@ class CampaignTreeView(QTreeView):
         if not trace:
             QMessageBox.information(
                 self,
-                "Trace introuvable",
-                "Impossible de retrouver la trace d'echec de ce test dans la sortie du dernier run.",
+                "Traceback not found",
+                "Could not find this test's failure traceback in the last run's output.",
             )
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Trace d'echec - {nodeid}")
+        dialog.setWindowTitle(f"Failure traceback - {nodeid}")
         dialog.resize(800, 500)
 
         text_edit = QTextEdit()
@@ -612,7 +612,7 @@ class CampaignWorker(QThread):
         exit_code = 0
         try:
             self.stdout_signal.emit("Campaign worker started.\n")
-            self.stdout_signal.emit(f"Interpreteur des tests : {self.interpreter}\n")
+            self.stdout_signal.emit(f"Test interpreter: {self.interpreter}\n")
 
             # Verification dans le thread de travail : le thread UI ne peut pas se
             # le permettre (lancer un processus l'y gelerait). Remplit aussi le
@@ -768,8 +768,8 @@ class CampaignWorker(QThread):
         with pytest_nodeid_args(nodeids) as nodeid_args:
             if nodeid_args and nodeid_args[0].startswith("@"):
                 self.stdout_signal.emit(
-                    f"{len(nodeids)} nodeids passes via un fichier d'arguments "
-                    "(ligne de commande trop longue pour Windows).\n"
+                    f"{len(nodeids)} nodeids passed via an argument file "
+                    "(command line too long for Windows).\n"
                 )
 
             cmd = [
@@ -1087,9 +1087,9 @@ class CampaignPanel(QWidget):
         except Exception as exc:
             show_scrollable_error(
                 self,
-                "Erreur de chargement de la campagne",
+                "Campaign load error",
                 str(exc),
-                intro="Impossible de charger ce fichier campaign.yml :",
+                intro="Could not load this campaign.yml file:",
             )
 
     def open_config(self):
@@ -1158,12 +1158,12 @@ class CampaignPanel(QWidget):
 
     def run_failed(self):
         if not self.failed_nodeids:
-            QMessageBox.information(self, "Info", "Aucun test en echec a relancer.")
+            QMessageBox.information(self, "Info", "No failed test to re-run.")
             return
 
         selections = self._selections_for_nodeids(self.failed_nodeids)
         if not selections:
-            QMessageBox.information(self, "Info", "Aucun test en echec correspondant trouve dans la campagne.")
+            QMessageBox.information(self, "Info", "No matching failed test found in the campaign.")
             return
 
         self._launch_worker(selections, f"Re-running {len(selections)} failed test(s)...\n")
@@ -1228,9 +1228,9 @@ class CampaignPanel(QWidget):
         if problem:
             show_scrollable_error(
                 self,
-                "Interpreteur des tests inutilisable",
+                "Test interpreter unusable",
                 problem,
-                intro="La campagne n'a pas pu etre lancee :",
+                intro="The campaign could not be started:",
             )
             return
 

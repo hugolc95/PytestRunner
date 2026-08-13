@@ -78,13 +78,13 @@ NAV_MAX_WIDTH = 380
 GENERAL_SECTION = "General"
 
 DESCRIPTIONS = {
-    "log_path": "Dossier ou sont ecrits les fichiers .log, un par test execute.",
-    "log_directory": "Dossier ou sont ecrits les fichiers .log, un par test execute.",
-    "python_executable": "Python utilise pour collecter et executer les tests "
-                         "(il lui faut pytest). Vide = reglage global de l'application.",
-    "import_mode": "Mode d'import pytest. importlib accepte des fichiers de test "
-                   "de meme nom dans des dossiers differents.",
-    "pythonpath": "Chemins ajoutes au PYTHONPATH des tests, un par ligne.",
+    "log_path": "Folder where .log files are written, one per test run.",
+    "log_directory": "Folder where .log files are written, one per test run.",
+    "python_executable": "Python used to collect and run the tests "
+                         "(needs pytest). Empty = the app's global setting.",
+    "import_mode": "pytest import mode. importlib accepts test files with the "
+                   "same name in different folders.",
+    "pythonpath": "Paths added to the tests' PYTHONPATH, one per line.",
 }
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
@@ -215,7 +215,7 @@ class _ListField(_Field):
         lignes = min(max(len(self.original), self.MIN_LINES), self.MAX_LINES)
         self.widget = _ValueList(lignes)
         self.widget.setPlainText("\n".join(str(v) for v in self.original))
-        self.widget.setPlaceholderText("Une valeur par ligne")
+        self.widget.setPlaceholderText("One value per line")
         self.widget.setLineWrapMode(QPlainTextEdit.NoWrap)
         # Largeur de la plus longue valeur : sans cela, une liste de modes
         # s'affichait tronquee alors qu'il restait de la place. Une liste plus
@@ -314,15 +314,15 @@ class _ReaderField(_Field):
             width_for_content(self.widget, propositions + [actuel], marge=64))
         if not propositions:
             self.widget.lineEdit().setPlaceholderText(
-                "Aucun lecteur detecte : saisissez son nom")
+                "No reader detected: type its name")
         ligne.addWidget(self.widget, 1)
 
         self.add_button = QPushButton("+")
         self.add_button.setStyleSheet(toolbar_button())
         self.add_button.setFixedWidth(30)
         self.add_button.setToolTip(
-            "Ajouter ce lecteur a la liste des lecteurs a tester.\n"
-            "La cle Reader que lisent vos tests n'est pas modifiee.")
+            "Add this reader to the list of readers to test.\n"
+            "The Reader key your tests read is not changed.")
         self.add_button.clicked.connect(self._ajouter)
         ligne.addWidget(self.add_button)
 
@@ -363,7 +363,7 @@ class _ReaderListField(_Field):
         for nom in self.original:
             self.add_row(str(nom))
         if not self.original:
-            self._vide = QLabel("Aucun lecteur supplementaire.")
+            self._vide = QLabel("No additional reader.")
             self._vide.setStyleSheet(styles.muted_label())
             self._layout.addWidget(self._vide)
 
@@ -389,13 +389,13 @@ class _ReaderListField(_Field):
         combo.setMaximumWidth(
             width_for_content(combo, propositions + [nom], marge=64))
         if not nom and not propositions:
-            combo.lineEdit().setPlaceholderText("Nom du lecteur")
+            combo.lineEdit().setPlaceholderText("Reader name")
         boite.addWidget(combo, 1)
 
         retirer = QPushButton("−")
         retirer.setStyleSheet(toolbar_button())
         retirer.setFixedWidth(30)
-        retirer.setToolTip("Retirer ce lecteur")
+        retirer.setToolTip("Remove this reader")
         retirer.clicked.connect(lambda: self._retirer(ligne, combo))
         boite.addWidget(retirer)
         boite.addStretch(0)

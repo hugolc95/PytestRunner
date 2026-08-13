@@ -878,29 +878,29 @@ class TestTreeView(QTreeView):
         menu = QMenu(self)
 
         if own_nodeid:
-            run_label = "Lancer ce test"
+            run_label = "Run this test"
         else:
-            run_label = f"Lancer ces {len(nodeids_under)} test(s)"
+            run_label = f"Run these {len(nodeids_under)} test(s)"
         run_action = menu.addAction(run_label)
         run_action.setEnabled(bool(nodeids_under))
 
         menu.addSeparator()
 
-        copy_nodeid_action = menu.addAction("Copier le nodeid")
+        copy_nodeid_action = menu.addAction("Copy nodeid")
         copy_nodeid_action.setEnabled(bool(own_nodeid))
 
-        copy_path_action = menu.addAction("Copier le chemin du fichier")
+        copy_path_action = menu.addAction("Copy file path")
         copy_path_action.setEnabled(bool(reference_nodeid))
 
-        open_file_action = menu.addAction("Ouvrir le fichier source")
+        open_file_action = menu.addAction("Open source file")
         open_file_action.setEnabled(bool(reference_nodeid))
 
-        open_log_action = menu.addAction("Ouvrir le log de ce test")
+        open_log_action = menu.addAction("Open this test's log")
         open_log_action.setEnabled(bool(own_nodeid))
 
         own_status = item.data(STATUS_ROLE)
         menu.addSeparator()
-        view_trace_action = menu.addAction("Voir la trace d'echec")
+        view_trace_action = menu.addAction("View failure traceback")
         view_trace_action.setEnabled(bool(own_nodeid) and own_status in ("FAILED", "ERROR"))
 
         chosen = menu.exec_(self.viewport().mapToGlobal(pos))
@@ -925,13 +925,13 @@ class TestTreeView(QTreeView):
         if not trace:
             QMessageBox.information(
                 self,
-                "Trace introuvable",
-                "Impossible de retrouver la trace d'echec de ce test dans la sortie du dernier run.",
+                "Traceback not found",
+                "Could not find this test's failure traceback in the last run's output.",
             )
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Trace d'echec - {nodeid}")
+        dialog.setWindowTitle(f"Failure traceback - {nodeid}")
         dialog.resize(800, 500)
 
         text_edit = QTextEdit()

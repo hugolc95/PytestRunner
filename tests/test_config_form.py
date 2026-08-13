@@ -360,7 +360,7 @@ def test_a_described_setting_keeps_its_explanation_in_the_tooltip(qtbot):
 
     page = form.pages.currentWidget()
     infobulles = [w.toolTip() for w in page.widget().findChildren(QLabel)]
-    assert any("LOG_PATH" in b and "fichiers .log" in b for b in infobulles)
+    assert any("LOG_PATH" in b and ".log files" in b for b in infobulles)
 
 
 # --------------------------------------------------- navigation entre sections
