@@ -148,31 +148,21 @@ def test_no_marker_is_left_behind(config):
 
 # --------------------------------------------------------------- enchainement
 
-def test_sequential_is_the_default(tmp_path):
-    """C'est le seul mode qui ne demande rien au code de test."""
+def test_parallel_is_the_default(tmp_path):
+    """Rien a declarer : le plugin (core/reader_plugin.py) rend le fichier de
+    configuration virtuellement different pour chaque process sans ecrire nulle
+    part, donc sans risque pour un workspace qui n'a rien configure."""
+    assert reader_mode_for(str(tmp_path)) == "parallel"
+
+
+def test_sequential_can_be_asked_for(tmp_path):
+    (tmp_path / "config.yml").write_text("reader_mode: sequential\n", encoding="utf-8")
     assert reader_mode_for(str(tmp_path)) == "sequential"
 
 
-def test_parallel_can_be_asked_for(tmp_path):
+def test_parallel_can_be_asked_for_explicitly(tmp_path):
     (tmp_path / "config.yml").write_text("reader_mode: parallel\n", encoding="utf-8")
     assert reader_mode_for(str(tmp_path)) == "parallel"
-
-
-def test_declaring_a_getter_switches_to_parallel_on_its_own(tmp_path):
-    """Le point demande : des que le plugin peut prendre en charge le lecteur
-    sans risque, le parallele devient automatique -- une seule ligne a
-    ajouter, et pas la peine de connaitre en plus la cle reader_mode."""
-    (tmp_path / "config.yml").write_text(
-        "reader_getter: config_getters.getConfigReader\n", encoding="utf-8")
-    assert reader_mode_for(str(tmp_path)) == "parallel"
-
-
-def test_an_explicit_mode_overrides_the_inference(tmp_path):
-    """On doit pouvoir revenir au sequentiel malgre un reader_getter present."""
-    (tmp_path / "config.yml").write_text(
-        "reader_getter: config_getters.getConfigReader\n"
-        "reader_mode: sequential\n", encoding="utf-8")
-    assert reader_mode_for(str(tmp_path)) == "sequential"
 
 
 READERS = ["Lecteur A", "Lecteur B"]
@@ -183,7 +173,12 @@ def window(qtbot, tmp_path):
     from gui_qt.main_window import MainWindow
 
     QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
+    # reader_mode: sequential explicite : ces tests portent sur le mecanisme
+    # sequentiel lui-meme (ecriture dans la configuration, un run a la fois,
+    # restauration), plus choisi par defaut depuis que le parallele est sans
+    # risque.
     (tmp_path / "config.yml").write_text(
+        "reader_mode: sequential\n"
         "Reader: Lecteur A\nReaders:\n  - Lecteur A\n  - Lecteur B\n", encoding="utf-8")
     # Le test note le lecteur que la configuration lui donnait, comme le ferait
     # un getConfigReader() reel.
@@ -220,15 +215,14 @@ def test_the_tests_see_each_reader_in_turn(window, qtbot):
             worker.wait(5000)
 
 
-def test_the_sequential_fallback_explains_how_to_go_parallel(window, qtbot):
-    """Le sequentiel sans reader_getter est un choix par defaut, pas une
-    limite : la console doit dire comment en sortir, sans obliger a revenir
-    demander comment faire."""
+def test_the_sequential_choice_is_explained_in_the_console(window, qtbot):
+    """Le sequentiel est un choix explicite (reader_mode: sequential) depuis
+    que le parallele est le defaut : la console doit dire ce qui est arrive."""
     window._launch_worker(["test_x.py::test_f"], "run\n")
     try:
         window._flush_console_output()
-        assert "reader_getter" in window.console.toPlainText()
         assert "l'un apres l'autre" in window.console.toPlainText()
+        assert "reader_mode: sequential" in window.console.toPlainText()
     finally:
         qtbot.waitUntil(lambda: window._runs_left == 0, timeout=120000)
         for worker in window.workers:
@@ -236,14 +230,14 @@ def test_the_sequential_fallback_explains_how_to_go_parallel(window, qtbot):
             worker.wait(5000)
 
 
-def test_no_fallback_note_once_a_getter_is_declared(parallele, qtbot):
-    """Une fois le parallele possible, l'avertissement n'a plus lieu d'etre."""
+def test_no_sequential_note_in_parallel_mode(parallele, qtbot):
+    """En parallele (le defaut), aucun avertissement de secours n'a lieu d'etre."""
     parallele._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
     try:
         parallele._flush_console_output()
         sortie = "".join(parallele.details.console_for(i).toPlainText()
                          for i in range(3))
-        assert "reader_getter" not in sortie
+        assert "l'un apres l'autre" not in sortie
     finally:
         qtbot.waitUntil(lambda: parallele._runs_left == 0, timeout=120000)
         for worker in parallele.workers:
@@ -491,16 +485,17 @@ def test_loading_a_workspace_repairs_an_interrupted_run(qtbot, tmp_path):
 @pytest.fixture
 def parallele(qtbot, tmp_path):
     """Un workspace calque sur le votre : un config_getters.getConfigReader()
-    qui lit la cle Reader, et une classe de test qui l'appelle dans son setup."""
+    qui lit la cle Reader, et une classe de test qui l'appelle dans son setup.
+
+    Rien a declarer pour obtenir le parallele : c'est desormais le defaut, sans
+    risque, des que plusieurs lecteurs sont a tester.
+    """
     from gui_qt.main_window import MainWindow
 
     QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
-    # Pas de reader_mode ici : declarer reader_getter doit suffire a lui seul a
-    # faire choisir le parallele, c'est le scenario que l'utilisateur attend.
     (tmp_path / "config.yml").write_text(
         "Reader: Lecteur A\n"
-        "Readers:\n  - Lecteur B\n  - Lecteur C\n"
-        "reader_getter: config_getters.getConfigReader\n",
+        "Readers:\n  - Lecteur B\n  - Lecteur C\n",
         encoding="utf-8")
 
     (tmp_path / "config_getters.py").write_text(textwrap.dedent('''
@@ -536,8 +531,8 @@ def parallele(qtbot, tmp_path):
 
 def test_three_readers_run_at_once_each_with_its_own(parallele, qtbot):
     """Le but : trois pytest en meme temps, chacun voyant son lecteur, sans
-    qu'une seule ligne du code de test ait change, et sans meme avoir eu a
-    ecrire reader_mode: parallel -- reader_getter suffit."""
+    qu'une seule ligne du code de test ait change, et sans rien avoir eu a
+    configurer -- le parallele est le defaut."""
     parallele._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
     try:
         assert len(parallele.workers) == 3
@@ -567,15 +562,20 @@ def test_the_configuration_is_never_written_in_parallel(parallele, qtbot):
             worker.wait(10000)
 
 
-def test_a_wrong_getter_stops_the_run_loudly(qtbot, tmp_path):
-    """Continuer serait pire : tous les lecteurs liraient le meme et les
-    resultats se ressembleraient sans que rien ne le signale."""
+def test_a_reader_key_the_plugin_cannot_locate_stops_the_run_loudly(qtbot, tmp_path):
+    """`reader_config_path()` retrouve le fichier via un vrai parseur YAML, qui
+    voit la cle Reader meme en notation JSON/flow (`{Reader: A, ...}`). Le
+    plugin, lui, doit REECRIRE cette cle sans reserialiser tout le fichier
+    (commentaires, ordre, mise en forme a preserver) : il travaille donc ligne
+    a ligne, et une telle ligne n'a pas de `Reader:` isole a repointer.
+
+    Continuer serait pire que s'arreter : tous les lecteurs liraient la meme
+    valeur, sans que rien ne le signale.
+    """
     from gui_qt.main_window import MainWindow
 
     (tmp_path / "config.yml").write_text(
-        "Reader: A\nReaders:\n  - B\n"
-        "reader_mode: parallel\n"
-        "reader_getter: module_qui_nexiste_pas.getReader\n", encoding="utf-8")
+        "{Reader: A, Readers: [A, B]}\n", encoding="utf-8")
     (tmp_path / "test_x.py").write_text(
         "def test_f():\n    pass\n", encoding="utf-8")
 
@@ -599,12 +599,13 @@ def test_a_wrong_getter_stops_the_run_loudly(qtbot, tmp_path):
             worker.wait(10000)
 
 
-def test_without_a_getter_parallel_falls_back_to_the_variable(qtbot, tmp_path):
-    """Le mode parallele reste utilisable pour qui a deja adapte son getter."""
+def test_the_reader_variable_is_set_alongside_the_plugin_in_parallel(qtbot, tmp_path):
+    """La variable d'environnement reste disponible en plus du plugin, pour un
+    workspace dont le code de test prefere la lire directement."""
     from gui_qt.main_window import MainWindow
 
     (tmp_path / "config.yml").write_text(
-        "Reader: A\nReaders:\n  - B\nreader_mode: parallel\n", encoding="utf-8")
+        "Reader: A\nReaders:\n  - B\n", encoding="utf-8")
     (tmp_path / "test_x.py").write_text(
         "def test_f():\n    pass\n", encoding="utf-8")
 
@@ -614,7 +615,12 @@ def test_without_a_getter_parallel_falls_back_to_the_variable(qtbot, tmp_path):
     fenetre.refresh_readers()
     fenetre._launch_worker(["test_x.py::test_f"], "run\n")
     try:
-        assert all(not w._plugin_args for w in fenetre.workers)
+        qtbot.waitUntil(lambda: fenetre._runs_left == 0, timeout=120000)
+        for worker in fenetre.workers:
+            worker.wait(10000)
+
+        assert all(w._plugin_args for w in fenetre.workers), \
+            "le plugin doit etre injecte pour chaque lecteur en parallele"
         assert fenetre.workers[1]._env()["PYTESTRUNNER_READER"] == "B"
     finally:
         for worker in fenetre.workers:
@@ -645,16 +651,15 @@ def test_the_generated_plugin_is_cleaned_up(parallele, qtbot):
 @pytest.fixture
 def parallele_conftest(qtbot, tmp_path):
     """Reproduction fidele du workspace signale : getConfigReader n'est pas
-    dans un module a part, mais directement dans conftest.py. Le nom que ce
-    fichier recoit dans sys.modules n'est pas previsible depuis l'exterieur,
-    d'ou reader_getter: getConfigReader (sans prefixe de module)."""
+    dans un module a part, mais directement dans conftest.py. Sans importance
+    pour le plugin, qui ne touche jamais a cette fonction ni a l'endroit ou
+    elle vit -- seul le fichier qu'elle lit est rendu virtuellement different."""
     from gui_qt.main_window import MainWindow
 
     QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
     (tmp_path / "config.yml").write_text(
         "Reader: Lecteur A\n"
-        "Readers:\n  - Lecteur B\n  - Lecteur C\n"
-        "reader_getter: getConfigReader\n",
+        "Readers:\n  - Lecteur B\n  - Lecteur C\n",
         encoding="utf-8")
 
     (tmp_path / "conftest.py").write_text(textwrap.dedent('''
@@ -704,5 +709,83 @@ def test_a_getter_living_directly_in_conftest_works(parallele_conftest, qtbot):
         assert temoins == ["vu_Lecteur_A", "vu_Lecteur_B", "vu_Lecteur_C"]
     finally:
         for worker in parallele_conftest.workers:
+            worker.stop()
+            worker.wait(10000)
+
+
+# ----------------------------------------- le bug signale : un getter qui enrichit
+
+
+@pytest.fixture
+def parallele_getter_enrichi(qtbot, tmp_path):
+    """Reproduction du bug signale mot pour mot : "mon getter rajoute un petit
+    champs dans la string qui n'est pas pris en compte au lancement des tests".
+
+    Le getter ne se contente pas de relire `Reader` : il lui ajoute un suffixe,
+    comme le ferait un formatage ou un champ construit reel. Comme il n'est
+    JAMAIS remplace -- seul le fichier qu'il lit est rendu virtuellement
+    different -- cet ajout doit survivre intact au lancement en parallele.
+    """
+    from gui_qt.main_window import MainWindow
+
+    QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
+    (tmp_path / "config.yml").write_text(
+        "Reader: Lecteur A\n"
+        "Readers:\n  - Lecteur B\n  - Lecteur C\n",
+        encoding="utf-8")
+
+    (tmp_path / "conftest.py").write_text(textwrap.dedent('''
+        import pathlib
+        import yaml
+
+        def getConfigReader():
+            config = pathlib.Path(__file__).with_name("config.yml")
+            lecteur = yaml.safe_load(config.read_text(encoding="utf-8"))["Reader"]
+            # Le getter reel de l'utilisateur ne se contente pas de relire la
+            # cle : il lui ajoute un champ.
+            return lecteur + " [verifie]"
+    '''), encoding="utf-8")
+
+    (tmp_path / "test_x.py").write_text(textwrap.dedent('''
+        import pathlib
+
+        from conftest import getConfigReader
+
+        class TestSuite:
+            def setup_method(self):
+                self.reader = getConfigReader()
+
+            def test_f(self):
+                pathlib.Path(__file__).with_name(
+                    "vu_" + self.reader.replace(" ", "_")).touch()
+    '''), encoding="utf-8")
+
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    fenetre.workspace = str(tmp_path)
+    fenetre.details.set_workspace(str(tmp_path))
+    fenetre.refresh_readers()
+    return fenetre
+
+
+def test_a_getter_that_enriches_the_reader_keeps_its_enrichment_in_parallel(
+        parallele_getter_enrichi, qtbot):
+    """Avec l'ancien remplacement de fonction, ce '[verifie]' disparaissait :
+    toute la fonction etait remplacee par une simple valeur figee. Ici
+    getConfigReader() tourne sans la moindre modification, donc son ajout se
+    retrouve, intact, dans les trois temoins."""
+    parallele_getter_enrichi._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
+    try:
+        qtbot.waitUntil(lambda: parallele_getter_enrichi._runs_left == 0, timeout=120000)
+
+        temoins = sorted(
+            p.name for p in Path(parallele_getter_enrichi.workspace).glob("vu_*"))
+        assert temoins == [
+            "vu_Lecteur_A_[verifie]",
+            "vu_Lecteur_B_[verifie]",
+            "vu_Lecteur_C_[verifie]",
+        ]
+    finally:
+        for worker in parallele_getter_enrichi.workers:
             worker.stop()
             worker.wait(10000)

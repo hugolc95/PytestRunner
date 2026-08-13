@@ -174,51 +174,30 @@ READER_MODE_KEYS = ("reader_mode", "readers_mode", "mode_lecteurs")
 
 # Deux facons d'enchainer plusieurs lecteurs.
 #
-# `sequential` les joue l'un apres l'autre, en ecrivant chacun dans la cle
-# `Reader` du fichier de configuration avant son run. C'est le seul mode qui ne
-# demande RIEN au code de test : celui-ci continue de lire un lecteur unique,
-# comme il l'a toujours fait. Filet de securite quand aucun autre moyen n'est
-# declare de distinguer les lecteurs entre processus simultanes.
+# `parallel`, le defaut, lance tout en meme temps. Le lecteur ne peut alors pas
+# passer par le fichier de configuration, que tous les processus partagent : un
+# plugin injecte (core/reader_plugin.py) rend ce fichier virtuellement
+# different pour chaque processus, avec la cle `Reader` deja a la bonne valeur
+# -- sans y ecrire, et sans toucher au code de test, qui continue de lire "son"
+# fichier normalement. Aucune declaration n'est necessaire dans le workspace :
+# le fichier concerne est celui-la meme ou `Reader`/`Readers` a ete trouve. Si
+# jamais ce fichier ne peut pas etre prepare (cle absente, fichier illisible),
+# le plugin echoue bruyamment plutot que de laisser tourner deux lecteurs avec
+# la meme valeur sans que rien ne le signale.
 #
-# `parallel` lance tout en meme temps. Le lecteur ne peut alors pas passer par
-# le fichier, que tous les processus partagent : il passe par un plugin injecte
-# qui remplace la fonction du workspace, designee par `reader_getter` :
-#     reader_getter: config_getters.getConfigReader
-# Cette fonction vit souvent dans un conftest.py, dont le nom de module reel
-# depend de la structure du workspace et n'est pas toujours previsible ; le nom
-# seul suffit alors (voir core/reader_plugin.py) :
-#     reader_getter: getConfigReader
-# C'est un choix SANS DANGER des que cette cle est presente (le plugin echoue
-# bruyamment plutot que de laisser tous les lecteurs lire la meme valeur), donc
-# c'est le mode retenu automatiquement quand elle est declaree. `reader_mode`
-# permet de forcer l'un ou l'autre explicitement, y compris pour revenir au
-# sequentiel malgre un reader_getter present.
+# `sequential` les joue l'un apres l'autre, en ecrivant chacun reellement dans
+# la cle `Reader` du fichier avant son run. Utile pour revenir en arriere si le
+# materiel ne supporte pas deux acces simultanes, via `reader_mode: sequential`.
 READER_MODES = ("sequential", "parallel")
-DEFAULT_READER_MODE = "sequential"
-
-READER_GETTER_KEYS = ("reader_getter", "reader_function", "getter_reader")
-
-
-def reader_getter_for(workspace: str | None, config_path: str | None = None) -> str:
-    """Fonction du workspace qui donne le lecteur.
-
-    Sous la forme `module.fonction`, ou juste `fonction` quand elle vit dans un
-    conftest.py (voir core/reader_plugin.py pour la recherche que ce deuxieme
-    cas declenche). Declaree, elle permet le mode parallele sans modifier le
-    code de test : un plugin injecte la remplace le temps du run. Absente, le
-    lecteur ne passe que par la variable d'environnement, que le workspace doit
-    alors lire lui-meme.
-    """
-    valeur = setting_for(workspace, READER_GETTER_KEYS, config_path)
-    return str(valeur).strip() if valeur is not None else ""
+DEFAULT_READER_MODE = "parallel"
 
 
 def reader_mode_for(workspace: str | None, config_path: str | None = None) -> str:
-    """Comment enchainer les lecteurs : l'un apres l'autre, ou tous a la fois.
+    """Comment enchainer les lecteurs : tous a la fois, ou l'un apres l'autre.
 
-    Sans reglage explicite, le parallele est choisi des qu'un reader_getter est
-    declare -- c'est alors sans risque -- et le sequentiel sinon, puisque c'est
-    le seul mode qui ne demande rien au code de test.
+    Parallele par defaut : c'est desormais sans risque pour le code de test
+    (voir core/reader_plugin.py), donc rien a declarer pour l'obtenir.
+    `reader_mode: sequential` revient a l'ancien comportement.
     """
     valeur = setting_for(workspace, READER_MODE_KEYS, config_path)
     if valeur is not None:
@@ -226,8 +205,6 @@ def reader_mode_for(workspace: str | None, config_path: str | None = None) -> st
         if mode in READER_MODES:
             return mode
 
-    if reader_getter_for(workspace, config_path):
-        return "parallel"
     return DEFAULT_READER_MODE
 
 

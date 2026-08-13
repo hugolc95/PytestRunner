@@ -1,177 +1,223 @@
-"""Retrouver la fonction lecteur quand elle vit dans un conftest.py.
+"""Le plugin injecte qui impose le lecteur d'un run, sans toucher au code test.
 
-Le nom qu'un conftest.py recoit dans sys.modules depend de la structure du
-workspace (rootdir, presence d'un __init__.py, plusieurs conftest.py
-imbriques) et n'est pas previsible depuis l'exterieur. Ces tests verifient
-l'algorithme de recherche directement, sans passer par un vrai subprocess
-pytest : plus rapide, et ils isolent precisement ce qui peut se tromper.
+Ces tests couvrent deux niveaux :
+- `_construire_texte_modifie`, la construction du texte du fichier avec la cle
+  Reader swappee, directement (fonction pure, sans dependre de l'environnement) ;
+- le plugin genere complet, execute comme un vrai module Python (comme le ferait
+  le subprocess pytest), pour verifier que `builtins.open` et
+  `pathlib.Path.read_text`/`read_bytes` sont bien interceptes pour le fichier
+  vise, et pour lui seul.
+
+Le point central : getConfigReader() (ou equivalent) ne doit JAMAIS etre
+remplacee. Elle doit s'executer normalement et lire un fichier qui, de son
+point de vue, contient deja le bon lecteur -- meme si elle fait plus que
+relire la cle brute (ce que l'ancienne approche par remplacement de fonction
+cassait, voir l'entete de core/reader_plugin.py).
 """
 
-import sys
+import builtins
+import pathlib
 import types
 
 import pytest
 
-from core.reader_plugin import _PLUGIN_SOURCE
+from core.reader_plugin import CONFIG_PATH_ENV, PLUGIN_MODULE, _PLUGIN_SOURCE, reader_plugin
 
 
-def _charger_plugin(monkeypatch, reader="R1", cible="getConfigReader"):
+@pytest.fixture(autouse=True)
+def _restaurer_open():
+    """Le plugin patche builtins.open/Path.read_text/read_bytes des son import,
+    directement sur les objets globaux (c'est le mecanisme teste) : sans
+    restauration explicite, un test patche laisserait tous les suivants lire
+    un fichier virtuel perime."""
+    reel_open = builtins.open
+    reel_read_text = pathlib.Path.read_text
+    reel_read_bytes = pathlib.Path.read_bytes
+    yield
+    builtins.open = reel_open
+    pathlib.Path.read_text = reel_read_text
+    pathlib.Path.read_bytes = reel_read_bytes
+
+
+def _charger_plugin(monkeypatch, reader="", config_path=""):
     """Execute le code du plugin genere comme un module Python normal.
 
-    Les variables _READER/_CIBLE du plugin sont lues depuis l'environnement au
-    chargement : on le fixe donc avant d'executer le code, exactement comme le
-    ferait le vrai subprocess pytest.
+    Les variables du plugin sont lues depuis l'environnement au chargement :
+    on le fixe donc avant d'executer le code, exactement comme le ferait le
+    vrai subprocess pytest.
     """
-    monkeypatch.setenv("PYTESTRUNNER_READER", reader)
-    monkeypatch.setenv("PYTESTRUNNER_READER_GETTER", cible)
+    if reader:
+        monkeypatch.setenv("PYTESTRUNNER_READER", reader)
+    else:
+        monkeypatch.delenv("PYTESTRUNNER_READER", raising=False)
+    if config_path:
+        monkeypatch.setenv(CONFIG_PATH_ENV, str(config_path))
+    else:
+        monkeypatch.delenv(CONFIG_PATH_ENV, raising=False)
 
     module = types.ModuleType("plugin_pytestrunner_sous_test")
     exec(compile(_PLUGIN_SOURCE, "<plugin genere>", "exec"), module.__dict__)
     return module
 
 
-def _faux_module(monkeypatch, nom_sys_modules, fichier, **attributs):
-    """Enregistre un faux module dans sys.modules, pour simuler un conftest.py
-    charge sous un nom que l'exterieur ne devine pas."""
-    module = types.ModuleType(nom_sys_modules)
-    module.__file__ = fichier
-    for cle, valeur in attributs.items():
-        setattr(module, cle, valeur)
-    monkeypatch.setitem(sys.modules, nom_sys_modules, module)
-    return module
+# ------------------------------------------------ _construire_texte_modifie
+
+def test_construire_texte_modifie_swaps_the_least_indented_reader_line(monkeypatch):
+    plugin = _charger_plugin(monkeypatch)
+    brut = "Reader: Lecteur A\nSection:\n  Reader: ignore\n"
+
+    modifie = plugin._construire_texte_modifie(brut, "Lecteur B")
+
+    assert modifie == "Reader: Lecteur B\nSection:\n  Reader: ignore\n"
 
 
-# --------------------------------------------------- juste le nom de fonction
+def test_construire_texte_modifie_preserves_quoting_and_trailing_comment(monkeypatch):
+    plugin = _charger_plugin(monkeypatch)
+    brut = "Reader: ancien  # commentaire\n"
 
-def test_a_bare_name_is_found_in_a_module_that_looks_like_a_conftest(monkeypatch):
-    """Le cas de l'utilisateur : getConfigReader vit dans un conftest.py, dont
-    le nom reel dans sys.modules n'est pas "conftest.getConfigReader"."""
-    def getConfigReader():
-        return "original"
+    modifie = plugin._construire_texte_modifie(brut, "valeur: speciale")
 
-    _faux_module(monkeypatch, "un_nom_totalement_impredictible",
-                "/workspace/Test/conftest.py", getConfigReader=getConfigReader)
-
-    plugin = _charger_plugin(monkeypatch, cible="getConfigReader")
-    original, raison = plugin._trouver_original("getConfigReader")
-
-    assert original is getConfigReader
-    assert raison == ""
+    assert modifie == 'Reader: "valeur: speciale" # commentaire\n'
 
 
-def test_a_bare_name_ignores_unrelated_modules_with_the_same_attribute(monkeypatch):
-    """Ne pas se laisser distraire par un attribut de meme nom ailleurs qu'un
-    conftest.py -- une coincidence de nom ne doit pas remplacer la mauvaise
-    fonction."""
-    def autre_fonction():
-        return "sans rapport"
+def test_construire_texte_modifie_returns_none_without_a_reader_key(monkeypatch):
+    plugin = _charger_plugin(monkeypatch)
+    brut = "Autre: valeur\n"
 
-    def la_bonne():
-        return "conftest"
-
-    _faux_module(monkeypatch, "un_module_quelconque", "/ws/utils.py",
-                getConfigReader=autre_fonction)
-    _faux_module(monkeypatch, "conftest", "/ws/conftest.py",
-                getConfigReader=la_bonne)
-
-    plugin = _charger_plugin(monkeypatch, cible="getConfigReader")
-    original, raison = plugin._trouver_original("getConfigReader")
-
-    assert original is la_bonne
+    assert plugin._construire_texte_modifie(brut, "Lecteur B") is None
 
 
-def test_a_bare_name_absent_everywhere_is_reported(monkeypatch):
-    plugin = _charger_plugin(monkeypatch, cible="getConfigReader")
-    original, raison = plugin._trouver_original("getConfigReader")
+def test_construire_texte_modifie_preserves_crlf(monkeypatch):
+    plugin = _charger_plugin(monkeypatch)
+    brut = "Reader: ancien\r\nAutre: x\r\n"
 
-    assert original is None
-    assert "getConfigReader" in raison
+    modifie = plugin._construire_texte_modifie(brut, "nouveau")
 
-
-# ---------------------------------------------------------- forme "module.fonction"
-
-def test_a_dotted_name_is_imported_directly_when_possible(monkeypatch):
-    def getConfigReader():
-        return "x"
-
-    _faux_module(monkeypatch, "conftest", "/ws/conftest.py",
-                getConfigReader=getConfigReader)
-    monkeypatch.setattr(
-        "importlib.import_module",
-        lambda nom: sys.modules[nom] if nom in sys.modules else (_ for _ in ()).throw(
-            ModuleNotFoundError(nom)))
-
-    plugin = _charger_plugin(monkeypatch, cible="conftest.getConfigReader")
-    original, raison = plugin._trouver_original("conftest.getConfigReader")
-
-    assert original is getConfigReader
+    assert modifie == "Reader: nouveau\r\nAutre: x\r\n"
 
 
-def test_a_dotted_name_falls_back_to_a_module_with_a_matching_file(monkeypatch):
-    """Le module donne ne correspond a aucun module directement importable
-    (chemin relatif au workspace, package que Python ne connait pas...) : on
-    cherche alors un module deja charge dont le nom se termine pareil.
+# --------------------------------------------------------- bout en bout, fichier
 
-    Le nom utilise ("outils_lecteur") est choisi pour ne coincider avec aucun
-    module deja charge par CE projet de tests -- sans quoi le test verifierait
-    accidentellement une collision de cet environnement-ci plutot que le
-    mecanisme de repli lui-meme.
-    """
-    import importlib
+def test_open_of_the_target_file_returns_the_virtual_text(monkeypatch, tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("Reader: Lecteur A\n", encoding="utf-8")
+
+    _charger_plugin(monkeypatch, reader="Lecteur B", config_path=str(config))
+
+    with open(str(config), "r", encoding="utf-8") as f:
+        contenu = f.read()
+    assert contenu == "Reader: Lecteur B\n"
+
+
+def test_path_read_text_of_the_target_file_returns_the_virtual_text(monkeypatch, tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("Reader: Lecteur A\n", encoding="utf-8")
+
+    _charger_plugin(monkeypatch, reader="Lecteur B", config_path=str(config))
+
+    assert pathlib.Path(str(config)).read_text() == "Reader: Lecteur B\n"
+
+
+def test_a_getter_that_enriches_the_raw_reader_value_keeps_its_enrichment(monkeypatch, tmp_path):
+    """Reproduction du bug signale : le getter du workspace ne se contente pas
+    de relire `Reader`, il ajoute un champ a la valeur. Comme la fonction n'est
+    jamais remplacee -- seul le fichier qu'elle lit est virtuellement different
+    -- cet ajout doit survivre intact."""
+    config = tmp_path / "config.yml"
+    config.write_text("Reader: Lecteur A\n", encoding="utf-8")
+
+    _charger_plugin(monkeypatch, reader="Lecteur B", config_path=str(config))
 
     def getConfigReader():
-        return "y"
+        # Un getter réel typique : il lit la cle Reader, puis lui ajoute un
+        # champ construit -- exactement ce que l'ancien remplacement de
+        # fonction perdait.
+        with open(str(config), "r", encoding="utf-8") as f:
+            for ligne in f:
+                if ligne.startswith("Reader:"):
+                    lecteur = ligne.split(":", 1)[1].strip()
+                    return f"{lecteur} [verifie]"
+        return ""
 
-    _faux_module(monkeypatch, "TSu.JC_API.Int.outils_lecteur",
-                "/ws/TSu/JC_API/Int/outils_lecteur.py",
-                getConfigReader=getConfigReader)
-
-    def import_module_qui_echoue(nom):
-        raise ModuleNotFoundError(nom)
-
-    monkeypatch.setattr(importlib, "import_module", import_module_qui_echoue)
-
-    plugin = _charger_plugin(monkeypatch, cible="outils_lecteur.getConfigReader")
-    original, raison = plugin._trouver_original("outils_lecteur.getConfigReader")
-
-    assert original is getConfigReader
+    assert getConfigReader() == "Lecteur B [verifie]"
 
 
-def test_a_dotted_name_whose_module_is_missing_is_reported(monkeypatch):
-    monkeypatch.delitem(sys.modules, "module_qui_nexiste_pas", raising=False)
-    plugin = _charger_plugin(monkeypatch, cible="module_qui_nexiste_pas.getReader")
-    original, raison = plugin._trouver_original("module_qui_nexiste_pas.getReader")
+def test_files_other_than_the_target_are_not_intercepted(monkeypatch, tmp_path):
+    vise = tmp_path / "config.yml"
+    vise.write_text("Reader: Lecteur A\n", encoding="utf-8")
+    autre = tmp_path / "autre.yml"
+    autre.write_text("Reader: ne pas toucher\n", encoding="utf-8")
 
-    assert original is None
-    assert "introuvable" in raison
+    _charger_plugin(monkeypatch, reader="Lecteur B", config_path=str(vise))
 
-
-def test_a_dotted_name_with_the_wrong_attribute_is_reported(monkeypatch):
-    _faux_module(monkeypatch, "conftest", "/ws/conftest.py", autre_chose=lambda: None)
-    plugin = _charger_plugin(monkeypatch, cible="conftest.getConfigReader")
-    original, raison = plugin._trouver_original("conftest.getConfigReader")
-
-    assert original is None
-    assert "getConfigReader" in raison
+    with open(str(autre), "r", encoding="utf-8") as f:
+        assert f.read() == "Reader: ne pas toucher\n"
+    assert pathlib.Path(str(autre)).read_text() == "Reader: ne pas toucher\n"
 
 
-# --------------------------------------------------------------- bout en bout
+def test_writing_to_the_target_file_is_not_intercepted(monkeypatch, tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("Reader: Lecteur A\n", encoding="utf-8")
+    reel_open = builtins.open
 
-def test_applying_replaces_every_reference_to_the_found_function(monkeypatch):
-    """Le remplacement doit suivre jusque dans le module de test qui a fait
-    `from conftest import getConfigReader`, exactement comme pour la forme
-    module.fonction deja couverte ailleurs."""
-    def getConfigReader():
-        return "jamais utilise si le remplacement marche"
+    _charger_plugin(monkeypatch, reader="Lecteur B", config_path=str(config))
 
-    conftest = _faux_module(monkeypatch, "conftest", "/ws/conftest.py",
-                            getConfigReader=getConfigReader)
-    test_module = _faux_module(monkeypatch, "test_x", "/ws/test_x.py",
-                               getConfigReader=getConfigReader)
+    with open(str(config), "w", encoding="utf-8") as f:
+        f.write("Reader: ecrit pour de vrai\n")
 
-    plugin = _charger_plugin(monkeypatch, reader="Lecteur B", cible="getConfigReader")
-    plugin._appliquer()
+    with reel_open(str(config), "r", encoding="utf-8") as f:
+        assert f.read() == "Reader: ecrit pour de vrai\n"
+
+
+# ------------------------------------------------------------------- erreurs
+
+def test_missing_reader_key_sets_an_error_and_setup_raises(monkeypatch, tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("Autre: valeur\n", encoding="utf-8")
+
+    plugin = _charger_plugin(monkeypatch, reader="Lecteur B", config_path=str(config))
+
+    assert plugin._erreur != ""
+    assert plugin._texte_virtuel is None
+    with pytest.raises(RuntimeError):
+        plugin.pytest_runtest_setup(item=None)
+
+
+def test_unreadable_config_path_sets_an_error(monkeypatch, tmp_path):
+    introuvable = tmp_path / "n_existe_pas.yml"
+
+    plugin = _charger_plugin(monkeypatch, reader="Lecteur B", config_path=str(introuvable))
+
+    assert plugin._erreur != ""
+    assert plugin._texte_virtuel is None
+    with pytest.raises(RuntimeError):
+        plugin.pytest_runtest_setup(item=None)
+
+
+def test_without_reader_or_config_path_nothing_is_patched_or_reported(monkeypatch):
+    plugin = _charger_plugin(monkeypatch)
 
     assert plugin._erreur == ""
-    assert conftest.getConfigReader() == "Lecteur B"
-    assert test_module.getConfigReader() == "Lecteur B"
+    assert plugin._texte_virtuel is None
+    plugin.pytest_runtest_setup(item=None)  # ne doit pas lever
+
+
+# ------------------------------------------------------------- reader_plugin()
+
+def test_reader_plugin_is_a_noop_without_a_config_path():
+    with reader_plugin("") as (arguments, dossier):
+        assert arguments == []
+        assert dossier == ""
+
+
+def test_reader_plugin_writes_the_generated_module_and_yields_its_args(tmp_path):
+    config = tmp_path / "config.yml"
+    config.write_text("Reader: Lecteur A\n", encoding="utf-8")
+
+    with reader_plugin(str(config)) as (arguments, dossier):
+        assert arguments == ["-p", PLUGIN_MODULE]
+        chemin_module = pathlib.Path(dossier) / f"{PLUGIN_MODULE}.py"
+        assert chemin_module.is_file()
+        assert chemin_module.read_text(encoding="utf-8") == _PLUGIN_SOURCE
+
+    assert not pathlib.Path(dossier).exists()

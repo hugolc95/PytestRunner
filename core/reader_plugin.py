@@ -1,33 +1,28 @@
-"""Imposer le lecteur d'un run sans modifier le code de test.
+"""Imposer le lecteur d'un run sans modifier le code de test, ni sa logique.
 
 En mode parallele, plusieurs pytest tournent en meme temps : le lecteur ne peut
-pas passer par le fichier de configuration, que tous partagent. Il passe par une
-variable d'environnement -- encore faut-il que les tests la lisent.
+pas passer par le fichier de configuration, que tous partagent -- l'ecrire pour
+l'un ecraserait ce que l'autre vient d'y mettre.
 
-Plutot que de demander une ligne dans `getConfigReader()`, on injecte un plugin
-pytest qui remplace cette fonction, le temps du run, par une qui retourne le
-lecteur voulu. Le workspace declare simplement laquelle :
+Premiere approche essayee : remplacer la fonction getConfigReader() du
+workspace par une qui retourne directement le lecteur voulu. Elle a un defaut
+serieux -- si cette fonction ne se contente pas de relire la cle `Reader` mais
+lui ajoute quelque chose (un champ construit, une validation, un formatage...),
+ce traitement disparait avec la fonction remplacee. Le lecteur transmis aux
+tests n'est alors plus celui que le vrai code aurait produit.
 
-    reader_getter: config_getters.getConfigReader
+La bonne approche ne touche donc PAS a la fonction : elle rend le FICHIER de
+configuration virtuellement different pour ce process, avec la cle `Reader`
+deja mise a la bonne valeur, exactement comme le fait le mode sequentiel en
+l'ecrivant reellement sur disque -- sauf qu'ici rien n'est ecrit, seule la
+lecture du fichier est interceptee en memoire, dans CE process uniquement, donc
+sans que les autres lecteurs qui tournent en meme temps ne s'en apercoivent.
 
-Quand la fonction vit dans un conftest.py -- le cas le plus courant --, son nom
-de module reel depend de la facon dont pytest l'a charge (rootdir, presence
-d'un __init__.py, plusieurs conftest.py imbriques...) et n'est pas toujours
-predictible depuis l'exterieur. Deux ecritures sont donc acceptees :
-
-    reader_getter: conftest.getConfigReader   # nom de module tente tel quel,
-                                               # avec repli sur une recherche
-    reader_getter: getConfigReader            # juste le nom : cherche dans
-                                               # tout module charge qui
-                                               # ressemble a un conftest.py
-
-Le remplacement est fait au dernier moment, pas au chargement du plugin : le
-conftest du workspace n'est importe (et le module a remplacer disponible)
-qu'une fois la collecte terminee.
-
-Si le remplacement echoue, le run s'arrete avec un message. Continuer serait
-pire : tous les lecteurs liraient le meme et les resultats se ressembleraient
-sans que rien ne le signale.
+getConfigReader() n'est jamais touchee : elle s'execute normalement, lit "son"
+fichier de configuration (qui contient deja le bon lecteur du point de vue de
+ce process), et applique tout traitement qu'elle fait d'habitude. Aucune
+declaration n'est necessaire dans le workspace pour que cela fonctionne : le
+fichier concerne est celui-la meme ou `Reader`/`Readers` a ete trouve.
 """
 
 from __future__ import annotations
@@ -39,169 +34,180 @@ from pathlib import Path
 
 PLUGIN_MODULE = "pytestrunner_reader"
 
-GETTER_ENV = "PYTESTRUNNER_READER_GETTER"
+CONFIG_PATH_ENV = "PYTESTRUNNER_READER_CONFIG_PATH"
 
 _PLUGIN_SOURCE = '''\
 """Genere par PytestRunner. Impose le lecteur de ce run.
 
 Ne pas modifier : ce fichier est recree et supprime a chaque lancement.
 """
-import importlib
+import builtins
+import io
 import os
-import sys
+import pathlib
+import re
 
 import pytest
 
 _READER = os.environ.get("PYTESTRUNNER_READER", "")
-_CIBLE = os.environ.get("PYTESTRUNNER_READER_GETTER", "")
+_CONFIG_PATH = os.environ.get("PYTESTRUNNER_READER_CONFIG_PATH", "")
 
-_fait = False
+# Meme regle qu'un `Reader:` a la racine du fichier prime sur celui d'une
+# section -- voir core/reader_switch.py, dont cette portion est la copie : le
+# plugin genere tourne seul dans un subprocess pytest, sans acces au paquet
+# PytestRunner.
+_LIGNE_RE = re.compile(
+    r"^(?P<indent>[ \\t]*)(?P<cle>[A-Za-z_][\\w \\-]*?)(?P<sep>[ \\t]*:[ \\t]*)"
+    r"(?P<valeur>[^\\n#]*)(?P<fin>#.*)?$"
+)
+_CLES_READER = ("reader", "lecteur")
+_A_CITER = set(":#{}[],&*?|<>=!%@`\\"'\\\\")
+
+
+def _normaliser_cle(cle):
+    return str(cle).strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _citer(valeur):
+    valeur = str(valeur)
+    if not valeur:
+        return \'""\'
+    if any(c in _A_CITER for c in valeur) or valeur != valeur.strip():
+        return \'"\' + valeur.replace("\\\\", "\\\\\\\\").replace(\'"\', \'\\\\"\') + \'"\'
+    return valeur
+
+
+def _construire_texte_modifie(brut, nouveau_lecteur):
+    """Le texte du fichier, avec la ligne Reader (la moins indentee) changee.
+
+    None si aucune cle reader n'y est trouvee : rien de sur a modifier.
+    """
+    meilleure = None
+    for numero, ligne in enumerate(brut.splitlines()):
+        m = _LIGNE_RE.match(ligne)
+        if m is None or _normaliser_cle(m.group("cle")) not in _CLES_READER:
+            continue
+        indent = len(m.group("indent").expandtabs(4))
+        if meilleure is None or indent < meilleure[1]:
+            meilleure = (numero, indent)
+
+    if meilleure is None:
+        return None
+
+    numero = meilleure[0]
+    lignes = brut.splitlines(keepends=True)
+    m = _LIGNE_RE.match(lignes[numero].rstrip("\\r\\n"))
+
+    fin_de_ligne = "\\r\\n" if lignes[numero].endswith("\\r\\n") \\
+        else ("\\n" if lignes[numero].endswith("\\n") else "")
+    commentaire = m.group("fin") or ""
+    if commentaire:
+        commentaire = " " + commentaire.strip()
+
+    lignes[numero] = (
+        m.group("indent") + m.group("cle") + m.group("sep")
+        + _citer(nouveau_lecteur) + commentaire + fin_de_ligne
+    )
+    return "".join(lignes)
+
+
+_texte_virtuel = None
+_chemin_normalise = None
 _erreur = ""
 
 
-def _ressemble_a_conftest(module):
-    """Vrai si ce module a des chances d'etre un conftest.py.
-
-    Le nom qu'un conftest.py recoit dans sys.modules depend de la structure du
-    workspace (rootdir, __init__.py, plusieurs conftest.py imbriques) : on
-    reconnait donc le fichier plutot que d'exiger un nom precis.
-    """
-    nom = getattr(module, "__name__", "") or ""
-    fichier = getattr(module, "__file__", "") or ""
-    return nom == "conftest" or nom.endswith(".conftest") \
-        or os.path.basename(fichier) == "conftest.py"
-
-
-def _trouver_original(cible):
-    """Retrouve (objet_fonction) designe par `cible`, ou (None, raison_echec).
-
-    `cible` peut etre "module.fonction" (tente tel quel, avec repli sur une
-    recherche par nom si l'import direct echoue) ou juste "fonction" (cherche
-    dans tout module deja charge qui ressemble a un conftest.py -- c'est le cas
-    le plus courant, le nom reel du module conftest n'etant pas previsible).
-    """
-    module_name, point, attribut = cible.rpartition(".")
-
-    if not point:
-        # Pas de module donne : on ne cherche que dans les conftest.py connus.
-        candidats = [m for m in sys.modules.values()
-                    if m is not None and _ressemble_a_conftest(m) and hasattr(m, attribut)]
-        if not candidats:
-            return None, (
-                "aucun conftest.py charge ne definit %r (verifiez l'orthographe, "
-                "et que ce fichier fait bien partie des tests lances)" % attribut
-            )
-        return getattr(candidats[0], attribut), ""
-
-    module = None
-    try:
-        module = importlib.import_module(module_name)
-    except Exception:
-        pass
-
-    if module is None:
-        # Repli : le nom donne ne correspond a aucun module importable tel
-        # quel (frequent pour un conftest.py, dont le nom reel differe selon
-        # la structure du workspace). On cherche un module deja charge dont le
-        # nom ou le fichier y correspond.
-        court = module_name.rsplit(".", 1)[-1]
-        for present in sys.modules.values():
-            if present is None:
-                continue
-            nom_present = getattr(present, "__name__", "") or ""
-            fichier = getattr(present, "__file__", "") or ""
-            base = os.path.splitext(os.path.basename(fichier))[0] if fichier else ""
-            if nom_present == module_name or nom_present.rsplit(".", 1)[-1] == court \
-                    or base == court:
-                module = present
-                break
-
-    if module is None:
-        return None, "module %r introuvable parmi ceux deja charges" % module_name
-    if not hasattr(module, attribut):
-        return None, "le module trouve n'a pas d'attribut %r" % attribut
-    return getattr(module, attribut), ""
-
-
-def _appliquer():
-    """Remplace la fonction designee par une qui retourne le lecteur du run."""
-    global _fait, _erreur
-    if _fait or not _READER or not _CIBLE:
+def _preparer():
+    """Lit le vrai fichier une fois, calcule sa version avec le bon lecteur."""
+    global _texte_virtuel, _chemin_normalise, _erreur
+    if not _READER or not _CONFIG_PATH:
         return
-    _fait = True
-
     try:
-        original, raison = _trouver_original(_CIBLE)
-        if original is None:
-            _erreur = raison
-            return
+        with open(_CONFIG_PATH, "r", encoding="utf-8", newline="") as f:
+            brut = f.read()
+    except OSError as exc:
+        _erreur = "impossible de lire %r : %s" % (_CONFIG_PATH, exc)
+        return
 
-        def _remplacant(*args, **kwargs):
-            return _READER
+    modifie = _construire_texte_modifie(brut, _READER)
+    if modifie is None:
+        _erreur = "aucune cle Reader trouvee dans %r" % _CONFIG_PATH
+        return
 
-        _remplacant.__wrapped__ = original
-
-        # Remplacer a l'endroit trouve ne suffit pas : un
-        # `from config_getters import getConfigReader` a copie la reference dans
-        # le module de test, et c'est cette copie-la qui est appelee. On
-        # remplace donc TOUTES les references a cette fonction precise -- pas
-        # tout ce qui porte ce nom, mais tout ce qui EST cet objet.
-        remplacements = 0
-        for present in list(sys.modules.values()):
-            if present is None:
-                continue
-            try:
-                noms = list(vars(present))
-            except Exception:
-                continue
-            for nom in noms:
-                try:
-                    if getattr(present, nom, None) is original:
-                        setattr(present, nom, _remplacant)
-                        remplacements += 1
-                except Exception:
-                    continue
-
-        if not remplacements:
-            _erreur = "aucune reference a remplacer"
-    except Exception as exc:
-        _erreur = "%s: %s" % (type(exc).__name__, exc)
+    _texte_virtuel = modifie
+    _chemin_normalise = os.path.normcase(os.path.abspath(_CONFIG_PATH))
 
 
-def _verifier():
-    if _erreur:
-        raise RuntimeError(
-            "PytestRunner n'a pas pu imposer le lecteur %r : la fonction %r n'a "
-            "pas pu etre remplacee (%s).\\n"
-            "Sans cela tous les lecteurs liraient le meme et les resultats se "
-            "ressembleraient sans que rien ne le signale.\\n"
-            "Corrigez la cle reader_getter du fichier de configuration, ou "
-            "repassez en reader_mode: sequential." % (_READER, _CIBLE, _erreur)
-        )
+def _est_le_fichier_vise(chemin):
+    if _texte_virtuel is None:
+        return False
+    try:
+        return os.path.normcase(os.path.abspath(os.fspath(chemin))) == _chemin_normalise
+    except Exception:
+        return False
 
 
-def pytest_collection_finish(session):
-    # Le conftest du workspace a complete sys.path : le module est importable.
-    _appliquer()
+_open_reel = builtins.open
+
+
+def _open_virtuel(fichier, mode="r", *args, **kwargs):
+    # Seule une lecture du fichier vise est interceptee : une ecriture doit
+    # continuer d'aller sur le vrai fichier (rare, mais ne jamais la piegeur).
+    if "r" in mode and "+" not in mode and _est_le_fichier_vise(fichier):
+        if "b" in mode:
+            return io.BytesIO(_texte_virtuel.encode("utf-8"))
+        return io.StringIO(_texte_virtuel)
+    return _open_reel(fichier, mode, *args, **kwargs)
+
+
+_read_text_reel = pathlib.Path.read_text
+_read_bytes_reel = pathlib.Path.read_bytes
+
+
+def _read_text_virtuel(self, *args, **kwargs):
+    if _est_le_fichier_vise(self):
+        return _texte_virtuel
+    return _read_text_reel(self, *args, **kwargs)
+
+
+def _read_bytes_virtuel(self, *args, **kwargs):
+    if _est_le_fichier_vise(self):
+        return _texte_virtuel.encode("utf-8")
+    return _read_bytes_reel(self, *args, **kwargs)
+
+
+_preparer()
+if _texte_virtuel is not None:
+    # Des l'import du plugin -- le plus tot que pytest permette -- et non dans
+    # un hook : getConfigReader() peut etre appelee des le debut de la
+    # collecte (conftest.py, fixture de session...), avant que la plupart des
+    # hooks ne se declenchent.
+    builtins.open = _open_virtuel
+    pathlib.Path.read_text = _read_text_virtuel
+    pathlib.Path.read_bytes = _read_bytes_virtuel
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_setup(item):
-    # tryfirst : le remplacement doit etre en place avant le setup_method de la
-    # classe de test, qui est justement l'endroit ou le lecteur est demande.
-    _appliquer()
-    _verifier()
+    if _erreur:
+        raise RuntimeError(
+            "PytestRunner n'a pas pu imposer le lecteur %r : %s.\\n"
+            "Continuer aurait fait tourner tous les lecteurs avec la meme "
+            "valeur, sans que rien ne le signale.\\n"
+            "Verifiez la cle Reader du fichier de configuration, ou repassez "
+            "en reader_mode: sequential." % (_READER, _erreur)
+        )
 '''
 
 
 @contextmanager
-def reader_plugin(getter: str):
+def reader_plugin(config_path: str):
     """Fournit (arguments pytest, dossier a ajouter au PYTHONPATH).
 
-    Sans `getter`, ne fait rien : le lecteur passe alors par la seule variable
-    d'environnement, que le workspace doit lire lui-meme.
+    Sans `config_path`, ne fait rien : rien ne permet alors de savoir quel
+    fichier rendre virtuellement different, et le lecteur ne passe que par la
+    variable d'environnement PYTESTRUNNER_READER (inoffensive si rien ne la lit).
     """
-    if not getter:
+    if not config_path:
         yield [], ""
         return
 
