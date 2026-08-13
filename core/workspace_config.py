@@ -184,6 +184,10 @@ READER_MODE_KEYS = ("reader_mode", "readers_mode", "mode_lecteurs")
 # le fichier, que tous les processus partagent : il passe par un plugin injecte
 # qui remplace la fonction du workspace, designee par `reader_getter` :
 #     reader_getter: config_getters.getConfigReader
+# Cette fonction vit souvent dans un conftest.py, dont le nom de module reel
+# depend de la structure du workspace et n'est pas toujours previsible ; le nom
+# seul suffit alors (voir core/reader_plugin.py) :
+#     reader_getter: getConfigReader
 # C'est un choix SANS DANGER des que cette cle est presente (le plugin echoue
 # bruyamment plutot que de laisser tous les lecteurs lire la meme valeur), donc
 # c'est le mode retenu automatiquement quand elle est declaree. `reader_mode`
@@ -196,11 +200,14 @@ READER_GETTER_KEYS = ("reader_getter", "reader_function", "getter_reader")
 
 
 def reader_getter_for(workspace: str | None, config_path: str | None = None) -> str:
-    """Fonction du workspace qui donne le lecteur, sous la forme module.fonction.
+    """Fonction du workspace qui donne le lecteur.
 
-    Declaree, elle permet le mode parallele sans modifier le code de test : un
-    plugin injecte la remplace le temps du run. Absente, le lecteur ne passe que
-    par la variable d'environnement, que le workspace doit alors lire lui-meme.
+    Sous la forme `module.fonction`, ou juste `fonction` quand elle vit dans un
+    conftest.py (voir core/reader_plugin.py pour la recherche que ce deuxieme
+    cas declenche). Declaree, elle permet le mode parallele sans modifier le
+    code de test : un plugin injecte la remplace le temps du run. Absente, le
+    lecteur ne passe que par la variable d'environnement, que le workspace doit
+    alors lire lui-meme.
     """
     valeur = setting_for(workspace, READER_GETTER_KEYS, config_path)
     return str(valeur).strip() if valeur is not None else ""

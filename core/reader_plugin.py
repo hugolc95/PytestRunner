@@ -8,12 +8,22 @@ Plutot que de demander une ligne dans `getConfigReader()`, on injecte un plugin
 pytest qui remplace cette fonction, le temps du run, par une qui retourne le
 lecteur voulu. Le workspace declare simplement laquelle :
 
-    reader_mode: parallel
     reader_getter: config_getters.getConfigReader
 
+Quand la fonction vit dans un conftest.py -- le cas le plus courant --, son nom
+de module reel depend de la facon dont pytest l'a charge (rootdir, presence
+d'un __init__.py, plusieurs conftest.py imbriques...) et n'est pas toujours
+predictible depuis l'exterieur. Deux ecritures sont donc acceptees :
+
+    reader_getter: conftest.getConfigReader   # nom de module tente tel quel,
+                                               # avec repli sur une recherche
+    reader_getter: getConfigReader            # juste le nom : cherche dans
+                                               # tout module charge qui
+                                               # ressemble a un conftest.py
+
 Le remplacement est fait au dernier moment, pas au chargement du plugin : le
-module a remplacer n'est importable qu'une fois que le conftest du workspace a
-complete sys.path, ce qui arrive bien apres.
+conftest du workspace n'est importe (et le module a remplacer disponible)
+qu'une fois la collecte terminee.
 
 Si le remplacement echoue, le run s'arrete avec un message. Continuer serait
 pire : tous les lecteurs liraient le meme et les resultats se ressembleraient
@@ -36,7 +46,9 @@ _PLUGIN_SOURCE = '''\
 
 Ne pas modifier : ce fichier est recree et supprime a chaque lancement.
 """
+import importlib
 import os
+import sys
 
 import pytest
 
@@ -47,6 +59,70 @@ _fait = False
 _erreur = ""
 
 
+def _ressemble_a_conftest(module):
+    """Vrai si ce module a des chances d'etre un conftest.py.
+
+    Le nom qu'un conftest.py recoit dans sys.modules depend de la structure du
+    workspace (rootdir, __init__.py, plusieurs conftest.py imbriques) : on
+    reconnait donc le fichier plutot que d'exiger un nom precis.
+    """
+    nom = getattr(module, "__name__", "") or ""
+    fichier = getattr(module, "__file__", "") or ""
+    return nom == "conftest" or nom.endswith(".conftest") \
+        or os.path.basename(fichier) == "conftest.py"
+
+
+def _trouver_original(cible):
+    """Retrouve (objet_fonction) designe par `cible`, ou (None, raison_echec).
+
+    `cible` peut etre "module.fonction" (tente tel quel, avec repli sur une
+    recherche par nom si l'import direct echoue) ou juste "fonction" (cherche
+    dans tout module deja charge qui ressemble a un conftest.py -- c'est le cas
+    le plus courant, le nom reel du module conftest n'etant pas previsible).
+    """
+    module_name, point, attribut = cible.rpartition(".")
+
+    if not point:
+        # Pas de module donne : on ne cherche que dans les conftest.py connus.
+        candidats = [m for m in sys.modules.values()
+                    if m is not None and _ressemble_a_conftest(m) and hasattr(m, attribut)]
+        if not candidats:
+            return None, (
+                "aucun conftest.py charge ne definit %r (verifiez l'orthographe, "
+                "et que ce fichier fait bien partie des tests lances)" % attribut
+            )
+        return getattr(candidats[0], attribut), ""
+
+    module = None
+    try:
+        module = importlib.import_module(module_name)
+    except Exception:
+        pass
+
+    if module is None:
+        # Repli : le nom donne ne correspond a aucun module importable tel
+        # quel (frequent pour un conftest.py, dont le nom reel differe selon
+        # la structure du workspace). On cherche un module deja charge dont le
+        # nom ou le fichier y correspond.
+        court = module_name.rsplit(".", 1)[-1]
+        for present in sys.modules.values():
+            if present is None:
+                continue
+            nom_present = getattr(present, "__name__", "") or ""
+            fichier = getattr(present, "__file__", "") or ""
+            base = os.path.splitext(os.path.basename(fichier))[0] if fichier else ""
+            if nom_present == module_name or nom_present.rsplit(".", 1)[-1] == court \
+                    or base == court:
+                module = present
+                break
+
+    if module is None:
+        return None, "module %r introuvable parmi ceux deja charges" % module_name
+    if not hasattr(module, attribut):
+        return None, "le module trouve n'a pas d'attribut %r" % attribut
+    return getattr(module, attribut), ""
+
+
 def _appliquer():
     """Remplace la fonction designee par une qui retourne le lecteur du run."""
     global _fait, _erreur
@@ -54,24 +130,18 @@ def _appliquer():
         return
     _fait = True
 
-    module_name, _, attribut = _CIBLE.rpartition(".")
-    if not module_name or not attribut:
-        _erreur = "reader_getter doit valoir module.fonction"
-        return
-
     try:
-        import importlib
-        import sys
-
-        module = importlib.import_module(module_name)
-        original = getattr(module, attribut)
+        original, raison = _trouver_original(_CIBLE)
+        if original is None:
+            _erreur = raison
+            return
 
         def _remplacant(*args, **kwargs):
             return _READER
 
         _remplacant.__wrapped__ = original
 
-        # Remplacer dans le module qui la definit ne suffit pas : un
+        # Remplacer a l'endroit trouve ne suffit pas : un
         # `from config_getters import getConfigReader` a copie la reference dans
         # le module de test, et c'est cette copie-la qui est appelee. On
         # remplace donc TOUTES les references a cette fonction precise -- pas

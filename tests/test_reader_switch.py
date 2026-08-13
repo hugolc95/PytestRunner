@@ -638,3 +638,71 @@ def test_the_generated_plugin_is_cleaned_up(parallele, qtbot):
         for worker in parallele.workers:
             worker.stop()
             worker.wait(10000)
+
+
+# --------------------------- le cas exact signale : getConfigReader dans conftest.py
+
+@pytest.fixture
+def parallele_conftest(qtbot, tmp_path):
+    """Reproduction fidele du workspace signale : getConfigReader n'est pas
+    dans un module a part, mais directement dans conftest.py. Le nom que ce
+    fichier recoit dans sys.modules n'est pas previsible depuis l'exterieur,
+    d'ou reader_getter: getConfigReader (sans prefixe de module)."""
+    from gui_qt.main_window import MainWindow
+
+    QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
+    (tmp_path / "config.yml").write_text(
+        "Reader: Lecteur A\n"
+        "Readers:\n  - Lecteur B\n  - Lecteur C\n"
+        "reader_getter: getConfigReader\n",
+        encoding="utf-8")
+
+    (tmp_path / "conftest.py").write_text(textwrap.dedent('''
+        import pathlib
+        import yaml
+
+        def getConfigReader():
+            config = pathlib.Path(__file__).with_name("config.yml")
+            return yaml.safe_load(config.read_text(encoding="utf-8"))["Reader"]
+    '''), encoding="utf-8")
+
+    (tmp_path / "test_x.py").write_text(textwrap.dedent('''
+        import pathlib
+
+        from conftest import getConfigReader
+
+        class TestSuite:
+            def setup_method(self):
+                self.reader = getConfigReader()
+
+            def test_f(self):
+                pathlib.Path(__file__).with_name(
+                    "vu_" + self.reader.replace(" ", "_")).touch()
+    '''), encoding="utf-8")
+
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    fenetre.workspace = str(tmp_path)
+    fenetre.details.set_workspace(str(tmp_path))
+    fenetre.refresh_readers()
+    return fenetre
+
+
+def test_a_getter_living_directly_in_conftest_works(parallele_conftest, qtbot):
+    """Le cas signale mot pour mot : "ma fonction de getConfigReader est dans
+    le conftest". Trois pytest en meme temps, chacun voyant son lecteur, sans
+    modifier ni conftest.py ni test_x.py."""
+    parallele_conftest._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
+    try:
+        assert len(parallele_conftest.workers) == 3
+        assert len([w for w in parallele_conftest.workers if w.isRunning()]) >= 2, \
+            "les processus doivent tourner ensemble, pas l'un apres l'autre"
+
+        qtbot.waitUntil(lambda: parallele_conftest._runs_left == 0, timeout=120000)
+
+        temoins = sorted(p.name for p in Path(parallele_conftest.workspace).glob("vu_*"))
+        assert temoins == ["vu_Lecteur_A", "vu_Lecteur_B", "vu_Lecteur_C"]
+    finally:
+        for worker in parallele_conftest.workers:
+            worker.stop()
+            worker.wait(10000)

@@ -1406,9 +1406,11 @@ class MainWindow(QMainWindow):
                 self.workspace, self.config_path()):
             self._queue_console_output(
                 f"{len(lecteurs)} lecteurs seront testes l'un apres l'autre.\n"
-                "Pour les lancer en parallele, declarez dans la configuration :\n"
-                "  reader_getter: <module>.<fonction>   "
-                "(celle qui renvoie le lecteur actif)\n"
+                "Pour les lancer en parallele, declarez dans la configuration la "
+                "fonction qui renvoie le lecteur actif :\n"
+                "  reader_getter: <module>.<fonction>\n"
+                "  reader_getter: <fonction>              "
+                "(si elle vit dans un conftest.py)\n"
             )
 
         self.workers: list[PytestWorker] = []
