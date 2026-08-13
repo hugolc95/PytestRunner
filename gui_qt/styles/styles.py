@@ -585,6 +585,36 @@ def separator_style() -> str:
     return f"background-color: {mix(p['border'], p['text_muted'], 0.35)}; border: none;"
 
 
+def reader_tab_style() -> str:
+    """Onglets compacts pour choisir la console d'un lecteur.
+
+    Ils vivent sous les onglets Console/Source/Log, dont ils heritaient
+    jusque-la le style (padding 8px 22px, min-height 18px) : beaucoup trop
+    imposant pour un simple aiguillage entre deux ou trois consoles.
+    """
+    p = _active
+    return f"""
+    QTabBar::tab {{
+        background-color: transparent;
+        color: {p['text_muted']};
+        padding: 2px 10px;
+        margin-right: 2px;
+        min-width: 36px;
+        min-height: 14px;
+        font-size: 11px;
+        font-weight: 500;
+        border-radius: 4px;
+    }}
+    QTabBar::tab:selected {{
+        background-color: {p['surface']};
+        border: 1px solid {p['border']};
+    }}
+    QTabBar::tab:hover:!selected {{
+        color: {p['text']};
+    }}
+    """
+
+
 # ---------- TOOLBAR BUTTON ----------
 def toolbar_button():
     p = _active

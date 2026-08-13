@@ -67,6 +67,28 @@ from gui_qt.styles.styles import (
 
 _COLLECTED_RE = re.compile(r"collected (\d+) items")
 
+_SUMMARY_PATTERNS = {
+    "PASSED": r"(\d+)\s+passed",
+    "FAILED": r"(\d+)\s+failed",
+    "SKIPPED": r"(\d+)\s+skipped",
+    "ERROR": r"(\d+)\s+error",
+}
+
+
+def _parse_summary_counts(sortie: str) -> dict:
+    """Compteurs lus dans le resume final pytest d'UNE seule sortie.
+
+    A la difference du total agrege sur tous les lecteurs (utilise pour les
+    cartes), sert a donner a chaque lecteur son propre resultat dans
+    l'historique des executions.
+    """
+    counts = {}
+    for key, pattern in _SUMMARY_PATTERNS.items():
+        matches = re.findall(pattern, sortie, re.IGNORECASE)
+        if matches:
+            counts[key] = int(matches[-1])
+    return counts
+
 
 def blend_color(base: str, strong: str, ratio: float) -> str:
     """
@@ -441,6 +463,12 @@ class MainWindow(QMainWindow):
         self.total_tests = 0
         self.done_tests = 0
         self.failed_nodeids: set[str] = set()
+        # Un historique par lecteur : chacun tourne dans son propre process et
+        # merite sa propre ligne (voir _on_finished), donc son propre suivi.
+        self._current_readers: list[str] = [""]
+        self._current_junit_paths: list[str] = [""]
+        self._failed_nodeids_by_reader: list[set[str]] = [set()]
+        self._exit_codes: list[int] = [0]
 
         self.test_counts = {
             "PASSED": 0,
@@ -1002,6 +1030,8 @@ class MainWindow(QMainWindow):
         """
         if status == "FAILED":
             self.failed_nodeids.add(nodeid)
+            if reader_index < len(self._failed_nodeids_by_reader):
+                self._failed_nodeids_by_reader[reader_index].add(nodeid)
 
         self.done_tests += 1
         if self.progress.maximum() > 0:
@@ -1083,6 +1113,8 @@ class MainWindow(QMainWindow):
         """
         if reader_index < len(self._run_outputs):
             self._run_outputs[reader_index] = stdout
+        if reader_index < len(self._exit_codes):
+            self._exit_codes[reader_index] = exit_code
 
         self._runs_left -= 1
         if self._runs_left > 0:
@@ -1105,26 +1137,15 @@ class MainWindow(QMainWindow):
 
         # Les compteurs sont mis a jour au fil de l'eau depuis les lignes pytest.
         # Si pytest fournit un resume final, il reste prioritaire. Avec plusieurs
-        # lecteurs, chaque processus ecrit le sien : il faut les ADDITIONNER. Ne
-        # lire que le dernier resume ramenait le total a celui d'un seul lecteur.
+        # lecteurs, chaque processus ecrit le sien : il faut les ADDITIONNER pour
+        # les cartes, qui montrent le total tous lecteurs confondus (l'historique,
+        # plus bas, garde lui le detail par lecteur).
         sorties = [s for s in self._run_outputs if s] or [stdout]
-        patterns = {
-            "PASSED": r"(\d+)\s+passed",
-            "FAILED": r"(\d+)\s+failed",
-            "SKIPPED": r"(\d+)\s+skipped",
-            "ERROR": r"(\d+)\s+error",
-        }
-
-        for key, pattern in patterns.items():
-            total = 0
-            trouve = False
-            for sortie in sorties:
-                matches = re.findall(pattern, sortie, re.IGNORECASE)
-                if matches:
-                    total += int(matches[-1])
-                    trouve = True
-            if trouve:
-                self.test_counts[key] = total
+        comptes_par_sortie = [_parse_summary_counts(sortie) for sortie in sorties]
+        for key in _SUMMARY_PATTERNS:
+            valeurs = [comptes[key] for comptes in comptes_par_sortie if key in comptes]
+            if valeurs:
+                self.test_counts[key] = sum(valeurs)
 
         self._cards_timer.stop()
         self._cards_dirty = True
@@ -1145,18 +1166,38 @@ class MainWindow(QMainWindow):
         self.rerun_failed_button.setEnabled(bool(self.failed_nodeids))
 
         # ---- Enregistrement dans l'historique des executions ----
+        # Une ligne par lecteur : chacun a tourne dans son propre process, avec
+        # son propre resultat. Un total agrege masquerait lequel a echoue.
         duration = (time.time() - self._run_started_at) if self._run_started_at else 0.0
-        self.history_manager.add_run(
-            run_id=self._current_run_id or new_run_id(),
-            workspace=self.workspace or "",
-            duration_seconds=duration,
-            exit_code=exit_code,
-            counts=self.test_counts,
-            nodeids=self._current_run_nodeids,
-            failed_nodeids=sorted(self.failed_nodeids),
-            output_text=stdout,
-            junit_xml_path=self._current_junit_path or "",
-        )
+        lecteurs = self._current_readers or [""]
+        plusieurs = len(lecteurs) > 1
+        base_run_id = self._current_run_id or new_run_id()
+
+        for index, lecteur in enumerate(lecteurs):
+            sortie = self._run_outputs[index] if index < len(self._run_outputs) else stdout
+            counts = _parse_summary_counts(sortie)
+            failed = (
+                sorted(self._failed_nodeids_by_reader[index])
+                if index < len(self._failed_nodeids_by_reader)
+                else sorted(self.failed_nodeids)
+            )
+            code = self._exit_codes[index] if index < len(self._exit_codes) else exit_code
+            junit = (
+                self._current_junit_paths[index]
+                if index < len(self._current_junit_paths) else ""
+            )
+            self.history_manager.add_run(
+                run_id=f"{base_run_id}.{index}" if plusieurs else base_run_id,
+                workspace=self.workspace or "",
+                duration_seconds=duration,
+                exit_code=code,
+                counts=counts,
+                nodeids=self._current_run_nodeids,
+                failed_nodeids=failed,
+                output_text=sortie,
+                junit_xml_path=junit,
+                reader=lecteur,
+            )
         self._refresh_history_window()
 
     def _refresh_history_window(self):
@@ -1389,6 +1430,10 @@ class MainWindow(QMainWindow):
         self.failed_nodeids.clear()
         self._unmatched_results.clear()
         self._replaced_cases = 0
+        self._current_readers = list(lecteurs)
+        self._current_junit_paths = [""] * len(lecteurs)
+        self._failed_nodeids_by_reader = [set() for _ in lecteurs]
+        self._exit_codes = [0] * len(lecteurs)
         self.tree.start_run()
 
         # Parallele par defaut : le fichier de configuration est rendu
@@ -1417,6 +1462,7 @@ class MainWindow(QMainWindow):
             junit = self._current_junit_path
             if len(lecteurs) > 1:
                 junit = os.path.join(history_dir(), f"{self._current_run_id}.{index}.xml")
+            self._current_junit_paths[index] = junit
 
             worker = PytestWorker(
                 nodeids=nodeids,

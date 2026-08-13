@@ -424,6 +424,7 @@ class DetailPanel(QWidget):
                 f"border-left:3px solid {couleur};"
                 f"background:{styles.mix(styles.palette()['surface'], couleur, 0.07)};"
             )
+        self.console_tabs.setStyleSheet(styles.reader_tab_style())
         self.compare_button.setStyleSheet(theme_toggle_button())
         self.detach_button.setStyleSheet(theme_toggle_button())
         for index in range(self.console_tabs.count()):

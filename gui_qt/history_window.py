@@ -27,7 +27,7 @@ from gui_qt.styles.styles import primary_button, neutral_button, danger_button, 
 from gui_qt.status_icons import status_icon, STATUS_COLORS
 
 
-COLUMNS = ["Date", "Mode", "Workspace", "Total", "Passed", "Failed", "Skipped", "Error", "Duree (s)"]
+COLUMNS = ["Date", "Mode", "Workspace", "Reader", "Total", "Passed", "Failed", "Skipped", "Error", "Duree (s)"]
 
 
 class HistoryWindow(QDialog):
@@ -101,6 +101,7 @@ class HistoryWindow(QDialog):
                 ts,
                 mode,
                 entry.get("workspace", ""),
+                entry.get("reader", "") or "—",
                 str(entry.get("total", 0)),
                 str(entry.get("passed", 0)),
                 str(entry.get("failed", 0)),

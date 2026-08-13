@@ -789,3 +789,78 @@ def test_a_getter_that_enriches_the_reader_keeps_its_enrichment_in_parallel(
         for worker in parallele_getter_enrichi.workers:
             worker.stop()
             worker.wait(10000)
+
+
+@pytest.fixture
+def parallele_conftest_reel(qtbot, tmp_path):
+    """Le conftest.py exact envoye en capture d'ecran : CONFIG charge une seule
+    fois au chargement du module, et getConfigReader() prefixe la valeur lue
+    ("hubreader:" + CONFIG.get('READER')) au lieu de la retourner telle quelle.
+    """
+    from gui_qt.main_window import MainWindow
+
+    QSettings("MyCompany", "PyTestRunner").setValue("theme", "light")
+    (tmp_path / "config.yml").write_text(
+        "READER: Lecteur A\n"
+        "Readers:\n  - Lecteur B\n  - Lecteur C\n",
+        encoding="utf-8")
+
+    (tmp_path / "conftest.py").write_text(textwrap.dedent('''
+        import pathlib
+        import yaml
+
+        def load_config():
+            config = pathlib.Path(__file__).with_name("config.yml")
+            return yaml.safe_load(config.read_text(encoding="utf-8"))
+
+        CONFIG = load_config()
+
+        def getConfigReader():
+            reader = "hubreader:" + CONFIG.get("READER")
+            return reader
+    '''), encoding="utf-8")
+
+    (tmp_path / "test_x.py").write_text(textwrap.dedent('''
+        import pathlib
+
+        from conftest import getConfigReader
+
+        class TestSuite:
+            def setup_method(self):
+                self.reader = getConfigReader()
+
+            def test_f(self):
+                pathlib.Path(__file__).with_name(
+                    "vu_" + self.reader.replace(" ", "_").replace(":", "-")).touch()
+    '''), encoding="utf-8")
+
+    fenetre = MainWindow()
+    qtbot.addWidget(fenetre)
+    fenetre.workspace = str(tmp_path)
+    fenetre.details.set_workspace(str(tmp_path))
+    fenetre.refresh_readers()
+    return fenetre
+
+
+def test_the_exact_reported_conftest_keeps_its_hubreader_prefix(
+        parallele_conftest_reel, qtbot):
+    """Reproduction litterale du conftest.py envoye : CONFIG est lu une seule
+    fois a l'import du module (avant meme que getConfigReader() ne soit
+    appelee), donc le fichier doit deja etre virtuellement different a ce
+    moment-la -- c'est pourquoi le plugin patche des l'import, pas dans un
+    hook qui se declencherait trop tard."""
+    parallele_conftest_reel._launch_worker(["test_x.py::TestSuite::test_f"], "run\n")
+    try:
+        qtbot.waitUntil(lambda: parallele_conftest_reel._runs_left == 0, timeout=120000)
+
+        temoins = sorted(
+            p.name for p in Path(parallele_conftest_reel.workspace).glob("vu_*"))
+        assert temoins == [
+            "vu_hubreader-Lecteur_A",
+            "vu_hubreader-Lecteur_B",
+            "vu_hubreader-Lecteur_C",
+        ]
+    finally:
+        for worker in parallele_conftest_reel.workers:
+            worker.stop()
+            worker.wait(10000)

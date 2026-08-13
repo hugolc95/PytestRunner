@@ -72,8 +72,16 @@ class RunHistoryManager:
         output_text: str,
         junit_xml_path: str = "",
         source: str = "workspace",
+        reader: str = "",
     ) -> dict:
-        """Enregistre un run termine et retourne l'entree creee."""
+        """Enregistre un run termine et retourne l'entree creee.
+
+        Avec plusieurs lecteurs, un run pytest par lecteur tourne : chacun a
+        son propre resultat (compteurs, sortie, JUnit) et merite sa propre
+        ligne d'historique, plutot qu'un total agrege qui masquerait lequel a
+        echoue. `reader` porte alors le nom du lecteur ; vide pour un run a
+        lecteur unique ou sans lecteur configure du tout.
+        """
 
         output_path = os.path.join(history_dir(), f"{run_id}.log")
         try:
@@ -89,6 +97,7 @@ class RunHistoryManager:
             "timestamp": time.time(),
             "source": source,
             "workspace": workspace,
+            "reader": reader,
             "duration_seconds": round(duration_seconds, 2),
             "exit_code": exit_code,
             "total": sum(counts.values()),
