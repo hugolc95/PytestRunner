@@ -19,6 +19,7 @@ from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import (
     QHBoxLayout,
+    QSplitter,
     QLabel,
     QPlainTextEdit,
     QTabWidget,
@@ -176,10 +177,21 @@ class DetailPanel(QWidget):
         # setPlainText ne doit pas passer pour une modification de l'utilisateur.
         self._loading = False
 
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
-        self.console.document().setMaximumBlockCount(12000)
-        self.console.setLineWrapMode(QTextEdit.NoWrap)
+        # Une console par lecteur. `self.console` reste la premiere : tout le
+        # code d'affichage existant continue d'ecrire dedans sans changement.
+        self.consoles: list[QTextEdit] = [self._new_console()]
+        self.console = self.consoles[0]
+        self.console_headers: list[QLabel] = [QLabel()]
+        self.console_headers[0].setVisible(False)
+
+        self.console_area = QWidget()
+        self._console_layout = QVBoxLayout(self.console_area)
+        self._console_layout.setContentsMargins(0, 0, 0, 0)
+        self._console_layout.setSpacing(4)
+        self.console_split = QSplitter(Qt.Vertical)
+        self._console_layout.addWidget(self.console_split)
+        self.console_split.addWidget(
+            self._console_box(self.console_headers[0], self.console))
 
         self.source_view = CodeView()
         self.log_view = QPlainTextEdit()
@@ -188,7 +200,8 @@ class DetailPanel(QWidget):
 
         # Coloration a l'affichage : la sortie brute reste intacte pour
         # l'historique, les traces d'echec et la detection des statuts.
-        self.console_highlighter = PytestOutputHighlighter(self.console.document())
+        self.console_highlighters = [PytestOutputHighlighter(self.console.document())]
+        self.console_highlighter = self.console_highlighters[0]
         self.source_highlighter = PythonHighlighter(self.source_view.document())
         self.log_highlighter = LogHighlighter(self.log_view.document())
 
@@ -216,7 +229,7 @@ class DetailPanel(QWidget):
         self.source_view.textChanged.connect(self._on_source_edited)
 
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.console, "Console")
+        self.tabs.addTab(self.console_area, "Console")
         self.tabs.addTab(
             self._wrap(self.source_header, self.source_view,
                        self.source_status, self.edit_button),
@@ -230,6 +243,60 @@ class DetailPanel(QWidget):
 
         self._refresh_edit_button()
         self.restyle()
+
+    @staticmethod
+    def _new_console() -> QTextEdit:
+        vue = QTextEdit()
+        vue.setReadOnly(True)
+        vue.document().setMaximumBlockCount(12000)
+        vue.setLineWrapMode(QTextEdit.NoWrap)
+        return vue
+
+    @staticmethod
+    def _console_box(header: QLabel, vue: QTextEdit) -> QWidget:
+        boite = QWidget()
+        col = QVBoxLayout(boite)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(2)
+        col.addWidget(header)
+        col.addWidget(vue)
+        return boite
+
+    def set_readers(self, labels: list[str]):
+        """Une console par lecteur, empilees, chacune avec son en-tete colore.
+
+        Une console unique melangeant deux runs simultanes serait illisible : les
+        lignes des deux lecteurs s'y entrelaceraient au rythme des cartes.
+        """
+        labels = list(labels)
+        multi = len(labels) > 1
+
+        while len(self.consoles) < len(labels):
+            vue = self._new_console()
+            entete = QLabel()
+            self.consoles.append(vue)
+            self.console_headers.append(entete)
+            self.console_highlighters.append(PytestOutputHighlighter(vue.document()))
+            self.console_split.addWidget(self._console_box(entete, vue))
+
+        for index, vue in enumerate(self.consoles):
+            visible = index == 0 or index < len(labels)
+            vue.parentWidget().setVisible(visible)
+            entete = self.console_headers[index]
+            if multi and index < len(labels):
+                entete.setText(labels[index])
+                entete.setVisible(True)
+            else:
+                entete.setVisible(False)
+
+        self._reader_labels = labels
+        self.restyle()
+
+    def console_for(self, reader_index: int) -> QTextEdit:
+        """Console de ce lecteur, la premiere a defaut."""
+        if 0 <= reader_index < len(self.consoles):
+            return self.consoles[reader_index]
+        return self.console
 
     @staticmethod
     def _wrap(header: QLabel, view: QPlainTextEdit, *extras: QWidget) -> QWidget:
@@ -250,7 +317,15 @@ class DetailPanel(QWidget):
         return container
 
     def restyle(self):
-        self.console.setStyleSheet(console_style())
+        for index, vue in enumerate(self.consoles):
+            vue.setStyleSheet(console_style())
+            entete = self.console_headers[index]
+            couleur = styles.reader_color(index)
+            entete.setStyleSheet(
+                f"color:{couleur}; font-weight:700; font-size:12px; padding:3px 6px;"
+                f"border-left:3px solid {couleur};"
+                f"background:{styles.mix(styles.palette()['surface'], couleur, 0.07)};"
+            )
         self.source_view.setStyleSheet(console_style())
         self.log_view.setStyleSheet(console_style())
         self.source_header.setStyleSheet(styles.muted_label())
@@ -260,8 +335,8 @@ class DetailPanel(QWidget):
 
         # Les couleurs de coloration viennent de la palette : elles doivent etre
         # reconstruites, pas seulement reappliquees.
-        for highlighter in (self.console_highlighter, self.source_highlighter,
-                            self.log_highlighter):
+        for highlighter in [*self.console_highlighters, self.source_highlighter,
+                            self.log_highlighter]:
             highlighter.refresh()
         self.source_view.restyle()
 

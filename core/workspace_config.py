@@ -138,6 +138,61 @@ def import_mode_args(workspace: str | None, config_path: str | None = None) -> l
     return [f"--import-mode={mode}"] if mode else []
 
 
+# ------------------------------------------------------------------- readers
+
+READERS_KEYS = ("readers", "reader_list", "lecteurs")
+READER_KEYS = ("reader", "lecteur")
+READER_ENV_KEYS = ("reader_env", "reader_env_var", "reader_variable")
+
+# Variable d'environnement portant le lecteur d'un run. Le workspace ne peut pas
+# le recevoir autrement : deux processus lances en meme temps partagent le meme
+# config.yml, donc y ecrire le lecteur du moment est impossible. Les tests lisent
+# donc cette variable, avec repli sur la cle Reader du fichier.
+DEFAULT_READER_ENV = "PYTESTRUNNER_READER"
+
+
+def reader_env_var(workspace: str | None, config_path: str | None = None) -> str:
+    """Nom de la variable d'environnement portant le lecteur."""
+    valeur = setting_for(workspace, READER_ENV_KEYS, config_path)
+    texte = str(valeur).strip() if valeur is not None else ""
+    return texte or DEFAULT_READER_ENV
+
+
+def readers_for(workspace: str | None, config_path: str | None = None) -> list[str]:
+    """Lecteurs declares par le workspace, dans l'ordre du fichier.
+
+    `readers` liste les lecteurs disponibles ; a defaut on retombe sur la cle
+    `reader` seule, ce qui donne une liste d'un element et le comportement
+    actuel.
+    """
+    valeur = setting_for(workspace, READERS_KEYS, config_path)
+    if valeur is None:
+        valeur = setting_for(workspace, READER_KEYS, config_path)
+
+    if valeur is None:
+        return []
+    if isinstance(valeur, (list, tuple)):
+        noms = [str(v).strip() for v in valeur]
+    else:
+        noms = [str(valeur).strip()]
+
+    # Un meme lecteur deux fois donnerait deux runs identiques et deux colonnes
+    # indiscernables.
+    vus: list[str] = []
+    for nom in noms:
+        if nom and nom not in vus:
+            vus.append(nom)
+    return vus
+
+
+def reader_env(workspace: str | None, reader: str, config_path: str | None = None) -> dict:
+    """Environnement du processus pytest pour ce lecteur."""
+    env = pytest_env(workspace, config_path)
+    if reader:
+        env[reader_env_var(workspace, config_path)] = reader
+    return env
+
+
 # ------------------------------------------------------------------ console
 
 CONSOLE_PATH_KEYS = ("console_path_levels", "console_paths", "console_path")

@@ -570,6 +570,15 @@ def info_button():
     return outline_button(_active["primary"])
 
 
+# Couleurs d'identite des lecteurs, dans l'ordre de leur declaration. Elles
+# doivent rester distinguables entre elles ET lisibles sur les deux fonds, d'ou
+# des teintes prises dans la palette plutot qu'un arc-en-ciel.
+def reader_color(index: int) -> str:
+    p = _active
+    couleurs = (p["primary"], p["status"]["SKIPPED"], p["status"]["ERROR"], p["success"])
+    return couleurs[index % len(couleurs)]
+
+
 def separator_style() -> str:
     """Trait vertical entre deux groupes d'une barre d'actions."""
     p = _active

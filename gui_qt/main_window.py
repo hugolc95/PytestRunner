@@ -5,7 +5,7 @@ from PyQt5.QtWidgets import (
     QPushButton,
     QFileDialog,
     QMessageBox,
-    QTextEdit, QSplitter, QComboBox, QSizePolicy, QTabWidget, QFrame, QDialog,
+    QTextEdit, QSplitter, QComboBox, QSizePolicy, QTabWidget, QFrame, QDialog, QCheckBox,
     QToolButton, QApplication
 )
 
@@ -35,8 +35,8 @@ from core.test_tree import build_test_tree
 from core.pytest_executor import (PytestOutputParser, compact_output_line,
                                   pytest_nodeid_args)
 from core.run_history import RunHistoryManager, history_dir, new_run_id
-from core.workspace_config import (console_path_levels, import_mode_args, pytest_env,
-                                   show_test_classes)
+from core.workspace_config import (console_path_levels, import_mode_args, reader_env,
+                                   readers_for, show_test_classes)
 from core.python_interpreter import (
     check_ready_to_run,
     interpreter_source,
@@ -100,8 +100,12 @@ class PytestWorker(QThread):
     collected_signal = pyqtSignal(int)
 
     def __init__(self, nodeids, workspace, junit_xml_path=None, parallel=False,
-                 interpreter=None, targets=None):
+                 interpreter=None, targets=None, reader=""):
         super().__init__()
+        # Lecteur de ce run. Deux processus lances en meme temps partagent le
+        # meme config.yml : le lecteur ne peut donc pas y etre ecrit, il passe
+        # par une variable d'environnement que les tests lisent.
+        self.reader = reader
         self.nodeids = nodeids
         # Cibles reellement passees a pytest : repliees en chemins de dossier ou
         # de fichier quand tout le sous-arbre est selectionne. Beaucoup plus
@@ -160,7 +164,7 @@ class PytestWorker(QThread):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
-                env=pytest_env(self.workspace),
+                env=reader_env(self.workspace, self.reader),
                 creationflags=subprocess_flags(),
             )
         except (OSError, ValueError) as exc:
@@ -352,6 +356,9 @@ class MainWindow(QMainWindow):
         # que la collecte n'est pas reproductible d'un lancement a l'autre.
         self._unmatched_results: list[str] = []
         self._replaced_cases = 0
+        self.workers: list = []
+        self._runs_left = 0
+        self._run_outputs: list[str] = []
         self.settings = QSettings("MyCompany", "PyTestRunner")
         styles.set_theme(self.settings.value("theme", "light", type=str))
         # main_qt.py pose la feuille de style avant de connaitre le theme
@@ -486,6 +493,24 @@ class MainWindow(QMainWindow):
         action_bar.addWidget(self.stop_button)
         action_bar.addWidget(self.rerun_failed_button)
 
+        # Lecteurs : n'apparait que si le workspace en declare plusieurs.
+        self._reader_separator = self._separator()
+        action_bar.addWidget(self._reader_separator)
+        self.reader_bar = QHBoxLayout()
+        self.reader_bar.setSpacing(10)
+        action_bar.addLayout(self.reader_bar)
+        self.reader_checkboxes: list[QCheckBox] = []
+
+        self.diff_button = QPushButton("Differences seulement")
+        self.diff_button.setCheckable(True)
+        self.diff_button.setCursor(Qt.PointingHandCursor)
+        self.diff_button.setStyleSheet(toolbar_button())
+        self.diff_button.setToolTip(
+            "N'afficher que les tests sur lesquels les lecteurs ne s'accordent pas.")
+        self.diff_button.toggled.connect(self.tree.filter_divergences)
+        action_bar.addWidget(self.diff_button)
+        self._show_reader_controls(False)
+
         # Sans cet espace final, la barre repartit toute la largeur de la
         # fenetre entre les boutons : ils s'etiraient sur 250 px chacun et
         # flottaient au milieu. Ils gardent maintenant leur taille naturelle et
@@ -606,6 +631,45 @@ class MainWindow(QMainWindow):
 
         self.workspace: str | None = None
 
+    def _show_reader_controls(self, visible: bool):
+        self._reader_separator.setVisible(visible)
+        self.diff_button.setVisible(visible)
+        for case in self.reader_checkboxes:
+            case.setVisible(visible)
+
+    def refresh_readers(self):
+        """Reconstruit les cases a cocher a partir de la configuration.
+
+        Un seul lecteur declare (ou aucun) ne justifie pas de commande : la barre
+        reste alors exactement comme avant.
+        """
+        for case in self.reader_checkboxes:
+            self.reader_bar.removeWidget(case)
+            case.deleteLater()
+        self.reader_checkboxes.clear()
+
+        lecteurs = readers_for(self.workspace, self.config_path())
+        if len(lecteurs) > 1:
+            for index, nom in enumerate(lecteurs):
+                case = QCheckBox(nom)
+                case.setChecked(True)
+                case.setCursor(Qt.PointingHandCursor)
+                case.setStyleSheet(
+                    f"color:{styles.reader_color(index)}; font-weight:600;")
+                self.reader_bar.addWidget(case)
+                self.reader_checkboxes.append(case)
+
+        self._show_reader_controls(len(lecteurs) > 1)
+
+    def selected_readers(self) -> list[str]:
+        """Lecteurs coches, ou [] quand le workspace n'en declare pas plusieurs."""
+        coches = [c.text() for c in self.reader_checkboxes if c.isChecked()]
+        if self.reader_checkboxes and not coches:
+            # Tout decocher ne doit pas empecher de lancer : on retombe sur le
+            # comportement d'un workspace sans lecteurs.
+            return []
+        return coches
+
     def _separator(self) -> QFrame:
         """Trait vertical entre deux groupes d'actions.
 
@@ -684,6 +748,10 @@ class MainWindow(QMainWindow):
         for button in (self.btn_select_all, self.btn_select_none, self.btn_failed_only,
                        self.btn_expand_all, self.btn_collapse_all):
             button.setStyleSheet(toolbar_button())
+
+        self.diff_button.setStyleSheet(toolbar_button())
+        for index, case in enumerate(self.reader_checkboxes):
+            case.setStyleSheet(f"color:{styles.reader_color(index)}; font-weight:600;")
 
         for trait in getattr(self, "_separators", []):
             trait.setStyleSheet(separator_style())
@@ -770,10 +838,10 @@ class MainWindow(QMainWindow):
         dialog = FlakyTestsDialog(self.history_manager, self)
         dialog.exec_()
 
-    def _queue_console_output(self, text: str):
+    def _queue_console_output(self, text: str, reader_index: int = 0):
         if not text:
             return
-        self._console_pending.append(text)
+        self._console_pending.append((reader_index, text))
         if not self._console_flush_timer.isActive():
             self._console_flush_timer.start()
 
@@ -782,27 +850,34 @@ class MainWindow(QMainWindow):
             self._console_flush_timer.stop()
             return
 
-        text = "".join(self._console_pending)
+        # Regroupe par console : chacune n'est touchee qu'une fois par vidage,
+        # meme quand deux lecteurs ecrivent en meme temps.
+        paquets: dict[int, list[str]] = {}
+        for index, texte in self._console_pending:
+            paquets.setdefault(index, []).append(texte)
         self._console_pending.clear()
 
-        self.console.moveCursor(QTextCursor.End)
-        self.console.insertPlainText(text)
-        self.console.ensureCursorVisible()
+        for index, morceaux in paquets.items():
+            vue = self.details.console_for(index)
+            vue.moveCursor(QTextCursor.End)
+            vue.insertPlainText("".join(morceaux))
+            vue.ensureCursorVisible()
 
-    def _on_stdout(self, text: str):
+    def _on_stdout(self, text: str, reader_index: int = 0):
         # Ne pas écrire dans QTextEdit ligne par ligne: sur de gros environnements,
         # cela peut faire planter Qt sous Windows avec 0xC0000409.
         # L'analyse des resultats se fait dans le thread de lecture (voir
         # PytestWorker) et arrive par test_status_signal. Ici, que de l'affichage.
-        self._queue_console_output(text)
+        self._queue_console_output(text, reader_index)
 
     def _on_collected(self, count: int):
-        self.total_tests = count
-        self.done_tests = 0
-        self.progress.setMaximum(count)
-        self.progress.setValue(0)
+        # Chaque processus annonce son propre total : avec plusieurs lecteurs,
+        # le travail a accomplir est la somme, pas le dernier chiffre recu.
+        lecteurs = max(1, len(getattr(self, "workers", []) or [1]))
+        self.total_tests = count * lecteurs
+        self.progress.setMaximum(self.total_tests)
 
-    def _on_test_status(self, nodeid: str, status: str):
+    def _on_test_status(self, nodeid: str, status: str, reader_index: int = 0):
         """Un test vient de se terminer : rafraichissement immediat.
 
         Appele une fois par test, y compris pour chaque cas parametre. L'arbre et
@@ -825,7 +900,8 @@ class MainWindow(QMainWindow):
         # pour que l'arbre montre ce qui a reellement tourne plutot que de perdre
         # le resultat.
         if not self.tree.update_single_test(
-            nodeid, status, self.workspace or "", create_missing=True
+            nodeid, status, self.workspace or "", create_missing=True,
+            reader_index=reader_index,
         ):
             self._unmatched_results.append(nodeid)
 
@@ -882,17 +958,40 @@ class MainWindow(QMainWindow):
         self.card_skipped.update_value(self.test_counts["SKIPPED"], total)
         self.card_error.update_value(self.test_counts["ERROR"], total)
 
-    def _on_stderr(self, text: str):
-        self._queue_console_output(text)
+    def _on_stderr(self, text: str, reader_index: int = 0):
+        self._queue_console_output(text, reader_index)
 
-    def _on_finished(self, exit_code: int, stdout: str):
+    def _on_run_finished(self, exit_code: int, stdout: str, reader_index: int = 0):
+        """Un des processus vient de finir.
+
+        Le bilan n'est dresse qu'au dernier : les cartes, l'historique et le
+        nettoyage de l'arbre portent sur l'ensemble des lecteurs.
+        """
+        if reader_index < len(self._run_outputs):
+            self._run_outputs[reader_index] = stdout
+
+        self._runs_left -= 1
+        if self._runs_left > 0:
+            self._flush_console_output()
+            self._queue_console_output(
+                f"\nPytest finished with exit code {exit_code}\n", reader_index)
+            self._flush_console_output()
+            return
+
+        self._on_finished(exit_code, "\n".join(self._run_outputs), reader_index)
+
+    def _on_finished(self, exit_code: int, stdout: str, reader_index: int = 0):
         self._flush_console_output()
-        self._queue_console_output(f"\nPytest finished with exit code {exit_code}\n")
+        self._queue_console_output(
+            f"\nPytest finished with exit code {exit_code}\n", reader_index)
         self._flush_console_output()
         self.tree.set_last_output(stdout)
 
         # Les compteurs sont mis a jour au fil de l'eau depuis les lignes pytest.
-        # Si pytest fournit un resume final, il reste prioritaire.
+        # Si pytest fournit un resume final, il reste prioritaire. Avec plusieurs
+        # lecteurs, chaque processus ecrit le sien : il faut les ADDITIONNER. Ne
+        # lire que le dernier resume ramenait le total a celui d'un seul lecteur.
+        sorties = [s for s in self._run_outputs if s] or [stdout]
         patterns = {
             "PASSED": r"(\d+)\s+passed",
             "FAILED": r"(\d+)\s+failed",
@@ -901,9 +1000,15 @@ class MainWindow(QMainWindow):
         }
 
         for key, pattern in patterns.items():
-            matches = re.findall(pattern, stdout, re.IGNORECASE)
-            if matches:
-                self.test_counts[key] = int(matches[-1])
+            total = 0
+            trouve = False
+            for sortie in sorties:
+                matches = re.findall(pattern, sortie, re.IGNORECASE)
+                if matches:
+                    total += int(matches[-1])
+                    trouve = True
+            if trouve:
+                self.test_counts[key] = total
 
         self._cards_timer.stop()
         self._cards_dirty = True
@@ -965,6 +1070,8 @@ class MainWindow(QMainWindow):
             return
 
         open_config_editor(self, self.workspace, self.settings)
+        # Le fichier retenu, ou son contenu, vient peut-etre de changer.
+        self.refresh_readers()
         # Le fichier retenu vient peut-etre de changer, et c'est lui qui porte
         # LOG_PATH : l'onglet Log doit repartir du bon endroit.
         self.details.set_workspace(self.workspace, self.config_path())
@@ -1065,6 +1172,7 @@ class MainWindow(QMainWindow):
     def _on_workspace_loaded(self, roots, count: int, workspace: str):
         self.workspace = workspace
         self.details.set_workspace(workspace, self.config_path(workspace))
+        self.refresh_readers()
         self.details.clear_details()
         self.tree.load_tree(roots)
         self.run_button.setEnabled(count > 0)
@@ -1083,11 +1191,14 @@ class MainWindow(QMainWindow):
         )
 
     def stop_tests(self):
-        if hasattr(self, "worker") and self.worker.isRunning():
-            self.worker.stop()
-            self.console.append("\n⛔ Test execution stopped by user. ⛔\n")
-            self.stop_button.setEnabled(False)
-            self.progress.setValue(self.progress.maximum())
+        workers = [w for w in getattr(self, "workers", []) if w.isRunning()]
+        if not workers:
+            return
+        for worker in workers:
+            worker.stop()
+        self.console.append("\n⛔ Test execution stopped by user. ⛔\n")
+        self.stop_button.setEnabled(False)
+        self.progress.setValue(self.progress.maximum())
 
     def _launch_worker(self, nodeids: list[str], intro_message: str, targets: list[str] | None = None):
         """
@@ -1115,14 +1226,21 @@ class MainWindow(QMainWindow):
         # le workspace.
         self.details.save_source()
 
-        self.console.clear()
+        # Un run par lecteur selectionne. Sans lecteur configure, la liste vaut
+        # [""] et tout se passe exactement comme avant.
+        lecteurs = self.selected_readers() or [""]
+
+        self.details.set_readers(lecteurs if len(lecteurs) > 1 else [])
+        self.tree.set_readers(lecteurs if len(lecteurs) > 1 else [])
+        for index in range(len(lecteurs)):
+            self.details.console_for(index).clear()
         self.console.append(intro_message)
 
         self.tree.reset_result_colors()
         self.done_tests = 0
         self.progress.reset()
         self.progress.setValue(0)
-        self.progress.setMaximum(len(nodeids))
+        self.progress.setMaximum(len(nodeids) * len(lecteurs))
 
         self.test_counts = {k: 0 for k in self.test_counts}
         self.card_passed.update_value(0)
@@ -1130,26 +1248,12 @@ class MainWindow(QMainWindow):
         self.card_skipped.update_value(0)
         self.card_error.update_value(0)
 
-        self.total_tests = len(nodeids)
+        self.total_tests = len(nodeids) * len(lecteurs)
 
         self._current_run_id = new_run_id()
         self._current_junit_path = os.path.join(history_dir(), f"{self._current_run_id}.xml")
         self._run_started_at = time.time()
         self._current_run_nodeids = list(nodeids)
-
-        self.worker = PytestWorker(
-            nodeids=nodeids,
-            workspace=self.workspace,
-            junit_xml_path=self._current_junit_path,
-            interpreter=interpreter,
-            targets=targets,
-        )
-
-        self.worker.stdout_signal.connect(self._on_stdout)
-        self.worker.test_status_signal.connect(self._on_test_status)
-        self.worker.collected_signal.connect(self._on_collected)
-        self.worker.stderr_signal.connect(self._on_stderr)
-        self.worker.finished_signal.connect(self._on_finished)
 
         self.run_button.setEnabled(False)
         self.rerun_failed_button.setEnabled(False)
@@ -1159,7 +1263,41 @@ class MainWindow(QMainWindow):
         self._replaced_cases = 0
         self.tree.start_run()
 
-        self.worker.start()
+        self.workers: list[PytestWorker] = []
+        self._runs_left = len(lecteurs)
+        self._run_outputs: list[str] = [""] * len(lecteurs)
+
+        for index, lecteur in enumerate(lecteurs):
+            # Un rapport JUnit par lecteur : un seul chemin verrait les deux
+            # processus s'ecraser l'un l'autre.
+            junit = self._current_junit_path
+            if len(lecteurs) > 1:
+                junit = os.path.join(history_dir(), f"{self._current_run_id}.{index}.xml")
+
+            worker = PytestWorker(
+                nodeids=nodeids,
+                workspace=self.workspace,
+                junit_xml_path=junit,
+                interpreter=interpreter,
+                targets=targets,
+                reader=lecteur,
+            )
+            worker.stdout_signal.connect(
+                lambda texte, i=index: self._on_stdout(texte, i))
+            worker.test_status_signal.connect(
+                lambda nodeid, statut, i=index: self._on_test_status(nodeid, statut, i))
+            worker.collected_signal.connect(self._on_collected)
+            worker.stderr_signal.connect(
+                lambda texte, i=index: self._on_stderr(texte, i))
+            worker.finished_signal.connect(
+                lambda code, sortie, i=index: self._on_run_finished(code, sortie, i))
+            self.workers.append(worker)
+
+        # Le dernier worker reste accessible sous `self.worker` : le reste du
+        # code (arret, tests) n'a pas a savoir combien il y en a.
+        self.worker = self.workers[-1]
+        for worker in self.workers:
+            worker.start()
 
     def run_selected_tests(self):
         if not self.workspace:

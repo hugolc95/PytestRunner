@@ -1,5 +1,6 @@
 from PyQt5.QtGui import QStandardItemModel, QStandardItem, QBrush, QIcon, QColor, QCursor, QPainter, QPolygonF
-from PyQt5.QtWidgets import QTreeView, QMenu, QApplication, QDialog, QVBoxLayout, QTextEdit, QMessageBox
+from PyQt5.QtWidgets import (QTreeView, QMenu, QApplication, QDialog, QVBoxLayout, QTextEdit,
+                             QMessageBox, QHeaderView)
 from PyQt5.QtCore import Qt, QModelIndex, QPointF, pyqtSignal
 
 from core.test_tree import TestNode, build_test_tree
@@ -7,6 +8,25 @@ from core.failure_report import extract_failure_traceback
 from gui_qt.status_icons import STATUS_PRIORITY, STATUS_COLORS, status_icon as _status_icon
 from gui_qt.styles import styles
 from gui_qt.styles.styles import console_style
+
+
+# Longueur au-dela de laquelle un nom de lecteur est raccourci en en-tete de
+# colonne. Le nom complet reste dans l'infobulle et sur la console.
+MAX_READER_LABEL = 14
+
+
+def short_reader_label(nom: str) -> str:
+    """Nom court d'un lecteur pour un en-tete de colonne.
+
+    `Infineon CryptoWrapperTU Reader 0` devient `Reader 0` : ecrit en entier,
+    l'en-tete imposait sa largeur a une colonne qui n'affiche qu'une icone.
+    """
+    nom = str(nom).strip()
+    if len(nom) <= MAX_READER_LABEL:
+        return nom
+    mots = nom.split()
+    court = " ".join(mots[-2:]) if len(mots) >= 2 else nom[-MAX_READER_LABEL:]
+    return court if len(court) <= MAX_READER_LABEL else court[-MAX_READER_LABEL:]
 
 
 ID_ROLE = Qt.UserRole
@@ -58,6 +78,9 @@ class TestTreeView(QTreeView):
         # pendant le run en cours. Leurs autres cas sont alors suspects : voir
         # prune_replaced_cases().
         self._functions_with_new_cases: list[QStandardItem] = []
+        # Lecteurs du dernier run : une colonne de resultat chacun des qu'il
+        # y en a plus d'un.
+        self._readers: list[str] = []
         # Sortie console complete du dernier run, utilisee pour retrouver la trace
         # d'echec d'un test precis (menu contextuel "Voir la trace d'echec").
         self._last_output: str = ""
@@ -453,12 +476,18 @@ class TestTreeView(QTreeView):
             stack = [self.model.item(row) for row in range(self.model.rowCount())]
             while stack:
                 item = stack.pop()
-                item.setData(None, STATUS_ROLE)
-                item.setData(None, Qt.ForegroundRole)
-                item.setIcon(QIcon())
-                font = item.font()
-                font.setBold(False)
-                item.setFont(font)
+                # Les colonnes de resultat aussi : un statut oublie ferait croire
+                # a une divergence avec un lecteur qui n'a pas encore repondu.
+                for colonne in range(self.model.columnCount()):
+                    cellule = self._status_cell(item, colonne)
+                    if cellule is None:
+                        continue
+                    cellule.setData(None, STATUS_ROLE)
+                    cellule.setData(None, Qt.ForegroundRole)
+                    cellule.setIcon(QIcon())
+                    police = cellule.font()
+                    police.setBold(False)
+                    cellule.setFont(police)
                 for row in range(item.rowCount()):
                     stack.append(item.child(row))
         finally:
@@ -536,8 +565,105 @@ class TestTreeView(QTreeView):
             self.setUpdatesEnabled(True)
             self.viewport().update()
 
+    # -----------------------------
+    # Colonnes de resultat, une par lecteur
+    # -----------------------------
+
+    def set_readers(self, labels: list[str]):
+        """Une colonne de resultat par lecteur, ou une seule colonne sans.
+
+        Les tests sont les memes d'un lecteur a l'autre : les lister deux fois
+        obligerait a balayer deux arbres pour comparer. Une ligne par test et une
+        colonne par lecteur met la divergence sous les yeux.
+        """
+        self._readers = list(labels)
+        colonnes = 1 + len(self._readers) if len(self._readers) > 1 else 1
+
+        self.model.setColumnCount(colonnes)
+        self.model.setHorizontalHeaderLabels(
+            ["Tests"] + [short_reader_label(n) for n in self._readers[:colonnes - 1]])
+
+        entete = self.header()
+        # Le nom du test prend la place restante : un en-tete de lecteur ecrivait
+        # sinon son nom complet en ecrasant la colonne qu'on vient lire.
+        entete.setStretchLastSection(False)
+        entete.setSectionResizeMode(0, QHeaderView.Stretch)
+
+        for index in range(1, colonnes):
+            entete.setSectionResizeMode(index, QHeaderView.ResizeToContents)
+            cellule = self.model.horizontalHeaderItem(index)
+            if cellule is not None:
+                cellule.setToolTip(self._readers[index - 1])
+                cellule.setForeground(QBrush(QColor(styles.reader_color(index - 1))))
+                cellule.setTextAlignment(Qt.AlignCenter)
+
+    def reader_column(self, reader_index: int) -> int:
+        """Colonne portant le resultat de ce lecteur, 0 s'il n'y en a qu'un."""
+        if len(getattr(self, "_readers", [])) > 1:
+            return 1 + reader_index
+        return 0
+
+    def _status_cell(self, item: QStandardItem, colonne: int) -> QStandardItem | None:
+        """Cellule de resultat de cette ligne, creee si besoin."""
+        if colonne == 0:
+            return item
+
+        parent = item.parent()
+        ligne = item.row()
+        if parent is None:
+            cellule = self.model.item(ligne, colonne)
+            if cellule is None:
+                cellule = QStandardItem()
+                self.model.setItem(ligne, colonne, cellule)
+        else:
+            cellule = parent.child(ligne, colonne)
+            if cellule is None:
+                cellule = QStandardItem()
+                parent.setChild(ligne, colonne, cellule)
+
+        cellule.setEditable(False)
+        cellule.setTextAlignment(Qt.AlignCenter)
+        return cellule
+
+    def divergent_nodeids(self) -> list[str]:
+        """Tests dont les lecteurs ne rapportent pas le meme resultat."""
+        if len(getattr(self, "_readers", [])) < 2:
+            return []
+
+        divergents = []
+        for norm, item in self._nodeid_to_item.items():
+            statuts = set()
+            for index in range(len(self._readers)):
+                cellule = self._status_cell(item, self.reader_column(index))
+                statuts.add(cellule.data(STATUS_ROLE) if cellule is not None else None)
+            if len(statuts) > 1:
+                divergents.append(norm)
+        return divergents
+
+    def filter_divergences(self, actif: bool):
+        """N'affiche que les tests sur lesquels les lecteurs ne s'accordent pas."""
+        if not actif:
+            self.clear_status_filter()
+            return
+
+        divergents = set(self.divergent_nodeids())
+        root = self.model.invisibleRootItem()
+        for row in range(root.rowCount()):
+            self._filter_divergent(root.child(row), divergents)
+
+    def _filter_divergent(self, item: QStandardItem, divergents: set) -> bool:
+        nodeid = item.data(NODEID_ROLE)
+        visible = bool(nodeid) and self._norm(nodeid) in divergents
+
+        for row in range(item.rowCount()):
+            if self._filter_divergent(item.child(row), divergents):
+                visible = True
+
+        self._set_row_hidden(item, not visible)
+        return visible
+
     def update_single_test(self, nodeid: str, status: str, workspace: str = "",
-                           create_missing: bool = False) -> bool:
+                           create_missing: bool = False, reader_index: int = 0) -> bool:
         """Applique le statut au test correspondant.
 
         Retourne False si le test etait absent de l'arbre. Avec `create_missing`,
@@ -556,15 +682,35 @@ class TestTreeView(QTreeView):
         # Meme raison que dans reset_result_colors, mais le cout est ici paye a
         # CHAQUE resultat de test recu : sans blocage, un run sur un gros
         # workspace ralentit a mesure que les resultats arrivent.
+        colonne = self.reader_column(reader_index)
         self.model.blockSignals(True)
         try:
-            self._apply_status(item, status)
-            self._propagate_status_to_parents(item)
+            cible = self._status_cell(item, colonne)
+            self._apply_status(cible, status)
+            if colonne == 0:
+                self._propagate_status_to_parents(item)
+            else:
+                # Le nom du test porte le pire des lecteurs : une divergence se
+                # repere sans deplier ni comparer les colonnes une a une.
+                pire = self._worst_reader_status(item)
+                if pire:
+                    self._apply_status(item, pire)
+                self._propagate_status_to_parents(item)
         finally:
             self.model.blockSignals(False)
 
         self.viewport().update()
         return connu
+
+    def _worst_reader_status(self, item: QStandardItem) -> str | None:
+        pire, priorite = None, 0
+        for index in range(len(getattr(self, "_readers", []))):
+            cellule = self._status_cell(item, self.reader_column(index))
+            statut = cellule.data(STATUS_ROLE) if cellule is not None else None
+            if STATUS_PRIORITY.get(statut, 0) > priorite:
+                priorite = STATUS_PRIORITY.get(statut, 0)
+                pire = statut
+        return pire
 
     def color_tests(self, results: dict[str, str]):
         self.reset_result_colors()
