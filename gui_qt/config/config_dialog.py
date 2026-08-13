@@ -32,7 +32,7 @@ class ConfigDialog(QDialog):
         self.editor = ConfigEditor()
         self.editor.load(config_path)
 
-        self.close_button = QPushButton("Fermer")
+        self.close_button = QPushButton("Close")
         self.close_button.setStyleSheet(toolbar_button())
         self.close_button.clicked.connect(self.accept)
 

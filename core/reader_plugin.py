@@ -125,12 +125,12 @@ def _preparer():
         with open(_CONFIG_PATH, "r", encoding="utf-8", newline="") as f:
             brut = f.read()
     except OSError as exc:
-        _erreur = "impossible de lire %r : %s" % (_CONFIG_PATH, exc)
+        _erreur = "could not read %r: %s" % (_CONFIG_PATH, exc)
         return
 
     modifie = _construire_texte_modifie(brut, _READER)
     if modifie is None:
-        _erreur = "aucune cle Reader trouvee dans %r" % _CONFIG_PATH
+        _erreur = "no Reader key found in %r" % _CONFIG_PATH
         return
 
     _texte_virtuel = modifie
@@ -190,11 +190,11 @@ if _texte_virtuel is not None:
 def pytest_runtest_setup(item):
     if _erreur:
         raise RuntimeError(
-            "PytestRunner n'a pas pu imposer le lecteur %r : %s.\\n"
-            "Continuer aurait fait tourner tous les lecteurs avec la meme "
-            "valeur, sans que rien ne le signale.\\n"
-            "Verifiez la cle Reader du fichier de configuration, ou repassez "
-            "en reader_mode: sequential." % (_READER, _erreur)
+            "PytestRunner could not impose the reader %r: %s.\\n"
+            "Continuing would have run every reader with the same value, "
+            "with nothing to signal it.\\n"
+            "Check the configuration file's Reader key, or switch back "
+            "to reader_mode: sequential." % (_READER, _erreur)
         )
 '''
 

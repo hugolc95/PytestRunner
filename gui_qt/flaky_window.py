@@ -14,13 +14,13 @@ from core.run_history import RunHistoryManager
 from gui_qt.styles.styles import neutral_button
 
 
-COLUMNS = ["Test", "Vu", "Echoue", "Taux d'echec"]
+COLUMNS = ["Test", "Seen", "Failed", "Failure rate"]
 
 
 class FlakyTestsDialog(QDialog):
     def __init__(self, history_manager: RunHistoryManager, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Tests instables (flaky)")
+        self.setWindowTitle("Flaky tests")
         self.resize(900, 500)
 
         self.history_manager = history_manager
@@ -28,8 +28,8 @@ class FlakyTestsDialog(QDialog):
         layout = QVBoxLayout(self)
 
         layout.addWidget(QLabel(
-            "Tests dont le resultat varie d'un run a l'autre (parfois passe, parfois echoue), "
-            "sur les 50 runs les plus recents de l'historique."
+            "Tests whose result varies from one run to the next (sometimes pass, sometimes fail), "
+            "over the 50 most recent runs in the history."
         ))
 
         self.table = QTableWidget(0, len(COLUMNS))
@@ -44,7 +44,7 @@ class FlakyTestsDialog(QDialog):
         layout.addWidget(self.table)
 
         button_bar = QHBoxLayout()
-        self.btn_refresh = QPushButton("Rafraichir")
+        self.btn_refresh = QPushButton("Refresh")
         self.btn_refresh.setStyleSheet(neutral_button())
         self.btn_refresh.clicked.connect(self.reload_entries)
         button_bar.addStretch()

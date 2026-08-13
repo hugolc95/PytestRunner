@@ -51,34 +51,34 @@ class InterpreterDialog(QDialog):
     def __init__(self, current: str, workspace: str | None = None, parent=None):
         super().__init__(parent)
 
-        self.setWindowTitle("Interpreteur Python des tests")
+        self.setWindowTitle("Test Python interpreter")
         self.resize(680, 260)
         self._probe: _ProbeWorker | None = None
         self._workspace = workspace
 
         explanation = QLabel(
-            "L'interface et les tests tournent dans deux processus separes : pytest est "
-            "lance en sous-processus. Vous pouvez donc utiliser ici un Python different "
-            "de celui de l'interface, par exemple un Python 64 bits pour des tests qui "
-            "chargent des DLL natives."
+            "The interface and the tests run in two separate processes: pytest is "
+            "started as a subprocess. You can therefore use a different Python here "
+            "than the interface's, for example a 64-bit Python for tests that load "
+            "native DLLs."
             "<br><br>"
-            "Cet interpreteur doit avoir <b>pytest</b> installe "
-            "(et <b>pytest-xdist</b> pour l'option Parallel)."
+            "This interpreter must have <b>pytest</b> installed "
+            "(and <b>pytest-xdist</b> for the Parallel option)."
         )
         explanation.setWordWrap(True)
         explanation.setTextFormat(Qt.RichText)
 
         self.path_edit = QLineEdit(current)
         self.path_edit.setPlaceholderText(
-            "Chemin de python.exe (laisser vide pour utiliser le Python par defaut)"
+            "Path to python.exe (leave empty to use the default Python)"
         )
         self.path_edit.setClearButtonEnabled(True)
 
-        browse_button = QPushButton("Parcourir...")
+        browse_button = QPushButton("Browse...")
         browse_button.setStyleSheet(toolbar_button())
         browse_button.clicked.connect(self._browse)
 
-        test_button = QPushButton("Tester")
+        test_button = QPushButton("Test")
         test_button.setStyleSheet(toolbar_button())
         test_button.clicked.connect(self._test)
 
@@ -98,16 +98,16 @@ class InterpreterDialog(QDialog):
         override = interpreter_from_config(workspace)
         if override:
             self.override_label.setText(
-                f"Note : le config.yml de ce workspace impose deja un interpreteur "
-                f"({override}). Il a priorite sur le reglage ci-dessus tant que ce "
-                f"workspace est charge."
+                f"Note: this workspace's config.yml already forces an interpreter "
+                f"({override}). It takes priority over the setting above while this "
+                f"workspace is loaded."
             )
 
-        ok_button = QPushButton("Enregistrer")
+        ok_button = QPushButton("Save")
         ok_button.setStyleSheet(primary_button())
         ok_button.clicked.connect(self.accept)
 
-        cancel_button = QPushButton("Annuler")
+        cancel_button = QPushButton("Cancel")
         cancel_button.setStyleSheet(toolbar_button())
         cancel_button.clicked.connect(self.reject)
 
@@ -131,9 +131,9 @@ class InterpreterDialog(QDialog):
 
     def _browse(self):
         start_dir = os.path.dirname(self.interpreter_path()) or os.path.expanduser("~")
-        filter_ = "Python (python.exe python3.exe)" if os.name == "nt" else "Tous les fichiers (*)"
+        filter_ = "Python (python.exe python3.exe)" if os.name == "nt" else "All files (*)"
         path, _ = QFileDialog.getOpenFileName(
-            self, "Choisir l'interpreteur Python des tests", start_dir, filter_
+            self, "Choose the test Python interpreter", start_dir, filter_
         )
         if path:
             self.path_edit.setText(path)
@@ -145,12 +145,12 @@ class InterpreterDialog(QDialog):
         if not path:
             self.status_label.setStyleSheet("color: #b00020;")
             self.status_label.setText(
-                "Aucun Python trouve automatiquement : indiquez le chemin de python.exe."
+                "No Python found automatically: specify the path to python.exe."
             )
             return
 
         self.status_label.setStyleSheet("color: #555;")
-        self.status_label.setText(f"Verification de {path} ...")
+        self.status_label.setText(f"Checking {path} ...")
 
         if self._probe is not None and self._probe.isRunning():
             return

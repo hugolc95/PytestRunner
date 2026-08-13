@@ -83,11 +83,11 @@ def test_config_without_the_key_is_transparent(tmp_path):
 
 
 def test_interpreter_source_reports_where_the_value_came_from(tmp_path):
-    assert interpreter_source(workspace=str(tmp_path)) == "Python courant"
-    assert interpreter_source(configured="/opt/py", workspace=str(tmp_path)) == "reglage de l'application"
+    assert interpreter_source(workspace=str(tmp_path)) == "current Python"
+    assert interpreter_source(configured="/opt/py", workspace=str(tmp_path)) == "application setting"
 
     write_config(tmp_path, "python_executable: /opt/py64\n")
-    assert interpreter_source(configured="/opt/py", workspace=str(tmp_path)) == "configuration du workspace"
+    assert interpreter_source(configured="/opt/py", workspace=str(tmp_path)) == "workspace configuration"
 
 
 def test_probe_reports_version_bitness_and_pytest():
@@ -101,7 +101,7 @@ def test_probe_reports_version_bitness_and_pytest():
 def test_probe_reports_missing_interpreter():
     info = probe_interpreter("/definitely/not/a/python")
     assert not info.ok
-    assert "introuvable" in info.error
+    assert "not found" in info.error
 
 
 def test_probe_rejects_a_non_python_executable(tmp_path):
@@ -146,7 +146,7 @@ def test_ui_thread_check_never_spawns_a_process(monkeypatch):
 def test_ui_thread_check_reports_a_cached_failure():
     probe_interpreter("/definitely/not/a/python")
     message = check_ready_to_run("/definitely/not/a/python")
-    assert "introuvable" in message
+    assert "not found" in message
 
 
 def test_ui_thread_check_reports_cached_missing_xdist(monkeypatch):
@@ -165,12 +165,12 @@ def test_check_ready_accepts_the_current_interpreter():
 
 def test_check_ready_explains_an_empty_configuration():
     message = check_ready_to_run("")
-    assert "Aucun interpreteur" in message
+    assert "No Python interpreter" in message
 
 
 def test_check_ready_explains_a_bad_path():
     message = check_ready_to_run("/definitely/not/a/python", cached_only=False)
-    assert "introuvable" in message
+    assert "not found" in message
 
 
 def test_check_ready_flags_missing_xdist(monkeypatch):
@@ -206,11 +206,11 @@ def test_collect_tests_accepts_an_explicit_interpreter(tmp_path):
 def test_collect_tests_reports_a_bad_interpreter_clearly(tmp_path):
     with pytest.raises(RuntimeError) as excinfo:
         collect_tests(str(tmp_path), interpreter="/definitely/not/a/python")
-    assert "introuvable" in str(excinfo.value)
+    assert "not found" in str(excinfo.value)
 
 
 def test_collect_tests_refuses_to_run_without_an_interpreter(tmp_path, monkeypatch):
     monkeypatch.setattr("core.test_discovery.resolve_interpreter", lambda **kwargs: "")
     with pytest.raises(RuntimeError) as excinfo:
         collect_tests(str(tmp_path))
-    assert "Aucun interpreteur" in str(excinfo.value)
+    assert "No Python interpreter" in str(excinfo.value)

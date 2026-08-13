@@ -171,7 +171,7 @@ def editor(qtbot, tmp_path):
 def test_the_form_tab_is_shown_first(editor):
     widget, _ = editor
     assert widget.tabs.currentIndex() == FORM_TAB
-    assert widget.tabs.tabText(FORM_TAB) == "Reglages"
+    assert widget.tabs.tabText(FORM_TAB) == "Settings"
 
 
 def test_saving_from_the_form_writes_the_file(editor):
@@ -212,7 +212,7 @@ def test_invalid_yaml_never_overwrites_the_file(editor):
     assert widget.current_values() is None
 
     assert fichier.read_text(encoding="utf-8") == avant
-    assert "invalide" in widget.status.text().lower()
+    assert "invalid" in widget.status.text().lower()
 
 
 def test_yaml_that_is_not_a_mapping_is_refused(editor):

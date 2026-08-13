@@ -99,12 +99,12 @@ def resolve_interpreter(configured: str | None = None, workspace: str | None = N
 def interpreter_source(configured: str | None = None, workspace: str | None = None) -> str:
     """Origine lisible de l'interpreteur resolu, pour l'afficher dans le GUI."""
     if interpreter_from_config(workspace):
-        return "configuration du workspace"
+        return "workspace configuration"
     if configured and str(configured).strip():
-        return "reglage de l'application"
+        return "application setting"
     if is_frozen():
-        return "Python trouve sur le PATH"
-    return "Python courant"
+        return "Python found on PATH"
+    return "current Python"
 
 
 @dataclass
@@ -131,8 +131,8 @@ class InterpreterInfo:
         if self.pytest_version:
             parts.append(f"pytest {self.pytest_version}")
         else:
-            parts.append("pytest ABSENT")
-        parts.append("pytest-xdist present" if self.has_xdist else "pytest-xdist absent")
+            parts.append("pytest MISSING")
+        parts.append("pytest-xdist present" if self.has_xdist else "pytest-xdist missing")
         return " - ".join(parts)
 
 
@@ -197,7 +197,7 @@ def probe_interpreter(path: str, timeout: float = 15.0, use_cache: bool = True) 
     jamais depuis le thread UI. Le thread UI doit passer par cached_probe().
     """
     if not path or not str(path).strip():
-        return InterpreterInfo(path=path, error="Aucun interpreteur configure.")
+        return InterpreterInfo(path=path, error="No interpreter configured.")
 
     path = str(path).strip()
 
@@ -223,18 +223,18 @@ def _run_probe(path: str, timeout: float) -> InterpreterInfo:
             creationflags=subprocess_flags(),
         )
     except FileNotFoundError:
-        return InterpreterInfo(path=path, error=f"Interpreteur introuvable : {path}")
+        return InterpreterInfo(path=path, error=f"Interpreter not found: {path}")
     except PermissionError:
-        return InterpreterInfo(path=path, error=f"Interpreteur non executable : {path}")
+        return InterpreterInfo(path=path, error=f"Interpreter not executable: {path}")
     except subprocess.TimeoutExpired:
-        return InterpreterInfo(path=path, error=f"Aucune reponse de l'interpreteur : {path}")
+        return InterpreterInfo(path=path, error=f"No response from the interpreter: {path}")
     except OSError as exc:
-        return InterpreterInfo(path=path, error=f"Interpreteur inutilisable : {path} ({exc})")
+        return InterpreterInfo(path=path, error=f"Interpreter unusable: {path} ({exc})")
 
     if process.returncode != 0:
         detail = (process.stderr or process.stdout or "").strip().splitlines()
-        message = detail[-1] if detail else f"code de sortie {process.returncode}"
-        return InterpreterInfo(path=path, error=f"Ce n'est pas un interpreteur Python valide : {message}")
+        message = detail[-1] if detail else f"exit code {process.returncode}"
+        return InterpreterInfo(path=path, error=f"This is not a valid Python interpreter: {message}")
 
     lines = process.stdout.splitlines()
     while len(lines) < 4:
@@ -268,9 +268,9 @@ def check_ready_to_run(path: str, parallel: bool = False, cached_only: bool = Tr
     """
     if not path:
         return (
-            "Aucun interpreteur Python n'est configure pour les tests.\n"
-            "Ouvrez le menu Configuration > Interpreteur Python des tests... "
-            "et indiquez le chemin de python.exe."
+            "No Python interpreter is configured for the tests.\n"
+            "Open the Settings > Test Python interpreter... menu "
+            "and specify the path to python.exe."
         )
 
     info = cached_probe(path) if cached_only else probe_interpreter(path)
@@ -281,21 +281,21 @@ def check_ready_to_run(path: str, parallel: bool = False, cached_only: bool = Tr
     if info.error:
         return (
             f"{info.error}\n\n"
-            "Corrigez le chemin dans le menu Configuration > Interpreteur Python des tests..."
+            "Fix the path in the Settings > Test Python interpreter... menu."
         )
 
     if not info.pytest_version:
         return (
-            f"pytest n'est pas installe dans l'interpreteur des tests :\n  {path}\n\n"
-            "C'est cet interpreteur-la qui doit avoir pytest, pas celui de l'interface.\n"
-            f"Installez-le avec :\n  \"{path}\" -m pip install pytest"
+            f"pytest is not installed in the test interpreter:\n  {path}\n\n"
+            "It's THIS interpreter that must have pytest, not the interface's.\n"
+            f"Install it with:\n  \"{path}\" -m pip install pytest"
         )
 
     if parallel and not info.has_xdist:
         return (
-            f"L'option Parallel necessite pytest-xdist dans l'interpreteur des tests :\n  {path}\n\n"
-            f"Installez-le avec :\n  \"{path}\" -m pip install pytest-xdist\n\n"
-            "Vous pouvez aussi decocher Parallel pour lancer les tests en sequentiel."
+            f"The Parallel option needs pytest-xdist in the test interpreter:\n  {path}\n\n"
+            f"Install it with:\n  \"{path}\" -m pip install pytest-xdist\n\n"
+            "You can also uncheck Parallel to run the tests sequentially."
         )
 
     return ""

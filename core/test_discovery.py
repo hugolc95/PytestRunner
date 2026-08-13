@@ -23,8 +23,8 @@ def collect_tests(workspace: str, interpreter: str | None = None) -> list[str]:
 
     if not python:
         raise RuntimeError(
-            "Aucun interpreteur Python n'est configure pour les tests.\n"
-            "Menu Configuration > Interpreteur Python des tests..."
+            "No Python interpreter is configured for the tests.\n"
+            "Settings > Test Python interpreter... menu"
         )
 
     cmd = [
@@ -50,20 +50,20 @@ def collect_tests(workspace: str, interpreter: str | None = None) -> list[str]:
         )
     except FileNotFoundError as exc:
         raise RuntimeError(
-            f"Interpreteur Python introuvable : {python}\n"
-            "Corrigez le chemin dans le menu Configuration > Interpreteur Python des tests..."
+            f"Python interpreter not found: {python}\n"
+            "Fix the path in the Settings > Test Python interpreter... menu."
         ) from exc
     except OSError as exc:
-        raise RuntimeError(f"Impossible de lancer l'interpreteur {python} : {exc}") from exc
+        raise RuntimeError(f"Could not start the interpreter {python}: {exc}") from exc
 
     # returncode 5 = no tests collected, pas une vraie erreur
     if process.returncode not in (0, 5):
         output = process.stderr or process.stdout or ""
         if "No module named pytest" in output:
             raise RuntimeError(
-                f"pytest n'est pas installe dans l'interpreteur des tests :\n  {python}\n\n"
-                "C'est cet interpreteur-la qui doit avoir pytest, pas celui de l'interface.\n"
-                f"Installez-le avec :\n  \"{python}\" -m pip install pytest"
+                f"pytest is not installed in the test interpreter:\n  {python}\n\n"
+                "It's THIS interpreter that must have pytest, not the interface's.\n"
+                f"Install it with:\n  \"{python}\" -m pip install pytest"
             )
         raise RuntimeError(output)
 

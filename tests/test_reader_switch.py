@@ -591,7 +591,7 @@ def test_a_reader_key_the_plugin_cannot_locate_stops_the_run_loudly(qtbot, tmp_p
         fenetre._flush_console_output()
 
         sortie = "".join(fenetre.details.console_for(i).toPlainText() for i in range(2))
-        assert "n'a pas pu imposer le lecteur" in sortie
+        assert "could not impose the reader" in sortie
         assert "reader_mode: sequential" in sortie, "la sortie de secours est indiquee"
     finally:
         for worker in fenetre.workers:
