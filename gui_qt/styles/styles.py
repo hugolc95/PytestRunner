@@ -7,6 +7,8 @@
 # Changer de theme a chaud demande de reappliquer les feuilles de style posees
 # widget par widget. C'est le role de restyle() cote fenetres.
 
+from gui_qt.styles.checkbox_icons import checkbox_icons
+
 LIGHT = {
     "name": "light",
 
@@ -33,6 +35,7 @@ LIGHT = {
     "checkbox_border": "#9e9e9e",
     "checkbox_checked": "#607d8b",
     "checkbox_partial": "#b0bec5",
+    "checkbox_mark": "#ffffff",
     "branch_arrow": "#5c6773",
     "branch_arrow_hover": "#1976d2",
 
@@ -130,6 +133,7 @@ DARK = {
     "checkbox_border": "#6b7480",
     "checkbox_checked": "#5aa9f8",
     "checkbox_partial": "#3f5a74",
+    "checkbox_mark": "#ffffff",
     "branch_arrow": "#98a2b0",
     "branch_arrow_hover": "#5aa9f8",
 
@@ -375,6 +379,23 @@ def app_stylesheet() -> str:
     QComboBox::drop-down {{
         border: none;
         width: 22px;
+        subcontrol-origin: padding;
+        subcontrol-position: center right;
+    }}
+    /* Triangle dessine en bordures : sans cette regle, Qt n'affichait aucune
+       fleche des lors qu'un style perso touche au combo, et rien n'indiquait
+       que le champ du workspace deroulait les chemins recents. */
+    QComboBox::down-arrow {{
+        image: none;
+        width: 0;
+        height: 0;
+        border-left: 4px solid transparent;
+        border-right: 4px solid transparent;
+        border-top: 5px solid {p['text_muted']};
+        margin-right: 8px;
+    }}
+    QComboBox::down-arrow:hover {{
+        border-top-color: {p['primary']};
     }}
     QComboBox QAbstractItemView {{
         background-color: {p['surface']};
@@ -439,6 +460,7 @@ def app_stylesheet() -> str:
     QCheckBox {{
         spacing: 6px;
     }}
+    {checkbox_rules("QCheckBox::indicator")}
 
     QScrollBar:vertical {{
         background: transparent;
@@ -689,27 +711,46 @@ def tree_style():
         color: {p['tree_selected_text']};
     }}
 
-    QTreeView::indicator {{
+    {checkbox_rules("QTreeView::indicator")}
+    """
+
+
+def checkbox_rules(selecteur: str) -> str:
+    """Regles d'une case a cocher, pour l'arbre comme pour un QCheckBox.
+
+    La coche elle-meme est une image : une feuille de style ne sait pas la
+    dessiner, et un simple `background-color` donnait un carre plein ou rien
+    ne distinguait "coche" de "partiellement coche" (voir
+    gui_qt/styles/checkbox_icons.py).
+    """
+    p = _active
+    icones = checkbox_icons(p["checkbox_mark"])
+    coche = f"image: url({icones['checked']});" if icones else ""
+    partiel = f"image: url({icones['partial']});" if icones else ""
+
+    return f"""
+    {selecteur} {{
         width: 16px;
         height: 16px;
-    }}
-
-    QTreeView::indicator:unchecked {{
-        border: 1px solid {p['checkbox_border']};
-        border-radius: 4px;
+        border-radius: 5px;
+        border: 1.5px solid {p['checkbox_border']};
         background-color: {p['checkbox_bg']};
     }}
 
-    QTreeView::indicator:checked {{
-        background-color: {p['checkbox_checked']};
-        border: 1px solid {p['checkbox_checked']};
-        border-radius: 4px;
+    {selecteur}:hover {{
+        border-color: {p['checkbox_checked']};
     }}
 
-    QTreeView::indicator:indeterminate {{
+    {selecteur}:checked {{
+        background-color: {p['checkbox_checked']};
+        border-color: {p['checkbox_checked']};
+        {coche}
+    }}
+
+    {selecteur}:indeterminate {{
         background-color: {p['checkbox_partial']};
-        border: 1px solid {p['checkbox_checked']};
-        border-radius: 4px;
+        border-color: {p['checkbox_partial']};
+        {partiel}
     }}
     """
 

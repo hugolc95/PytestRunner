@@ -19,6 +19,7 @@ from PyQt5.QtWidgets import QLineEdit
 import os
 import re
 import time
+from pathlib import Path
 
 from gui_qt.test_tree_view import TestTreeView, short_reader_label
 from gui_qt.config.config_editor import ConfigEditor
@@ -38,8 +39,9 @@ from core.reader_plugin import CONFIG_PATH_ENV, reader_plugin
 from core.reader_switch import ActiveReader, restore_interrupted_reader
 from core.run_history import RunHistoryManager, history_dir, new_run_id
 from core.workspace_config import (READER_KEYS, config_file_declaring, console_path_levels,
-                                   import_mode_args, reader_env,
-                                   reader_mode_for, readers_for, show_test_classes)
+                                   discover_config_files, import_mode_args, load_config,
+                                   reader_env, reader_mode_for, readers_for,
+                                   show_test_classes)
 from core.python_interpreter import (
     check_ready_to_run,
     interpreter_source,
@@ -1171,6 +1173,10 @@ class MainWindow(QMainWindow):
         lecteurs = self._current_readers or [""]
         plusieurs = len(lecteurs) > 1
         base_run_id = self._current_run_id or new_run_id()
+        # La configuration est jointe au run : relire un rapport six mois plus
+        # tard sans savoir sous quels reglages il a tourne n'apprend pas
+        # grand-chose.
+        reglages = self._workspace_settings()
 
         for index, lecteur in enumerate(lecteurs):
             sortie = self._run_outputs[index] if index < len(self._run_outputs) else stdout
@@ -1196,6 +1202,7 @@ class MainWindow(QMainWindow):
                 output_text=sortie,
                 junit_xml_path=junit,
                 reader=lecteur,
+                config=reglages,
             )
         self._refresh_history_window()
 
@@ -1217,8 +1224,14 @@ class MainWindow(QMainWindow):
 
         self.settings.setValue("recent_workspaces", recent)
 
+        # Le texte affiche est remis explicitement : clear() vide aussi la zone
+        # de saisie d'un combo editable, et le chemin disparaissait donc de la
+        # barre a chaque "Load Workspace", alors qu'il venait d'etre charge.
+        self.workspace_combo.blockSignals(True)
         self.workspace_combo.clear()
         self.workspace_combo.addItems(recent)
+        self.workspace_combo.setCurrentText(path)
+        self.workspace_combo.blockSignals(False)
 
     def open_config(self):
         if not self.workspace:
@@ -1235,6 +1248,23 @@ class MainWindow(QMainWindow):
     def config_path(self, workspace: str | None = None) -> str:
         """Fichier de configuration retenu pour ce workspace."""
         return remembered_config_path(workspace or self.workspace or "", self.settings)
+
+    def _workspace_settings(self) -> dict:
+        """Contenu du fichier de configuration du workspace, ou {}.
+
+        Joint a chaque entree d'historique pour apparaitre dans le rapport
+        HTML : les reglages sous lesquels un run a tourne font partie de son
+        resultat.
+        """
+        chemin = self.config_path()
+        candidats = [Path(chemin)] if chemin else []
+        candidats.extend(discover_config_files(self.workspace))
+        for candidat in candidats:
+            if candidat.is_file():
+                donnees = load_config(candidat)
+                if donnees:
+                    return donnees
+        return {}
 
     def select_all_tests(self):
         self.tree.set_all_checked(True)

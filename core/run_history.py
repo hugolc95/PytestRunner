@@ -73,6 +73,7 @@ class RunHistoryManager:
         junit_xml_path: str = "",
         source: str = "workspace",
         reader: str = "",
+        config: dict | None = None,
     ) -> dict:
         """Enregistre un run termine et retourne l'entree creee.
 
@@ -98,6 +99,7 @@ class RunHistoryManager:
             "source": source,
             "workspace": workspace,
             "reader": reader,
+            "config": dict(config) if isinstance(config, dict) else {},
             "duration_seconds": round(duration_seconds, 2),
             "exit_code": exit_code,
             "total": sum(counts.values()),

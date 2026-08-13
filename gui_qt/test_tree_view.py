@@ -604,6 +604,13 @@ class TestTreeView(QTreeView):
                 cellule.setToolTip(self._readers[index - 1])
                 cellule.setForeground(QBrush(QColor(styles.reader_color(index - 1))))
                 cellule.setTextAlignment(Qt.AlignCenter)
+                # Un en-tete de lecteur nomme une colonne de coches : il n'a pas
+                # a peser autant que les tests eux-memes. En petit et sans gras,
+                # il rend a la colonne la largeur que son nom lui prenait.
+                police = cellule.font()
+                police.setPointSize(max(6, police.pointSize() - 2))
+                police.setBold(False)
+                cellule.setFont(police)
 
     def reader_column(self, reader_index: int) -> int:
         """Colonne portant le resultat de ce lecteur, 0 s'il n'y en a qu'un."""

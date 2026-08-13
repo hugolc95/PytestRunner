@@ -26,13 +26,73 @@ def _card(label: str, value: int, key: str) -> str:
     """
 
 
+def _nodeid_item(nodeid: str) -> str:
+    """Une ligne de la liste : chemin en gris, nom du test en evidence.
+
+    Le nodeid est coupe au dernier `::` : sur des suites profondement
+    imbriquees, le chemin fait trois fois la longueur du nom du test et le
+    noyait completement.
+    """
+    texte = str(nodeid)
+    if "::" in texte:
+        chemin, _, nom = texte.rpartition("::")
+        return (
+            f'<li><span class="np">{html.escape(chemin)}::</span>'
+            f'<span class="nn">{html.escape(nom)}</span></li>'
+        )
+    return f'<li><span class="nn">{html.escape(texte)}</span></li>'
+
+
 def _list_section(title: str, nodeids: list, empty_text: str, open_by_default: bool) -> str:
-    items = "".join(f"<li><code>{html.escape(n)}</code></li>" for n in nodeids)
+    items = "".join(_nodeid_item(n) for n in nodeids)
     body = f"<ul class='nodeids'>{items}</ul>" if nodeids else f"<p class='empty'>{empty_text}</p>"
     return f"""
     <details class="section" {"open" if open_by_default else ""}>
         <summary>{title} <span class="count">({len(nodeids)})</span></summary>
         {body}
+    </details>
+    """
+
+
+# Cles de configuration sans interet dans un rapport : elles decrivent comment
+# PytestRunner lance les tests, pas dans quelles conditions ils ont tourne.
+_CONFIG_IGNOREES = {
+    "readers", "reader_list", "lecteurs",
+    "reader_mode", "readers_mode", "mode_lecteurs",
+    "console_path_levels", "console_paths", "console_path",
+    "show_test_class", "show_class", "show_classes",
+}
+
+
+def _config_rows(config: dict) -> str:
+    """Parametres de la configuration du workspace, en tableau cle/valeur.
+
+    Seules les valeurs simples sont reprises : une sous-section entiere
+    remplirait le rapport de details qui ne disent rien du run.
+    """
+    if not isinstance(config, dict):
+        return ""
+
+    lignes = []
+    for cle, valeur in config.items():
+        if str(cle).strip().lower().replace("-", "_") in _CONFIG_IGNOREES:
+            continue
+        if isinstance(valeur, (dict, list, tuple)):
+            continue
+        if valeur is None or valeur == "":
+            continue
+        lignes.append(
+            f"<tr><th>{html.escape(str(cle))}</th>"
+            f"<td>{html.escape(str(valeur))}</td></tr>"
+        )
+
+    if not lignes:
+        return ""
+
+    return f"""
+    <details class="section" open>
+        <summary>Configuration <span class="count">({len(lignes)})</span></summary>
+        <table class="config">{"".join(lignes)}</table>
     </details>
     """
 
@@ -114,9 +174,31 @@ def export_html_report(entry: dict, output_text: str, dest_path: str) -> None:
     details.section[open] summary::before {{ content: "▾"; }}
     .count {{ color: var(--muted); font-weight: 400; }}
     .nodeids, pre {{ margin: 0; padding: 12px 16px 16px; }}
-    .nodeids {{ list-style: none; columns: 2; -webkit-columns: 2; }}
-    .nodeids li {{ padding: 2px 0; font-size: 12.5px; }}
-    .nodeids code {{ color: #dc2626; }}
+    /* Une seule colonne, et une coupure autorisee n'importe ou : en deux
+       colonnes, un nodeid plus large que sa colonne debordait sur la voisine
+       et les chemins s'ecrivaient les uns par-dessus les autres. */
+    .nodeids {{ list-style: none; }}
+    .nodeids li {{
+        padding: 3px 0; font-size: 12.5px; line-height: 1.45;
+        font-family: ui-monospace, Consolas, monospace;
+        overflow-wrap: anywhere; word-break: break-word;
+        border-bottom: 1px solid var(--border);
+    }}
+    .nodeids li:last-child {{ border-bottom: none; }}
+    .np {{ color: var(--muted); }}
+    .nn {{ color: #dc2626; font-weight: 600; }}
+
+    table.config {{ width: 100%; border-collapse: collapse; }}
+    table.config th, table.config td {{
+        text-align: left; padding: 7px 16px; font-size: 13px;
+        border-bottom: 1px solid var(--border); vertical-align: top;
+    }}
+    table.config tr:last-child th, table.config tr:last-child td {{ border-bottom: none; }}
+    table.config th {{ width: 30%; font-weight: 600; color: var(--muted); }}
+    table.config td {{
+        font-family: ui-monospace, Consolas, monospace;
+        overflow-wrap: anywhere;
+    }}
     .empty {{ margin: 0; padding: 0 16px 16px; color: var(--muted); font-size: 13px; }}
     pre {{
         background: #0f172a; color: #e2e8f0; overflow-x: auto;
@@ -148,6 +230,7 @@ def export_html_report(entry: dict, output_text: str, dest_path: str) -> None:
 
     <div class="bar-track"><div class="bar-fill"></div></div>
 
+    {_config_rows(entry.get("config") or {})}
     {_list_section("Failed tests", failed_nodeids, "No failure.", bool(failed_nodeids))}
     {_list_section("Tests run", nodeids, "No test ran.", False)}
 
