@@ -92,6 +92,36 @@ def _parse_summary_counts(sortie: str) -> dict:
     return counts
 
 
+def segmented_group(*boutons) -> QHBoxLayout:
+    """Accole des boutons en un seul bloc, arrondi a ses seules extremites.
+
+    Les styliser un par un ne suffit pas : c'est leur position dans le groupe
+    qui decide des coins arrondis et de la bordure partagee. La disposition les
+    colle (espacement nul), la feuille de style fait le reste.
+    """
+    ligne = QHBoxLayout()
+    ligne.setContentsMargins(0, 0, 0, 0)
+    ligne.setSpacing(0)
+
+    dernier = len(boutons) - 1
+    for index, bouton in enumerate(boutons):
+        if len(boutons) == 1:
+            position = "single"
+        elif index == 0:
+            position = "left"
+        elif index == dernier:
+            position = "right"
+        else:
+            position = "middle"
+
+        bouton.setCursor(Qt.PointingHandCursor)
+        bouton.setFixedHeight(styles.TOOLBAR_HEIGHT)
+        bouton.setStyleSheet(styles.segmented_button(position))
+        ligne.addWidget(bouton)
+
+    return ligne
+
+
 def blend_color(base: str, strong: str, ratio: float) -> str:
     """
     Blend two hex colors based on ratio (0.0 -> base, 1.0 -> strong)
@@ -624,29 +654,34 @@ class MainWindow(QMainWindow):
         layout.addLayout(workspace_bar)
         layout.addLayout(action_bar)
 
+        # Barre de l'arbre : deux groupes accoles plutot que cinq boutons
+        # alignes. « All »/« None » agissent sur la selection, « Expand »/
+        # « Collapse » sur l'affichage -- cote a cote sans rien pour les
+        # distinguer, rien ne disait lesquels vont ensemble.
         tree_toolbar = QHBoxLayout()
-        tree_toolbar.setSpacing(6)
+        tree_toolbar.setSpacing(10)
 
         self.btn_select_all = QPushButton("All")
         self.btn_select_none = QPushButton("None")
+        self.btn_select_all.setToolTip("Select every test")
+        self.btn_select_none.setToolTip("Clear the selection")
         self.btn_select_all.clicked.connect(self.select_all_tests)
         self.btn_select_none.clicked.connect(self.select_no_tests)
 
-        self.btn_failed_only = QPushButton("Failed only")
-        self.btn_failed_only.setCheckable(True)
-        self.btn_failed_only.clicked.connect(lambda: self.on_summary_clicked("failed"))
-
-        self.btn_expand_all = QPushButton("Expand All")
+        self.btn_expand_all = QPushButton("Expand")
+        self.btn_collapse_all = QPushButton("Collapse")
+        self.btn_expand_all.setToolTip("Expand the whole tree")
+        self.btn_collapse_all.setToolTip("Collapse the whole tree")
         self.btn_expand_all.clicked.connect(self.tree.expandAll)
-
-        self.btn_collapse_all = QPushButton("Collapse All")
         self.btn_collapse_all.clicked.connect(self.tree.collapseAll)
 
-        self.btn_select_all.setStyleSheet(toolbar_button())
-        self.btn_select_none.setStyleSheet(toolbar_button())
-        self.btn_failed_only.setStyleSheet(toolbar_button())
-        self.btn_expand_all.setStyleSheet(toolbar_button())
-        self.btn_collapse_all.setStyleSheet(toolbar_button())
+        self.btn_failed_only = QPushButton("Failed only")
+        self.btn_failed_only.setCheckable(True)
+        self.btn_failed_only.setToolTip("Only show tests that failed")
+        self.btn_failed_only.clicked.connect(lambda: self.on_summary_clicked("failed"))
+        self.btn_failed_only.setCursor(Qt.PointingHandCursor)
+        self.btn_failed_only.setFixedHeight(styles.TOOLBAR_HEIGHT)
+        self.btn_failed_only.setStyleSheet(styles.filter_chip())
 
         self.selection_label = QLabel("0 / 0 selected")
         self.selection_label.setAlignment(Qt.AlignRight)
@@ -659,6 +694,8 @@ class MainWindow(QMainWindow):
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Find a test or a file...")
         self.filter_edit.setClearButtonEnabled(True)
+        self.filter_edit.setFixedHeight(styles.TOOLBAR_HEIGHT)
+        self.filter_edit.setMinimumWidth(200)
         self.filter_edit.textChanged.connect(self.on_filter_text_changed)
         self.filter_edit.returnPressed.connect(self.find_next)
 
@@ -672,24 +709,22 @@ class MainWindow(QMainWindow):
         self.btn_find_next = QPushButton("›")
         for bouton, action in ((self.btn_find_prev, self.find_previous),
                                (self.btn_find_next, self.find_next)):
-            bouton.setFixedWidth(24)
-            bouton.setCursor(Qt.PointingHandCursor)
-            bouton.setStyleSheet(toolbar_button())
+            bouton.setFixedWidth(26)
             bouton.clicked.connect(action)
             bouton.setEnabled(False)
         self.btn_find_prev.setToolTip("Previous match (Shift+Enter)")
         self.btn_find_next.setToolTip("Next match (Enter)")
 
-        tree_toolbar.addWidget(self.btn_select_all)
-        tree_toolbar.addWidget(self.btn_select_none)
+        tree_toolbar.addLayout(
+            segmented_group(self.btn_select_all, self.btn_select_none))
+        tree_toolbar.addLayout(
+            segmented_group(self.btn_expand_all, self.btn_collapse_all))
         tree_toolbar.addWidget(self.btn_failed_only)
-        tree_toolbar.addWidget(self.btn_expand_all)
-        tree_toolbar.addWidget(self.btn_collapse_all)
         tree_toolbar.addStretch()
-        tree_toolbar.addWidget(self.filter_edit)
         tree_toolbar.addWidget(self.find_label)
-        tree_toolbar.addWidget(self.btn_find_prev)
-        tree_toolbar.addWidget(self.btn_find_next)
+        tree_toolbar.addWidget(self.filter_edit)
+        tree_toolbar.addLayout(
+            segmented_group(self.btn_find_prev, self.btn_find_next))
 
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
@@ -942,10 +977,15 @@ class MainWindow(QMainWindow):
         self.rerun_failed_button.setStyleSheet(info_button())
 
         self.find_label.setStyleSheet(styles.muted_label())
-        for button in (self.btn_find_prev, self.btn_find_next,
-                       self.btn_select_all, self.btn_select_none, self.btn_failed_only,
-                       self.btn_expand_all, self.btn_collapse_all):
-            button.setStyleSheet(toolbar_button())
+        # La position dans le groupe decide des coins arrondis : la reappliquer
+        # telle quelle, sinon un changement de theme rend les segments a leur
+        # aspect de boutons isoles.
+        for gauche, droite in ((self.btn_select_all, self.btn_select_none),
+                               (self.btn_expand_all, self.btn_collapse_all),
+                               (self.btn_find_prev, self.btn_find_next)):
+            gauche.setStyleSheet(styles.segmented_button("left"))
+            droite.setStyleSheet(styles.segmented_button("right"))
+        self.btn_failed_only.setStyleSheet(styles.filter_chip())
 
         self.diff_button.setStyleSheet(toolbar_button())
         for index, case in enumerate(self.reader_checkboxes):

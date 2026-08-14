@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QTextCursor
+from PyQt5.QtGui import QColor, QFont, QTextCharFormat, QTextCursor
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QSplitter,
@@ -30,6 +30,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from core.ansi import contient_ansi, parse_ansi
 from core.pytest_executor import compact_path
 from gui_qt.code_view import CodeView
 from gui_qt.config.config_loader import (
@@ -813,6 +814,44 @@ class DetailPanel(QWidget):
 
         self._load_log_into(0, nodeid, "")
 
+    def _afficher_log(self, index: int, contenu: str):
+        """Ecrit le log dans sa vue, en rendant ses couleurs ANSI s'il en a.
+
+        Un conftest qui colore ses traces pour la console emet des sequences
+        `ESC[31m` : sans les interpreter, elles s'affichent en toutes lettres
+        au milieu de chaque ligne et la couleur est perdue.
+
+        Le coloriseur par mots-cles est alors debranche : le programme qui a
+        ecrit le log a deja dit quoi colorer, et deux coloriseurs qui se
+        superposent donnent un resultat que personne n'a choisi.
+        """
+        vue = self.log_views[index]
+        highlighter = self.log_highlighters[index]
+
+        if not contient_ansi(contenu):
+            if highlighter.document() is not vue.document():
+                highlighter.setDocument(vue.document())
+            vue.setPlainText(contenu)
+            return
+
+        highlighter.setDocument(None)
+        vue.clear()
+
+        curseur = vue.textCursor()
+        for texte, style in parse_ansi(contenu):
+            curseur.insertText(texte, self._format_ansi(style))
+
+    @staticmethod
+    def _format_ansi(style) -> QTextCharFormat:
+        format_ = QTextCharFormat()
+        if style.couleur:
+            format_.setForeground(QColor(styles.ansi_color(style.couleur, style.vive)))
+        if style.gras:
+            format_.setFontWeight(QFont.Bold)
+        format_.setFontItalic(style.italique)
+        format_.setFontUnderline(style.souligne)
+        return format_
+
     def _load_log_into(self, index: int, nodeid: str | None, reader: str):
         if index >= len(self.log_views):
             return
@@ -844,7 +883,7 @@ class DetailPanel(QWidget):
             return
 
         content, warning = read_text_file(Path(path))
-        vue.setPlainText(content)
+        self._afficher_log(index, content)
         # Le nom du lecteur, ou a defaut le seul nom du fichier : un chemin de
         # log reel fait plusieurs lignes de gros texte au-dessus du log, pour
         # une information qu'on ne lit pas. Chemin complet en infobulle.

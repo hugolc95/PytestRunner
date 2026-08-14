@@ -268,6 +268,41 @@ def card_colors(status: str) -> tuple[str, str]:
     return _active["cards"].get(status, (_active["surface"], _active["neutral"]))
 
 
+# Couleurs ANSI, traduites dans la palette du theme. Le rouge vif d'un
+# terminal (#ff0000) passe sous le seuil de lisibilite sur un fond clair : on
+# reprend donc les teintes deja retenues pour les statuts, qui ont ete choisies
+# lisibles dans les deux themes.
+_ANSI_CLAIR = {
+    "black": "#20262e", "red": "#c62828", "green": "#1a7f37",
+    "yellow": "#bf5b00", "blue": "#0969da", "magenta": "#7b1fa2",
+    "cyan": "#0e7490", "white": "#6b7480",
+}
+_ANSI_SOMBRE = {
+    "black": "#8b939d", "red": "#ef5350", "green": "#6bbf6e",
+    "yellow": "#ffa726", "blue": "#6bb3e8", "magenta": "#ba68c8",
+    "cyan": "#4dd0e1", "white": "#e4e7ec",
+}
+
+
+def ansi_color(nom: str, vive: bool = False) -> str:
+    """Couleur d'affichage pour une couleur ANSI, selon le theme actif.
+
+    `nom` est un nom de core.ansi.COULEURS, ou un `#rrggbb` deja explicite --
+    celui-la est rendu tel quel, c'est un choix precis du programme qui ecrit
+    le log.
+    """
+    if not nom:
+        return _active["text"]
+    if str(nom).startswith("#"):
+        return str(nom)
+
+    table = _ANSI_SOMBRE if is_dark() else _ANSI_CLAIR
+    couleur = table.get(str(nom), _active["text"])
+    # La variante vive n'est qu'un ecart de luminosite : l'eclaircir en theme
+    # sombre, l'assombrir en theme clair, pour rester lisible des deux cotes.
+    return shade(couleur, 1.25 if is_dark() else 0.8) if vive else couleur
+
+
 def syntax_color(role: str) -> str:
     """Couleur de coloration syntaxique Python pour ce role."""
     return _active["syntax"].get(role, _active["text"])
@@ -663,6 +698,95 @@ def toolbar_button():
     QPushButton:disabled {{
         color: {p['disabled_text']};
         border: 1px solid {p['border']};
+    }}
+    """
+
+
+TOOLBAR_HEIGHT = 26
+
+
+def segmented_button(position: str = "single") -> str:
+    """Bouton d'un groupe accole (« segmented control »).
+
+    Cinq boutons de largeurs differentes, tous encadres pareil, ne disaient pas
+    lesquels vont ensemble : « All » et « None » agissent sur la selection,
+    « Expand » et « Collapse » sur l'affichage. Les accoler par paire, arrondies
+    seulement aux extremites, rend le groupe lisible d'un coup d'oeil.
+
+    `position` vaut "left", "middle", "right" ou "single".
+    """
+    p = _active
+    r = BUTTON_RADIUS - 1
+
+    coins = {
+        "left": f"border-top-left-radius:{r}px; border-bottom-left-radius:{r}px;"
+                "border-top-right-radius:0; border-bottom-right-radius:0;",
+        "middle": "border-radius:0;",
+        "right": f"border-top-right-radius:{r}px; border-bottom-right-radius:{r}px;"
+                 "border-top-left-radius:0; border-bottom-left-radius:0;",
+        "single": f"border-radius:{r}px;",
+    }[position]
+
+    # Sans cela, la bordure droite de l'un et la gauche du suivant se cumulent
+    # en un trait deux fois trop epais entre les segments.
+    bordure_gauche = "border-left: none;" if position in ("middle", "right") else ""
+
+    return f"""
+    QPushButton {{
+        background-color: {p['surface']};
+        border: 1px solid {p['toolbar_border']};
+        {coins}
+        {bordure_gauche}
+        padding: 4px 12px;
+        font-size: 12px;
+        font-weight: 500;
+        color: {p['text']};
+    }}
+    QPushButton:hover {{
+        background-color: {p['hover']};
+        color: {p['primary']};
+    }}
+    QPushButton:pressed {{
+        background-color: {mix(p['surface'], p['primary'], 0.14)};
+    }}
+    QPushButton:checked {{
+        background-color: {mix(p['surface'], p['primary'], 0.16)};
+        color: {p['primary']};
+        font-weight: 600;
+    }}
+    QPushButton:disabled {{
+        color: {p['disabled_text']};
+        background-color: {p['surface']};
+    }}
+    """
+
+
+def filter_chip() -> str:
+    """Bascule de filtrage, distincte des groupes d'actions qui l'entourent.
+
+    Elle ne declenche pas une action ponctuelle : elle reste enfoncee tant que
+    le filtre s'applique, et doit se voir comme telle.
+    """
+    p = _active
+    return f"""
+    QPushButton {{
+        background-color: transparent;
+        border: 1px solid {p['toolbar_border']};
+        border-radius: 11px;
+        padding: 4px 14px;
+        font-size: 12px;
+        font-weight: 500;
+        color: {p['text_muted']};
+    }}
+    QPushButton:hover {{
+        border-color: {p['danger']};
+        color: {p['danger']};
+    }}
+    QPushButton:checked {{
+        background-color: {mix(p['surface'], p['danger'], 0.14)};
+        border-color: {p['danger']};
+        color: {p['danger']};
+        font-weight: 600;
     }}
     """
 
