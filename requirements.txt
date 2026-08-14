@@ -7,3 +7,7 @@ PyYAML==6.0.3
 colorama==0.4.6
 pytest-xdist==3.8.0
 execnet==2.1.2
+
+# Icones vectorielles de l'interface v2 (runner/). Wheel pur Python,
+# compatible win32.
+qtawesome==1.4.2
