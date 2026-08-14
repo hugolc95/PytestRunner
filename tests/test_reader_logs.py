@@ -149,4 +149,146 @@ def test_going_back_to_one_reader_hides_the_extra_view(panel, tmp_path):
     panel.set_readers(["Cosmo11Secured Reader", "Reader"])
     panel.set_readers([])
 
-    assert not panel.log_views[1].parentWidget().isVisible()
+    assert panel.log_views[1].parentWidget().isHidden()
+
+
+# ------------------------ onglets et comparaison, comme pour la console
+
+def test_the_log_panel_has_the_same_tabs_as_the_console(panel, tmp_path):
+    """Le geste doit etre le meme des deux cotes : une barre d'onglets pour
+    choisir le lecteur, un bouton pour les voir tous."""
+    build_workspace(tmp_path)
+    panel.set_workspace(str(tmp_path))
+    panel.set_readers(["Cosmo11Secured Reader", "Reader"])
+
+    # isHidden() et non isVisible() : rien n'est "visible" tant que la fenetre
+    # n'est pas affichee, et l'assertion passerait alors pour de mauvaises
+    # raisons quel que soit le comportement teste.
+    assert not panel.log_tabs.isHidden()
+    assert not panel.log_compare_button.isHidden()
+    assert panel.log_tabs.count() == 2
+
+
+def test_a_single_reader_shows_no_log_tabs(panel, tmp_path):
+    build_workspace(tmp_path)
+    panel.set_workspace(str(tmp_path))
+    panel.set_readers([])
+
+    assert panel.log_tabs.isHidden()
+    assert panel.log_compare_button.isHidden()
+
+
+def test_logs_are_compared_horizontally(panel):
+    """Cote a cote, et non l'un sous l'autre : on compare la meme ligne d'un
+    lecteur a l'autre, ce qu'un empilement vertical ne permet pas."""
+    from PyQt5.QtCore import Qt
+
+    assert panel.log_split.orientation() == Qt.Horizontal
+    # Les consoles, elles, restent l'une sous l'autre : leurs lignes defilent.
+    assert panel.console_split.orientation() == Qt.Vertical
+
+
+def test_switching_the_log_tab_shows_only_that_reader(panel, tmp_path):
+    build_workspace(tmp_path)
+    write_reader_logs(tmp_path, {"Cosmo11Secured Reader": "A", "Reader": "B"})
+    panel.set_workspace(str(tmp_path))
+    panel.set_readers(["Cosmo11Secured Reader", "Reader"])
+    panel.show_for(NODEID, NODEID)
+
+    panel.log_tabs.setCurrentIndex(1)
+    assert panel.log_views[0].parentWidget().isHidden()
+    assert not panel.log_views[1].parentWidget().isHidden()
+
+
+def test_comparing_shows_every_log_at_once(panel, tmp_path):
+    build_workspace(tmp_path)
+    write_reader_logs(tmp_path, {"Cosmo11Secured Reader": "A", "Reader": "B"})
+    panel.set_workspace(str(tmp_path))
+    panel.set_readers(["Cosmo11Secured Reader", "Reader"])
+    panel.show_for(NODEID, NODEID)
+
+    panel.log_compare_button.setChecked(True)
+    assert not panel.log_views[0].parentWidget().isHidden()
+    assert not panel.log_views[1].parentWidget().isHidden()
+
+
+def test_console_and_log_stay_on_the_same_reader(panel, tmp_path):
+    """Changer de lecteur cote Log doit y amener aussi la console, sinon on lit
+    le log d'un lecteur en regardant la sortie d'un autre."""
+    build_workspace(tmp_path)
+    panel.set_workspace(str(tmp_path))
+    panel.set_readers(["Cosmo11Secured Reader", "Reader"])
+
+    panel.log_tabs.setCurrentIndex(1)
+    assert panel.console_tabs.currentIndex() == 1
+
+    panel.console_tabs.setCurrentIndex(0)
+    assert panel.log_tabs.currentIndex() == 0
+
+
+def test_choosing_a_reader_is_announced_once(panel, tmp_path):
+    """Les deux barres se suivent : sans garde, chacune renverrait son choix a
+    l'autre et le signal partirait en boucle."""
+    build_workspace(tmp_path)
+    panel.set_workspace(str(tmp_path))
+    panel.set_readers(["Cosmo11Secured Reader", "Reader"])
+
+    recus = []
+    panel.reader_selected.connect(recus.append)
+    panel.log_tabs.setCurrentIndex(1)
+
+    assert recus == [1]
+
+
+def test_scrolling_one_log_scrolls_the_others(panel, tmp_path):
+    """Cote a cote, chaque log ne montre que la moitie de la largeur. Sans
+    defilement synchronise, amener la valeur d'un lecteur sous les yeux
+    laissait celle de l'autre hors champ -- il n'y avait plus rien a comparer."""
+    build_workspace(tmp_path)
+    longue = "\n".join(f"ligne {i} " + "x" * 200 for i in range(80))
+    write_reader_logs(tmp_path, {"Cosmo11Secured Reader": longue, "Reader": longue})
+    panel.set_workspace(str(tmp_path))
+    panel.set_readers(["Cosmo11Secured Reader", "Reader"])
+    panel.show_for(NODEID, NODEID)
+
+    panel.log_views[0].verticalScrollBar().setValue(17)
+    assert panel.log_views[1].verticalScrollBar().value() == 17
+
+    panel.log_views[1].horizontalScrollBar().setValue(40)
+    assert panel.log_views[0].horizontalScrollBar().value() == 40
+
+
+def test_consoles_scroll_independently(panel):
+    """Deux lecteurs n'avancent pas au meme rythme : lier leurs consoles
+    ramenerait sans cesse l'une la ou l'autre en est."""
+    panel.set_readers(["Lecteur A", "Lecteur B"])
+    for i, vue in enumerate(panel.consoles[:2]):
+        vue.setPlainText("\n".join(f"ligne {n}" for n in range(200)))
+
+    panel.consoles[0].verticalScrollBar().setValue(30)
+    assert panel.consoles[1].verticalScrollBar().value() != 30
+
+
+def test_a_compared_log_header_is_just_the_reader_name(panel, tmp_path):
+    """Cote a cote la colonne est etroite : le chemin y tenait sur trois lignes
+    alors qu'il ne differe d'un lecteur a l'autre que par le dossier du lecteur,
+    justement ce que l'en-tete dit deja. Chemin complet en infobulle."""
+    build_workspace(tmp_path)
+    write_reader_logs(tmp_path, {"Cosmo11Secured Reader": "A", "Reader": "B"})
+    panel.set_workspace(str(tmp_path))
+    panel.set_readers(["Cosmo11Secured Reader", "Reader"])
+    panel.show_for(NODEID, NODEID)
+
+    assert panel.log_headers[0].text() == "Cosmo11Secured Reader"
+    assert "test_cible.log" in panel.log_headers[0].toolTip()
+
+
+def test_a_single_log_header_still_shows_the_path(panel, tmp_path):
+    """Sans lecteur a nommer, c'est le chemin qui renseigne."""
+    build_workspace(tmp_path)
+    write_reader_logs(tmp_path, {"Cosmo11Secured Reader": "A"})
+    panel.set_workspace(str(tmp_path))
+
+    panel.show_for(NODEID, NODEID)
+
+    assert "test_cible.log" in panel.log_header.text()

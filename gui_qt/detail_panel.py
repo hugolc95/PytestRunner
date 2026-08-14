@@ -162,6 +162,170 @@ def write_source_file(path: Path, texte: str, fin_de_ligne: str) -> str | None:
     return None
 
 
+def _reader_box(header: QLabel, vue: QWidget) -> QWidget:
+    """Une vue de lecteur : son en-tete au-dessus, la vue en dessous."""
+    boite = QWidget()
+    col = QVBoxLayout(boite)
+    col.setContentsMargins(0, 0, 0, 0)
+    col.setSpacing(2)
+    col.addWidget(header)
+    col.addWidget(vue)
+    return boite
+
+
+class ReaderStack(QWidget):
+    """Une vue par lecteur, avec onglets pour choisir et bouton pour comparer.
+
+    Console et Log ont exactement le meme besoin : montrer une vue a la fois
+    quand on suit un lecteur, les montrer toutes quand on veut les comparer.
+    Le seul reglage qui change est le sens de la comparaison -- les consoles
+    l'une sous l'autre (leurs lignes defilent), les logs cote a cote (on
+    compare la meme ligne d'un lecteur a l'autre).
+    """
+
+    reader_selected = pyqtSignal(int)
+
+    def __init__(self, orientation, texte_comparer: str, texte_revenir: str,
+                 synchroniser_defilement: bool = False, parent=None):
+        super().__init__(parent)
+
+        self.views: list[QWidget] = []
+        self.headers: list[QLabel] = []
+        self._labels: list[str] = []
+        self._texte_comparer = texte_comparer
+        self._texte_revenir = texte_revenir
+        self._synchroniser = synchroniser_defilement
+        # Garde contre la reaction en chaine : deplacer une barre en deplace une
+        # autre, qui redeplacerait la premiere.
+        self._en_defilement = False
+
+        self.tabs = QTabBar()
+        self.tabs.setDrawBase(False)
+        self.tabs.setExpanding(False)
+        # Fenetre etroite + plusieurs lecteurs : les onglets peuvent quand meme
+        # manquer de place. Une ellipse et des fleches de defilement valent
+        # mieux qu'un texte tronque sans le dire ; le nom complet reste de
+        # toute facon dans l'infobulle.
+        self.tabs.setElideMode(Qt.ElideRight)
+        self.tabs.setUsesScrollButtons(True)
+        self.tabs.setVisible(False)
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
+        self.compare_button = QToolButton()
+        self.compare_button.setText("⊞")
+        self.compare_button.setCheckable(True)
+        self.compare_button.setAutoRaise(True)
+        self.compare_button.setCursor(Qt.PointingHandCursor)
+        self.compare_button.setToolTip(texte_comparer)
+        self.compare_button.setVisible(False)
+        self.compare_button.toggled.connect(self._on_compare_toggled)
+
+        barre = QHBoxLayout()
+        barre.setContentsMargins(0, 0, 0, 0)
+        barre.setSpacing(4)
+        barre.addWidget(self.tabs, 1)
+        barre.addWidget(self.compare_button)
+
+        self.split = QSplitter(orientation)
+
+        colonne = QVBoxLayout(self)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(2)
+        colonne.addLayout(barre)
+        colonne.addWidget(self.split)
+
+    def add_view(self, vue: QWidget, header: QLabel):
+        self.views.append(vue)
+        self.headers.append(header)
+        self.split.addWidget(_reader_box(header, vue))
+
+        if self._synchroniser:
+            for sens in ("verticalScrollBar", "horizontalScrollBar"):
+                barre = getattr(vue, sens)()
+                barre.valueChanged.connect(
+                    lambda valeur, s=sens, v=vue: self._propager_defilement(s, v, valeur))
+
+    def _propager_defilement(self, sens: str, source: QWidget, valeur: int):
+        """Fait suivre les autres vues, pour comparer la meme ligne partout.
+
+        Cote a cote, chaque vue ne montre que la moitie de la largeur : sans
+        cela, amener la valeur d'un lecteur sous les yeux laissait celle de
+        l'autre hors champ, et il n'y avait plus rien a comparer.
+        """
+        if self._en_defilement:
+            return
+
+        self._en_defilement = True
+        try:
+            for vue in self.views:
+                if vue is source:
+                    continue
+                barre = getattr(vue, sens)()
+                if barre.value() != valeur:
+                    barre.setValue(valeur)
+        finally:
+            self._en_defilement = False
+
+    def set_readers(self, labels: list[str]):
+        """Un onglet par lecteur, ou aucun quand il n'y en a qu'un."""
+        self._labels = list(labels)
+        multi = len(self._labels) > 1
+
+        self.tabs.blockSignals(True)
+        while self.tabs.count():
+            self.tabs.removeTab(0)
+        for index, nom in enumerate(self._labels if multi else []):
+            self.tabs.addTab(short_reader_label(nom))
+            self.tabs.setTabToolTip(index, nom)
+            self.tabs.setTabTextColor(index, QColor(styles.reader_color(index)))
+        self.tabs.blockSignals(False)
+
+        self.tabs.setVisible(multi)
+        self.compare_button.setVisible(multi)
+        self.apply_layout()
+
+    def apply_layout(self):
+        """Montre la vue de l'onglet courant, ou toutes en mode comparaison."""
+        nombre = max(1, len(self._labels))
+        comparer = self.compare_button.isChecked()
+        courant = max(0, self.tabs.currentIndex())
+
+        for index, vue in enumerate(self.views):
+            boite = vue.parentWidget()
+            if boite is None:
+                continue
+            if index >= nombre:
+                boite.setVisible(False)
+            else:
+                boite.setVisible(comparer or nombre == 1 or index == courant)
+
+    def show_reader(self, index: int):
+        if 0 <= index < self.tabs.count():
+            self.tabs.setCurrentIndex(index)
+
+    def select_silently(self, index: int):
+        """Change l'onglet courant sans reemettre reader_selected.
+
+        Sert a garder Console et Log sur le meme lecteur : sans cela, chacun
+        renverrait son choix a l'autre, indefiniment.
+        """
+        if not 0 <= index < self.tabs.count() or index == self.tabs.currentIndex():
+            return
+        self.tabs.blockSignals(True)
+        self.tabs.setCurrentIndex(index)
+        self.tabs.blockSignals(False)
+        self.apply_layout()
+
+    def _on_tab_changed(self, index: int):
+        self.apply_layout()
+        self.reader_selected.emit(index)
+
+    def _on_compare_toggled(self, actif: bool):
+        self.compare_button.setToolTip(
+            self._texte_revenir if actif else self._texte_comparer)
+        self.apply_layout()
+
+
 class DetailPanel(QWidget):
     """Onglets Console / Source / Log affiches a droite de l'arbre."""
 
@@ -190,63 +354,53 @@ class DetailPanel(QWidget):
         # setPlainText ne doit pas passer pour une modification de l'utilisateur.
         self._loading = False
 
-        # Une console par lecteur. `self.console` reste la premiere : tout le
-        # code d'affichage existant continue d'ecrire dedans sans changement.
-        self.consoles: list[QTextEdit] = [self._new_console()]
+        # Une console par lecteur, l'une SOUS l'autre en comparaison : leurs
+        # lignes defilent, on suit chacune sur toute la largeur.
+        self.console_stack = ReaderStack(
+            Qt.Vertical,
+            "Show all consoles at once",
+            "Back to one console at a time")
+        self.console_stack.reader_selected.connect(
+            lambda i: self._on_reader_chosen(i, self.log_stack))
+
+        # Noms historiques, conserves : tout le code d'affichage existant
+        # continue d'ecrire dans `self.console` sans changement.
+        self.console_area = self.console_stack
+        self.console_tabs = self.console_stack.tabs
+        self.compare_button = self.console_stack.compare_button
+        self.console_split = self.console_stack.split
+        self.consoles: list[QTextEdit] = self.console_stack.views
+        self.console_headers: list[QLabel] = self.console_stack.headers
+
+        entete_console = QLabel()
+        entete_console.setVisible(False)
+        self.console_stack.add_view(self._new_console(), entete_console)
         self.console = self.consoles[0]
-        self.console_headers: list[QLabel] = [QLabel()]
-        self.console_headers[0].setVisible(False)
-
-        # Un onglet par lecteur au-dessus, les consoles en dessous. En mode
-        # onglets une seule est visible, ce qui tient a n'importe quel nombre de
-        # lecteurs ; le bouton "Comparer" les montre toutes a la fois.
-        self.console_tabs = QTabBar()
-        self.console_tabs.setDrawBase(False)
-        self.console_tabs.setExpanding(False)
-        # Fenetre etroite + plusieurs lecteurs : les onglets peuvent quand meme
-        # manquer de place. Une ellipse et des fleches de defilement valent
-        # mieux qu'un texte tronque sans le dire ; le nom complet reste de
-        # toute facon dans l'infobulle.
-        self.console_tabs.setElideMode(Qt.ElideRight)
-        self.console_tabs.setUsesScrollButtons(True)
-        self.console_tabs.setVisible(False)
-        self.console_tabs.currentChanged.connect(self._on_console_tab_changed)
-
-        self.compare_button = QToolButton()
-        self.compare_button.setText("⊞")
-        self.compare_button.setCheckable(True)
-        self.compare_button.setAutoRaise(True)
-        self.compare_button.setCursor(Qt.PointingHandCursor)
-        self.compare_button.setToolTip("Show all consoles side by side")
-        self.compare_button.setVisible(False)
-        self.compare_button.toggled.connect(self._on_compare_toggled)
-
-        barre = QHBoxLayout()
-        barre.setContentsMargins(0, 0, 0, 0)
-        barre.setSpacing(4)
-        barre.addWidget(self.console_tabs, 1)
-        barre.addWidget(self.compare_button)
-
-        self.console_area = QWidget()
-        self._console_layout = QVBoxLayout(self.console_area)
-        self._console_layout.setContentsMargins(0, 0, 0, 0)
-        self._console_layout.setSpacing(2)
-        self._console_layout.addLayout(barre)
-        self.console_split = QSplitter(Qt.Vertical)
-        self._console_layout.addWidget(self.console_split)
-        self.console_split.addWidget(
-            self._console_box(self.console_headers[0], self.console))
 
         self.source_view = CodeView()
 
-        # Un log par lecteur, empiles. Le meme test tourne sur chaque lecteur et
-        # y ecrit son propre .log : les mettre l'un au-dessus de l'autre est ce
-        # qui permet de voir d'un coup d'oeil ou les deux divergent, sans
-        # rouvrir deux fenetres.
-        self.log_view = self._new_log_view()
-        self.log_views: list[QPlainTextEdit] = [self.log_view]
+        # Un log par lecteur, cote a cote en comparaison : le meme test ecrit
+        # son propre .log sur chaque lecteur, et c'est en les mettant l'un a
+        # cote de l'autre qu'on voit a quelle ligne ils divergent.
+        self.log_stack = ReaderStack(
+            Qt.Horizontal,
+            "Show every reader's log side by side",
+            "Back to one log at a time",
+            synchroniser_defilement=True)
+        self.log_stack.reader_selected.connect(
+            lambda i: self._on_reader_chosen(i, self.console_stack))
+
+        self.log_area = self.log_stack
+        self.log_tabs = self.log_stack.tabs
+        self.log_compare_button = self.log_stack.compare_button
+        self.log_split = self.log_stack.split
+        self.log_views: list[QPlainTextEdit] = self.log_stack.views
+        self.log_headers: list[QLabel] = self.log_stack.headers
+
         self.log_header = QLabel("Click a test in the tree to see its log.")
-        self.log_headers: list[QLabel] = [self.log_header]
+        self.log_header.setWordWrap(True)
+        self.log_stack.add_view(self._new_log_view(), self.log_header)
+        self.log_view = self.log_views[0]
 
         # Coloration a l'affichage : la sortie brute reste intacte pour
         # l'historique, les traces d'echec et la detection des statuts.
@@ -259,14 +413,6 @@ class DetailPanel(QWidget):
         self.source_header = QLabel("Click a test in the tree to see its source code.")
         for header in (self.source_header, self.log_header):
             header.setWordWrap(True)
-
-        self.log_split = QSplitter(Qt.Vertical)
-        self.log_split.addWidget(self._console_box(self.log_header, self.log_view))
-        self.log_area = QWidget()
-        _log_layout = QVBoxLayout(self.log_area)
-        _log_layout.setContentsMargins(6, 6, 6, 6)
-        _log_layout.setSpacing(4)
-        _log_layout.addWidget(self.log_split)
 
         # Bouton discret : la modification est un geste volontaire, on ne tape
         # pas par megarde dans un fichier de test en le consultant.
@@ -329,16 +475,6 @@ class DetailPanel(QWidget):
         vue.setLineWrapMode(QPlainTextEdit.NoWrap)
         return vue
 
-    @staticmethod
-    def _console_box(header: QLabel, vue: QTextEdit) -> QWidget:
-        boite = QWidget()
-        col = QVBoxLayout(boite)
-        col.setContentsMargins(0, 0, 0, 0)
-        col.setSpacing(2)
-        col.addWidget(header)
-        col.addWidget(vue)
-        return boite
-
     def set_readers(self, labels: list[str]):
         """Une console par lecteur, atteignable par onglet.
 
@@ -352,39 +488,22 @@ class DetailPanel(QWidget):
 
         while len(self.consoles) < len(labels):
             vue = self._new_console()
-            entete = QLabel()
-            self.consoles.append(vue)
-            self.console_headers.append(entete)
             self.console_highlighters.append(PytestOutputHighlighter(vue.document()))
-            self.console_split.addWidget(self._console_box(entete, vue))
+            self.console_stack.add_view(vue, QLabel())
 
-        # Un log par lecteur, pour comparer le meme test d'un lecteur a l'autre.
         while len(self.log_views) < len(labels):
             vue = self._new_log_view()
             entete = QLabel()
             entete.setWordWrap(True)
-            self.log_views.append(vue)
-            self.log_headers.append(entete)
             self.log_highlighters.append(LogHighlighter(vue.document()))
-            self.log_split.addWidget(self._console_box(entete, vue))
-
-        for index, vue in enumerate(self.log_views):
-            vue.parentWidget().setVisible(index < max(1, len(labels)))
+            self.log_stack.add_view(vue, entete)
 
         self._reader_labels = labels
+        self.console_stack.set_readers(labels)
+        self.log_stack.set_readers(labels)
 
-        self.console_tabs.blockSignals(True)
-        while self.console_tabs.count():
-            self.console_tabs.removeTab(0)
-        for index, nom in enumerate(labels if multi else []):
-            self.console_tabs.addTab(short_reader_label(nom))
-            self.console_tabs.setTabToolTip(index, nom)
-            self.console_tabs.setTabTextColor(index, QColor(styles.reader_color(index)))
-        self.console_tabs.blockSignals(False)
-
-        self.console_tabs.setVisible(multi)
-        self.compare_button.setVisible(multi)
-
+        # L'en-tete d'une console nomme son lecteur ; celui d'un log porte le
+        # chemin du fichier, pose par _load_log_into().
         for index, entete in enumerate(self.console_headers):
             if multi and index < len(labels):
                 entete.setText(labels[index])
@@ -392,31 +511,13 @@ class DetailPanel(QWidget):
             else:
                 entete.setVisible(False)
 
-        self._apply_console_layout()
         self.restyle()
 
-    def _apply_console_layout(self):
-        """Montre la console de l'onglet courant, ou toutes en mode comparaison."""
-        nombre = max(1, len(getattr(self, "_reader_labels", [])))
-        comparer = self.compare_button.isChecked()
-        courant = max(0, self.console_tabs.currentIndex())
-
-        for index, vue in enumerate(self.consoles):
-            boite = vue.parentWidget()
-            if index >= nombre:
-                boite.setVisible(False)
-            else:
-                boite.setVisible(comparer or nombre == 1 or index == courant)
-
-    def _on_console_tab_changed(self, index: int):
-        self._apply_console_layout()
+    def _on_reader_chosen(self, index: int, autre: "ReaderStack"):
+        """Console et Log restent sur le meme lecteur, quel que soit l'onglet
+        par lequel on l'a choisi."""
+        autre.select_silently(index)
         self.reader_selected.emit(index)
-
-    def _on_compare_toggled(self, actif: bool):
-        self.compare_button.setToolTip(
-            "Back to one console at a time" if actif
-            else "Show all consoles side by side")
-        self._apply_console_layout()
 
     def _on_detach_toggled(self, detache: bool):
         self.detach_button.setToolTip(
@@ -425,9 +526,8 @@ class DetailPanel(QWidget):
         self.detach_requested.emit(detache)
 
     def show_reader(self, reader_index: int):
-        """Amene la console de ce lecteur au premier plan."""
-        if 0 <= reader_index < self.console_tabs.count():
-            self.console_tabs.setCurrentIndex(reader_index)
+        """Amene la console ET le log de ce lecteur au premier plan."""
+        self.console_stack.show_reader(reader_index)
 
     def console_for(self, reader_index: int) -> QTextEdit:
         """Console de ce lecteur, la premiere a defaut."""
@@ -465,11 +565,13 @@ class DetailPanel(QWidget):
                 f"border-left:3px solid {couleur};"
                 f"background:{styles.mix(styles.palette()['surface'], couleur, 0.07)};"
             )
-        self.console_tabs.setStyleSheet(styles.reader_tab_style())
-        self.compare_button.setStyleSheet(theme_toggle_button())
-        self.detach_button.setStyleSheet(theme_toggle_button())
-        for index in range(self.console_tabs.count()):
-            self.console_tabs.setTabTextColor(index, QColor(styles.reader_color(index)))
+        for barre in (self.console_tabs, self.log_tabs):
+            barre.setStyleSheet(styles.reader_tab_style())
+            for index in range(barre.count()):
+                barre.setTabTextColor(index, QColor(styles.reader_color(index)))
+        for bouton in (self.compare_button, self.log_compare_button,
+                       self.detach_button):
+            bouton.setStyleSheet(theme_toggle_button())
         self.source_view.setStyleSheet(console_style())
         # Les logs par lecteur portent la meme pastille de couleur que leur
         # console, pour qu'on sache d'un coup d'oeil lequel on lit.
@@ -716,6 +818,10 @@ class DetailPanel(QWidget):
 
         vue = self.log_views[index]
         entete = self.log_headers[index]
+        # Le nom du lecteur suffit a nommer sa colonne : cote a cote, elle est
+        # etroite, et le chemin ne differe d'un lecteur a l'autre que par le
+        # dossier du lecteur -- justement ce que l'en-tete dit deja. Chemin
+        # complet en infobulle.
         prefixe = f"{reader}  —  " if reader else ""
 
         if not self.workspace:
@@ -741,7 +847,7 @@ class DetailPanel(QWidget):
         # Chemin raccourci : en entier, un chemin de log reel tenait sur quatre
         # lignes et mangeait la moitie de la hauteur laissee au log lui-meme.
         # Le chemin complet reste dans l'infobulle.
-        header = prefixe + compact_path(str(path), levels=1)
+        header = reader if reader else compact_path(str(path), levels=1)
         if warning:
             header += f"    ({warning})"
         entete.setText(header)
