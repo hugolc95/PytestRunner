@@ -118,3 +118,53 @@ def test_a_new_run_goes_back_to_the_total(window):
         for worker in window.workers:
             worker.stop()
             worker.wait(5000)
+
+
+# ---------------------------------------------- pastille des tests restants
+
+def test_the_remaining_card_counts_down_as_tests_finish(window):
+    """La barre de progression montre une proportion ; elle ne dit pas combien
+    de tests il reste encore a passer."""
+    _deux_lecteurs(window)
+    assert _valeur(window.card_remaining) == 4
+
+    window._on_test_status("test_x.py::test_a", "PASSED", 0)
+    window._refresh_summary_cards()
+    assert _valeur(window.card_remaining) == 3
+
+    window._on_test_status("test_x.py::test_b", "FAILED", 0)
+    window._refresh_summary_cards()
+    assert _valeur(window.card_remaining) == 2
+
+
+def test_the_remaining_card_follows_the_scope(window):
+    """Ramenee a un lecteur, elle compte ce qu'il reste A CE lecteur."""
+    _deux_lecteurs(window)
+    window._on_test_status("test_x.py::test_a", "PASSED", 0)
+    window._on_test_status("test_x.py::test_b", "PASSED", 0)
+
+    window.set_summary_scope(0)
+    assert _valeur(window.card_remaining) == 0, "Lecteur A a tout passe"
+
+    window.set_summary_scope(1)
+    assert _valeur(window.card_remaining) == 2, "Lecteur B n'a rien passe"
+
+
+def test_the_remaining_card_never_goes_negative(window):
+    """Un test peut etre rapporte plus de fois que prevu (cas parametres
+    remplaces en cours de collecte) : un nombre negatif n'aurait aucun sens."""
+    _deux_lecteurs(window)
+    for _ in range(10):
+        window._on_test_status("test_x.py::test_a", "PASSED", 0)
+    window._refresh_summary_cards()
+
+    assert _valeur(window.card_remaining) == 0
+
+
+def test_the_remaining_card_does_not_filter_the_tree(window):
+    """"Restant" n'est pas un statut : cliquer la pastille ne doit pas vider
+    l'arbre en cherchant des tests dont le statut serait "remaining"."""
+    _deux_lecteurs(window)
+    window.card_remaining.clicked.emit("remaining")
+
+    assert window.active_summary_filter is None

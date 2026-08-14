@@ -721,6 +721,11 @@ class MainWindow(QMainWindow):
         self.progress.setFixedHeight(20)
 
         # ---- Modern Summary Cards ----
+        # Ce qu'il reste a passer. Les quatre autres pastilles disent ce qui
+        # est fait ; celle-ci dit ce qui vient, ce que la barre de progression
+        # ne chiffre pas. Elle se vide au fil du run et n'est pas cliquable :
+        # "restant" n'est pas un statut sur lequel filtrer l'arbre.
+        self.card_remaining = SummaryCard("REMAINING")
         self.card_passed = SummaryCard("PASSED")
         self.card_failed = SummaryCard("FAILED")
         self.card_skipped = SummaryCard("SKIPPED")
@@ -758,6 +763,7 @@ class MainWindow(QMainWindow):
 
         summary_layout.addWidget(self.progress, 1)
         summary_layout.addWidget(self.scope_button)
+        summary_layout.addWidget(self.card_remaining)
         summary_layout.addWidget(self.card_passed)
         summary_layout.addWidget(self.card_failed)
         summary_layout.addWidget(self.card_skipped)
@@ -958,7 +964,8 @@ class MainWindow(QMainWindow):
         # blanc sur fond noir.
         self.details.restyle()
 
-        for card in (self.card_passed, self.card_failed, self.card_skipped, self.card_error):
+        for card in (self.card_remaining, self.card_passed, self.card_failed,
+                     self.card_skipped, self.card_error):
             card.restyle()
 
         # Les couleurs de statut deja posees sur les items de l'arbre viennent de
@@ -1184,6 +1191,8 @@ class MainWindow(QMainWindow):
 
         compteurs, reference = self._scoped_counts()
         total = max(reference, 1)
+        restants = max(0, reference - sum(compteurs.get(k, 0) for k in self.test_counts))
+        self.card_remaining.update_value(restants, total)
         self.card_passed.update_value(compteurs.get("PASSED", 0), total)
         self.card_failed.update_value(compteurs.get("FAILED", 0), total)
         self.card_skipped.update_value(compteurs.get("SKIPPED", 0), total)
@@ -1568,6 +1577,7 @@ class MainWindow(QMainWindow):
         self.progress.setMaximum(len(nodeids) * len(lecteurs))
 
         self.test_counts = {k: 0 for k in self.test_counts}
+        self.card_remaining.update_value(len(nodeids) * len(lecteurs))
         self.card_passed.update_value(0)
         self.card_failed.update_value(0)
         self.card_skipped.update_value(0)

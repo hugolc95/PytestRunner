@@ -582,12 +582,13 @@ class DetailPanel(QWidget):
             if multi:
                 couleur = styles.reader_color(index)
                 entete.setStyleSheet(
-                    f"color:{couleur}; font-weight:500; font-size:11px; padding:2px 6px;"
-                    f"border-left:3px solid {couleur};"
-                    f"background:{styles.mix(styles.palette()['surface'], couleur, 0.07)};"
+                    f"color:{couleur}; font-weight:500; font-size:10px; padding:1px 5px;"
+                    f"border-left:2px solid {couleur};"
+                    f"background:{styles.mix(styles.palette()['surface'], couleur, 0.06)};"
                 )
             else:
-                entete.setStyleSheet(styles.muted_label())
+                entete.setStyleSheet(
+                    f"color:{styles.palette()['text_muted']}; font-size:10px; padding:1px 2px;")
         self.source_header.setStyleSheet(styles.muted_label())
         self.source_status.setStyleSheet(styles.muted_label())
         self.edit_button.setStyleSheet(theme_toggle_button())
@@ -844,10 +845,10 @@ class DetailPanel(QWidget):
 
         content, warning = read_text_file(Path(path))
         vue.setPlainText(content)
-        # Chemin raccourci : en entier, un chemin de log reel tenait sur quatre
-        # lignes et mangeait la moitie de la hauteur laissee au log lui-meme.
-        # Le chemin complet reste dans l'infobulle.
-        header = reader if reader else compact_path(str(path), levels=1)
+        # Le nom du lecteur, ou a defaut le seul nom du fichier : un chemin de
+        # log reel fait plusieurs lignes de gros texte au-dessus du log, pour
+        # une information qu'on ne lit pas. Chemin complet en infobulle.
+        header = reader if reader else compact_path(str(path), levels=0)
         if warning:
             header += f"    ({warning})"
         entete.setText(header)

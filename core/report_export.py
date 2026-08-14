@@ -64,8 +64,12 @@ _CONFIG_IGNOREES = {
 }
 
 
-def _config_rows(config: dict) -> str:
-    """Parametres de la configuration du workspace, en tableau cle/valeur.
+def _config_badges(config: dict) -> str:
+    """Parametres de la configuration, en pastilles a cote du lecteur.
+
+    Les reglages d'un run se lisent d'un coup d'oeil avec lui, pas dans une
+    section a deplier plus bas : ils font partie de son identite, au meme titre
+    que le lecteur.
 
     Seules les valeurs simples sont reprises : une sous-section entiere
     remplirait le rapport de details qui ne disent rien du run.
@@ -73,7 +77,7 @@ def _config_rows(config: dict) -> str:
     if not isinstance(config, dict):
         return ""
 
-    lignes = []
+    pastilles = []
     for cle, valeur in config.items():
         if str(cle).strip().lower().replace("-", "_") in _CONFIG_IGNOREES:
             continue
@@ -81,20 +85,12 @@ def _config_rows(config: dict) -> str:
             continue
         if valeur is None or valeur == "":
             continue
-        lignes.append(
-            f"<tr><th>{html.escape(str(cle))}</th>"
-            f"<td>{html.escape(str(valeur))}</td></tr>"
+        pastilles.append(
+            f'<span class="badge param"><b>{html.escape(str(cle))}</b>'
+            f'{html.escape(str(valeur))}</span>'
         )
 
-    if not lignes:
-        return ""
-
-    return f"""
-    <details class="section" open>
-        <summary>Configuration <span class="count">({len(lignes)})</span></summary>
-        <table class="config">{"".join(lignes)}</table>
-    </details>
-    """
+    return "".join(pastilles)
 
 
 def export_html_report(entry: dict, output_text: str, dest_path: str) -> None:
@@ -147,6 +143,10 @@ def export_html_report(entry: dict, output_text: str, dest_path: str) -> None:
         font-size: 12px; font-weight: 600;
     }}
     .badge.reader {{ background: #eef2ff; color: var(--primary); }}
+    /* Memes pastilles que le lecteur : les reglages d'un run se lisent avec
+       lui, ils font partie de son identite. La cle en gras, la valeur a cote. */
+    .badge.param {{ background: #eef2ff; color: var(--primary); font-weight: 500; }}
+    .badge.param b {{ font-weight: 700; margin-right: 6px; }}
     .badge.ok {{ background: #f0fdf4; color: #16a34a; }}
     .badge.ko {{ background: #fef2f2; color: #dc2626; }}
 
@@ -188,17 +188,6 @@ def export_html_report(entry: dict, output_text: str, dest_path: str) -> None:
     .np {{ color: var(--muted); }}
     .nn {{ color: #dc2626; font-weight: 600; }}
 
-    table.config {{ width: 100%; border-collapse: collapse; }}
-    table.config th, table.config td {{
-        text-align: left; padding: 7px 16px; font-size: 13px;
-        border-bottom: 1px solid var(--border); vertical-align: top;
-    }}
-    table.config tr:last-child th, table.config tr:last-child td {{ border-bottom: none; }}
-    table.config th {{ width: 30%; font-weight: 600; color: var(--muted); }}
-    table.config td {{
-        font-family: ui-monospace, Consolas, monospace;
-        overflow-wrap: anywhere;
-    }}
     .empty {{ margin: 0; padding: 0 16px 16px; color: var(--muted); font-size: 13px; }}
     pre {{
         background: #0f172a; color: #e2e8f0; overflow-x: auto;
@@ -218,6 +207,7 @@ def export_html_report(entry: dict, output_text: str, dest_path: str) -> None:
         <div class="badges">
             {reader_badge}
             {exit_badge}
+            {_config_badges(entry.get("config") or {})}
         </div>
     </div>
 
@@ -230,7 +220,6 @@ def export_html_report(entry: dict, output_text: str, dest_path: str) -> None:
 
     <div class="bar-track"><div class="bar-fill"></div></div>
 
-    {_config_rows(entry.get("config") or {})}
     {_list_section("Failed tests", failed_nodeids, "No failure.", bool(failed_nodeids))}
     {_list_section("Tests run", nodeids, "No test ran.", False)}
 

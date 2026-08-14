@@ -64,6 +64,9 @@ LIGHT = {
         "FAILED": ("#fbd5d5", "#e53935"),
         "SKIPPED": ("#fde8c8", "#fb8c00"),
         "ERROR": ("#ecd9f5", "#8e24aa"),
+        # Restants : une seule teinte, donc une pastille qui ne change pas de
+        # couleur en se vidant. Elle compte ce qu'il reste, pas un resultat.
+        "REMAINING": ("#e6e9ee", "#e6e9ee"),
     },
     "card_text": "#222222",
     "card_active_border": "#333333",
@@ -162,6 +165,7 @@ DARK = {
         "FAILED": ("#33242a", "#a33b38"),
         "SKIPPED": ("#332c22", "#b3762a"),
         "ERROR": ("#2e2635", "#7a4a94"),
+        "REMAINING": ("#2a2f37", "#2a2f37"),
     },
     "card_text": "#e4e7ec",
     "card_active_border": "#8b939d",
@@ -725,10 +729,10 @@ def checkbox_rules(selecteur: str) -> str:
 
     return f"""
     {selecteur} {{
-        width: 16px;
-        height: 16px;
-        border-radius: 5px;
-        border: 1.5px solid {p['checkbox_border']};
+        width: 14px;
+        height: 14px;
+        border-radius: 4px;
+        border: 1px solid {p['checkbox_border']};
         background-color: {p['checkbox_bg']};
     }}
 

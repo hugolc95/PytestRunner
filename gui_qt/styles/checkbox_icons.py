@@ -39,20 +39,20 @@ def _ecrire(nom: str, svg: str) -> str:
 
 def _coche(couleur: str) -> str:
     return (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" '
-        'viewBox="0 0 16 16">'
-        f'<path d="M3.5 8.5 L6.5 11.5 L12.5 4.5" fill="none" stroke="{couleur}" '
-        'stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" '
+        'viewBox="0 0 14 14">'
+        f'<path d="M3.2 7.3 L5.9 10 L10.8 4.4" fill="none" stroke="{couleur}" '
+        'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>'
         '</svg>'
     )
 
 
 def _tiret(couleur: str) -> str:
     return (
-        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" '
-        'viewBox="0 0 16 16">'
-        f'<path d="M4 8 L12 8" fill="none" stroke="{couleur}" '
-        'stroke-width="2.2" stroke-linecap="round"/>'
+        '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" '
+        'viewBox="0 0 14 14">'
+        f'<path d="M3.8 7 L10.2 7" fill="none" stroke="{couleur}" '
+        'stroke-width="1.7" stroke-linecap="round"/>'
         '</svg>'
     )
 

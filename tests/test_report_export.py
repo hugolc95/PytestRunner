@@ -73,6 +73,11 @@ def test_export_escapes_html_in_the_workspace_path(tmp_path):
     assert "&lt;injected&gt;" in contenu
 
 
+def _badges(contenu: str) -> str:
+    """Le bandeau de pastilles de l'en-tete, lecteur et reglages compris."""
+    return contenu.split('class="badges"')[1].split("</div>")[0]
+
+
 def test_export_shows_the_workspace_configuration(tmp_path):
     """Les reglages sous lesquels un run a tourne font partie de son resultat :
     un rapport relu six mois plus tard doit les porter."""
@@ -81,15 +86,36 @@ def test_export_shows_the_workspace_configuration(tmp_path):
     export_html_report(entry, "output", str(dest))
 
     contenu = dest.read_text(encoding="utf-8")
-    assert "Configuration" in contenu
     assert "LOG_PATH" in contenu and "C:/traces" in contenu
     assert "PERSO" in contenu and "3072" in contenu
+
+
+def test_the_configuration_sits_next_to_the_reader(tmp_path):
+    """Au meme niveau que le lecteur, et non dans une section a deplier plus
+    bas : les reglages font partie de l'identite du run."""
+    dest = tmp_path / "report.html"
+    entry = _entry(reader="Lecteur B", config={"Mode": "PERSO"})
+    export_html_report(entry, "output", str(dest))
+
+    bandeau = _badges(dest.read_text(encoding="utf-8"))
+    assert "Lecteur B" in bandeau
+    assert "Mode" in bandeau and "PERSO" in bandeau
+
+
+def test_a_configuration_parameter_uses_the_reader_badge_style(tmp_path):
+    dest = tmp_path / "report.html"
+    export_html_report(_entry(config={"Mode": "PERSO"}), "output", str(dest))
+
+    contenu = dest.read_text(encoding="utf-8")
+    assert 'class="badge param"' in contenu
+    # Meme fond que la pastille du lecteur.
+    assert ".badge.param { background: #eef2ff" in contenu.replace("  ", " ")
 
 
 def test_export_omits_the_configuration_block_when_empty(tmp_path):
     dest = tmp_path / "report.html"
     export_html_report(_entry(config={}), "output", str(dest))
-    assert "table class=\"config\"" not in dest.read_text(encoding="utf-8")
+    assert 'class="badge param"' not in dest.read_text(encoding="utf-8")
 
 
 def test_export_skips_nested_and_runner_only_configuration_keys(tmp_path):
@@ -104,11 +130,11 @@ def test_export_skips_nested_and_runner_only_configuration_keys(tmp_path):
     })
     export_html_report(entry, "output", str(dest))
 
-    bloc = dest.read_text(encoding="utf-8").split("Configuration")[1].split("</table>")[0]
-    assert "Mode" in bloc
-    assert "Readers" not in bloc
-    assert "reader_mode" not in bloc
-    assert "Debug" not in bloc
+    bandeau = _badges(dest.read_text(encoding="utf-8"))
+    assert "Mode" in bandeau
+    assert "Readers" not in bandeau
+    assert "reader_mode" not in bandeau
+    assert "Debug" not in bandeau
 
 
 def test_export_escapes_html_in_the_configuration(tmp_path):

@@ -177,6 +177,8 @@ def test_a_custom_log_directory_is_honoured(panel, tmp_path):
 
     panel.show_for("module/test_exemple.py::test_cible", "module/test_exemple.py::test_cible")
 
+    # Aucun log n'existe sous `traces` : c'est le message d'explication qui est
+    # affiche, et il dit ou l'on a cherche.
     assert "traces" in panel.log_header.text()
 
 

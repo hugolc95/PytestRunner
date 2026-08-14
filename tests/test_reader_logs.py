@@ -292,3 +292,20 @@ def test_a_single_log_header_still_shows_the_path(panel, tmp_path):
     panel.show_for(NODEID, NODEID)
 
     assert "test_cible.log" in panel.log_header.text()
+
+
+def test_a_single_log_header_shows_only_the_file_name(panel, tmp_path):
+    """Un chemin de log reel fait plusieurs lignes de gros texte au-dessus du
+    log, pour une information qu'on ne lit pas. Il passe en infobulle."""
+    build_workspace(tmp_path)
+    write_reader_logs(tmp_path, {"Cosmo11Secured Reader": "A"})
+    panel.set_workspace(str(tmp_path))
+
+    panel.show_for(NODEID, NODEID)
+
+    entete = panel.log_header.text()
+    assert "test_cible.log" in entete
+    assert "Cosmo11Secured Reader" not in entete, "le dossier du lecteur n'a rien a faire la"
+    assert "20260813" not in entete, "ni le dossier de run"
+    # Le chemin complet reste atteignable.
+    assert "20260813" in panel.log_header.toolTip()
