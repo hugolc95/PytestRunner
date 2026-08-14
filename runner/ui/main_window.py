@@ -94,8 +94,10 @@ class MainWindow(QMainWindow):
         self.split.setChildrenCollapsible(False)
         self.split.addWidget(self._build_left())
         self.split.addWidget(self._build_right())
-        self.split.setStretchFactor(0, 4)
-        self.split.setStretchFactor(1, 6)
+        # 45/55 : a 40/60 les noms de tests parametres etaient tronques alors
+        # que la sortie avait de la place a revendre.
+        self.split.setStretchFactor(0, 45)
+        self.split.setStretchFactor(1, 55)
         colonne.addWidget(self.split, 1)
 
         self.setCentralWidget(central)
@@ -111,11 +113,14 @@ class MainWindow(QMainWindow):
         self.workspace_combo.setEditable(True)
         self.workspace_combo.setInsertPolicy(QComboBox.NoInsert)
         self.workspace_combo.lineEdit().setPlaceholderText("Path to a folder of tests…")
-        self.workspace_combo.setSizePolicy(self.workspace_combo.sizePolicy().Expanding,
-                                           self.workspace_combo.sizePolicy().Fixed)
+        # Un chemin n'a pas besoin de mille pixels : au-dela, le champ ecrase
+        # les actions qui comptent et la barre perd son equilibre.
+        self.workspace_combo.setMaximumWidth(560)
+        self.workspace_combo.setMinimumWidth(260)
         self.workspace_combo.lineEdit().returnPressed.connect(self.load_workspace)
 
         self.browse_button = QPushButton("Browse…")
+        self.browse_button.setObjectName("Ghost")
         self.browse_button.setIcon(icons.icon("mdi.folder-open-outline", t.TEXT_MUTED))
         self.browse_button.clicked.connect(self.browse_workspace)
 
@@ -136,10 +141,10 @@ class MainWindow(QMainWindow):
         self.stop_button.setToolTip("Stop the current run  (Esc)")
         self.stop_button.clicked.connect(self.stop_run)
 
-        ligne.addWidget(self.workspace_combo, 1)
+        ligne.addWidget(self.workspace_combo)
         ligne.addWidget(self.browse_button)
         ligne.addWidget(self.load_button)
-        ligne.addSpacing(t.SPACE_2)
+        ligne.addStretch(1)
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.run_button)
         return barre
@@ -170,9 +175,15 @@ class MainWindow(QMainWindow):
                                            lambda: self.tree.collapseAll())
 
         outils.addWidget(self.search, 1)
-        for bouton in (self.select_all_button, self.select_none_button,
-                       self.expand_button, self.collapse_button):
-            outils.addWidget(bouton)
+        # Groupes par intention : cocher d'un cote, deplier de l'autre. Quatre
+        # icones alignees a intervalle egal ne disaient pas lesquelles vont
+        # ensemble.
+        outils.addSpacing(t.SPACE_2)
+        outils.addWidget(self.select_all_button)
+        outils.addWidget(self.select_none_button)
+        outils.addSpacing(t.SPACE_3)
+        outils.addWidget(self.expand_button)
+        outils.addWidget(self.collapse_button)
 
         # Chercher et cocher n'ont aucun sens tant qu'aucun test n'est charge :
         # des controles actifs sur du vide laissent croire a une panne.
@@ -216,10 +227,9 @@ class MainWindow(QMainWindow):
 
     def _quiet(self, glyph: str, infobulle: str, slot) -> QPushButton:
         bouton = QPushButton()
-        bouton.setObjectName("Quiet")
+        bouton.setObjectName("Icon")
         bouton.setIcon(icons.icon(glyph, t.TEXT_MUTED))
         bouton.setToolTip(infobulle)
-        bouton.setFixedWidth(t.CONTROL_MD)
         bouton.clicked.connect(slot)
         return bouton
 

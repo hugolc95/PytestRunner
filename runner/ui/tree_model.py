@@ -182,7 +182,7 @@ class TestTreeModel(QAbstractItemModel):
     def _data_colonne_statut(self, ligne: _Row, reader_index: int, role):
         statut = self.status_for(ligne, reader_index)
         if role == Qt.DecorationRole and statut is not Status.PENDING:
-            return icons.status_icon(statut)
+            return icons.status_icon(statut, group=not ligne.is_leaf)
         if role == Qt.ToolTipRole and statut is not Status.PENDING:
             return statut.label
         if role == Qt.TextAlignmentRole:

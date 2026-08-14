@@ -33,6 +33,18 @@ STATUS_GLYPHS: dict[Status, str] = {
     Status.PENDING: "mdi.circle-small",
 }
 
+# Variante evidee, pour les lignes de REGROUPEMENT. Un dossier ne porte pas de
+# resultat : il montre le pire de ce qu'il contient. Le meme pictogramme plein
+# que sur une feuille laissait croire a un verdict propre a cette ligne.
+STATUS_GLYPHS_GROUP: dict[Status, str] = {
+    Status.PASSED: "mdi.check-circle-outline",
+    Status.FAILED: "mdi.close-circle-outline",
+    Status.SKIPPED: "mdi.minus-circle-outline",
+    Status.ERROR: "mdi.alert-circle-outline",
+    Status.RUNNING: "mdi.loading",
+    Status.PENDING: "mdi.circle-small",
+}
+
 KIND_GLYPHS: dict[Kind, str] = {
     Kind.FOLDER: "mdi.folder-outline",
     Kind.MODULE: "mdi.language-python",
@@ -57,8 +69,15 @@ def icon(nom: str, couleur: str = t.TEXT_MUTED) -> QIcon:
         return QIcon()
 
 
-def status_icon(status: Status) -> QIcon:
-    return icon(STATUS_GLYPHS.get(status, "mdi.circle-small"), t.status_color(status))
+def status_icon(status: Status, group: bool = False) -> QIcon:
+    """Icone d'un statut. `group` donne la variante evidee des regroupements."""
+    table = STATUS_GLYPHS_GROUP if group else STATUS_GLYPHS
+    couleur = t.status_color(status)
+    if group:
+        # Un agregat ne doit pas peser autant qu'un resultat : meme teinte,
+        # moins d'encre.
+        couleur = t.rgba(couleur, 0.75)
+    return icon(table.get(status, "mdi.circle-small"), couleur)
 
 
 def kind_icon(kind: Kind) -> QIcon:

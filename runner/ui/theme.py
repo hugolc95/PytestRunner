@@ -9,6 +9,7 @@ fonction de ce module.
 from __future__ import annotations
 
 from runner.domain.models import Status
+from runner.ui import glyphs
 from runner.ui import tokens as t
 
 
@@ -43,50 +44,82 @@ QFrame#Separator {{
 }}
 
 /* ---------------------------------------------------------------- boutons */
-/* Bouton par defaut : discret. Ce qui est rare ne doit pas crier. */
+/* Trois niveaux, et trois seulement. Auparavant tout etait la meme boite grise
+   et rien ne disait laquelle comptait :
+     Primary   -- l'action du moment, remplie, unique a l'ecran
+     Secondary -- la voie normale, contour discret  (defaut)
+     Ghost     -- utilitaire, sans chrome tant qu'on ne le survole pas        */
 QPushButton {{
     background-color: {t.BG_RAISED};
     color: {t.TEXT};
-    border: 1px solid {t.BORDER};
+    border: 1px solid {t.BORDER_STRONG};
     border-radius: {t.RADIUS_MD}px;
     padding: 0 {t.SPACE_3}px;
-    min-height: {t.CONTROL_SM}px;
+    min-height: {t.CONTROL_MD}px;
     font-size: {t.TEXT_SM}px;
+    font-weight: 500;
 }}
-QPushButton:hover {{ background-color: {t.BG_HOVER}; border-color: {t.BORDER_STRONG}; }}
+QPushButton:hover {{ background-color: {t.BG_HOVER}; border-color: {t.TEXT_FAINT}; }}
 QPushButton:pressed {{ background-color: {t.BG_SURFACE}; }}
-QPushButton:disabled {{ color: {t.TEXT_FAINT}; background-color: {t.BG_SURFACE}; }}
+QPushButton:disabled {{
+    color: {t.TEXT_FAINT};
+    background-color: transparent;
+    border-color: {t.BORDER};
+}}
 QPushButton:checked {{
-    background-color: {t.ACCENT_SOFT};
+    background-color: {t.rgba(t.ACCENT, 0.16)};
     border-color: {t.ACCENT};
     color: {t.ACCENT};
 }}
 
-/* L'action principale, et elle seule, porte la couleur d'accent. */
 QPushButton#Primary {{
     background-color: {t.ACCENT};
     color: #06101f;
-    border: none;
+    border: 1px solid {t.ACCENT};
     font-weight: 600;
     padding: 0 {t.SPACE_4}px;
-    min-height: {t.CONTROL_MD}px;
 }}
-QPushButton#Primary:hover {{ background-color: {t.ACCENT_HOVER}; }}
-QPushButton#Primary:pressed {{ background-color: {t.ACCENT_PRESSED}; }}
-QPushButton#Primary:disabled {{ background-color: {t.BG_RAISED}; color: {t.TEXT_FAINT}; }}
-
-QPushButton#Danger {{ min-height: {t.CONTROL_MD}px; }}
-QPushButton#Danger:hover {{
-    border-color: {t.status_color(Status.FAILED)};
-    color: {t.status_color(Status.FAILED)};
+QPushButton#Primary:hover {{
+    background-color: {t.ACCENT_HOVER}; border-color: {t.ACCENT_HOVER};
+}}
+QPushButton#Primary:pressed {{
+    background-color: {t.ACCENT_PRESSED}; border-color: {t.ACCENT_PRESSED};
+}}
+QPushButton#Primary:disabled {{
+    background-color: transparent; color: {t.TEXT_FAINT}; border-color: {t.BORDER};
 }}
 
-QPushButton#Quiet {{
+/* Ghost : rien tant qu'on ne le survole pas. Un bouton rare ne doit pas peser
+   autant qu'une action courante. */
+QPushButton#Ghost {{
     background-color: transparent;
     border-color: transparent;
     color: {t.TEXT_MUTED};
 }}
-QPushButton#Quiet:hover {{ background-color: {t.BG_HOVER}; color: {t.TEXT}; }}
+QPushButton#Ghost:hover {{
+    background-color: {t.BG_HOVER}; color: {t.TEXT}; border-color: transparent;
+}}
+QPushButton#Ghost:disabled {{ color: {t.TEXT_FAINT}; background: transparent; }}
+
+/* Arreter n'est pas une action colorée : elle ne le devient qu'au survol,
+   quand elle est reellement disponible. */
+QPushButton#Danger:hover {{
+    background-color: {t.rgba(t.status_color(Status.FAILED), 0.12)};
+    border-color: {t.status_color(Status.FAILED)};
+    color: {t.status_color(Status.FAILED)};
+}}
+
+/* Bouton d'icone : carre, pour ne pas pencher dans une rangee. */
+QPushButton#Icon {{
+    background-color: transparent;
+    border-color: transparent;
+    padding: 0;
+    min-width: {t.ICON_BUTTON}px;
+    max-width: {t.ICON_BUTTON}px;
+    min-height: {t.ICON_BUTTON}px;
+}}
+QPushButton#Icon:hover {{ background-color: {t.BG_HOVER}; }}
+QPushButton#Icon:checked {{ background-color: {t.rgba(t.ACCENT, 0.16)}; }}
 
 QToolButton {{
     background-color: transparent;
@@ -95,7 +128,7 @@ QToolButton {{
     padding: {t.SPACE_1}px;
 }}
 QToolButton:hover {{ background-color: {t.BG_HOVER}; }}
-QToolButton:checked {{ background-color: {t.ACCENT_SOFT}; }}
+QToolButton:checked {{ background-color: {t.rgba(t.ACCENT, 0.16)}; }}
 
 /* ---------------------------------------------------------------- champs */
 QLineEdit, QComboBox {{
@@ -109,6 +142,10 @@ QLineEdit, QComboBox {{
 }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {t.ACCENT}; }}
 QComboBox::drop-down {{ border: none; width: {t.SPACE_6}px; }}
+QComboBox::down-arrow {{
+    image: url({glyphs.chevron_down(t.TEXT_MUTED)});
+    width: 14px; height: 14px;
+}}
 QComboBox QAbstractItemView {{
     background-color: {t.BG_RAISED};
     border: 1px solid {t.BORDER_STRONG};
@@ -128,7 +165,42 @@ QTreeView {{
 }}
 QTreeView::item {{ min-height: {t.CONTROL_SM}px; border: none; padding-left: {t.SPACE_1}px; }}
 QTreeView::item:hover {{ background-color: {t.BG_HOVER}; }}
-QTreeView::item:selected {{ background-color: {t.ACCENT_SOFT}; color: {t.TEXT}; }}
+QTreeView::item:selected {{
+    background-color: {t.rgba(t.ACCENT, 0.18)};
+    color: {t.TEXT};
+}}
+
+/* Une coche dessinee : sans image, Qt rendait un simple caractere sans boite,
+   qui n'avait rien a voir avec le reste de l'interface. */
+QTreeView::indicator {{
+    width: 15px;
+    height: 15px;
+    border: 1px solid {t.BORDER_STRONG};
+    border-radius: {t.RADIUS_SM}px;
+    background-color: {t.BG_INPUT};
+}}
+QTreeView::indicator:hover {{ border-color: {t.ACCENT}; }}
+QTreeView::indicator:checked {{
+    background-color: {t.ACCENT};
+    border-color: {t.ACCENT};
+    image: url({glyphs.check("#06101f")});
+}}
+QTreeView::indicator:indeterminate {{
+    background-color: {t.rgba(t.ACCENT, 0.28)};
+    border-color: {t.ACCENT};
+    image: url({glyphs.dash(t.ACCENT)});
+}}
+
+QTreeView::branch:has-children:!has-siblings:closed,
+QTreeView::branch:closed:has-children:has-siblings {{
+    border-image: none;
+    image: url({glyphs.branch_closed(t.TEXT_FAINT)});
+}}
+QTreeView::branch:open:has-children:!has-siblings,
+QTreeView::branch:open:has-children:has-siblings {{
+    border-image: none;
+    image: url({glyphs.branch_open(t.TEXT_FAINT)});
+}}
 QHeaderView::section {{
     background-color: {t.BG_APP};
     color: {t.TEXT_MUTED};
@@ -151,6 +223,7 @@ QTabBar::tab {{
 }}
 QTabBar::tab:hover {{ color: {t.TEXT}; }}
 QTabBar::tab:selected {{ color: {t.TEXT}; border-bottom-color: {t.ACCENT}; font-weight: 600; }}
+QStatusBar QLabel {{ background: transparent; }}
 
 /* ---------------------------------------------------------------- textes */
 QPlainTextEdit, QTextEdit {{
@@ -205,20 +278,33 @@ QStatusBar::item {{ border: none; }}
 
 
 def pill_style(couleur: str, actif: bool = True) -> str:
-    """Pastille coloree : compteur de statut, nom de lecteur.
+    """Pastille coloree : nom de lecteur, etiquette.
 
     Passe par une fonction plutot que par le QSS global : la couleur depend
     d'une donnee (le statut, l'index du lecteur), pas du theme seul.
     """
-    fond = f"{couleur}22" if actif else "transparent"
-    texte = couleur if actif else t.TEXT_FAINT
     return (
-        f"background-color: {fond};"
-        f"color: {texte};"
-        f"border: 1px solid {couleur if actif else t.BORDER};"
+        f"background-color: {t.rgba(couleur, 0.14) if actif else 'transparent'};"
+        f"color: {couleur if actif else t.TEXT_FAINT};"
+        f"border: none;"
         f"border-radius: {t.RADIUS_PILL}px;"
         f"padding: {t.SPACE_1}px {t.SPACE_3}px;"
         f"font-size: {t.TEXT_XS}px; font-weight: 600;"
+    )
+
+
+def counter_style(couleur: str, actif: bool) -> str:
+    """Compteur de statut : sans boite.
+
+    Quatre pastilles encadrees se disputaient l'attention, dont trois a zero.
+    Ici seul le nombre porte la couleur ; a zero, tout s'eteint.
+    """
+    return (
+        "background: transparent; border: none;"
+        f"color: {couleur if actif else t.TEXT_FAINT};"
+        f"font-size: {t.TEXT_SM}px;"
+        f"font-weight: {'600' if actif else '400'};"
+        f"padding: 0 {t.SPACE_2}px;"
     )
 
 

@@ -77,18 +77,28 @@ class EmptyState(QWidget):
         self.detail_label.setText(detail)
 
 
-class StatusPill(QLabel):
-    """Compteur d'un statut : un nombre, un libelle, une couleur.
+class StatusPill(QWidget):
+    """Compteur d'un statut : une pastille de couleur, un nombre, un libelle.
 
-    Passe a l'etat eteint quand il vaut zero : quatre pastilles allumees dont
-    trois a zero attirent l'oeil sur du vide.
+    Sans boite ni bordure. Quatre compteurs encadres se disputaient
+    l'attention, dont trois affichant zero ; ici tout s'eteint a zero et seul
+    ce qui a une valeur ressort.
     """
 
     def __init__(self, status: Status, parent=None):
         super().__init__(parent)
         self._status = status
         self._value = 0
-        self.setAlignment(Qt.AlignCenter)
+
+        ligne = QHBoxLayout(self)
+        ligne.setContentsMargins(t.SPACE_2, 0, t.SPACE_2, 0)
+        ligne.setSpacing(t.SPACE_1)
+
+        self._dot = QLabel("●")
+        self._text = QLabel()
+        ligne.addWidget(self._dot)
+        ligne.addWidget(self._text)
+
         self.set_value(0)
 
     @property
@@ -97,8 +107,15 @@ class StatusPill(QLabel):
 
     def set_value(self, valeur: int) -> None:
         self._value = valeur
-        self.setText(f"{valeur}  {self._status.label}")
-        self.setStyleSheet(theme.pill_style(t.status_color(self._status), valeur > 0))
+        actif = valeur > 0
+        couleur = t.status_color(self._status)
+
+        self._dot.setStyleSheet(
+            f"color: {couleur if actif else t.BORDER_STRONG};"
+            f"font-size: 9px; background: transparent;")
+        self._text.setText(f"{valeur} {self._status.label.lower()}")
+        self._text.setStyleSheet(theme.counter_style(couleur, actif))
+        self.setToolTip(f"{valeur} {self._status.label.lower()}")
 
     def value(self) -> int:
         return self._value
@@ -156,10 +173,9 @@ class SearchBar(QWidget):
 
     def _nav(self, glyph: str, infobulle: str, signal) -> QPushButton:
         bouton = QPushButton()
-        bouton.setObjectName("Quiet")
+        bouton.setObjectName("Icon")
         bouton.setIcon(icons.icon(glyph, t.TEXT_MUTED))
         bouton.setToolTip(infobulle)
-        bouton.setFixedWidth(t.CONTROL_MD)
         bouton.setEnabled(False)
         bouton.clicked.connect(signal)
         return bouton
@@ -233,6 +249,7 @@ class ErrorDialog(QDialog):
 
         if detail:
             copier = QPushButton("Copy")
+            copier.setObjectName("Ghost")
             copier.setToolTip("Copy the full details to the clipboard")
             copier.clicked.connect(lambda: self._copier(detail or message))
             boutons.addWidget(copier)
