@@ -88,8 +88,48 @@ STATUS_COLORS: dict[Status, str] = {
 READER_COLORS = ("#4c8dff", "#39c5bb", "#e0a33e", "#c98bdb", "#7ec87e")
 
 
+# Les huit couleurs ANSI, retraduites dans le theme. Le rouge d'un terminal
+# (#ff0000) sur un fond presque noir vibre et fatigue ; on garde le SENS de la
+# couleur choisie par le conftest, pas sa valeur brute.
+ANSI_COLORS: dict[str, str] = {
+    "black": "#5d6675",   # jamais du noir : il disparaitrait sur ce fond
+    "red": "#ef5f57",
+    "green": "#4fae63",
+    "yellow": "#d8a13c",
+    "blue": "#4c8dff",
+    "magenta": "#c98bdb",
+    "cyan": "#39c5bb",
+    "white": "#e4e7ec",
+}
+
+ANSI_BRIGHT: dict[str, str] = {
+    "black": "#7b8494",
+    "red": "#ff8078",
+    "green": "#71c983",
+    "yellow": "#f0bd5c",
+    "magenta": "#dda6ea",
+    "blue": "#7aabff",
+    "cyan": "#5adbd1",
+    "white": "#ffffff",
+}
+
+
 def reader_color(index: int) -> str:
     return READER_COLORS[index % len(READER_COLORS)]
+
+
+def ansi_color(nom: str | None, vive: bool = False) -> str | None:
+    """Couleur du theme pour une couleur ANSI, ou None pour la couleur par defaut.
+
+    Les modes 256 couleurs et couleurs vraies donnent deja un `#rrggbb` : on le
+    laisse passer tel quel, il a ete choisi explicitement.
+    """
+    if not nom:
+        return None
+    if nom.startswith("#"):
+        return nom
+    table = ANSI_BRIGHT if vive else ANSI_COLORS
+    return table.get(nom)
 
 
 def rgba(couleur: str, opacite: float) -> str:
@@ -102,6 +142,24 @@ def rgba(couleur: str, opacite: float) -> str:
     c = couleur.lstrip("#")
     r, v, b = (int(c[i:i + 2], 16) for i in (0, 2, 4))
     return f"rgba({r}, {v}, {b}, {opacite:.2f})"
+
+
+def blend(couleur: str, fond: str, opacite: float) -> str:
+    """`#rrggbb` opaque equivalent a `couleur` posee sur `fond` a cette opacite.
+
+    Certaines zones dessinees par Qt ignorent purement et simplement le canal
+    alpha d'un `rgba()` en QSS et retombent sur leur couleur par defaut : la
+    colonne des branches d'un QTreeView en fait partie, et sa ligne
+    selectionnee redevenait alors d'un bleu systeme sans rapport avec le
+    theme. Composer la couleur nous-memes donne le meme rendu, en opaque.
+    """
+    def canaux(valeur: str) -> tuple[int, int, int]:
+        c = valeur.lstrip("#")
+        return tuple(int(c[i:i + 2], 16) for i in (0, 2, 4))
+
+    avant, arriere = canaux(couleur), canaux(fond)
+    melange = (round(a * opacite + b * (1 - opacite)) for a, b in zip(avant, arriere))
+    return "#" + "".join(f"{v:02x}" for v in melange)
 
 
 def status_color(status: Status) -> str:

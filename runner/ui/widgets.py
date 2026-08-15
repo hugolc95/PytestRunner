@@ -129,6 +129,41 @@ class ReaderBadge(QLabel):
         self.setStyleSheet(theme.pill_style(t.reader_color(index)))
 
 
+class ReaderResult(QWidget):
+    """Verdict d'un test sur un lecteur : le lecteur, puis son statut.
+
+    Reunis dans une seule etiquette pour qu'on lise « ce lecteur, ce
+    resultat » et non deux informations a rapprocher soi-meme.
+    """
+
+    def __init__(self, nom: str, index: int, status: Status, parent=None):
+        super().__init__(parent)
+
+        ligne = QHBoxLayout(self)
+        ligne.setContentsMargins(0, 0, 0, 0)
+        ligne.setSpacing(t.SPACE_2)
+
+        if nom:
+            ligne.addWidget(ReaderBadge(nom, index))
+
+        couleur = t.status_color(status)
+        actif = status is not Status.PENDING
+
+        icone = QLabel()
+        icone.setPixmap(icons.status_icon(status).pixmap(14, 14))
+        icone.setStyleSheet("background: transparent;")
+        icone.setVisible(actif)
+
+        texte = QLabel(status.label if actif else "NOT RUN")
+        texte.setStyleSheet(
+            f"color: {couleur if actif else t.TEXT_FAINT};"
+            f"font-size: {t.TEXT_XS}px; font-weight: 700;"
+            "background: transparent;")
+
+        ligne.addWidget(icone)
+        ligne.addWidget(texte)
+
+
 class SearchBar(QWidget):
     """Champ de recherche avec compteur et navigation entre correspondances.
 

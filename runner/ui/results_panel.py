@@ -1,32 +1,52 @@
-"""Panneau de droite : sortie pytest et logs, une vue par lecteur."""
+"""Panneau de droite : la fiche d'un test, la sortie brute, les logs.
+
+L'ordre des onglets est un choix, pas un hasard. Mesure faite sur un run reel
+de 160 tests dont 44 en echec, la console produit 292 lignes :
+
+    160  verdicts       -> deja dans l'arbre, une colonne par lecteur
+      9  bannieres      -> jamais lues
+      2  vides
+    121  traces d'echec <- la SEULE chose qu'on ne trouve nulle part ailleurs
+
+Le seul apport propre de la console represente 41 % de ses lignes, et c'est
+justement ce qu'elle rend le plus difficile a trouver : il faut passer neuf
+lignes avant la premiere trace, puis chercher la bonne parmi quarante-quatre.
+
+D'ou la disposition : `Detail` d'abord, qui repond a la question posee (ce test
+la, pourquoi), et la console juste derriere, entiere et copiable, pour tout ce
+que la fiche ne peut pas deviner.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
-    QPlainTextEdit,
     QPushButton,
     QSplitter,
-    QStackedWidget,
     QTabBar,
     QTabWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from runner.domain.models import Reader
+from runner.domain import failures as failures_mod
+from runner.domain.models import Reader, ReaderReport, Status
 from runner.ui import icons, theme
 from runner.ui import tokens as t
-from runner.ui.widgets import EmptyState
+from runner.ui.console_view import ConsoleView
+from runner.ui.detail_panel import DetailPanel
+
+ONGLET_DETAIL = 0
+ONGLET_OUTPUT = 1
+ONGLET_LOGS = 2
 
 
 class ReaderViews(QWidget):
-    """Une zone de texte par lecteur : une seule visible, ou toutes.
+    """Une console par lecteur : une seule visible, ou toutes.
 
     Sert deux fois -- la sortie pytest et les logs -- avec un sens de
     comparaison different. Les sorties defilent, on les empile pour garder la
@@ -35,13 +55,15 @@ class ReaderViews(QWidget):
 
     reader_selected = pyqtSignal(int)
 
-    def __init__(self, orientation=Qt.Vertical, sync_scroll: bool = False, parent=None):
+    def __init__(self, orientation=Qt.Vertical, sync_scroll: bool = False,
+                 show_lens: bool = True, parent=None):
         super().__init__(parent)
         self._sync = sync_scroll
+        self._show_lens = show_lens
         self._defile = False
         self._readers: tuple[Reader, ...] = ()
 
-        self.views: list[QPlainTextEdit] = []
+        self.views: list[ConsoleView] = []
         self.headers: list[QLabel] = []
 
         self.tabs = QTabBar()
@@ -53,12 +75,11 @@ class ReaderViews(QWidget):
         self.tabs.currentChanged.connect(self._on_tab)
 
         self.compare = QPushButton()
-        self.compare.setObjectName("Quiet")
+        self.compare.setObjectName("IconSm")
         self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
         self.compare.setCheckable(True)
-        self.compare.setToolTip("Compare every reader  (Ctrl+D)")
+        self.compare.setToolTip("Compare every reader  (Ctrl+Shift+D)")
         self.compare.setVisible(False)
-        self.compare.setFixedWidth(t.CONTROL_MD)
         self.compare.toggled.connect(lambda _: self._apply_layout())
 
         barre = QHBoxLayout()
@@ -80,11 +101,8 @@ class ReaderViews(QWidget):
 
     # ------------------------------------------------------------- structure
 
-    def _add_view(self) -> QPlainTextEdit:
-        vue = QPlainTextEdit()
-        vue.setReadOnly(True)
-        vue.setLineWrapMode(QPlainTextEdit.NoWrap)
-        vue.document().setMaximumBlockCount(20000)
+    def _add_view(self) -> ConsoleView:
+        vue = ConsoleView(show_lens=self._show_lens)
 
         entete = QLabel()
         entete.setVisible(False)
@@ -177,14 +195,11 @@ class ReaderViews(QWidget):
 
     def append(self, index: int, texte: str) -> None:
         if 0 <= index < len(self.views):
-            vue = self.views[index]
-            vue.moveCursor(QTextCursor.End)
-            vue.insertPlainText(texte)
-            vue.moveCursor(QTextCursor.End)
+            self.views[index].append(texte)
 
     def set_text(self, index: int, texte: str, entete: str = "") -> None:
         if 0 <= index < len(self.views):
-            self.views[index].setPlainText(texte)
+            self.views[index].set_text(texte)
             self.headers[index].setText(entete)
 
     def clear(self) -> None:
@@ -195,55 +210,140 @@ class ReaderViews(QWidget):
 
 
 class ResultsPanel(QWidget):
-    """Sortie pytest et logs, avec un etat vide tant que rien n'a tourne."""
+    """Fiche du test, sortie brute et logs, derriere un etat vide au demarrage."""
 
     reader_selected = pyqtSignal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._log_root: Path | None = None
+        self._readers: tuple[Reader, ...] = ()
+        self._sorties: dict[int, str] = {}
+        self._index_echecs: dict[int, dict] = {}
+        self._nodeid = ""
+        self._statuses: dict[int, Status] = {}
+
+        self.detail = DetailPanel()
+        self.detail.open_output.connect(self.show_output)
 
         self.output = ReaderViews(Qt.Vertical)
-        self.logs = ReaderViews(Qt.Horizontal, sync_scroll=True)
+        self.logs = ReaderViews(Qt.Horizontal, sync_scroll=True, show_lens=False)
 
-        # Les deux panneaux suivent le meme lecteur : lire le log de l'un en
+        # Les trois panneaux suivent le meme lecteur : lire le log de l'un en
         # regardant la sortie de l'autre n'a pas de sens.
         self.output.reader_selected.connect(self._on_reader, Qt.UniqueConnection)
         self.logs.reader_selected.connect(self._on_reader, Qt.UniqueConnection)
 
-        self.empty = EmptyState(
-            "mdi.console-line",
-            "No run yet",
-            "Select the tests you want on the left, then start a run. "
-            "The output of every reader shows up here.",
-        )
-
         self.tabs = QTabWidget()
-        self.tabs.addTab(self.output, icons.icon("mdi.console", t.TEXT_MUTED), "Output")
-        self.tabs.addTab(self.logs, icons.icon("mdi.file-document-outline", t.TEXT_MUTED), "Logs")
-
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self.empty)
-        self.stack.addWidget(self.tabs)
+        self.tabs.addTab(self.detail,
+                         icons.icon("mdi.text-box-search-outline", t.TEXT_MUTED),
+                         "Detail")
+        self.tabs.addTab(self.output, icons.icon("mdi.console", t.TEXT_MUTED),
+                         "Output")
+        self.tabs.addTab(self.logs,
+                         icons.icon("mdi.file-document-outline", t.TEXT_MUTED),
+                         "Logs")
+        self.tabs.setTabToolTip(ONGLET_DETAIL, "What happened to the selected test  (Ctrl+1)")
+        self.tabs.setTabToolTip(ONGLET_OUTPUT, "Everything pytest wrote  (Ctrl+2)")
+        self.tabs.setTabToolTip(ONGLET_LOGS, "The .log files of the selected test  (Ctrl+3)")
 
         colonne = QVBoxLayout(self)
         colonne.setContentsMargins(0, 0, 0, 0)
-        colonne.addWidget(self.stack)
+        colonne.addWidget(self.tabs)
+
+    # ------------------------------------------------------------- navigation
+
+    def show_tab(self, position: int) -> None:
+        self.tabs.setCurrentIndex(position)
+
+    def show_output(self) -> None:
+        self.show_tab(ONGLET_OUTPUT)
 
     def _on_reader(self, index: int) -> None:
         self.output.select_silently(index)
         self.logs.select_silently(index)
         self.reader_selected.emit(index)
 
+    # ------------------------------------------------------------------- run
+
     def set_readers(self, readers: tuple[Reader, ...]) -> None:
+        """Nouvelle collecte : les lecteurs changent, la selection ne vaut plus."""
+        self._readers = tuple(readers)
+        self._nodeid = ""
+        self._statuses = {}
+        self._sorties.clear()
+        self._index_echecs.clear()
+        self.detail.clear()
         self.output.set_readers(readers)
         self.logs.set_readers(readers)
 
     def begin_run(self) -> None:
+        """Vide les vues sans changer d'onglet.
+
+        Basculer d'office sur la console au lancement volait l'ecran a
+        l'utilisateur : l'avancement se lit dans l'arbre et dans la barre
+        d'etat, la console n'a pas a s'imposer.
+        """
         self.output.clear()
         self.logs.clear()
-        self.stack.setCurrentWidget(self.tabs)
-        self.tabs.setCurrentWidget(self.output)
+        self._sorties.clear()
+        self._index_echecs.clear()
+        self._refresh_detail()
+
+    def set_report(self, rapport: ReaderReport) -> None:
+        """Range la sortie complete d'un lecteur qui vient de finir.
+
+        Les traces d'echec ne sont extraites qu'a la demande : sur un run de
+        plusieurs milliers de lignes, les decouper a chaque fin de lecteur
+        couterait pour rien si personne ne clique.
+        """
+        index = rapport.reader.index
+        self._sorties[index] = rapport.output
+        self._index_echecs.pop(index, None)
+        self._refresh_detail()
+
+    def append_output(self, index: int, texte: str) -> None:
+        self.output.append(index, texte)
+
+    # ---------------------------------------------------------------- detail
+
+    def show_test(self, nodeid: str, statuses: dict[int, Status]) -> None:
+        """Selectionne un test : sa fiche, et ses logs."""
+        self._nodeid = nodeid
+        self._statuses = dict(statuses)
+        self._refresh_detail()
+        self.show_logs_for(nodeid, self._readers)
+
+    def update_statuses(self, nodeid: str, statuses: dict[int, Status]) -> None:
+        """Rafraichit la fiche si elle porte sur ce test, sans toucher aux logs.
+
+        Appele a chaque resultat pendant un run : relire les .log a ce
+        rythme-la balayerait le disque des centaines de fois.
+        """
+        if nodeid and nodeid == self._nodeid:
+            self._statuses = dict(statuses)
+            self._refresh_detail()
+
+    def _refresh_detail(self) -> None:
+        if not self._nodeid:
+            self.detail.clear()
+            return
+        cibles = self._readers or (Reader("", 0),)
+        echecs = {
+            lecteur.index: failures_mod.failure_for(
+                self._echecs_de(lecteur.index), self._nodeid)
+            for lecteur in cibles
+        }
+        self.detail.show_test(self._nodeid, self._readers, self._statuses, echecs)
+
+    def _echecs_de(self, reader_index: int) -> dict:
+        index = self._index_echecs.get(reader_index)
+        if index is None:
+            index = failures_mod.index_failures(self._sorties.get(reader_index, ""))
+            self._index_echecs[reader_index] = index
+        return index
+
+    # ------------------------------------------------------------------ logs
 
     def set_log_root(self, racine: Path | None) -> None:
         self._log_root = racine

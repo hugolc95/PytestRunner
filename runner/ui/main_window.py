@@ -34,7 +34,12 @@ from runner.domain.workspace import Workspace
 from runner.services.run_service import CollectWorker, RunService
 from runner.ui import icons, theme
 from runner.ui import tokens as t
-from runner.ui.results_panel import ResultsPanel
+from runner.ui.results_panel import (
+    ONGLET_DETAIL,
+    ONGLET_LOGS,
+    ONGLET_OUTPUT,
+    ResultsPanel,
+)
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import EmptyState, ErrorDialog, SearchBar, StatusPill
 
@@ -200,6 +205,9 @@ class MainWindow(QMainWindow):
         self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.tree.setHeaderHidden(False)
         self.tree.clicked.connect(self._on_tree_clicked)
+        # Au clavier aussi : parcourir l'arbre aux fleches doit mettre a jour
+        # la fiche, sinon la souris devient obligatoire pour lire un echec.
+        self.tree.selectionModel().currentRowChanged.connect(self._on_tree_current)
 
         entete = self.tree.header()
         entete.setStretchLastSection(False)
@@ -300,6 +308,18 @@ class MainWindow(QMainWindow):
         vue = self.menuBar().addMenu("&View")
         self._action(vue, "Find a test", QKeySequence.Find,
                      lambda: self.search.field.setFocus(), "mdi.magnify")
+        vue.addSeparator()
+        # Les trois vues du panneau de droite, au clavier : c'est le geste le
+        # plus repete d'un depouillement de run.
+        self._action(vue, "Test detail", "Ctrl+1",
+                     lambda: self.results.show_tab(ONGLET_DETAIL),
+                     "mdi.text-box-search-outline")
+        self._action(vue, "Raw output", "Ctrl+2",
+                     lambda: self.results.show_tab(ONGLET_OUTPUT), "mdi.console")
+        self._action(vue, "Logs", "Ctrl+3",
+                     lambda: self.results.show_tab(ONGLET_LOGS),
+                     "mdi.file-document-outline")
+        vue.addSeparator()
         self._action(vue, "Compare readers side by side", "Ctrl+Shift+D",
                      self._toggle_compare, "mdi.view-split-vertical")
 
@@ -318,9 +338,10 @@ class MainWindow(QMainWindow):
 
     def _connect_service(self) -> None:
         self.service.started.connect(self._on_run_started)
-        self.service.line.connect(self.results.output.append)
+        self.service.line.connect(self.results.append_output)
         self.service.outcome.connect(self._on_outcome)
         self.service.progress.connect(self._on_progress)
+        self.service.reader_finished.connect(self.results.set_report)
         self.service.finished.connect(self._on_run_finished)
 
     # =====================================================================
@@ -494,6 +515,9 @@ class MainWindow(QMainWindow):
         if pastille is not None:
             pastille.set_value(pastille.value() + 1)
 
+        self.results.update_statuses(outcome.nodeid,
+                                     self.model.statuses_for_nodeid(outcome.nodeid))
+
     @pyqtSlot(int, int)
     def _on_progress(self, faits: int, total: int) -> None:
         self.progress.setValue(faits)
@@ -529,10 +553,19 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(QModelIndex)
     def _on_tree_clicked(self, index: QModelIndex) -> None:
+        self._select_test(index)
+
+    @pyqtSlot(QModelIndex, QModelIndex)
+    def _on_tree_current(self, index: QModelIndex, _precedent: QModelIndex) -> None:
+        self._select_test(index)
+
+    def _select_test(self, index: QModelIndex) -> None:
+        """Montre la fiche du test pointe. Un regroupement n'en a pas."""
+        if not index.isValid():
+            return
         nodeid = self.model.data(index.siblingAtColumn(0), NODEID_ROLE)
         if nodeid:
-            self.results.show_logs_for(
-                nodeid, self.workspace.readers if self.workspace else ())
+            self.results.show_test(nodeid, self.model.statuses_for_nodeid(nodeid))
 
     @pyqtSlot(int, int)
     def _on_selection_changed(self, coches: int, total: int) -> None:

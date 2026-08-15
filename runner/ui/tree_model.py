@@ -348,6 +348,19 @@ class TestTreeModel(QAbstractItemModel):
                     retenus.append(feuille.node.nodeid)
         return retenus
 
+    def statuses_for_nodeid(self, nodeid: str) -> dict[int, Status]:
+        """Statut de ce test sur chaque lecteur declare.
+
+        Toujours une entree par lecteur, PENDING compris : la fiche d'un test
+        doit pouvoir dire « pas encore passe ici » plutot que d'omettre la
+        colonne, ce qui se lirait comme un lecteur oublie.
+        """
+        ligne = self._by_nodeid.get(nodeid)
+        if ligne is None:
+            return {}
+        indices = [r.index for r in self._readers] or [0]
+        return {i: ligne.statuses.get(i, Status.PENDING) for i in indices}
+
     def index_for_nodeid(self, nodeid: str) -> QModelIndex:
         ligne = self._by_nodeid.get(nodeid)
         if ligne is None:

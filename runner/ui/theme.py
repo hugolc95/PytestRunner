@@ -121,6 +121,52 @@ QPushButton#Icon {{
 QPushButton#Icon:hover {{ background-color: {t.BG_HOVER}; }}
 QPushButton#Icon:checked {{ background-color: {t.rgba(t.ACCENT, 0.16)}; }}
 
+/* Variante courte, pour les rangees d'outils secondaires : dans une meme
+   rangee, deux hauteurs differentes se voient tout de suite. */
+QPushButton#IconSm {{
+    background-color: transparent;
+    border-color: transparent;
+    padding: 0;
+    min-width: {t.CONTROL_SM}px;
+    max-width: {t.CONTROL_SM}px;
+    min-height: {t.CONTROL_SM}px;
+    max-height: {t.CONTROL_SM}px;
+}}
+QPushButton#IconSm:hover {{ background-color: {t.BG_HOVER}; }}
+QPushButton#IconSm:checked {{
+    background-color: {t.rgba(t.ACCENT, 0.16)};
+}}
+
+/* Selecteur segmente : plusieurs vues d'UNE meme chose, pas plusieurs actions.
+   Les segments se touchent et ne partagent qu'un seul trait ; separes, ils
+   auraient ete lus comme trois boutons independants. */
+QPushButton#Segment {{
+    background-color: transparent;
+    border: 1px solid {t.BORDER};
+    border-radius: 0;
+    color: {t.TEXT_MUTED};
+    padding: 0 {t.SPACE_3}px;
+    min-height: {t.CONTROL_SM}px;
+    max-height: {t.CONTROL_SM}px;
+    font-size: {t.TEXT_XS}px;
+    font-weight: 600;
+}}
+QPushButton#Segment[segment="first"] {{
+    border-top-left-radius: {t.RADIUS_MD}px;
+    border-bottom-left-radius: {t.RADIUS_MD}px;
+}}
+QPushButton#Segment[segment="middle"] {{ border-left: none; }}
+QPushButton#Segment[segment="last"] {{
+    border-left: none;
+    border-top-right-radius: {t.RADIUS_MD}px;
+    border-bottom-right-radius: {t.RADIUS_MD}px;
+}}
+QPushButton#Segment:hover {{ background-color: {t.BG_HOVER}; color: {t.TEXT}; }}
+QPushButton#Segment:checked {{
+    background-color: {t.rgba(t.ACCENT, 0.16)};
+    color: {t.ACCENT};
+}}
+
 QToolButton {{
     background-color: transparent;
     border: none;
@@ -201,6 +247,16 @@ QTreeView::branch:open:has-children:has-siblings {{
     border-image: none;
     image: url({glyphs.branch_open(t.TEXT_FAINT)});
 }}
+
+/* La colonne des branches est peinte a part de celle des items. Sans ces deux
+   regles, Qt y remet sa couleur de selection systeme et la ligne selectionnee
+   commence par un bloc bleu vif etranger au theme.
+   La couleur est composee en OPAQUE : sur cette zone precise, Qt ignore le
+   canal alpha d'un rgba() et retombe sur son bleu par defaut. */
+QTreeView::branch:selected {{
+    background-color: {t.blend(t.ACCENT, t.BG_SURFACE, 0.18)};
+}}
+QTreeView::branch:hover {{ background-color: {t.BG_HOVER}; }}
 QHeaderView::section {{
     background-color: {t.BG_APP};
     color: {t.TEXT_MUTED};
