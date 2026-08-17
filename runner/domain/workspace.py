@@ -8,10 +8,10 @@ standards d'abord.
 from __future__ import annotations
 
 import os
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Reader
 
 NOMS_STANDARDS = ("config.yaml", "config.yml")
@@ -137,14 +137,29 @@ class Workspace:
         return chemin if chemin.is_absolute() else Path(self.path) / chemin
 
     @property
+    def declared_interpreter(self) -> str:
+        """Interpreteur explicitement demande par la configuration.
+
+        Chaine vide si le workspace n'en declare pas -- distingue « rien de
+        configure » de « le Python par defaut », ce dont un reglage global
+        d'interpreteur a besoin pour savoir s'il doit s'effacer devant le
+        workspace ou s'appliquer.
+        """
+        valeur = _trouver(self.settings or {}, CLES_PYTHON)
+        return str(valeur).strip() if valeur else ""
+
+    @property
     def interpreter(self) -> str:
         """Python qui doit executer les tests.
 
         Celui du workspace s'il en declare un : l'interface peut tourner en
-        32 bits pendant que les tests chargent des DLL 64 bits.
+        32 bits pendant que les tests chargent des DLL 64 bits. Sinon, le
+        Python par defaut -- jamais `sys.executable` sans precaution : une
+        fois l'interface empaquetee, ce serait son propre exe, et le lancer
+        en sous-processus rouvrirait une copie de l'interface au lieu de
+        pytest.
         """
-        valeur = _trouver(self.settings or {}, CLES_PYTHON)
-        return str(valeur).strip() if valeur else sys.executable
+        return self.declared_interpreter or interpreter_mod.default()
 
     @property
     def env(self) -> dict:

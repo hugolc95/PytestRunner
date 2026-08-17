@@ -28,12 +28,14 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Reader, RunRequest, Status
 from runner.domain.tree import build_tree, collapse_single_class
 from runner.domain.workspace import Workspace
 from runner.services.run_service import CollectWorker, RunService
 from runner.ui import icons, theme
 from runner.ui import tokens as t
+from runner.ui.interpreter_dialog import InterpreterDialog
 from runner.ui.marker_bar import MarkerFilter
 from runner.ui.results_panel import (
     ONGLET_DETAIL,
@@ -55,6 +57,7 @@ K_SPLIT_MAIN = "window/split_main"
 K_RECENT = "workspace/recent"
 K_LAST = "workspace/last"
 K_TREE_COLS = "tree/columns"
+K_INTERPRETER = "interpreter/override"
 
 
 class MainWindow(QMainWindow):
@@ -72,6 +75,9 @@ class MainWindow(QMainWindow):
         self._matches: list[str] = []
         self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
         self._match_index = -1
+        # Reglage global, distinct de celui qu'un workspace peut imposer dans
+        # sa configuration -- celui-la garde toujours la priorite.
+        self._interpreter_override = ""
         self._elapsed = QTimer(self)
         self._elapsed.setInterval(1000)
         self._elapsed.timeout.connect(self._tick)
@@ -335,6 +341,9 @@ class MainWindow(QMainWindow):
         self._action(fichier, "Reload tests", QKeySequence.Refresh, self.load_workspace,
                      "mdi.refresh")
         fichier.addSeparator()
+        self._action(fichier, "Test Python interpreter…", None,
+                     self.open_interpreter_dialog, "mdi.language-python")
+        fichier.addSeparator()
         self._action(fichier, "Quit", QKeySequence.Quit, self.close, "mdi.exit-to-app")
 
         executer = self.menuBar().addMenu("&Run")
@@ -392,6 +401,59 @@ class MainWindow(QMainWindow):
         self.addAction(action)
         return action
 
+    def _effective_interpreter(self) -> str:
+        """Interpreteur a utiliser : workspace declare > reglage global > defaut.
+
+        Jamais `sys.executable` tel quel : une fois l'interface empaquetee par
+        PyInstaller, cette valeur serait l'exe de l'interface elle-meme. Le
+        lancer en sous-processus rouvrirait une copie de l'interface au lieu de
+        pytest -- une nouvelle fenetre apparait, sans le moindre arbre puisque
+        aucune collecte n'a jamais eu lieu, et rien ne dit pourquoi.
+        `interpreter_mod.default()` cherche a la place un vrai Python sur le
+        PATH quand l'application est figee.
+        """
+        if self.workspace is not None and self.workspace.declared_interpreter:
+            return self.workspace.declared_interpreter
+        if self._interpreter_override:
+            return self._interpreter_override
+        if self.workspace is not None:
+            return self.workspace.interpreter
+        return interpreter_mod.default()
+
+    def _require_interpreter(self) -> str:
+        """L'interpreteur resolu, ou chaine vide apres avoir explique pourquoi.
+
+        Une chaine vide passee telle quelle a `subprocess` donne une erreur
+        illisible (`FileNotFoundError: ''`) ; ici l'utilisateur sait tout de
+        suite ou aller la configurer.
+        """
+        chemin = self._effective_interpreter()
+        if chemin:
+            return chemin
+
+        ErrorDialog.show_error(
+            self, "No Python interpreter",
+            "No Python interpreter was found automatically for the tests.",
+            "This happens when the application is packaged and no Python is "
+            "on the PATH. Set one from File > Test Python interpreter…")
+        return ""
+
+    @pyqtSlot()
+    def open_interpreter_dialog(self) -> None:
+        declare = self.workspace.declared_interpreter if self.workspace else ""
+        dialogue = InterpreterDialog(self._interpreter_override, declare, self)
+        if dialogue.exec_() != InterpreterDialog.Accepted:
+            return
+
+        nouveau = dialogue.interpreter_path()
+        if nouveau != self._interpreter_override:
+            self._interpreter_override = nouveau
+            self.settings.setValue(K_INTERPRETER, nouveau)
+            # Un changement d'interpreteur invalide tout ce que l'arbre montrait
+            # jusqu'ici : les nodeids collectes ailleurs peuvent ne plus exister.
+            if self.workspace is not None and not self.workspace.declared_interpreter:
+                self.load_workspace()
+
     def _connect_service(self) -> None:
         self.service.started.connect(self._on_run_started)
         self.service.line.connect(self.results.append_output)
@@ -428,13 +490,17 @@ class MainWindow(QMainWindow):
         self.workspace = Workspace.load(chemin)
         self._remember_workspace(chemin)
 
+        python = self._require_interpreter()
+        if not python:
+            return
+
         self.status_label.setText("Collecting tests…")
         self.load_button.setEnabled(False)
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)  # indetermine : la duree est inconnue
 
         self._collector = CollectWorker(
-            self.workspace.path, self.workspace.interpreter, self.workspace.env, self)
+            self.workspace.path, python, self.workspace.env, self)
         self._collector.collected.connect(self._on_collected)
         self._collector.failed.connect(self._on_collect_failed)
         self._collector.start()
@@ -541,9 +607,13 @@ class MainWindow(QMainWindow):
                 str(self.results.source.path() or ""))
             return
 
+        python = self._require_interpreter()
+        if not python:
+            return
+
         requete = RunRequest(
             workspace=self.workspace.path,
-            interpreter=self.workspace.interpreter,
+            interpreter=python,
             nodeids=tuple(nodeids),
             readers=self.workspace.readers,
             config_path=self.workspace.config_path,
@@ -807,6 +877,8 @@ class MainWindow(QMainWindow):
         colonnes = self.settings.value(K_TREE_COLS)
         if colonnes is not None:
             self.tree.header().restoreState(colonnes)
+
+        self._interpreter_override = self.settings.value(K_INTERPRETER, "", type=str)
 
     def closeEvent(self, event) -> None:
         self.results.source.save()
