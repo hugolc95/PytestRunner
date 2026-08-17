@@ -83,12 +83,19 @@ class StatusPill(QWidget):
     Sans boite ni bordure. Quatre compteurs encadres se disputaient
     l'attention, dont trois affichant zero ; ici tout s'eteint a zero et seul
     ce qui a une valeur ressort.
+
+    C'est aussi un filtre : cliquer ne montre plus que les tests de ce statut.
+    Le compteur et le filtre sont le meme geste -- on lit « 44 failed », on
+    veut voir lesquels, on clique dessus.
     """
+
+    clicked = pyqtSignal(object)  # le Status de cette pastille
 
     def __init__(self, status: Status, parent=None):
         super().__init__(parent)
         self._status = status
         self._value = 0
+        self._active = False
 
         ligne = QHBoxLayout(self)
         ligne.setContentsMargins(t.SPACE_2, 0, t.SPACE_2, 0)
@@ -99,6 +106,7 @@ class StatusPill(QWidget):
         ligne.addWidget(self._dot)
         ligne.addWidget(self._text)
 
+        self.setCursor(Qt.PointingHandCursor)
         self.set_value(0)
 
     @property
@@ -107,15 +115,83 @@ class StatusPill(QWidget):
 
     def set_value(self, valeur: int) -> None:
         self._value = valeur
-        actif = valeur > 0
+        self._repaint()
+
+    def set_active(self, actif: bool) -> None:
+        """Marque la pastille comme filtre en cours."""
+        self._active = actif
+        self._repaint()
+
+    def is_active(self) -> bool:
+        return self._active
+
+    def value(self) -> int:
+        return self._value
+
+    # ------------------------------------------------------------------
+
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton and self._value:
+            self.clicked.emit(self._status)
+        super().mousePressEvent(event)
+
+    def _repaint(self) -> None:
+        allume = self._value > 0
         couleur = t.status_color(self._status)
+        libelle = self._status.label.lower()
 
         self._dot.setStyleSheet(
-            f"color: {couleur if actif else t.BORDER_STRONG};"
+            f"color: {couleur if allume else t.BORDER_STRONG};"
             f"font-size: 9px; background: transparent;")
-        self._text.setText(f"{valeur} {self._status.label.lower()}")
-        self._text.setStyleSheet(theme.counter_style(couleur, actif))
-        self.setToolTip(f"{valeur} {self._status.label.lower()}")
+        self._text.setText(f"{self._value} {libelle}")
+        self._text.setStyleSheet(theme.counter_style(couleur, allume))
+
+        # Le fond ne s'allume que sur le filtre actif : c'est le seul etat qui
+        # doit se distinguer d'un simple compteur.
+        self.setStyleSheet(
+            f"background-color: {t.rgba(couleur, 0.16)};"
+            f"border-radius: {t.RADIUS_SM}px;" if self._active
+            else "background: transparent;")
+
+        if not allume:
+            self.setToolTip(f"No {libelle} test")
+        elif self._active:
+            self.setToolTip(f"Showing only {libelle} tests — click to show all")
+        else:
+            self.setToolTip(f"{self._value} {libelle} — click to show only these")
+
+
+class RemainingPill(QWidget):
+    """Ce qu'il reste a passer. Gris : ce n'est pas un verdict, c'est un reste.
+
+    Un compteur qui descend dit mieux « ca avance » qu'une barre de
+    progression seule, et il repond a la question qu'on se pose vraiment
+    devant une suite longue : combien de temps encore.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._value = 0
+
+        ligne = QHBoxLayout(self)
+        ligne.setContentsMargins(t.SPACE_2, 0, t.SPACE_2, 0)
+        ligne.setSpacing(t.SPACE_1)
+
+        self._dot = QLabel("●")
+        self._dot.setStyleSheet(
+            f"color: {t.BORDER_STRONG}; font-size: 9px; background: transparent;")
+        self._text = QLabel()
+        ligne.addWidget(self._dot)
+        ligne.addWidget(self._text)
+
+        self.set_value(0)
+        self.setVisible(False)
+
+    def set_value(self, valeur: int) -> None:
+        self._value = max(0, valeur)
+        self._text.setText(f"{self._value} left")
+        self._text.setStyleSheet(theme.counter_style(t.TEXT_MUTED, self._value > 0))
+        self.setToolTip(f"{self._value} tests still to run")
 
     def value(self) -> int:
         return self._value

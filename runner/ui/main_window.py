@@ -45,7 +45,13 @@ from runner.ui.results_panel import (
     ResultsPanel,
 )
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
-from runner.ui.widgets import EmptyState, ErrorDialog, SearchBar, StatusPill
+from runner.ui.widgets import (
+    EmptyState,
+    ErrorDialog,
+    RemainingPill,
+    SearchBar,
+    StatusPill,
+)
 
 ORG, APP = "PytestRunner", "Runner"
 
@@ -78,6 +84,8 @@ class MainWindow(QMainWindow):
         # Reglage global, distinct de celui qu'un workspace peut imposer dans
         # sa configuration -- celui-la garde toujours la priorite.
         self._interpreter_override = ""
+        # Statut dont on ne montre que les tests, ou None pour tout montrer.
+        self._status_filter: Status | None = None
         self._elapsed = QTimer(self)
         self._elapsed.setInterval(1000)
         self._elapsed.timeout.connect(self._tick)
@@ -325,11 +333,17 @@ class MainWindow(QMainWindow):
             statut: StatusPill(statut)
             for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
         }
+        for pastille in self.pills.values():
+            pastille.clicked.connect(self.filter_by_status)
+
+        # A gauche des verdicts : ce qui reste n'est pas un resultat.
+        self.remaining_pill = RemainingPill()
 
         barre.addWidget(self.status_label)
         barre.addWidget(self.progress)
         barre.addWidget(self.elapsed_label)
         barre.addPermanentWidget(QLabel(""))
+        barre.addPermanentWidget(self.remaining_pill)
         for pastille in self.pills.values():
             barre.addPermanentWidget(pastille)
 
@@ -516,6 +530,8 @@ class MainWindow(QMainWindow):
         self.markers.set_markers(collection.marker_list())
         self._show_active_filter()
 
+        self._clear_status_filter()
+        self.remaining_pill.setVisible(False)
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
         lecteurs = self.workspace.readers if self.workspace else ()
         self.model.set_readers(lecteurs)
@@ -651,6 +667,13 @@ class MainWindow(QMainWindow):
         for pastille in self.pills.values():
             pastille.set_value(0)
 
+        # Un filtre pose sur le run precedent masquerait les resultats du
+        # nouveau au fur et a mesure qu'ils arrivent.
+        self._clear_status_filter()
+
+        self.remaining_pill.set_value(request.total_tests)
+        self.remaining_pill.setVisible(True)
+
         self._seconds = 0
         self.elapsed_label.setText("0s")
         self._elapsed.start()
@@ -677,12 +700,15 @@ class MainWindow(QMainWindow):
     def _on_progress(self, faits: int, total: int) -> None:
         self.progress.setValue(faits)
         restants = max(0, total - faits)
+        self.remaining_pill.set_value(restants)
         self.status_label.setText(f"Running… {restants} left")
 
     @pyqtSlot(list)
     def _on_run_finished(self, rapports: list) -> None:
         self._elapsed.stop()
         self.progress.setVisible(False)
+
+        self.remaining_pill.setVisible(False)
 
         annule = any(r.cancelled for r in rapports)
         echecs = sum(r.failed for r in rapports)
@@ -793,6 +819,69 @@ class MainWindow(QMainWindow):
         self.markers.clear()
         self._show_active_filter()
         self.status_label.setText("Marker filter cleared")
+
+    @pyqtSlot(object)
+    def filter_by_status(self, status) -> None:
+        """Ne montre plus que les tests de ce statut. Recliquer rend tout.
+
+        Le compteur et le filtre sont le meme geste : on lit « 44 failed », on
+        veut voir lesquels, on clique dessus.
+        """
+        self._status_filter = None if self._status_filter is status else status
+
+        for statut, pastille in self.pills.items():
+            pastille.set_active(statut is self._status_filter)
+
+        self._apply_status_filter()
+
+        if self._status_filter is None:
+            self.status_label.setText("Showing every test")
+        else:
+            libelle = self._status_filter.label.lower()
+            self.status_label.setText(f"Showing only {libelle} tests")
+
+    def _clear_status_filter(self) -> None:
+        """Retire le filtre sans rien dire : appele quand le contexte change."""
+        if self._status_filter is None:
+            return
+        self._status_filter = None
+        for pastille in self.pills.values():
+            pastille.set_active(False)
+        self._apply_status_filter()
+
+    def _apply_status_filter(self) -> None:
+        """Masque les lignes qui ne menent a aucun test du statut retenu.
+
+        Un dossier reste visible des qu'il CONTIENT un test retenu : le
+        masquer couperait le chemin vers ce test, et l'arbre n'aurait plus
+        de racine a montrer.
+        """
+        statut = self._status_filter
+
+        def garder(parent: QModelIndex) -> bool:
+            visible_ici = False
+            for ligne in range(self.model.rowCount(parent)):
+                index = self.model.index(ligne, 0, parent)
+                objet = index.internalPointer()
+
+                if statut is None:
+                    retenu = True
+                    garder(index)
+                elif objet.is_leaf:
+                    retenu = any(s is statut for s in objet.statuses.values())
+                else:
+                    retenu = garder(index)
+
+                self.tree.setRowHidden(ligne, parent, not retenu)
+                visible_ici = visible_ici or retenu
+            return visible_ici
+
+        garder(QModelIndex())
+
+        # Ce qui est masque doit rester atteignable : on ouvre les branches qui
+        # menent aux tests retenus, sinon le filtre ne montre qu'une racine.
+        if statut is not None:
+            self.tree.expandAll()
 
     @pyqtSlot()
     def select_divergent(self) -> None:
