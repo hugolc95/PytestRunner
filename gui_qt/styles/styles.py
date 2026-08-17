@@ -321,6 +321,66 @@ def muted_label() -> str:
     return f"color: {_active['text_muted']}; font-size: 12px;"
 
 
+def error_label() -> str:
+    """Message qui signale une saisie que pytest refuserait."""
+    return f"color: {_active['danger']}; font-size: 12px;"
+
+
+def line_edit(invalid: bool = False) -> str:
+    """Champ de saisie. `invalid` le borde de rouge sans rien effacer.
+
+    Rejeter la frappe ou vider le champ ferait perdre ce qu'on etait en train
+    d'ecrire ; le dire suffit.
+    """
+    p = _active
+    bordure = p["danger"] if invalid else p["border"]
+    return f"""
+    QLineEdit {{
+        background-color: {p['surface']};
+        border: 1px solid {bordure};
+        border-radius: 4px;
+        padding: 2px 8px;
+        font-size: 12px;
+        color: {p['text']};
+    }}
+    QLineEdit:focus {{
+        border-color: {p['danger'] if invalid else p['primary']};
+    }}
+    """
+
+
+def marker_chip() -> str:
+    """Puce de marker : une etiquette qu'on allume, pas un bouton d'action.
+
+    Ronde et sans relief au repos pour qu'une rangee de dix ne fasse pas
+    concurrence au bouton qui lance vraiment les tests. Elle prend l'accent de
+    l'application, et non le rouge de « Failed only » : elle selectionne, elle
+    n'alerte pas.
+    """
+    p = _active
+    return f"""
+    QPushButton {{
+        background-color: transparent;
+        border: 1px solid {p['toolbar_border']};
+        border-radius: 11px;
+        padding: 2px 12px;
+        font-size: 12px;
+        font-weight: 500;
+        color: {p['text_muted']};
+    }}
+    QPushButton:hover {{
+        border-color: {p['primary']};
+        color: {p['primary']};
+    }}
+    QPushButton:checked {{
+        background-color: {mix(p['surface'], p['primary'], 0.14)};
+        border-color: {p['primary']};
+        color: {p['primary']};
+        font-weight: 600;
+    }}
+    """
+
+
 # ---------- APP-WIDE STYLESHEET ----------
 def app_stylesheet() -> str:
     """Feuille de style globale (QApplication.setStyleSheet). Les styles poses

@@ -361,6 +361,53 @@ class TestTreeView(QTreeView):
             self.viewport().update()
         self._emit_selection_changed()
 
+    def set_checked_nodeids(self, nodeids) -> int:
+        """Ne coche QUE ces tests, et rend le nombre reellement coche.
+
+        En un seul passage, signaux coupes : cocher un a un declencherait un
+        recalcul de tous les parents a chaque case, soit un travail quadratique
+        sur une suite de plusieurs milliers de tests.
+        """
+        voulus = {self._norm(n) for n in nodeids}
+
+        self.setUpdatesEnabled(False)
+        self.model.blockSignals(True)
+        self._updating = True
+        try:
+            coches = 0
+            for cle, item in self._nodeid_to_item.items():
+                actif = cle in voulus
+                item.setCheckState(Qt.Checked if actif else Qt.Unchecked)
+                coches += actif
+            # Les parents ne portent pas de nodeid : leur etat se deduit de
+            # leurs enfants, une fois toutes les feuilles posees.
+            for row in range(self.model.rowCount()):
+                self._recompute_parent(self.model.item(row))
+        finally:
+            self._updating = False
+            self.model.blockSignals(False)
+            self.setUpdatesEnabled(True)
+            self.viewport().update()
+
+        self._emit_selection_changed()
+        return coches
+
+    def _recompute_parent(self, item: QStandardItem) -> Qt.CheckState:
+        """Etat d'un regroupement, deduit de bas en haut."""
+        if item.rowCount() == 0:
+            return item.checkState()
+
+        etats = {self._recompute_parent(item.child(row))
+                 for row in range(item.rowCount())}
+        if etats == {Qt.Checked}:
+            etat = Qt.Checked
+        elif etats == {Qt.Unchecked}:
+            etat = Qt.Unchecked
+        else:
+            etat = Qt.PartiallyChecked
+        item.setCheckState(etat)
+        return etat
+
     def _on_item_changed(self, item: QStandardItem):
         if self._updating:
             return

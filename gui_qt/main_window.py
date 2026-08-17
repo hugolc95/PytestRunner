@@ -21,6 +21,7 @@ import re
 import time
 from pathlib import Path
 
+from gui_qt.marker_bar import MarkerBar
 from gui_qt.test_tree_view import TestTreeView, short_reader_label
 from gui_qt.config.config_editor import ConfigEditor
 from gui_qt.campaign_window import CampaignPanel
@@ -31,7 +32,7 @@ from gui_qt.dialogs import (show_scrollable_error, open_test_log_for, open_confi
 from gui_qt.detail_panel import DetailPanel
 
 
-from core.test_discovery import collect_tests
+from core.test_discovery import collect_details
 from core.test_tree import build_test_tree
 from core.pytest_executor import (PytestOutputParser, compact_output_line,
                                   pytest_nodeid_args)
@@ -340,7 +341,9 @@ class PytestWorker(QThread):
 
 
 class WorkspaceLoadWorker(QThread):
-    loaded_signal = pyqtSignal(object, int, str)
+    # `object` au milieu et non `int` : la collecte rapporte aussi les markers
+    # de chaque test, releves pendant le meme passage de pytest.
+    loaded_signal = pyqtSignal(object, object, str)
     error_signal = pyqtSignal(str)
 
     def __init__(self, workspace, interpreter=None):
@@ -356,10 +359,10 @@ class WorkspaceLoadWorker(QThread):
             if self.interpreter:
                 probe_interpreter(self.interpreter)
 
-            nodeids = collect_tests(self.workspace, interpreter=self.interpreter)
-            roots = build_test_tree(nodeids, self.workspace,
+            collection = collect_details(self.workspace, interpreter=self.interpreter)
+            roots = build_test_tree(list(collection.nodeids), self.workspace,
                                     show_classes=show_test_classes(self.workspace))
-            self.loaded_signal.emit(roots, len(nodeids), self.workspace)
+            self.loaded_signal.emit(roots, collection, self.workspace)
         except Exception as exc:
             self.error_signal.emit(str(exc))
 
@@ -726,12 +729,20 @@ class MainWindow(QMainWindow):
         tree_toolbar.addLayout(
             segmented_group(self.btn_find_prev, self.btn_find_next))
 
+        self.marker_bar = MarkerBar()
+        self.marker_bar.filter_changed.connect(self.on_marker_filter)
+        self._markers_by_nodeid = {}
+
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
 
         left_layout.addLayout(tree_toolbar)
+        # Sous la recherche, au-dessus de l'arbre : les markers sont un axe de
+        # selection, ils appartiennent au meme endroit que « All » et « None ».
+        # La barre se masque d'elle-meme quand la suite n'en utilise aucun.
+        left_layout.addWidget(self.marker_bar)
         left_layout.addWidget(self.tree)
         left_layout.addWidget(self.selection_label)
 
@@ -996,6 +1007,7 @@ class MainWindow(QMainWindow):
 
         self.tree.setStyleSheet(tree_style())
         self.selection_label.setStyleSheet(styles.muted_label())
+        self.marker_bar.apply_theme()
 
         # Console, Source et Log posent leurs couleurs widget par widget et
         # reconstruisent leurs coloriseurs : sans cet appel, ces trois zones
@@ -1415,6 +1427,26 @@ class MainWindow(QMainWindow):
     def select_no_tests(self):
         self.tree.set_all_checked(False)
 
+    def on_marker_filter(self):
+        """Coche exactement les tests que l'expression de markers retient.
+
+        Un champ vide ne decoche rien : effacer le filtre pour retrouver une
+        selection patiemment faite a la main, et la voir disparaitre, serait la
+        pire des surprises.
+        """
+        predicat = self.marker_bar.matcher()
+        if predicat is None:
+            return
+
+        retenus = [nodeid for nodeid, noms in self._markers_by_nodeid.items()
+                   if predicat(frozenset(noms))]
+        coches = self.tree.set_checked_nodeids(retenus)
+
+        expression = self.marker_bar.expression()
+        self._queue_console_output(
+            f"{coches} tests match '{expression}'.\n" if coches
+            else f"No test matches '{expression}'.\n")
+
     def on_summary_clicked(self, status: str):
         if self.active_summary_filter == status:
             self.active_summary_filter = None
@@ -1531,8 +1563,11 @@ class MainWindow(QMainWindow):
         """
         self.details.show_for(target or None, nodeid or None)
 
-    def _on_workspace_loaded(self, roots, count: int, workspace: str):
+    def _on_workspace_loaded(self, roots, collection, workspace: str):
         self.workspace = workspace
+        count = len(collection)
+        self._markers_by_nodeid = dict(collection.markers)
+        self.marker_bar.set_markers(collection.marker_list())
         self.details.set_workspace(workspace, self.config_path(workspace))
         self.refresh_readers()
 

@@ -1,10 +1,19 @@
+import os
 import subprocess
 
+from core.markers import Collection, marker_probe, read_probe
 from core.python_interpreter import resolve_interpreter, subprocess_flags
 from core.workspace_config import import_mode_args, pytest_env
 
+_ENV_MARKERS = "PYTESTRUNNER_MARKERS_OUT"
+
 
 def collect_tests(workspace: str, interpreter: str | None = None) -> list[str]:
+    """Nodeids seuls. Voir `collect_details` pour les markers qui vont avec."""
+    return list(collect_details(workspace, interpreter).nodeids)
+
+
+def collect_details(workspace: str, interpreter: str | None = None) -> Collection:
     """
     Collecte les tests avec pytest et retourne les nodeids RELATIFS au workspace.
 
@@ -27,34 +36,47 @@ def collect_tests(workspace: str, interpreter: str | None = None) -> list[str]:
             "Settings > Test Python interpreter... menu"
         )
 
-    cmd = [
-        python,
-        "-m", "pytest",
-        "--collect-only",
-        "-q",
-        # Pas de --import-mode impose : le defaut de pytest (prepend) insere le
-        # dossier du fichier de test en tete de sys.path, ce dont dependent les
-        # suites dont le conftest importe un module voisin. Un workspace qui a
-        # besoin d'importlib le declare dans sa configuration.
-        *import_mode_args(workspace),
-    ]
+    # Les markers sont releves pendant CE passage : une seconde collecte
+    # doublerait l'attente, et sur un conftest qui parle au materiel elle la
+    # doublerait pour de bon.
+    with marker_probe() as (args_plugin, dossier_plugin, fichier_markers):
+        cmd = [
+            python,
+            "-m", "pytest",
+            "--collect-only",
+            "-q",
+            # Pas de --import-mode impose : le defaut de pytest (prepend) insere le
+            # dossier du fichier de test en tete de sys.path, ce dont dependent les
+            # suites dont le conftest importe un module voisin. Un workspace qui a
+            # besoin d'importlib le declare dans sa configuration.
+            *import_mode_args(workspace),
+            *args_plugin,
+        ]
 
-    try:
-        process = subprocess.run(
-            cmd,
-            cwd=workspace,
-            capture_output=True,
-            text=True,
-            env=pytest_env(workspace),
-            creationflags=subprocess_flags(),
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError(
-            f"Python interpreter not found: {python}\n"
-            "Fix the path in the Settings > Test Python interpreter... menu."
-        ) from exc
-    except OSError as exc:
-        raise RuntimeError(f"Could not start the interpreter {python}: {exc}") from exc
+        env = dict(pytest_env(workspace))
+        env[_ENV_MARKERS] = fichier_markers
+        ancien = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = dossier_plugin + (os.pathsep + ancien if ancien else "")
+
+        try:
+            process = subprocess.run(
+                cmd,
+                cwd=workspace,
+                capture_output=True,
+                text=True,
+                env=env,
+                creationflags=subprocess_flags(),
+            )
+        except FileNotFoundError as exc:
+            raise RuntimeError(
+                f"Python interpreter not found: {python}\n"
+                "Fix the path in the Settings > Test Python interpreter... menu."
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(
+                f"Could not start the interpreter {python}: {exc}") from exc
+
+        markers_par_nodeid, descriptions = read_probe(fichier_markers)
 
     # returncode 5 = no tests collected, pas une vraie erreur
     if process.returncode not in (0, 5):
@@ -84,4 +106,8 @@ def collect_tests(workspace: str, interpreter: str | None = None) -> list[str]:
             seen.add(normalized)
             results.append(normalized)
 
-    return results
+    # Le releve ne fait autorite que sur les tests que la collecte a listes :
+    # un plugin qui aurait rate son fichier ne doit pas inventer de tests.
+    markers_par_nodeid = {k: v for k, v in markers_par_nodeid.items() if k in seen}
+
+    return Collection(tuple(results), markers_par_nodeid, descriptions)

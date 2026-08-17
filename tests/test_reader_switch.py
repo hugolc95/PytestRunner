@@ -464,6 +464,7 @@ def test_a_disconnected_reader_stays_selectable():
 
 def test_loading_a_workspace_repairs_an_interrupted_run(qtbot, tmp_path):
     """Le lecteur affiche aurait sinon change sans que personne ne l'ait demande."""
+    from core.markers import Collection
     from gui_qt.main_window import MainWindow
 
     config = tmp_path / "config.yml"
@@ -473,7 +474,7 @@ def test_loading_a_workspace_repairs_an_interrupted_run(qtbot, tmp_path):
 
     fenetre = MainWindow()
     qtbot.addWidget(fenetre)
-    fenetre._on_workspace_loaded([], 0, str(tmp_path))
+    fenetre._on_workspace_loaded([], Collection(), str(tmp_path))
     fenetre._flush_console_output()
 
     assert read_active_reader(config) == "Lecteur A"
