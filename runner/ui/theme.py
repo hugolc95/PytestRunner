@@ -89,6 +89,24 @@ QPushButton#Primary:disabled {{
     background-color: transparent; color: {t.TEXT_FAINT}; border-color: {t.BORDER};
 }}
 
+/* Lancer : vert plein, comme dans l'ancienne interface. */
+QPushButton#Run {{
+    background-color: {t.RUN};
+    color: #06120a;
+    border: 1px solid {t.RUN};
+    font-weight: 600;
+    padding: 0 {t.SPACE_4}px;
+}}
+QPushButton#Run:hover {{
+    background-color: {t.RUN_HOVER}; border-color: {t.RUN_HOVER};
+}}
+QPushButton#Run:pressed {{
+    background-color: {t.RUN_PRESSED}; border-color: {t.RUN_PRESSED};
+}}
+QPushButton#Run:disabled {{
+    background-color: transparent; color: {t.TEXT_FAINT}; border-color: {t.BORDER};
+}}
+
 /* Ghost : rien tant qu'on ne le survole pas. Un bouton rare ne doit pas peser
    autant qu'une action courante. */
 QPushButton#Ghost {{

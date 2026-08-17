@@ -1,6 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 """Recette PyInstaller pour l'interface Pytest Runner.
 
+Construit l'interface courante (runner/). L'ancienne (main_qt.py + gui_qt/)
+reste dans le depot et se lance par `python main_qt.py` ; pour en rebuilder
+l'exe a l'identique :
+    git checkout v1.0-classic && build_exe.bat
+
 L'exe ne contient QUE l'interface. Il n'embarque ni pytest, ni les dependances
 des tests : ceux-ci sont lances dans un processus separe, avec l'interpreteur
 Python configure dans le menu Configuration. C'est ce qui permet de distribuer
@@ -53,14 +58,22 @@ EXCLUDES = [
 ]
 
 
+# qtawesome porte ses pictogrammes dans des fichiers de police. Sans eux,
+# l'interface se lance mais toutes les icones sont vides : le module gere ce
+# cas sans planter, ce qui rend la panne d'autant plus discrete.
+from PyInstaller.utils.hooks import collect_data_files
+
+QTAWESOME_DATA = collect_data_files("qtawesome")
+
+
 a = Analysis(
-    ["main_qt.py"],
+    ["main_runner.py"],
     pathex=[],
     binaries=[],
     # config.yaml n'est PAS embarque : il est lu dans le workspace de
     # l'utilisateur, pas a cote de l'exe.
-    datas=[],
-    hiddenimports=["yaml"],
+    datas=QTAWESOME_DATA,
+    hiddenimports=["yaml", "qtawesome"],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

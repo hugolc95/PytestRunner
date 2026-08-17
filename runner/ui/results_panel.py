@@ -35,14 +35,17 @@ from PyQt5.QtWidgets import (
 
 from runner.domain import failures as failures_mod
 from runner.domain.models import Reader, ReaderReport, Status
+from runner.domain.source import path_of as source_path
 from runner.ui import icons, theme
 from runner.ui import tokens as t
 from runner.ui.console_view import ConsoleView
 from runner.ui.detail_panel import DetailPanel
+from runner.ui.source_panel import SourcePanel
 
 ONGLET_DETAIL = 0
-ONGLET_OUTPUT = 1
-ONGLET_LOGS = 2
+ONGLET_SOURCE = 1
+ONGLET_OUTPUT = 2
+ONGLET_LOGS = 3
 
 
 class ReaderViews(QWidget):
@@ -226,6 +229,8 @@ class ResultsPanel(QWidget):
         self.detail = DetailPanel()
         self.detail.open_output.connect(self.show_output)
 
+        self.source = SourcePanel()
+
         self.output = ReaderViews(Qt.Vertical)
         self.logs = ReaderViews(Qt.Horizontal, sync_scroll=True, show_lens=False)
 
@@ -238,14 +243,21 @@ class ResultsPanel(QWidget):
         self.tabs.addTab(self.detail,
                          icons.icon("mdi.text-box-search-outline", t.TEXT_MUTED),
                          "Detail")
+        self.tabs.addTab(self.source,
+                         icons.icon("mdi.file-code-outline", t.TEXT_MUTED),
+                         "Source")
         self.tabs.addTab(self.output, icons.icon("mdi.console", t.TEXT_MUTED),
                          "Output")
         self.tabs.addTab(self.logs,
                          icons.icon("mdi.file-document-outline", t.TEXT_MUTED),
                          "Logs")
-        self.tabs.setTabToolTip(ONGLET_DETAIL, "What happened to the selected test  (Ctrl+1)")
-        self.tabs.setTabToolTip(ONGLET_OUTPUT, "Everything pytest wrote  (Ctrl+2)")
-        self.tabs.setTabToolTip(ONGLET_LOGS, "The .log files of the selected test  (Ctrl+3)")
+        self.tabs.setTabToolTip(ONGLET_DETAIL,
+                                "What happened to the selected test  (Ctrl+1)")
+        self.tabs.setTabToolTip(ONGLET_SOURCE,
+                                "The file of the selected test, editable  (Ctrl+2)")
+        self.tabs.setTabToolTip(ONGLET_OUTPUT, "Everything pytest wrote  (Ctrl+3)")
+        self.tabs.setTabToolTip(ONGLET_LOGS,
+                                "The .log files of the selected test  (Ctrl+4)")
 
         colonne = QVBoxLayout(self)
         colonne.setContentsMargins(0, 0, 0, 0)
@@ -274,6 +286,8 @@ class ResultsPanel(QWidget):
         self._sorties.clear()
         self._index_echecs.clear()
         self.detail.clear()
+        self.source.save()
+        self.source.clear()
         self.output.set_readers(readers)
         self.logs.set_readers(readers)
 
@@ -307,11 +321,13 @@ class ResultsPanel(QWidget):
 
     # ---------------------------------------------------------------- detail
 
-    def show_test(self, nodeid: str, statuses: dict[int, Status]) -> None:
-        """Selectionne un test : sa fiche, et ses logs."""
+    def show_test(self, nodeid: str, statuses: dict[int, Status],
+                  workspace: str = "") -> None:
+        """Selectionne un test : sa fiche, sa source, et ses logs."""
         self._nodeid = nodeid
         self._statuses = dict(statuses)
         self._refresh_detail()
+        self.source.show_file(source_path(workspace, nodeid), nodeid)
         self.show_logs_for(nodeid, self._readers)
 
     def update_statuses(self, nodeid: str, statuses: dict[int, Status]) -> None:

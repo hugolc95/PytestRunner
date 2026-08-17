@@ -39,6 +39,7 @@ from runner.ui.results_panel import (
     ONGLET_DETAIL,
     ONGLET_LOGS,
     ONGLET_OUTPUT,
+    ONGLET_SOURCE,
     ResultsPanel,
 )
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
@@ -135,12 +136,26 @@ class MainWindow(QMainWindow):
         self.load_button.setToolTip("Collect the tests of this workspace  (Ctrl+O)")
         self.load_button.clicked.connect(self.load_workspace)
 
+        # Vert et non l'accent bleu : « lancer » et « arreter » sont les deux
+        # gestes qu'on cherche sans lire, et vert/rouge est la convention de
+        # tous les lanceurs de tests. C'est la seule entorse a la couleur
+        # d'accent unique, et elle est deliberee.
         self.run_button = QPushButton("Run tests")
-        self.run_button.setObjectName("Primary")
-        self.run_button.setIcon(icons.icon("mdi.play", "#06101f"))
+        self.run_button.setObjectName("Run")
+        self.run_button.setIcon(icons.icon("mdi.play", "#06120a"))
         self.run_button.setToolTip("Run the selected tests  (F5)")
         self.run_button.setCursor(Qt.PointingHandCursor)
         self.run_button.clicked.connect(self.run_selected)
+
+        # Sorti du menu : apres un run rouge, relancer les seuls echecs est
+        # l'action suivante une fois sur deux. La chercher dans un menu est
+        # un pas de trop.
+        self.rerun_button = QPushButton("Re-run failed")
+        self.rerun_button.setObjectName("Ghost")
+        self.rerun_button.setIcon(icons.icon("mdi.replay", t.TEXT_MUTED))
+        self.rerun_button.setToolTip("Run only the tests that failed  (F6)")
+        self.rerun_button.setCursor(Qt.PointingHandCursor)
+        self.rerun_button.clicked.connect(self.rerun_failed)
 
         self.stop_button = QPushButton("Stop")
         self.stop_button.setObjectName("Danger")
@@ -152,6 +167,7 @@ class MainWindow(QMainWindow):
         ligne.addWidget(self.browse_button)
         ligne.addWidget(self.load_button)
         ligne.addStretch(1)
+        ligne.addWidget(self.rerun_button)
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.run_button)
         return barre
@@ -351,9 +367,12 @@ class MainWindow(QMainWindow):
         self._action(vue, "Test detail", "Ctrl+1",
                      lambda: self.results.show_tab(ONGLET_DETAIL),
                      "mdi.text-box-search-outline")
-        self._action(vue, "Raw output", "Ctrl+2",
+        self._action(vue, "Source", "Ctrl+2",
+                     lambda: self.results.show_tab(ONGLET_SOURCE),
+                     "mdi.file-code-outline")
+        self._action(vue, "Raw output", "Ctrl+3",
                      lambda: self.results.show_tab(ONGLET_OUTPUT), "mdi.console")
-        self._action(vue, "Logs", "Ctrl+3",
+        self._action(vue, "Logs", "Ctrl+4",
                      lambda: self.results.show_tab(ONGLET_LOGS),
                      "mdi.file-document-outline")
         vue.addSeparator()
@@ -512,6 +531,16 @@ class MainWindow(QMainWindow):
         if self.workspace is None or not nodeids or self.service.busy:
             return
 
+        # Une correction encore dans le tampon de l'editeur ferait relancer la
+        # version d'avant, et chercher pourquoi elle n'a rien change.
+        if not self.results.source.save():
+            ErrorDialog.show_error(
+                self, "Could not save the source",
+                "The file you edited could not be written, so the run would "
+                "use the previous version.",
+                str(self.results.source.path() or ""))
+            return
+
         requete = RunRequest(
             workspace=self.workspace.path,
             interpreter=self.workspace.interpreter,
@@ -607,7 +636,9 @@ class MainWindow(QMainWindow):
             return
         nodeid = self.model.data(index.siblingAtColumn(0), NODEID_ROLE)
         if nodeid:
-            self.results.show_test(nodeid, self.model.statuses_for_nodeid(nodeid))
+            self.results.show_test(
+                nodeid, self.model.statuses_for_nodeid(nodeid),
+                self.workspace.path if self.workspace else "")
 
     @pyqtSlot(int, int)
     def _on_selection_changed(self, coches: int, total: int) -> None:
@@ -751,8 +782,9 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(occupe)
         self.act_run.setEnabled(self.run_button.isEnabled())
         self.act_stop.setEnabled(occupe)
-        self.act_rerun.setEnabled(charge and not occupe
-                                  and bool(self.model.failed_nodeids()))
+        rejouable = charge and not occupe and bool(self.model.failed_nodeids())
+        self.act_rerun.setEnabled(rejouable)
+        self.rerun_button.setEnabled(rejouable)
         self.act_diverge.setEnabled(len(self.model.readers) > 1)
 
     def _restore(self) -> None:
@@ -777,6 +809,7 @@ class MainWindow(QMainWindow):
             self.tree.header().restoreState(colonnes)
 
     def closeEvent(self, event) -> None:
+        self.results.source.save()
         self.settings.setValue(K_GEOMETRY, self.saveGeometry())
         self.settings.setValue(K_STATE, self.saveState())
         self.settings.setValue(K_SPLIT_MAIN, self.split.saveState())

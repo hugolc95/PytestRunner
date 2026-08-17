@@ -14,8 +14,16 @@ python -c "import PyQt5" 2>nul
 if errorlevel 1 (
     echo PyQt5 est introuvable pour ce Python.
     echo Installez les dependances de build avec :
-    echo     python -m pip install PyQt5 PyYAML pyinstaller
+    echo     python -m pip install PyQt5 PyYAML qtawesome pyinstaller
     exit /b 1
+)
+
+python -c "import qtawesome" 2>nul
+if errorlevel 1 (
+    echo qtawesome est introuvable : sans lui l'exe se lance mais toutes
+    echo les icones sont vides. Installation...
+    python -m pip install qtawesome
+    if errorlevel 1 exit /b 1
 )
 
 python -c "import PyInstaller" 2>nul

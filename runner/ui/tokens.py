@@ -69,6 +69,13 @@ ACCENT_HOVER = "#5f9bff"
 ACCENT_PRESSED = "#3f7ae6"
 ACCENT_SOFT = "#1d2a44"
 
+# Lancer et arreter sont les deux gestes qu'on cherche sans lire. Vert / rouge
+# est la convention de tous les lanceurs de tests, et c'est la seule entorse
+# assumee a la regle « une seule couleur d'accent ».
+RUN = "#2f9150"
+RUN_HOVER = "#37a75d"
+RUN_PRESSED = "#277b43"
+
 # Les statuts ne sont pas des accents : ce sont des donnees. Ils n'apparaissent
 # que sur des pastilles et des icones, jamais sur un bouton.
 # Volontairement inegales en intensite : un run vert ne se regarde pas, un
@@ -112,6 +119,32 @@ ANSI_BRIGHT: dict[str, str] = {
     "cyan": "#5adbd1",
     "white": "#ffffff",
 }
+
+
+# Coloration syntaxique de l'onglet Source. Une famille froide, posee sur le
+# fond d'entree presque noir : le rouge des chaines des themes clairs y vibre.
+SYNTAX: dict[str, str] = {
+    "keyword": "#c792ea",
+    "builtin": "#82aaff",
+    "string": "#c3e88d",
+    "docstring": "#788a9c",
+    "comment": "#5d6675",
+    "number": "#f78c6c",
+    "decorator": "#ffcb6b",
+    "function": "#82aaff",
+    "classname": "#ffcb6b",
+    "self": "#f07178",
+}
+
+# Gouttiere des numeros de ligne, et surbrillance de la ligne courante.
+GUTTER_BG = "#0d0f13"
+GUTTER_TEXT = "#4a525f"
+GUTTER_CURRENT = "#8b94a3"
+CURRENT_LINE = "#141922"
+
+
+def syntax_color(role: str) -> str:
+    return SYNTAX.get(role, TEXT)
 
 
 def reader_color(index: int) -> str:
