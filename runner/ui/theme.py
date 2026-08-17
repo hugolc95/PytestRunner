@@ -187,6 +187,29 @@ QLineEdit, QComboBox {{
     selection-color: #06101f;
 }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {t.ACCENT}; }}
+/* Une expression que pytest refuserait : le champ le dit avant qu'on lance. */
+QLineEdit[invalid="true"] {{ border-color: {t.status_color(Status.FAILED)}; }}
+
+/* Puce de marker : une etiquette qu'on peut allumer, pas un bouton d'action.
+   Ronde et sans relief au repos pour qu'une rangee de dix ne fasse pas
+   concurrence au bouton qui lance vraiment les tests. */
+QPushButton#Chip {{
+    background-color: transparent;
+    border: 1px solid {t.BORDER_STRONG};
+    border-radius: {t.RADIUS_PILL}px;
+    color: {t.TEXT_MUTED};
+    padding: 0 {t.SPACE_3}px;
+    min-height: {t.CONTROL_SM - 4}px;
+    max-height: {t.CONTROL_SM - 4}px;
+    font-size: {t.TEXT_XS}px;
+    font-weight: 600;
+}}
+QPushButton#Chip:hover {{ background-color: {t.BG_HOVER}; color: {t.TEXT}; }}
+QPushButton#Chip:checked {{
+    background-color: {t.rgba(t.ACCENT, 0.16)};
+    border-color: {t.ACCENT};
+    color: {t.ACCENT};
+}}
 QComboBox::drop-down {{ border: none; width: {t.SPACE_6}px; }}
 QComboBox::down-arrow {{
     image: url({glyphs.chevron_down(t.TEXT_MUTED)});

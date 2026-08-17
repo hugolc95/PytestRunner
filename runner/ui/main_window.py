@@ -34,6 +34,7 @@ from runner.domain.workspace import Workspace
 from runner.services.run_service import CollectWorker, RunService
 from runner.ui import icons, theme
 from runner.ui import tokens as t
+from runner.ui.marker_bar import MarkerBar
 from runner.ui.results_panel import (
     ONGLET_DETAIL,
     ONGLET_LOGS,
@@ -68,6 +69,7 @@ class MainWindow(QMainWindow):
         self.service = RunService(self)
         self._collector: CollectWorker | None = None
         self._matches: list[str] = []
+        self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
         self._match_index = -1
         self._elapsed = QTimer(self)
         self._elapsed.setInterval(1000)
@@ -196,6 +198,13 @@ class MainWindow(QMainWindow):
         self.tree_toolbar.setLayout(outils)
         self.tree_toolbar.setVisible(False)
         colonne.addWidget(self.tree_toolbar)
+
+        # Sous la recherche, au-dessus de l'arbre : les markers sont un axe de
+        # selection, ils appartiennent au meme endroit que les cases a cocher.
+        # La barre se masque d'elle-meme quand la suite n'en utilise aucun.
+        self.markers = MarkerBar()
+        self.markers.filter_changed.connect(self._on_marker_filter)
+        colonne.addWidget(self.markers)
 
         self.tree = QTreeView()
         self.tree.setModel(self.model)
@@ -383,11 +392,15 @@ class MainWindow(QMainWindow):
         self._collector.failed.connect(self._on_collect_failed)
         self._collector.start()
 
-    @pyqtSlot(list)
-    def _on_collected(self, nodeids: list) -> None:
+    @pyqtSlot(object)
+    def _on_collected(self, collection) -> None:
         self.progress.setVisible(False)
         self.progress.setRange(0, 100)
         self.load_button.setEnabled(True)
+
+        nodeids = list(collection.nodeids)
+        self._markers_by_nodeid = dict(collection.markers)
+        self.markers.set_markers(collection.marker_list())
 
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
         lecteurs = self.workspace.readers if self.workspace else ()
@@ -577,6 +590,33 @@ class MainWindow(QMainWindow):
         lecteurs = self.workspace.readers if self.workspace else ()
         if 0 <= index < len(lecteurs):
             self.status_label.setText(f"Showing {lecteurs[index].name}")
+
+    @pyqtSlot()
+    def _on_marker_filter(self) -> None:
+        """Coche exactement les tests que l'expression retient.
+
+        Un champ vide ne decoche rien : effacer le filtre pour retrouver la
+        selection qu'on avait patiemment faite a la main, et la voir disparaitre,
+        serait la pire des surprises.
+        """
+        predicat = self.markers.matcher()
+        if predicat is None:
+            return
+
+        retenus = [nodeid for nodeid, noms in self._markers_by_nodeid.items()
+                   if predicat(frozenset(noms))]
+
+        self.model.set_all_checked(False)
+        for nodeid in retenus:
+            index = self.model.index_for_nodeid(nodeid)
+            if index.isValid():
+                self.model.setData(index, Qt.Checked, Qt.CheckStateRole)
+
+        if retenus:
+            self._reveal(retenus[0])
+        self.status_label.setText(
+            f"{len(retenus)} tests match “{self.markers.expression()}”"
+            if retenus else f"No test matches “{self.markers.expression()}”")
 
     @pyqtSlot()
     def select_divergent(self) -> None:

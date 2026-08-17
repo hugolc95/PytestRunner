@@ -20,7 +20,9 @@ class CollectWorker(QThread):
     secondes. La faire dans le fil UI gele la fenetre.
     """
 
-    collected = pyqtSignal(list)
+    # `object` et non `list` : la collecte rapporte aussi les markers de chaque
+    # test, releves pendant le meme passage de pytest.
+    collected = pyqtSignal(object)
     failed = pyqtSignal(str)
 
     def __init__(self, workspace: str, interpreter: str, env: dict, parent=None):
@@ -31,11 +33,12 @@ class CollectWorker(QThread):
 
     def run(self) -> None:  # pragma: no cover - execute dans un thread Qt
         try:
-            nodeids = execution.collect(self._workspace, self._interpreter, self._env)
+            collection = execution.collect(self._workspace, self._interpreter,
+                                           self._env)
         except RuntimeError as exc:
             self.failed.emit(str(exc))
             return
-        self.collected.emit(nodeids)
+        self.collected.emit(collection)
 
 
 class _ReaderWorker(QThread):

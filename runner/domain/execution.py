@@ -13,9 +13,11 @@ import tempfile
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 
-from runner.domain import parsing
+from runner.domain import markers, parsing
+from runner.domain.markers import Marker, marker_probe, read_probe, summarize
 from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest, Status
 from runner.domain.reader_isolation import ENV_CONFIG, ENV_READER, reader_plugin
 
@@ -52,41 +54,79 @@ def _fichier_arguments(nodeids: tuple[str, ...]):
             pass
 
 
+@dataclass(frozen=True)
+class Collection:
+    """Ce qu'une collecte rapporte d'un workspace.
+
+    Les markers voyagent avec les nodeids parce qu'ils sortent du MEME passage
+    de pytest : une seconde collecte doublerait l'attente, et sur un conftest
+    qui parle au materiel elle la doublerait pour de bon.
+    """
+
+    nodeids: tuple[str, ...] = ()
+    markers: dict[str, tuple[str, ...]] = field(default_factory=dict)
+    declared: dict[str, str] = field(default_factory=dict)
+
+    def __len__(self) -> int:
+        return len(self.nodeids)
+
+    def __iter__(self):
+        return iter(self.nodeids)
+
+    def marker_list(self) -> list[Marker]:
+        return summarize(self.markers, self.declared)
+
+
 def collect(workspace: str, interpreter: str, env: dict | None = None,
-            timeout: float = 120.0) -> list[str]:
-    """Nodeids de la suite, relatifs au workspace.
+            timeout: float = 120.0) -> Collection:
+    """Nodeids de la suite et leurs markers, relatifs au workspace.
 
     Leve RuntimeError avec un message lisible : c'est ce message que
     l'interface affichera, il ne doit pas etre une stacktrace.
     """
-    commande = [interpreter, "-m", "pytest", "--collect-only", "-q"]
-    try:
-        process = subprocess.run(
-            commande, cwd=workspace, capture_output=True, text=True,
-            timeout=timeout, env=env or os.environ.copy(),
-            creationflags=creation_flags(),
-        )
-    except FileNotFoundError as exc:
-        raise RuntimeError(f"Python interpreter not found: {interpreter}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError(
-            f"Collection timed out after {timeout:.0f}s. "
-            "A conftest that connects to hardware at import time can hang here."
-        ) from exc
-    except OSError as exc:
-        raise RuntimeError(f"Could not start {interpreter}: {exc}") from exc
+    with marker_probe() as (args_plugin, dossier_plugin, fichier_markers):
+        commande = [interpreter, "-m", "pytest", "--collect-only", "-q",
+                    *args_plugin]
+        environnement = markers.environment(env, fichier_markers)
+        ancien = environnement.get("PYTHONPATH", "")
+        environnement["PYTHONPATH"] = dossier_plugin + (
+            os.pathsep + ancien if ancien else "")
 
-    # 5 = aucun test collecte. Ce n'est pas une erreur, juste un dossier vide.
-    if process.returncode not in (0, 5):
-        sortie = process.stderr or process.stdout or ""
-        if "No module named pytest" in sortie:
-            raise RuntimeError(
-                f"pytest is not installed in the test interpreter:\n  {interpreter}\n\n"
-                f'Install it with:\n  "{interpreter}" -m pip install pytest'
+        try:
+            process = subprocess.run(
+                commande, cwd=workspace, capture_output=True, text=True,
+                timeout=timeout, env=environnement,
+                creationflags=creation_flags(),
             )
-        raise RuntimeError(sortie.strip() or "pytest could not collect the tests.")
+        except FileNotFoundError as exc:
+            raise RuntimeError(f"Python interpreter not found: {interpreter}") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(
+                f"Collection timed out after {timeout:.0f}s. "
+                "A conftest that connects to hardware at import time can hang here."
+            ) from exc
+        except OSError as exc:
+            raise RuntimeError(f"Could not start {interpreter}: {exc}") from exc
 
-    return parsing.parse_collect_only(process.stdout)
+        # 5 = aucun test collecte. Ce n'est pas une erreur, juste un dossier vide.
+        if process.returncode not in (0, 5):
+            sortie = process.stderr or process.stdout or ""
+            if "No module named pytest" in sortie:
+                raise RuntimeError(
+                    f"pytest is not installed in the test interpreter:\n  {interpreter}\n\n"
+                    f'Install it with:\n  "{interpreter}" -m pip install pytest'
+                )
+            raise RuntimeError(sortie.strip() or "pytest could not collect the tests.")
+
+        nodeids = parsing.parse_collect_only(process.stdout)
+        par_nodeid, descriptions = read_probe(fichier_markers)
+
+    # Le releve ne fait autorite que sur les tests que la collecte a listes :
+    # un plugin qui aurait rate son fichier ne doit pas inventer de tests.
+    connus = set(nodeids)
+    par_nodeid = {k: v for k, v in par_nodeid.items() if k in connus}
+
+    return Collection(tuple(nodeids), par_nodeid, descriptions)
 
 
 class ReaderRun:
