@@ -10,6 +10,8 @@
 
 import os
 
+from pathlib import Path
+
 from PyQt5.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -19,11 +21,18 @@ from PyQt5.QtWidgets import (
     QLabel,
     QApplication,
     QMessageBox,
+    QFileDialog,
+    QInputDialog,
 )
 from PyQt5.QtCore import Qt
 
 from gui_qt.styles.styles import primary_button, neutral_button
-from gui_qt.config.config_loader import find_test_log, resolve_log_root
+from gui_qt.config.config_loader import (
+    STANDARD_CONFIG_NAMES,
+    discover_config_candidates,
+    find_test_log,
+    resolve_log_root,
+)
 
 
 def show_scrollable_error(parent, title: str, message: str, intro: str | None = None):
@@ -42,15 +51,15 @@ def show_scrollable_error(parent, title: str, message: str, intro: str | None = 
     text_edit = QTextEdit()
     text_edit.setReadOnly(True)
     text_edit.setLineWrapMode(QTextEdit.NoWrap)
-    text_edit.setPlainText(message or "(aucun detail)")
+    text_edit.setPlainText(message or "(no detail)")
     layout.addWidget(text_edit)
 
     button_bar = QHBoxLayout()
-    copy_button = QPushButton("Copier")
+    copy_button = QPushButton("Copy")
     copy_button.setStyleSheet(neutral_button())
     copy_button.clicked.connect(lambda: QApplication.clipboard().setText(message or ""))
 
-    close_button = QPushButton("Fermer")
+    close_button = QPushButton("Close")
     close_button.setStyleSheet(primary_button())
     close_button.clicked.connect(dialog.accept)
 
@@ -72,6 +81,79 @@ def show_scrollable_error(parent, title: str, message: str, intro: str | None = 
     dialog.exec_()
 
 
+def resolve_config_to_open(parent, workspace: str, remembered: str | None = None) -> Path | None:
+    """Determine quel fichier de configuration ouvrir pour ce workspace.
+
+    Beaucoup de projets n'appellent pas leur configuration `config.yml`. Plutot
+    que d'abandonner avec "No config.yaml found", on procede par ordre :
+
+    1. le fichier deja choisi pour ce workspace, s'il existe toujours ;
+    2. un nom standard (config.yaml / config.yml) present a la racine ;
+    3. l'unique YAML de la racine, s'il n'y en a qu'un ;
+    4. sinon on laisse l'utilisateur choisir (liste des YAML trouves, ou
+       selecteur de fichiers si la racine n'en contient aucun).
+
+    Retourne None si l'utilisateur annule.
+    """
+    if remembered:
+        remembered_path = Path(remembered)
+        if remembered_path.is_file():
+            return remembered_path
+
+    candidates = discover_config_candidates(workspace)
+
+    for path in candidates:
+        if path.name in STANDARD_CONFIG_NAMES:
+            return path
+
+    if len(candidates) == 1:
+        return candidates[0]
+
+    if candidates:
+        names = [path.name for path in candidates]
+        choice, accepted = QInputDialog.getItem(
+            parent,
+            "Choose the configuration",
+            f"No {STANDARD_CONFIG_NAMES[0]} file in this workspace.\n"
+            "YAML files found at the root:",
+            names,
+            0,
+            False,
+        )
+        if not accepted:
+            return None
+        return Path(workspace) / choice
+
+    path, _ = QFileDialog.getOpenFileName(
+        parent,
+        "Choose the configuration file",
+        workspace,
+        "YAML files (*.yml *.yaml);;All files (*)",
+    )
+    return Path(path) if path else None
+
+
+def open_config_editor(parent, workspace: str, settings=None) -> None:
+    """Ouvre l'editeur de configuration pour ce workspace.
+
+    Le fichier retenu est memorise par workspace, pour que les clics suivants
+    n'aient plus a demander. Partage entre les onglets Workspace et Campaign.
+    """
+    from gui_qt.config.config_dialog import ConfigDialog
+
+    key = f"config_file/{workspace}"
+    remembered = settings.value(key, "", type=str) if settings is not None else ""
+
+    config_path = resolve_config_to_open(parent, workspace, remembered)
+    if config_path is None:
+        return
+
+    if settings is not None:
+        settings.setValue(key, str(config_path))
+
+    ConfigDialog(config_path, parent).exec_()
+
+
 def _startfile(parent, path) -> bool:
     """Ouvre un fichier/dossier avec l'application par defaut de Windows.
     Retourne True si l'ouverture a ete tentee, False sinon (plateforme non geree)."""
@@ -81,38 +163,49 @@ def _startfile(parent, path) -> bool:
     except AttributeError:
         QMessageBox.information(
             parent,
-            "Non supporte",
-            f"Ouverture automatique non disponible sur cette plateforme.\nChemin : {path}",
+            "Not supported",
+            f"Automatic opening is not available on this platform.\nPath: {path}",
         )
         return False
     except OSError as exc:
-        QMessageBox.critical(parent, "Erreur", f"Impossible d'ouvrir :\n{exc}")
+        QMessageBox.critical(parent, "Error", f"Could not open:\n{exc}")
         return True
 
 
-def open_test_log_for(parent, workspace: str, nodeid: str):
+def remembered_config_path(workspace: str, settings) -> str:
+    """Fichier de configuration deja retenu pour ce workspace, ou "".
+
+    C'est lui qui porte LOG_PATH dans les projets dont la configuration ne
+    s'appelle pas config.yml.
+    """
+    if settings is None or not workspace:
+        return ""
+    return settings.value(f"config_file/{workspace}", "", type=str)
+
+
+def open_test_log_for(parent, workspace: str, nodeid: str, config_path: str | None = None):
     """Ouvre le fichier .log du dernier run pour ce test (via le manifeste ecrit par
     le conftest). A defaut : ouvre le dossier racine des logs s'il existe, sinon
     informe qu'aucun log n'a encore ete produit. Partage entre les onglets Workspace
     et Campaign."""
-    log_path = find_test_log(workspace, nodeid)
+    log_path = find_test_log(workspace, nodeid, config_path)
     if log_path is not None:
         _startfile(parent, log_path)
         return
 
-    log_root = resolve_log_root(workspace)
+    log_root = resolve_log_root(workspace, config_path)
     if log_root.is_dir():
         QMessageBox.information(
             parent,
-            "Log introuvable",
-            "Aucun log pour ce test precis dans le dernier run.\n"
-            f"Ouverture du dossier des logs :\n{log_root}",
+            "Log not found",
+            "No log for this specific test in the last run.\n"
+            f"Opening the logs folder:\n{log_root}",
         )
         _startfile(parent, log_root)
     else:
         QMessageBox.information(
             parent,
-            "Aucun log",
-            "Aucun log n'a encore ete produit pour ce workspace.\n"
-            "Lancez d'abord ce test (le conftest cree un .log par test execute).",
+            "No log",
+            "No log has been produced yet for this workspace.\n"
+            "Run this test first (the conftest creates a .log per test run).",
         )

@@ -3,11 +3,10 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
-import sys
 import time
 from dataclasses import dataclass
 
-from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QSettings
+from PyQt5.QtCore import Qt, QThread, pyqtSignal, QTimer, QModelIndex, QPointF, QSettings
 from PyQt5.QtGui import QTextCursor
 from PyQt5.QtWidgets import (
     QWidget,
@@ -26,18 +25,29 @@ from PyQt5.QtWidgets import (
     QSizePolicy,
     QMenu,
     QDialog,
-    QCheckBox,
+    QFrame,
 )
-from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QBrush
+from PyQt5.QtGui import QStandardItemModel, QStandardItem, QIcon, QBrush, QColor, QCursor, QPainter, QPolygonF
 
 from core.campaign import Campaign, CampaignScenario, CampaignTest, load_campaign, command_to_display
 from core.failure_report import extract_failure_traceback
-from core.pytest_executor import parse_test_status_line
+from core.pytest_executor import (PytestOutputParser, compact_output_line,
+                                  pytest_nodeid_args)
 from core.run_history import RunHistoryManager, new_run_id, history_dir
-from gui_qt.config.config_loader import find_config_yaml
-from gui_qt.config.config_dialog import ConfigDialog
-from gui_qt.dialogs import show_scrollable_error, open_test_log_for
-from gui_qt.styles.styles import primary_button, neutral_button, success_button, danger_button, toolbar_button, tree_style, console_style
+from core.workspace_config import (console_path_levels, import_mode_args, pythonpath_for,
+                                   show_test_classes)
+from core.python_interpreter import (
+    check_ready_to_run,
+    resolve_interpreter,
+    subprocess_flags,
+)
+from gui_qt.dialogs import (show_scrollable_error, open_test_log_for, open_config_editor,
+                            remembered_config_path)
+from gui_qt.detail_panel import DetailPanel
+from gui_qt.styles import styles
+from gui_qt.styles.styles import (primary_button, neutral_button, success_button, danger_button,
+                                  info_button, separator_style, toolbar_button, tree_style,
+                                  console_style)
 from gui_qt.status_icons import STATUS_PRIORITY, STATUS_COLORS, status_icon
 
 
@@ -62,6 +72,9 @@ class CampaignTreeView(QTreeView):
     selection_changed = pyqtSignal(int, int)
     # Emis avec le nodeid d'un test dont on veut ouvrir le fichier .log.
     open_log_requested = pyqtSignal(str)
+    # Emis (target, nodeid) quand un element est clique, pour alimenter les
+    # onglets Source et Log.
+    item_clicked = pyqtSignal(str, str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -83,6 +96,17 @@ class CampaignTreeView(QTreeView):
 
         self.setContextMenuPolicy(Qt.CustomContextMenu)
         self.customContextMenuRequested.connect(self._show_context_menu)
+
+        self.clicked.connect(self._on_index_clicked)
+
+    def _on_index_clicked(self, index: QModelIndex):
+        item = self.model.itemFromIndex(index)
+        if item is None:
+            return
+        nodeid = item.data(NODEID_ROLE) or ""
+        # Un scenario ou un setup n'a pas de nodeid : seule la source du test a
+        # un sens ici, donc la cible se deduit du nodeid quand il existe.
+        self.item_clicked.emit(nodeid, nodeid)
 
     def _norm(self, value: str) -> str:
         # Sous Windows, pytest affiche parfois les nodeids avec des antislashs
@@ -276,7 +300,12 @@ class CampaignTreeView(QTreeView):
     # -----------------------------
 
     def reset_result_colors(self):
+        # Signaux bloques pendant le parcours : chaque setData/setIcon emet sinon
+        # itemChanged, donc _on_item_changed repropage les cases a cocher sur tout
+        # l'arbre a chaque item touche (cout quadratique). On ne modifie ici que
+        # l'apparence, jamais les cases a cocher.
         self.setUpdatesEnabled(False)
+        self.model.blockSignals(True)
         try:
             stack = [self.model.item(row) for row in range(self.model.rowCount())]
             while stack:
@@ -290,6 +319,72 @@ class CampaignTreeView(QTreeView):
                 for row in range(item.rowCount()):
                     stack.append(item.child(row))
         finally:
+            self.model.blockSignals(False)
+            self.setUpdatesEnabled(True)
+            self.viewport().update()
+
+    def drawBranches(self, painter, rect, index):
+        """Dessine les fleches de deploiement nous-memes.
+
+        Les fleches fournies par le style natif de Qt sont sombres et
+        disparaissent sur le fond sombre de l'arbre. Les dessiner ici garantit
+        qu'elles suivent la palette, quel que soit le theme.
+        """
+        palette = styles.palette()
+
+        if self.selectionModel() is not None and self.selectionModel().isSelected(index):
+            painter.fillRect(rect, QColor(palette["tree_selected"]))
+
+        model = index.model()
+        if model is None or not model.hasChildren(index):
+            return
+
+        sous_le_curseur = rect.contains(self.viewport().mapFromGlobal(QCursor.pos()))
+        couleur = QColor(palette["branch_arrow_hover"] if sous_le_curseur
+                         else palette["branch_arrow"])
+
+        # La fleche occupe le dernier cran d'indentation, juste avant la case.
+        centre_x = rect.right() - self.indentation() / 2 + 1
+        centre_y = rect.center().y() + 1
+        cote = 4.0
+
+        if self.isExpanded(index):
+            # Triangle vers le bas.
+            points = [
+                QPointF(centre_x - cote, centre_y - cote / 2),
+                QPointF(centre_x + cote, centre_y - cote / 2),
+                QPointF(centre_x, centre_y + cote * 0.9),
+            ]
+        else:
+            # Triangle vers la droite.
+            points = [
+                QPointF(centre_x - cote / 2, centre_y - cote),
+                QPointF(centre_x - cote / 2, centre_y + cote),
+                QPointF(centre_x + cote * 0.9, centre_y),
+            ]
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(couleur)
+        painter.drawPolygon(QPolygonF(points))
+        painter.restore()
+
+    def recolor_statuses(self):
+        """Reapplique les couleurs de statut avec la palette courante."""
+        self.setUpdatesEnabled(False)
+        self.model.blockSignals(True)
+        try:
+            stack = [self.model.item(row) for row in range(self.model.rowCount())]
+            while stack:
+                item = stack.pop()
+                status = item.data(STATUS_ROLE)
+                if status:
+                    self._apply_status(item, status)
+                for row in range(item.rowCount()):
+                    stack.append(item.child(row))
+        finally:
+            self.model.blockSignals(False)
             self.setUpdatesEnabled(True)
             self.viewport().update()
 
@@ -299,8 +394,7 @@ class CampaignTreeView(QTreeView):
         if not items:
             return False
         item = items.pop(0)
-        self._apply_status(item, status)
-        self._propagate_status_to_parents(item)
+        self._apply_status_quietly(item, status)
         return True
 
     def update_setup_status(self, scenario_index: int, status: str):
@@ -309,8 +403,22 @@ class CampaignTreeView(QTreeView):
         item = self._setup_items.get(scenario_index)
         if item is None:
             return
-        self._apply_status(item, status)
-        self._propagate_status_to_parents(item)
+        self._apply_status_quietly(item, status)
+
+    def _apply_status_quietly(self, item: QStandardItem, status: str):
+        """Applique un statut sans reveiller la propagation des cases a cocher.
+
+        Le cout est paye a chaque resultat recu : laisser itemChanged se declencher
+        ferait reparcourir tout l'arbre a chaque test termine.
+        """
+        self.model.blockSignals(True)
+        try:
+            self._apply_status(item, status)
+            self._propagate_status_to_parents(item)
+        finally:
+            self.model.blockSignals(False)
+
+        self.viewport().update()
 
     def _apply_status(self, item: QStandardItem, status: str):
         item.setData(status, STATUS_ROLE)
@@ -420,9 +528,9 @@ class CampaignTreeView(QTreeView):
         own_status = item.data(STATUS_ROLE)
 
         menu = QMenu(self)
-        open_log_action = menu.addAction("Ouvrir le log de ce test")
+        open_log_action = menu.addAction("Open this test's log")
         open_log_action.setEnabled(bool(own_nodeid))
-        view_trace_action = menu.addAction("Voir la trace d'echec")
+        view_trace_action = menu.addAction("View failure traceback")
         view_trace_action.setEnabled(bool(own_nodeid) and own_status in ("FAILED", "ERROR"))
 
         chosen = menu.exec_(self.viewport().mapToGlobal(pos))
@@ -436,13 +544,13 @@ class CampaignTreeView(QTreeView):
         if not trace:
             QMessageBox.information(
                 self,
-                "Trace introuvable",
-                "Impossible de retrouver la trace d'echec de ce test dans la sortie du dernier run.",
+                "Traceback not found",
+                "Could not find this test's failure traceback in the last run's output.",
             )
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle(f"Trace d'echec - {nodeid}")
+        dialog.setWindowTitle(f"Failure traceback - {nodeid}")
         dialog.resize(800, 500)
 
         text_edit = QTextEdit()
@@ -471,12 +579,20 @@ class CampaignWorker(QThread):
         selections: list[CampaignSelection],
         junit_xml_path: str | None = None,
         parallel: bool = False,
+        interpreter: str | None = None,
     ):
         super().__init__()
         self.campaign = campaign
         self.selections = selections
         self.junit_xml_path = junit_xml_path
         self.parallel = parallel
+        # Priorite : cle `python:` de campaign.yml, puis interpreteur fourni par
+        # le GUI (config.yml du workspace ou reglage global), puis Python courant.
+        self.interpreter = (
+            campaign.python_executable
+            or interpreter
+            or resolve_interpreter(workspace=campaign.workspace)
+        )
         self._stopped = False
         self._process: subprocess.Popen | None = None
         # Sortie console complete (plafonnee), conservee pour l'historique des executions.
@@ -496,6 +612,16 @@ class CampaignWorker(QThread):
         exit_code = 0
         try:
             self.stdout_signal.emit("Campaign worker started.\n")
+            self.stdout_signal.emit(f"Test interpreter: {self.interpreter}\n")
+
+            # Verification dans le thread de travail : le thread UI ne peut pas se
+            # le permettre (lancer un processus l'y gelerait). Remplit aussi le
+            # cache pour que les lancements suivants soient verifies instantanement.
+            problem = check_ready_to_run(self.interpreter, parallel=self.parallel, cached_only=False)
+            if problem:
+                self.error_signal.emit(problem + "\n")
+                self.finished_signal.emit(-1, "".join(self._output_buffer))
+                return
             grouped: dict[int, list[CampaignSelection]] = {}
             for selection in self.selections:
                 grouped.setdefault(selection.scenario_index, []).append(selection)
@@ -546,6 +672,9 @@ class CampaignWorker(QThread):
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
         entries = [str(path) for path in self.campaign.pythonpath if str(path).strip()]
+        # Le workspace peut declarer ses propres chemins : un framework externe
+        # doit etre importable que l'on passe par une campagne ou non.
+        entries.extend(pythonpath_for(self.campaign.workspace))
         old_pythonpath = env.get("PYTHONPATH")
         if old_pythonpath:
             entries.append(old_pythonpath)
@@ -579,16 +708,17 @@ class CampaignWorker(QThread):
             assert command is not None
             if self._looks_like_pytest_target(command):
                 cmd = [
-                    sys.executable,
+                    self.interpreter,
+                    "-u",
                     "-m",
                     "pytest",
                     command,
-                    "--import-mode=importlib",
+                    *import_mode_args(self.campaign.workspace),
                     "--tb=short",
                     "-v",
                 ]
             elif command.endswith(".py") and os.path.exists(os.path.join(self.campaign.workspace, command)):
-                cmd = [sys.executable, command]
+                cmd = [self.interpreter, command]
             else:
                 cmd = shlex.split(command)
         return self._run_command(cmd)
@@ -633,23 +763,34 @@ class CampaignWorker(QThread):
                 "--keep-duplicates is enabled.\n"
             )
 
-        cmd = [
-            sys.executable,
-            "-m",
-            "pytest",
-            *nodeids,
-            "--keep-duplicates",
-            "--import-mode=importlib",
-            "--tb=short",
-            "-v",
-        ]
-        if self.parallel:
-            # Necessite pytest-xdist. parse_test_status_line() gere le format
-            # de sortie -v specifique a -n (prefixe [gwN]).
-            cmd.extend(["-n", "auto"])
-        if junit_part_path:
-            cmd.append(f"--junitxml={junit_part_path}")
-        return self._run_command(cmd)
+        # Le fichier d'arguments eventuel doit exister tant que pytest tourne :
+        # _run_command() est donc appele a l'interieur du bloc.
+        with pytest_nodeid_args(nodeids) as nodeid_args:
+            if nodeid_args and nodeid_args[0].startswith("@"):
+                self.stdout_signal.emit(
+                    f"{len(nodeids)} nodeids passed via an argument file "
+                    "(command line too long for Windows).\n"
+                )
+
+            cmd = [
+                self.interpreter,
+                "-u",
+                "-m",
+                "pytest",
+                *nodeid_args,
+                "--keep-duplicates",
+                # Pas de --import-mode impose : voir core/workspace_config.py.
+                *import_mode_args(self.campaign.workspace),
+                "--tb=short",
+                "-v",
+            ]
+            if self.parallel:
+                # Necessite pytest-xdist. parse_test_status_line() gere le format
+                # de sortie -v specifique a -n (prefixe [gwN]).
+                cmd.extend(["-n", "auto"])
+            if junit_part_path:
+                cmd.append(f"--junitxml={junit_part_path}")
+            return self._run_command(cmd)
 
     def _merge_junit_reports(self, part_paths: list[str], dest_path: str):
         """Fusionne les rapports JUnit XML d'une campagne (un par scenario) en un
@@ -693,6 +834,7 @@ class CampaignWorker(QThread):
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
+                creationflags=subprocess_flags(),
             )
         except Exception as exc:
             self.stdout_signal.emit(f"Unable to start command: {type(exc).__name__}: {exc}\n")
@@ -700,9 +842,12 @@ class CampaignWorker(QThread):
         assert self._process.stdout is not None
         emit_buffer = []
         emit_size = 0
+        last_flush = time.monotonic()
+        parser = PytestOutputParser()
 
         def flush_emit_buffer():
-            nonlocal emit_buffer, emit_size
+            nonlocal emit_buffer, emit_size, last_flush
+            last_flush = time.monotonic()
             if emit_buffer:
                 self.stdout_signal.emit("".join(emit_buffer))
                 emit_buffer = []
@@ -711,7 +856,7 @@ class CampaignWorker(QThread):
         for line in iter(self._process.stdout.readline, ""):
             if self._stopped:
                 break
-            parsed = parse_test_status_line(line)
+            parsed = parser.feed(line)
             if parsed:
                 self.test_status_signal.emit(parsed[0], parsed[1])
 
@@ -720,9 +865,14 @@ class CampaignWorker(QThread):
             while self._output_size > self._output_limit and self._output_buffer:
                 self._output_size -= len(self._output_buffer.pop(0))
 
-            emit_buffer.append(line)
-            emit_size += len(line)
-            if len(emit_buffer) >= 50 or emit_size >= 8192:
+            # Raccourci a l'affichage seulement : _output_buffer garde le brut.
+            affichee = compact_output_line(
+                line, console_path_levels(self.campaign.workspace),
+                show_test_classes(self.campaign.workspace))
+            emit_buffer.append(affichee)
+            emit_size += len(affichee)
+            if (len(emit_buffer) >= 50 or emit_size >= 8192
+                    or time.monotonic() - last_flush >= 0.05):
                 flush_emit_buffer()
         flush_emit_buffer()
         if self._stopped:
@@ -772,10 +922,9 @@ class CampaignPanel(QWidget):
         self.browse_button = QPushButton("Browse")
         self.load_button = QPushButton("Load Campaign")
         self.open_config_button = QPushButton("Open Config")
-        self.run_button = QPushButton("Run Selected")
-        self.stop_button = QPushButton("Stop")
-        self.rerun_failed_button = QPushButton("Re-run Failed")
-        self.parallel_checkbox = QCheckBox("Parallel (-n auto)")
+        self.run_button = QPushButton("▶  Run Selected")
+        self.stop_button = QPushButton("■  Stop")
+        self.rerun_failed_button = QPushButton("↻  Re-run Failed")
         self.all_button = QPushButton("All")
         self.none_button = QPushButton("None")
         self.failed_only_button = QPushButton("Failed only")
@@ -788,7 +937,7 @@ class CampaignPanel(QWidget):
         self.open_config_button.setStyleSheet(neutral_button())
         self.run_button.setStyleSheet(success_button())
         self.stop_button.setStyleSheet(danger_button())
-        self.rerun_failed_button.setStyleSheet(danger_button())
+        self.rerun_failed_button.setStyleSheet(info_button())
         self.all_button.setStyleSheet(toolbar_button())
         self.none_button.setStyleSheet(toolbar_button())
         self.failed_only_button.setStyleSheet(toolbar_button())
@@ -803,6 +952,7 @@ class CampaignPanel(QWidget):
         self.tree.setStyleSheet(tree_style())
         self.tree.selection_changed.connect(self.on_selection_changed)
         self.tree.open_log_requested.connect(self.open_test_log)
+        self.tree.item_clicked.connect(self._on_tree_item_clicked)
 
         self.filter_edit = QLineEdit()
         self.filter_edit.setPlaceholderText("Filter tests...")
@@ -812,10 +962,9 @@ class CampaignPanel(QWidget):
         self.selection_label.setAlignment(Qt.AlignRight)
         self.selection_label.setStyleSheet("color: #616161; font-size: 12px;")
 
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
+        self.details = DetailPanel()
+        self.console = self.details.console
         self.console.document().setMaximumBlockCount(12000)
-        self.console.setStyleSheet(console_style())
         self._console_pending: list[str] = []
         self._console_flush_timer = QTimer(self)
         self._console_flush_timer.setInterval(50)
@@ -834,11 +983,13 @@ class CampaignPanel(QWidget):
         action_bar.setSpacing(8)
         action_bar.addWidget(self.load_button)
         action_bar.addWidget(self.open_config_button)
-        action_bar.addSpacing(90)
+        action_bar.addWidget(self._separator())
         action_bar.addWidget(self.run_button)
         action_bar.addWidget(self.stop_button)
         action_bar.addWidget(self.rerun_failed_button)
-        action_bar.addWidget(self.parallel_checkbox)
+        # Sans espace final, la barre etirait chaque bouton sur toute la
+        # largeur ; ils gardent leur taille et restent groupes a gauche.
+        action_bar.addStretch(1)
 
         tree_toolbar = QHBoxLayout()
         tree_toolbar.setSpacing(6)
@@ -860,7 +1011,7 @@ class CampaignPanel(QWidget):
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(left)
-        splitter.addWidget(self.console)
+        splitter.addWidget(self.details)
         splitter.setStretchFactor(0, 2)
         splitter.setStretchFactor(1, 3)
 
@@ -918,6 +1069,9 @@ class CampaignPanel(QWidget):
         try:
             self.campaign = load_campaign(path)
             self.tree.load_campaign(self.campaign)
+            self.details.set_workspace(self.campaign.workspace,
+                                       self._config_path(self.campaign.workspace))
+            self.details.clear_details()
             self._add_recent_campaign(path)
             self.settings.setValue("last_campaign", path)
             self.console.clear()
@@ -933,9 +1087,9 @@ class CampaignPanel(QWidget):
         except Exception as exc:
             show_scrollable_error(
                 self,
-                "Erreur de chargement de la campagne",
+                "Campaign load error",
                 str(exc),
-                intro="Impossible de charger ce fichier campaign.yml :",
+                intro="Could not load this campaign.yml file:",
             )
 
     def open_config(self):
@@ -943,18 +1097,16 @@ class CampaignPanel(QWidget):
             QMessageBox.warning(self, "Warning", "No campaign loaded.")
             return
 
-        config_path = find_config_yaml(self.campaign.workspace)
-        if not config_path:
-            QMessageBox.information(self, "Info", "No config.yaml found.")
-            return
+        open_config_editor(self, self.campaign.workspace, self.settings)
 
-        dialog = ConfigDialog(config_path, self)
-        dialog.exec_()
+    def _on_tree_item_clicked(self, target: str, nodeid: str):
+        self.details.show_for(target or None, nodeid or None)
 
     def open_test_log(self, nodeid: str):
         if not self.campaign:
             return
-        open_test_log_for(self, self.campaign.workspace, nodeid)
+        open_test_log_for(self, self.campaign.workspace, nodeid,
+                          self._config_path(self.campaign.workspace))
 
     def on_selection_changed(self, selected: int, total: int):
         self.selection_label.setText(f"{selected} / {total} selected")
@@ -1006,17 +1158,82 @@ class CampaignPanel(QWidget):
 
     def run_failed(self):
         if not self.failed_nodeids:
-            QMessageBox.information(self, "Info", "Aucun test en echec a relancer.")
+            QMessageBox.information(self, "Info", "No failed test to re-run.")
             return
 
         selections = self._selections_for_nodeids(self.failed_nodeids)
         if not selections:
-            QMessageBox.information(self, "Info", "Aucun test en echec correspondant trouve dans la campagne.")
+            QMessageBox.information(self, "Info", "No matching failed test found in the campaign.")
             return
 
         self._launch_worker(selections, f"Re-running {len(selections)} failed test(s)...\n")
 
+    def _config_path(self, workspace: str | None) -> str:
+        """Fichier de configuration retenu pour ce workspace, porteur de LOG_PATH."""
+        return remembered_config_path(workspace or "", self.settings)
+
+    def _separator(self) -> QFrame:
+        """Trait vertical entre deux groupes d'actions."""
+        trait = QFrame()
+        trait.setFrameShape(QFrame.VLine)
+        trait.setFixedWidth(1)
+        # Un peu plus haut que le texte, moins haut que les boutons : le trait
+        # separe sans dessiner une colonne dans la barre.
+        trait.setFixedHeight(22)
+        trait.setStyleSheet(separator_style())
+        self._separators = getattr(self, "_separators", [])
+        self._separators.append(trait)
+        return trait
+
+    def restyle(self):
+        """Reapplique les styles de l'onglet Campaign avec la palette courante."""
+        self.browse_button.setStyleSheet(neutral_button())
+        self.load_button.setStyleSheet(primary_button())
+        self.open_config_button.setStyleSheet(neutral_button())
+        self.run_button.setStyleSheet(success_button())
+        self.stop_button.setStyleSheet(danger_button())
+        self.rerun_failed_button.setStyleSheet(info_button())
+
+        for button in (self.all_button, self.none_button, self.failed_only_button,
+                       self.expand_all_button, self.collapse_all_button):
+            button.setStyleSheet(toolbar_button())
+
+        for trait in getattr(self, "_separators", []):
+            trait.setStyleSheet(separator_style())
+
+        self.tree.setStyleSheet(tree_style())
+        self.details.restyle()
+        self.selection_label.setStyleSheet(styles.muted_label())
+        self.tree.recolor_statuses()
+
+    def current_interpreter(self) -> str:
+        """Interpreteur effectif pour cette campagne.
+
+        campaign.yml (cle `python:`) a la priorite, sinon config.yml du workspace,
+        sinon le reglage global partage avec le mode Workspace.
+        """
+        if self.campaign and self.campaign.python_executable:
+            return self.campaign.python_executable
+
+        configured = self.settings.value("test_interpreter", "", type=str)
+        workspace = self.campaign.workspace if self.campaign else None
+        return resolve_interpreter(configured=configured, workspace=workspace)
+
     def _launch_worker(self, selections: list[CampaignSelection], intro_message: str):
+        interpreter = self.current_interpreter()
+
+        # Verifie avant de reinitialiser l'UI, pour ne pas effacer les resultats
+        # precedents si finalement rien ne peut etre lance.
+        problem = check_ready_to_run(interpreter)
+        if problem:
+            show_scrollable_error(
+                self,
+                "Test interpreter unusable",
+                problem,
+                intro="The campaign could not be started:",
+            )
+            return
+
         self.console.clear()
         self.console.append(intro_message)
 
@@ -1038,7 +1255,7 @@ class CampaignPanel(QWidget):
             self.campaign,
             selections,
             junit_xml_path=self._current_junit_path,
-            parallel=self.parallel_checkbox.isChecked(),
+            interpreter=interpreter,
         )
         self.worker.stdout_signal.connect(self._on_stdout)
         self.worker.error_signal.connect(self._on_stdout)

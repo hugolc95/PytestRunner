@@ -13,3 +13,7 @@ rapport_*.html
 # Logs APDU generes par utils.log du SmartcardFramework
 apdu_log.log
 logs/
+
+# Sorties de build PyInstaller (l'exe se reconstruit, il n'est pas versionne)
+build/
+dist/

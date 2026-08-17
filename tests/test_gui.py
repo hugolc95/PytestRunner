@@ -20,9 +20,9 @@ def test_main_window_parses_results(qtbot):
     w=MainWindow(); qtbot.addWidget(w)
     w.workspace='.'
     w.tree.load_tree(build_test_tree(['test_a.py::test_ok','test_a.py::test_bad']))
-    w._parse_pytest_output_line('collected 2 items')
-    w._parse_pytest_output_line('test_a.py::test_ok PASSED [ 50%]')
-    w._parse_pytest_output_line('test_a.py::test_bad FAILED [100%]')
+    w._on_collected(2)
+    w._on_test_status('test_a.py::test_ok', 'PASSED')
+    w._on_test_status('test_a.py::test_bad', 'FAILED')
     assert w.done_tests==2 and w.test_counts['PASSED']==1 and w.test_counts['FAILED']==1
     assert 'test_a.py::test_bad' in w.failed_nodeids
 
@@ -46,6 +46,40 @@ def test_worker_success_failure_skip_error(qtbot, tmp_path):
     assert result and result[0][0]==1
     for status in ('PASSED','FAILED','SKIPPED','ERROR'):
         assert status in text
+
+
+def test_worker_reports_each_test_as_it_finishes(qtbot, tmp_path):
+    """L'arbre doit se colorer test par test pendant le run, y compris pour
+    chaque cas parametre, et non par paquets une fois le run bien avance."""
+    (tmp_path/'test_pas_a_pas.py').write_text(textwrap.dedent('''
+      import pytest
+      @pytest.mark.parametrize("v", range(6))
+      def test_cas(v):
+          assert True
+    '''), encoding='utf-8')
+
+    recus=[]; fini=[]
+    worker=PytestWorker(['test_pas_a_pas.py'], str(tmp_path))
+    worker.test_status_signal.connect(lambda n,s: recus.append((n,s)))
+    worker.finished_signal.connect(lambda c,s: fini.append(c))
+    worker.start(); qtbot.waitUntil(lambda: bool(fini), timeout=30000)
+
+    assert len(recus)==6, f"un signal par cas parametre attendu, recu {recus}"
+    assert all(status=='PASSED' for _, status in recus)
+    assert all('::test_cas[' in nodeid for nodeid, _ in recus)
+
+
+def test_worker_reports_the_collected_count(qtbot, tmp_path):
+    (tmp_path/'test_deux.py').write_text(
+        "def test_a():\n    assert True\ndef test_b():\n    assert True\n", encoding='utf-8')
+
+    comptes=[]; fini=[]
+    worker=PytestWorker(['test_deux.py'], str(tmp_path))
+    worker.collected_signal.connect(comptes.append)
+    worker.finished_signal.connect(lambda c,s: fini.append(c))
+    worker.start(); qtbot.waitUntil(lambda: bool(fini), timeout=30000)
+
+    assert comptes and comptes[0]==2
 
 
 def test_worker_stop(qtbot, tmp_path):

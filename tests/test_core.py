@@ -70,6 +70,25 @@ def test_invalid_campaign(tmp_path):
     with pytest.raises(ValueError): load_campaign(str(p))
 
 
+def test_campaign_can_pin_its_own_interpreter(tmp_path):
+    yml=tmp_path/'campaign.yml'
+    yml.write_text(textwrap.dedent('''
+      name: Demo
+      workspace: .
+      python: C:/Py313-64/python.exe
+      scenarios:
+        - name: S1
+          tests: []
+    '''), encoding='utf-8')
+    assert load_campaign(str(yml)).python_executable == 'C:/Py313-64/python.exe'
+
+
+def test_campaign_without_python_key_leaves_choice_to_the_app(tmp_path):
+    yml=tmp_path/'campaign.yml'
+    yml.write_text('name: Demo\nworkspace: .\nscenarios: []\n', encoding='utf-8')
+    assert load_campaign(str(yml)).python_executable is None
+
+
 def test_packaged_workspace_exposes_parametrized_examples():
     """Le workspace livré doit afficher les cas @pytest.mark.parametrize dans la GUI."""
     project_root = Path(__file__).resolve().parents[1]

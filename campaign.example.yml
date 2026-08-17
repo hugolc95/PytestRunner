@@ -14,6 +14,13 @@ workspace: .
 pythonpath:
   - .
 
+# python : interpreteur utilise pour cette campagne. Prioritaire sur le config.yml
+# du workspace et sur le reglage global de l'application (menu Configuration).
+# Utile quand une campagne cible un environnement Python different du reste du
+# projet. Absent : l'interpreteur configure dans l'application est utilise.
+#
+# python: C:\Python313-64\python.exe
+
 # Ce fichier fonctionne directement avec le faux environnement inclus dans ce ZIP :
 #   testSuite1/test_api.py
 #   testSuite1/test_math.py

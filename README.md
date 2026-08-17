@@ -1,15 +1,42 @@
-# Pytest Runner GUI — Python 3.13 32 bits, hors ligne
+# Pytest Runner GUI
 
 Application de bureau **PyQt5** permettant de charger un workspace, découvrir ses tests pytest, sélectionner des tests complets ou un seul cas paramétré, lancer/arrêter l'exécution, consulter les résultats et exécuter des campagnes YAML.
 
-## Cible stricte
+## Deux Python indépendants
+
+L'interface **n'importe jamais** le code testé : elle lance pytest dans un sous-processus et lit sa sortie. L'interface et les tests peuvent donc utiliser deux interpréteurs Python différents.
+
+C'est ce qui permet, par exemple, de piloter depuis une interface 32 bits des tests qui ont besoin d'un Python 64 bits pour charger des DLL natives.
+
+L'interpréteur des tests se règle dans **Configuration > Interpréteur Python des tests...**. Cet interpréteur doit avoir `pytest` installé (et `pytest-xdist` si vous cochez *Parallel*) ; l'interface, elle, n'a besoin que de PyQt5 et PyYAML.
+
+Ordre de priorité, du plus fort au plus faible :
+
+1. la clé `python:` de `campaign.yml` (mode Campaign uniquement) ;
+2. la clé `python_executable:` du `config.yaml` du workspace ;
+3. le réglage global de l'application ;
+4. le Python courant.
+
+Laisser le réglage vide conserve le comportement historique : les tests tournent avec le Python de l'interface.
+
+## Exécutable Windows
+
+L'interface peut être distribuée en application autonome, sans installer Python sur le poste.
+
+**➜ [Télécharger la dernière version](https://github.com/hugolc95/PytestRunner/releases/tag/latest)** (`PytestRunner-windows.zip`)
+
+Ce lien est permanent et pointe toujours vers le dernier build. Chaque push reconstruit l'application sur une machine Windows, y rejoue la suite de tests, vérifie que l'exécutable démarre, puis met la release à jour.
+
+Pour construire soi-même : `build_exe.bat` (nécessite PyQt5, PyYAML et PyInstaller).
+
+Le résultat est le dossier `dist\PytestRunner\` : distribuez-le entier (zippé), pas seulement le `.exe`. L'exécutable ne contient que l'interface — pytest et les dépendances des tests restent du côté de l'interpréteur configuré, il faut donc toujours renseigner celui-ci au premier lancement.
+
+## Installation hors ligne (mode source)
 
 - Windows x86 / 32 bits ;
-- CPython **3.13 32 bits** uniquement ;
+- CPython **3.13 32 bits** ;
 - aucune connexion Internet nécessaire ;
 - Python doit déjà être installé sur le poste.
-
-Un Python 3.13 64 bits n'est pas utilisé par les scripts de cette édition.
 
 ## Démarrage
 
