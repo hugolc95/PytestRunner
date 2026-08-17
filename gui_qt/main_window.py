@@ -21,7 +21,7 @@ import re
 import time
 from pathlib import Path
 
-from gui_qt.marker_bar import MarkerBar
+from gui_qt.marker_bar import MarkerFilter
 from gui_qt.test_tree_view import TestTreeView, short_reader_label
 from gui_qt.config.config_editor import ConfigEditor
 from gui_qt.campaign_window import CampaignPanel
@@ -686,6 +686,10 @@ class MainWindow(QMainWindow):
         self.btn_failed_only.setFixedHeight(styles.TOOLBAR_HEIGHT)
         self.btn_failed_only.setStyleSheet(styles.filter_chip())
 
+        self.marker_bar = MarkerFilter()
+        self.marker_bar.filter_changed.connect(self.on_marker_filter)
+        self._markers_by_nodeid = {}
+
         self.selection_label = QLabel("0 / 0 selected")
         self.selection_label.setAlignment(Qt.AlignRight)
         self.selection_label.setStyleSheet("color: #616161; font-size: 12px;")
@@ -723,28 +727,47 @@ class MainWindow(QMainWindow):
         tree_toolbar.addLayout(
             segmented_group(self.btn_expand_all, self.btn_collapse_all))
         tree_toolbar.addWidget(self.btn_failed_only)
+        # A cote de « Failed only » : deux filtres, meme famille. Le bouton
+        # garde la meme largeur que la suite ait trois markers ou trente.
+        tree_toolbar.addWidget(self.marker_bar)
         tree_toolbar.addStretch()
         tree_toolbar.addWidget(self.find_label)
         tree_toolbar.addWidget(self.filter_edit)
         tree_toolbar.addLayout(
             segmented_group(self.btn_find_prev, self.btn_find_next))
 
-        self.marker_bar = MarkerBar()
-        self.marker_bar.filter_changed.connect(self.on_marker_filter)
-        self._markers_by_nodeid = {}
+
 
         left_widget = QWidget()
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(4)
 
+        # Le compte de selection et le filtre qui l'explique, sur la meme
+        # ligne : le resultat se lit la ou le resultat vivait deja, et le
+        # filtre ne prend aucune place tant qu'il n'y en a pas.
+        pied = QHBoxLayout()
+        pied.setContentsMargins(0, 0, 0, 0)
+        pied.setSpacing(6)
+
+        self.filter_label = QLabel("")
+        self.filter_label.setVisible(False)
+
+        self.filter_clear = QPushButton("x")
+        self.filter_clear.setFixedSize(20, 20)
+        self.filter_clear.setToolTip("Clear the marker filter")
+        self.filter_clear.setCursor(Qt.PointingHandCursor)
+        self.filter_clear.setVisible(False)
+        self.filter_clear.clicked.connect(self.clear_marker_filter)
+
+        pied.addWidget(self.filter_label)
+        pied.addWidget(self.filter_clear)
+        pied.addStretch()
+        pied.addWidget(self.selection_label)
+
         left_layout.addLayout(tree_toolbar)
-        # Sous la recherche, au-dessus de l'arbre : les markers sont un axe de
-        # selection, ils appartiennent au meme endroit que « All » et « None ».
-        # La barre se masque d'elle-meme quand la suite n'en utilise aucun.
-        left_layout.addWidget(self.marker_bar)
         left_layout.addWidget(self.tree)
-        left_layout.addWidget(self.selection_label)
+        left_layout.addLayout(pied)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.setSizes([400, 800])
@@ -1008,6 +1031,7 @@ class MainWindow(QMainWindow):
         self.tree.setStyleSheet(tree_style())
         self.selection_label.setStyleSheet(styles.muted_label())
         self.marker_bar.apply_theme()
+        self.show_active_filter()
 
         # Console, Source et Log posent leurs couleurs widget par widget et
         # reconstruisent leurs coloriseurs : sans cet appel, ces trois zones
@@ -1434,6 +1458,8 @@ class MainWindow(QMainWindow):
         selection patiemment faite a la main, et la voir disparaitre, serait la
         pire des surprises.
         """
+        self.show_active_filter()
+
         predicat = self.marker_bar.matcher()
         if predicat is None:
             return
@@ -1446,6 +1472,34 @@ class MainWindow(QMainWindow):
         self._queue_console_output(
             f"{coches} tests match '{expression}'.\n" if coches
             else f"No test matches '{expression}'.\n")
+
+    def show_active_filter(self):
+        """Rappelle le filtre en cours a cote du compte de selection.
+
+        Le panneau se referme ; sans ce rappel, il ne resterait aucune trace de
+        POURQUOI une partie de l'arbre est decochee.
+        """
+        expression = self.marker_bar.expression()
+        p = styles.palette()
+        self.filter_label.setText(expression)
+        self.filter_label.setToolTip(f"Marker filter: {expression}")
+        self.filter_label.setStyleSheet(
+            f"color: {p['primary']}; font-size: 12px; font-weight: 600;"
+            f"background-color: {styles.mix(p['background'], p['primary'], 0.14)};"
+            "border-radius: 9px; padding: 2px 10px;")
+        self.filter_clear.setStyleSheet(styles.toolbar_button())
+        self.filter_label.setVisible(bool(expression))
+        self.filter_clear.setVisible(bool(expression))
+
+    def clear_marker_filter(self):
+        """Retire le filtre sans toucher a la selection qu'il a produite.
+
+        Decocher au passage ferait perdre un choix qu'on vient peut-etre
+        d'affiner a la main ; enlever l'etiquette suffit a dire que le filtre
+        ne s'applique plus.
+        """
+        self.marker_bar.clear()
+        self.show_active_filter()
 
     def on_summary_clicked(self, status: str):
         if self.active_summary_filter == status:
@@ -1568,6 +1622,7 @@ class MainWindow(QMainWindow):
         count = len(collection)
         self._markers_by_nodeid = dict(collection.markers)
         self.marker_bar.set_markers(collection.marker_list())
+        self.show_active_filter()
         self.details.set_workspace(workspace, self.config_path(workspace))
         self.refresh_readers()
 

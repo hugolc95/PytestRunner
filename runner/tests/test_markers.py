@@ -294,7 +294,7 @@ def test_the_probe_never_invents_a_test(suite_marquee):
 
 
 # =========================================================================
-# La barre
+# Le bouton et son panneau
 # =========================================================================
 
 
@@ -305,87 +305,215 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-@pytest.fixture
-def barre(qapp):
-    from runner.ui.marker_bar import MarkerBar
+TROIS = [Marker("smoke", "quick checks", 3),
+         Marker("perso", "personalisation", 2),
+         Marker("slow", "", 1)]
 
-    b = MarkerBar()
-    b.set_markers([Marker("smoke", "quick checks", 3),
-                   Marker("perso", "personalisation", 2),
-                   Marker("slow", "", 1)])
+BEAUCOUP = [Marker(f"marker_{i:02d}", f"famille {i}", 30 - i) for i in range(30)]
+
+
+@pytest.fixture
+def bouton(qapp):
+    from runner.ui.marker_bar import MarkerFilter
+
+    b = MarkerFilter()
+    b.set_markers(TROIS)
     return b
 
 
-def test_a_suite_without_markers_hides_the_bar_entirely(qapp):
-    """Une rangee vide au-dessus de l'arbre serait de la place prise pour rien."""
-    from runner.ui.marker_bar import MarkerBar
+def test_a_suite_without_markers_hides_the_button(qapp):
+    from runner.ui.marker_bar import MarkerFilter
 
-    b = MarkerBar()
+    b = MarkerFilter()
     b.set_markers([])
     assert b.isHidden()
 
-    b.set_markers([Marker("smoke", "", 1)])
+    b.set_markers(TROIS)
     assert not b.isHidden()
 
 
-def test_clicking_chips_writes_the_expression(barre):
-    barre._chips["smoke"].setChecked(True)
-    barre._chips["smoke"].clicked.emit()
-    assert barre.expression() == "smoke"
+def test_thirty_markers_do_not_widen_the_toolbar(qapp):
+    """La regression qui a motive ce panneau.
 
-    barre._chips["perso"].setChecked(True)
-    barre._chips["perso"].clicked.emit()
-    assert barre.expression() == "smoke or perso"
+    En rangee de puces, trente markers reclamaient 2892 px : Qt comprimait les
+    puces en moignons d'un caractere et la largeur minimale du panneau gauche
+    suivait, ecrasant tout le reste de la fenetre. Un bouton ne grandit pas
+    avec le nombre de markers.
+    """
+    from runner.ui.marker_bar import MarkerFilter
+    from runner.ui.theme import app_stylesheet
+
+    # La feuille de style decide de la taille d'un bouton, et l'application
+    # est partagee par toute la session de tests : sans la poser ici, la
+    # mesure dependrait de l'ordre des fichiers.
+    qapp.setStyleSheet(app_stylesheet())
+
+    b = MarkerFilter()
+    b.set_markers(TROIS)
+    etroit = b.sizeHint().width()
+
+    b.set_markers(BEAUCOUP)
+    assert b.sizeHint().width() == etroit
+    assert b.sizeHint().width() < 80  # un carre, pas une rangee qui s'etale
 
 
-def test_typing_a_union_lights_the_matching_chips(barre):
-    barre.field.setText("perso or slow")
-    assert not barre._chips["smoke"].isChecked()
-    assert barre._chips["perso"].isChecked()
-    assert barre._chips["slow"].isChecked()
+def test_the_popup_never_grows_past_its_bounds(bouton):
+    """Il se pose par-dessus l'arbre : il ne doit pas couvrir la fenetre."""
+    from runner.ui.marker_bar import HAUTEUR_LISTE, LARGEUR_PANNEAU
+
+    bouton.set_markers(BEAUCOUP)
+    popup = bouton.popup
+    popup.adjustSize()
+
+    assert popup.width() == LARGEUR_PANNEAU
+    assert 0 < popup.scroll.maximumHeight() <= HAUTEUR_LISTE
+    assert popup.height() < 500
 
 
-def test_a_custom_expression_leaves_every_chip_off(barre):
-    """Les puces ne savent ecrire qu'une union : les laisser allumees sur un
+def test_the_list_stops_on_a_whole_row(bouton):
+    """Une derniere ligne coupee en deux se lit comme un defaut d'affichage."""
+    bouton.set_markers(BEAUCOUP)
+    popup = bouton.popup
+    ligne = next(iter(popup._rows.values())).height()
+    assert ligne > 0
+    assert popup.scroll.maximumHeight() % ligne == 0
+
+
+def test_a_short_list_is_not_padded_with_empty_space(bouton):
+    """Trois markers ne doivent pas ouvrir un panneau de dix lignes."""
+    popup = bouton.popup
+    ligne = next(iter(popup._rows.values())).height()
+    assert popup.scroll.maximumHeight() == 3 * ligne
+
+
+def test_every_marker_has_a_row_even_when_the_list_scrolls(bouton):
+    bouton.set_markers(BEAUCOUP)
+    assert len(bouton.popup._boxes) == 30
+
+
+def test_searching_narrows_the_list(bouton):
+    bouton.set_markers(BEAUCOUP)
+    popup = bouton.popup
+
+    popup.search.setText("marker_1")
+    visibles = [n for n, l in popup._rows.items() if not l.isHidden()]
+    assert visibles == [f"marker_1{i}" for i in range(10)]
+    assert popup.empty.isHidden()
+
+
+def test_a_search_that_matches_nothing_says_so(bouton):
+    bouton.popup.search.setText("zzz")
+    assert not any(not l.isHidden() for l in bouton.popup._rows.values())
+    assert not bouton.popup.empty.isHidden()
+
+
+def test_clearing_the_search_brings_every_marker_back(bouton):
+    popup = bouton.popup
+    popup.search.setText("smoke")
+    popup.search.setText("")
+    assert all(not l.isHidden() for l in popup._rows.values())
+
+
+def test_ticking_boxes_writes_the_expression(bouton):
+    bouton.popup._boxes["smoke"].setChecked(True)
+    assert bouton.expression() == "smoke"
+
+    bouton.popup._boxes["perso"].setChecked(True)
+    assert bouton.expression() == "smoke or perso"
+
+
+def test_typing_a_union_ticks_the_matching_boxes(bouton):
+    bouton.popup.field.setText("perso or slow")
+    assert not bouton.popup._boxes["smoke"].isChecked()
+    assert bouton.popup._boxes["perso"].isChecked()
+    assert bouton.popup._boxes["slow"].isChecked()
+
+
+def test_a_custom_expression_leaves_every_box_off(bouton):
+    """Les cases ne savent ecrire qu'une union : les laisser cochees sur un
     `and not` mentirait sur ce qui est selectionne."""
-    barre.field.setText("smoke and not slow")
-    assert not any(p.isChecked() for p in barre._chips.values())
-    assert barre.is_valid()
+    bouton.popup.field.setText("smoke and not slow")
+    assert not any(c.isChecked() for c in bouton.popup._boxes.values())
+    assert bouton.is_valid()
 
 
-def test_an_invalid_expression_is_signalled_and_selects_nothing(barre):
-    barre.field.setText("smoke &&")
-    assert barre.matcher() is None
-    assert not barre.is_valid()
-    assert barre.message.text()
-    assert barre.field.property("invalid")
+def test_the_button_says_when_a_filter_is_on(bouton):
+    """Le panneau se referme : sans ce rappel, un filtre actif serait
+    invisible et on chercherait pourquoi l'arbre est a moitie decoche."""
+    assert not bouton.property("active")
+
+    bouton.popup._boxes["smoke"].setChecked(True)
+    assert bouton.property("active")
+    assert "smoke" in bouton.toolTip()
+
+    bouton.popup._boxes["perso"].setChecked(True)
+    assert "smoke, perso" in bouton.toolTip()
 
 
-def test_an_unknown_marker_is_a_note_not_an_error(barre):
-    """pytest l'accepte : il ne selectionne simplement rien. Le dire evite de
-    chercher pourquoi la selection est vide."""
-    barre.field.setText("smoke or jamais_vu")
-    assert barre.is_valid()
-    assert "jamais_vu" in barre.message.text()
+def test_the_button_stays_a_square_whatever_it_shows(bouton):
+    """Un libelle qui s'allonge affamerait le champ de recherche voisin."""
+    avant = bouton.sizeHint()
+    bouton.popup.field.setText("gpki and not slow or prepersonalisation")
+    assert bouton.sizeHint() == avant
+    assert bouton.text() == ""
 
 
-def test_an_empty_field_asks_for_nothing(barre):
+def test_a_custom_expression_is_signalled_on_the_button(bouton):
+    """Aucune case n'est cochee, mais un filtre s'applique bien."""
+    bouton.popup.field.setText("smoke and not slow")
+    assert bouton.property("active")
+    assert "smoke and not slow" in bouton.toolTip()
+
+
+def test_an_invalid_expression_is_signalled_and_selects_nothing(bouton):
+    bouton.popup.field.setText("smoke &&")
+    assert bouton.matcher() is None
+    assert not bouton.is_valid()
+    assert bouton.popup.message.text()
+    assert bouton.popup.field.property("invalid")
+
+
+def test_an_unknown_marker_is_a_note_not_an_error(bouton):
+    bouton.popup.field.setText("smoke or jamais_vu")
+    assert bouton.is_valid()
+    assert "jamais_vu" in bouton.popup.message.text()
+
+
+def test_an_empty_field_asks_for_nothing(bouton):
     """Effacer le filtre ne doit pas balayer une selection faite a la main."""
-    barre.field.setText("smoke")
-    assert barre.matcher() is not None
-    barre.field.setText("")
-    assert barre.matcher() is None
+    bouton.popup.field.setText("smoke")
+    assert bouton.matcher() is not None
+    bouton.popup.field.setText("")
+    assert bouton.matcher() is None
 
 
-def test_loading_another_workspace_resets_the_filter(barre):
-    barre.field.setText("smoke and not slow")
-    barre.set_markers([Marker("autre", "", 4)])
-    assert barre.expression() == ""
-    assert set(barre._chips) == {"autre"}
+def test_the_clear_button_wipes_the_filter(bouton):
+    bouton.popup.field.setText("smoke or perso")
+    assert bouton.popup.clear_button.isEnabled()
+
+    bouton.popup.clear_button.click()
+    assert bouton.expression() == ""
+    assert not any(c.isChecked() for c in bouton.popup._boxes.values())
+    assert not bouton.popup.clear_button.isEnabled()
 
 
-def test_the_bar_emits_once_per_change(barre):
+def test_the_popup_counts_what_the_expression_retains(bouton):
+    bouton.set_markers(BEAUCOUP)
+    bouton.popup.field.setText("marker_00 or marker_01")
+    assert "2 of 30" in bouton.popup.count.text()
+
+
+def test_loading_another_workspace_resets_the_filter(bouton):
+    bouton.popup.field.setText("smoke and not slow")
+    bouton.set_markers([Marker("autre", "", 4)])
+
+    assert bouton.expression() == ""
+    assert set(bouton.popup._boxes) == {"autre"}
+    assert not bouton.property("active")
+
+
+def test_the_filter_emits_once_per_change(bouton):
     coups = []
-    barre.filter_changed.connect(lambda: coups.append(1))
-    barre.field.setText("smoke")
+    bouton.filter_changed.connect(lambda: coups.append(1))
+    bouton.popup.field.setText("smoke")
     assert len(coups) == 1

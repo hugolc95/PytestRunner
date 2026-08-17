@@ -34,7 +34,7 @@ from runner.domain.workspace import Workspace
 from runner.services.run_service import CollectWorker, RunService
 from runner.ui import icons, theme
 from runner.ui import tokens as t
-from runner.ui.marker_bar import MarkerBar
+from runner.ui.marker_bar import MarkerFilter
 from runner.ui.results_panel import (
     ONGLET_DETAIL,
     ONGLET_LOGS,
@@ -181,7 +181,15 @@ class MainWindow(QMainWindow):
         self.collapse_button = self._quiet("mdi.unfold-less-horizontal", "Collapse all",
                                            lambda: self.tree.collapseAll())
 
+        self.markers = MarkerFilter()
+        self.markers.filter_changed.connect(self._on_marker_filter)
+
         outils.addWidget(self.search, 1)
+        # Le filtre par marker rejoint la rangee d'icones : il selectionne, tout
+        # comme « tout cocher » -- et il ne prend qu'un carre, quel que soit le
+        # nombre de markers de la suite.
+        outils.addSpacing(t.SPACE_2)
+        outils.addWidget(self.markers)
         # Groupes par intention : cocher d'un cote, deplier de l'autre. Quatre
         # icones alignees a intervalle egal ne disaient pas lesquelles vont
         # ensemble.
@@ -198,13 +206,6 @@ class MainWindow(QMainWindow):
         self.tree_toolbar.setLayout(outils)
         self.tree_toolbar.setVisible(False)
         colonne.addWidget(self.tree_toolbar)
-
-        # Sous la recherche, au-dessus de l'arbre : les markers sont un axe de
-        # selection, ils appartiennent au meme endroit que les cases a cocher.
-        # La barre se masque d'elle-meme quand la suite n'en utilise aucun.
-        self.markers = MarkerBar()
-        self.markers.filter_changed.connect(self._on_marker_filter)
-        colonne.addWidget(self.markers)
 
         self.tree = QTreeView()
         self.tree.setModel(self.model)
@@ -237,9 +238,32 @@ class MainWindow(QMainWindow):
         self.left_stack.addWidget(self.tree)
         colonne.addWidget(self.left_stack, 1)
 
+        # Le compte de selection et le filtre qui l'explique, sur la meme
+        # ligne : le resultat se lit la ou le resultat vivait deja, et le
+        # filtre ne prend aucune place tant qu'il n'y en a pas.
+        pied = QHBoxLayout()
+        pied.setContentsMargins(0, 0, 0, 0)
+        pied.setSpacing(t.SPACE_2)
+
         self.selection_label = QLabel("")
         self.selection_label.setStyleSheet(theme.faint())
-        colonne.addWidget(self.selection_label)
+
+        self.filter_label = QLabel("")
+        self.filter_label.setVisible(False)
+
+        self.filter_clear = QPushButton()
+        self.filter_clear.setObjectName("IconSm")
+        self.filter_clear.setIcon(icons.icon("mdi.close", t.TEXT_MUTED))
+        self.filter_clear.setToolTip("Clear the marker filter")
+        self.filter_clear.setCursor(Qt.PointingHandCursor)
+        self.filter_clear.setVisible(False)
+        self.filter_clear.clicked.connect(self.clear_marker_filter)
+
+        pied.addWidget(self.selection_label)
+        pied.addStretch(1)
+        pied.addWidget(self.filter_label)
+        pied.addWidget(self.filter_clear)
+        colonne.addLayout(pied)
         return panneau
 
     def _quiet(self, glyph: str, infobulle: str, slot) -> QPushButton:
@@ -305,6 +329,10 @@ class MainWindow(QMainWindow):
         self.act_stop = self._action(executer, "Stop", "Esc", self.stop_run, "mdi.stop")
 
         selection = self.menuBar().addMenu("&Select")
+        self.act_markers = self._action(
+            selection, "Filter by marker…", "Ctrl+M",
+            self._open_markers, "mdi.tag-multiple-outline")
+        selection.addSeparator()
         self._action(selection, "All", QKeySequence.SelectAll,
                      lambda: self.model.set_all_checked(True))
         self._action(selection, "None", "Ctrl+Shift+A",
@@ -401,6 +429,7 @@ class MainWindow(QMainWindow):
         nodeids = list(collection.nodeids)
         self._markers_by_nodeid = dict(collection.markers)
         self.markers.set_markers(collection.marker_list())
+        self._show_active_filter()
 
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
         lecteurs = self.workspace.readers if self.workspace else ()
@@ -592,6 +621,11 @@ class MainWindow(QMainWindow):
             self.status_label.setText(f"Showing {lecteurs[index].name}")
 
     @pyqtSlot()
+    def _open_markers(self) -> None:
+        if not self.markers.isHidden():
+            self.markers.toggle_popup()
+
+    @pyqtSlot()
     def _on_marker_filter(self) -> None:
         """Coche exactement les tests que l'expression retient.
 
@@ -599,6 +633,8 @@ class MainWindow(QMainWindow):
         selection qu'on avait patiemment faite a la main, et la voir disparaitre,
         serait la pire des surprises.
         """
+        self._show_active_filter()
+
         predicat = self.markers.matcher()
         if predicat is None:
             return
@@ -617,6 +653,31 @@ class MainWindow(QMainWindow):
         self.status_label.setText(
             f"{len(retenus)} tests match “{self.markers.expression()}”"
             if retenus else f"No test matches “{self.markers.expression()}”")
+
+    def _show_active_filter(self) -> None:
+        """Rappelle le filtre en cours a cote du compte de selection.
+
+        Le panneau se referme ; sans ce rappel, il ne resterait aucune trace de
+        POURQUOI une partie de l'arbre est decochee.
+        """
+        expression = self.markers.expression()
+        self.filter_label.setText(expression)
+        self.filter_label.setToolTip(f"Marker filter: {expression}")
+        self.filter_label.setStyleSheet(theme.pill_style(t.ACCENT))
+        self.filter_label.setVisible(bool(expression))
+        self.filter_clear.setVisible(bool(expression))
+
+    @pyqtSlot()
+    def clear_marker_filter(self) -> None:
+        """Retire le filtre sans toucher a la selection qu'il a produite.
+
+        Decocher au passage ferait perdre un choix qu'on vient peut-etre
+        d'affiner a la main ; enlever l'etiquette suffit a dire que le filtre
+        ne s'applique plus.
+        """
+        self.markers.clear()
+        self._show_active_filter()
+        self.status_label.setText("Marker filter cleared")
 
     @pyqtSlot()
     def select_divergent(self) -> None:

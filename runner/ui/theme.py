@@ -100,6 +100,40 @@ QPushButton#Ghost:hover {{
     background-color: {t.BG_HOVER}; color: {t.TEXT}; border-color: transparent;
 }}
 QPushButton#Ghost:disabled {{ color: {t.TEXT_FAINT}; background: transparent; }}
+/* Un filtre pose derriere un panneau ferme serait invisible : on chercherait
+   pourquoi la moitie de l'arbre est decochee. Le bouton le dit. */
+QPushButton#Ghost[active="true"] {{
+    background-color: {t.rgba(t.ACCENT, 0.16)};
+    color: {t.ACCENT};
+}}
+
+/* Panneau flottant : il se pose PAR-DESSUS l'arbre, il lui faut donc un fond
+   opaque, un contour et de l'ombre portee pour ne pas se confondre avec lui. */
+QFrame#Popup {{
+    background-color: {t.BG_RAISED};
+    border: 1px solid {t.BORDER_STRONG};
+    border-radius: {t.RADIUS_LG}px;
+}}
+QScrollArea#Plain, QScrollArea#Plain > QWidget > QWidget {{
+    background: transparent;
+    border: none;
+}}
+QWidget#MarkerRow {{ border-radius: {t.RADIUS_SM}px; }}
+QWidget#MarkerRow:hover {{ background-color: {t.BG_HOVER}; }}
+QCheckBox {{ background: transparent; font-size: {t.TEXT_SM}px; spacing: {t.SPACE_2}px; }}
+QCheckBox::indicator {{
+    width: 15px;
+    height: 15px;
+    border: 1px solid {t.BORDER_STRONG};
+    border-radius: {t.RADIUS_SM}px;
+    background-color: {t.BG_INPUT};
+}}
+QCheckBox::indicator:hover {{ border-color: {t.ACCENT}; }}
+QCheckBox::indicator:checked {{
+    background-color: {t.ACCENT};
+    border-color: {t.ACCENT};
+    image: url({glyphs.check("#06101f")});
+}}
 
 /* Arreter n'est pas une action colorée : elle ne le devient qu'au survol,
    quand elle est reellement disponible. */
