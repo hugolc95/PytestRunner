@@ -23,9 +23,17 @@ def _dossier() -> Path:
     return _DOSSIER
 
 
-def _ecrire(nom: str, svg: str) -> str:
+def _ecrire(nom: str, svg: str, couleur: str = "") -> str:
     """Ecrit le SVG et rend son chemin en slashs, seule forme que Qt accepte
-    dans une url() sous Windows."""
+    dans une url() sous Windows.
+
+    La couleur entre dans le nom du fichier : Qt met en cache les images
+    chargees par `url()` en les indexant sur le chemin. Un nom fixe aurait
+    donc garde la teinte du theme precedent apres bascule, malgre un fichier
+    reecrit.
+    """
+    if couleur:
+        nom = f"{nom.removesuffix('.svg')}_{couleur.lstrip('#')}.svg"
     chemin = _dossier() / nom
     try:
         chemin.write_text(svg, encoding="utf-8")
@@ -44,28 +52,28 @@ def _svg(contenu: str, taille: int = 14) -> str:
 def check(couleur: str) -> str:
     trace = (f'<path d="M3.2 7.2 L5.9 10 L10.9 4.3" fill="none" stroke="{couleur}" '
              'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>')
-    return _ecrire("check.svg", _svg(trace))
+    return _ecrire("check.svg", _svg(trace), couleur)
 
 
 def dash(couleur: str) -> str:
     trace = (f'<path d="M4 7 L10 7" fill="none" stroke="{couleur}" '
              'stroke-width="1.8" stroke-linecap="round"/>')
-    return _ecrire("dash.svg", _svg(trace))
+    return _ecrire("dash.svg", _svg(trace), couleur)
 
 
 def chevron_down(couleur: str) -> str:
     trace = (f'<path d="M3.5 5.5 L7 9 L10.5 5.5" fill="none" stroke="{couleur}" '
              'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>')
-    return _ecrire("chevron.svg", _svg(trace))
+    return _ecrire("chevron.svg", _svg(trace), couleur)
 
 
 def branch_closed(couleur: str) -> str:
     trace = (f'<path d="M5.5 3.5 L9 7 L5.5 10.5" fill="none" stroke="{couleur}" '
              'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>')
-    return _ecrire("branch_closed.svg", _svg(trace))
+    return _ecrire("branch_closed.svg", _svg(trace), couleur)
 
 
 def branch_open(couleur: str) -> str:
     trace = (f'<path d="M3.5 5.5 L7 9 L10.5 5.5" fill="none" stroke="{couleur}" '
              'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>')
-    return _ecrire("branch_open.svg", _svg(trace))
+    return _ecrire("branch_open.svg", _svg(trace), couleur)

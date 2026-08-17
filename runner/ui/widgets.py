@@ -44,23 +44,21 @@ class EmptyState(QWidget):
         colonne.setSpacing(t.SPACE_3)
         colonne.setContentsMargins(t.SPACE_8, t.SPACE_8, t.SPACE_8, t.SPACE_8)
 
-        image = QLabel()
-        image.setAlignment(Qt.AlignCenter)
-        image.setPixmap(icons.icon(glyph, t.TEXT_FAINT).pixmap(40, 40))
-        colonne.addWidget(image)
+        self._glyph = glyph
+        self._image = QLabel()
+        self._image.setAlignment(Qt.AlignCenter)
+        colonne.addWidget(self._image)
 
         self.title_label = QLabel(titre)
         self.title_label.setAlignment(Qt.AlignCenter)
-        self.title_label.setStyleSheet(
-            f"color: {t.TEXT}; font-size: {t.TEXT_LG}px; font-weight: 600;"
-            "background: transparent;")
+        self.title_label.setObjectName("Title")
         colonne.addWidget(self.title_label)
 
         self.detail_label = QLabel(detail)
         self.detail_label.setAlignment(Qt.AlignCenter)
         self.detail_label.setWordWrap(True)
         self.detail_label.setMaximumWidth(360)
-        self.detail_label.setStyleSheet(theme.muted())
+        self.detail_label.setObjectName("Muted")
         colonne.addWidget(self.detail_label, alignment=Qt.AlignCenter)
 
         if action:
@@ -71,6 +69,14 @@ class EmptyState(QWidget):
                 bouton.setToolTip(f"{action}  ({raccourci})")
             bouton.clicked.connect(self.action_clicked)
             colonne.addWidget(bouton, alignment=Qt.AlignCenter)
+
+        self.restyle()
+
+    def restyle(self) -> None:
+        """Repeint le pictogramme : une image posee une fois ne suit pas la
+        feuille de style, et gardait le gris du theme de depart -- bien visible
+        au centre d'un panneau devenu blanc."""
+        self._image.setPixmap(icons.icon(self._glyph, t.TEXT_FAINT).pixmap(40, 40))
 
     def update_text(self, titre: str, detail: str) -> None:
         self.title_label.setText(titre)
@@ -120,6 +126,10 @@ class StatusPill(QWidget):
     def set_active(self, actif: bool) -> None:
         """Marque la pastille comme filtre en cours."""
         self._active = actif
+        self._repaint()
+
+    def restyle(self) -> None:
+        """Rejoue les couleurs : elles dependent du statut, pas de la feuille."""
         self._repaint()
 
     def is_active(self) -> bool:
@@ -196,13 +206,20 @@ class RemainingPill(QWidget):
     def value(self) -> int:
         return self._value
 
+    def restyle(self) -> None:
+        self.set_value(self._value)
+
 
 class ReaderBadge(QLabel):
     """Nom d'un lecteur, dans sa couleur, pour relier colonne / onglet / log."""
 
     def __init__(self, nom: str, index: int, parent=None):
         super().__init__(nom, parent)
-        self.setStyleSheet(theme.pill_style(t.reader_color(index)))
+        self._index = index
+        self.restyle()
+
+    def restyle(self) -> None:
+        self.setStyleSheet(theme.pill_style(t.reader_color(self._index)))
 
 
 class ReaderResult(QWidget):
@@ -222,6 +239,9 @@ class ReaderResult(QWidget):
         if nom:
             ligne.addWidget(ReaderBadge(nom, index))
 
+        # Pas de `restyle()` ici : le panneau de detail rebatit ces etiquettes
+        # a chaque affichage, y compris quand il rejoue le theme. Les couleurs
+        # lues maintenant sont donc toujours celles de la palette courante.
         couleur = t.status_color(status)
         actif = status is not Status.PENDING
 
@@ -262,13 +282,15 @@ class SearchBar(QWidget):
         self.field = QLineEdit()
         self.field.setPlaceholderText("Find a test…")
         self.field.setClearButtonEnabled(True)
-        self.field.addAction(icons.icon("mdi.magnify", t.TEXT_FAINT),
-                             QLineEdit.LeadingPosition)
+        # La loupe est gardee sous la main : au changement de theme il faut lui
+        # repeindre son icone, et non en ajouter une deuxieme a cote.
+        self._magnify = self.field.addAction(
+            icons.icon("mdi.magnify", t.TEXT_FAINT), QLineEdit.LeadingPosition)
         self.field.textChanged.connect(self.query_changed)
         self.field.returnPressed.connect(self.next_match)
 
         self.counter = QLabel("")
-        self.counter.setStyleSheet(theme.faint())
+        self.counter.setObjectName("Faint")
         self.counter.setMinimumWidth(52)
         self.counter.setAlignment(Qt.AlignCenter)
 
@@ -290,6 +312,11 @@ class SearchBar(QWidget):
         bouton.setEnabled(False)
         bouton.clicked.connect(signal)
         return bouton
+
+    def restyle(self) -> None:
+        self._magnify.setIcon(icons.icon("mdi.magnify", t.TEXT_FAINT))
+        self.prev_button.setIcon(icons.icon("mdi.chevron-up", t.TEXT_MUTED))
+        self.next_button.setIcon(icons.icon("mdi.chevron-down", t.TEXT_MUTED))
 
     def set_matches(self, position: int, total: int) -> None:
         """Met a jour le compteur. `position` est en base 1, 0 si aucun."""

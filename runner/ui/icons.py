@@ -54,13 +54,22 @@ KIND_GLYPHS: dict[Kind, str] = {
 }
 
 
-@lru_cache(maxsize=256)
-def icon(nom: str, couleur: str = t.TEXT_MUTED) -> QIcon:
+def icon(nom: str, couleur: str = "") -> QIcon:
     """Icone nommee, teintee. Vide si qtawesome n'est pas disponible.
 
     Une icone vide laisse l'interface utilisable : rien ne depend d'elle pour
     etre compris, chaque action porte aussi un libelle ou une infobulle.
+
+    La couleur est resolue AVANT le cache. En argument par defaut elle serait
+    figee a l'import ; laissee vide jusqu'a l'interieur, elle donnerait une
+    clef de cache identique dans les deux themes -- et la bascule rendrait
+    l'icone de l'ancien.
     """
+    return _icon(nom, couleur or t.TEXT_MUTED)
+
+
+@lru_cache(maxsize=512)
+def _icon(nom: str, couleur: str) -> QIcon:
     if qtawesome is None:  # pragma: no cover
         return QIcon()
     try:

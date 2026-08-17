@@ -109,7 +109,7 @@ class ReaderViews(QWidget):
 
         entete = QLabel()
         entete.setVisible(False)
-        entete.setStyleSheet(theme.faint())
+        entete.setObjectName("Faint")
 
         boite = QWidget()
         col = QVBoxLayout(boite)
@@ -264,6 +264,19 @@ class ResultsPanel(QWidget):
         colonne.addWidget(self.tabs)
 
     # ------------------------------------------------------------- navigation
+
+    def restyle(self) -> None:
+        """Fait redescendre le changement de theme dans tout le panneau."""
+        for vues in (self.output, self.logs):
+            for vue in vues.views:
+                vue.restyle()
+        self.source.restyle()
+        for position, glyphe in (
+                (ONGLET_DETAIL, "mdi.text-box-search-outline"),
+                (ONGLET_SOURCE, "mdi.file-code-outline"),
+                (ONGLET_OUTPUT, "mdi.console"),
+                (ONGLET_LOGS, "mdi.file-document-outline")):
+            self.tabs.setTabIcon(position, icons.icon(glyphe, t.TEXT_MUTED))
 
     def show_tab(self, position: int) -> None:
         self.tabs.setCurrentIndex(position)

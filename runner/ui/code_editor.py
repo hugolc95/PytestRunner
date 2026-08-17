@@ -210,6 +210,18 @@ class CodeEditor(QPlainTextEdit):
         self.setExtraSelections([selection])
         self._gutter.update()
 
+    def restyle(self) -> None:
+        """Reconstruit la coloration avec la palette courante.
+
+        Les formats du surligneur sont batis une fois a la construction : ils
+        gardent sinon les couleurs du theme de depart, sur un fond qui, lui,
+        a change.
+        """
+        self.highlighter = PythonHighlighter(self.document())
+        self.highlight_current_line()
+        self._update_width()
+        self.viewport().update()
+
     def goto_line(self, ligne: int) -> None:
         """Place le curseur sur cette ligne (base 0) et la centre.
 

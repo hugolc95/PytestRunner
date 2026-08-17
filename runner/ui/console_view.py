@@ -123,7 +123,7 @@ class ConsoleView(QWidget):
         ligne.addWidget(self.lens_bar)
 
         self.counter = QLabel("")
-        self.counter.setStyleSheet(theme.faint())
+        self.counter.setObjectName("Faint")
 
         ligne.addSpacing(t.SPACE_2)
         ligne.addWidget(self.counter)
@@ -155,6 +155,20 @@ class ConsoleView(QWidget):
         bouton.setToolTip(infobulle)
         bouton.toggled.connect(slot)
         return bouton
+
+    def restyle(self) -> None:
+        """Rejoue le rendu avec la palette courante.
+
+        Les formats ANSI sont mis en cache par style : ils portent des couleurs
+        resolues au moment ou ils ont ete crees, et survivraient donc a une
+        bascule de theme en gardant l'ancienne teinte.
+        """
+        self._formats.clear()
+        self.copy_button.setIcon(icons.icon("mdi.content-copy", t.TEXT_MUTED))
+        self.wrap_button.setIcon(icons.icon("mdi.wrap", t.TEXT_MUTED))
+        self.follow_button.setIcon(
+            icons.icon("mdi.arrow-down-circle-outline", t.TEXT_MUTED))
+        self._repaint()
 
     # ---------------------------------------------------------------- contenu
 

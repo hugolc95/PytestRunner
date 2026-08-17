@@ -64,6 +64,7 @@ K_RECENT = "workspace/recent"
 K_LAST = "workspace/last"
 K_TREE_COLS = "tree/columns"
 K_INTERPRETER = "interpreter/override"
+K_THEME = "window/theme"
 
 
 class MainWindow(QMainWindow):
@@ -156,7 +157,7 @@ class MainWindow(QMainWindow):
         # d'accent unique, et elle est deliberee.
         self.run_button = QPushButton("Run tests")
         self.run_button.setObjectName("Run")
-        self.run_button.setIcon(icons.icon("mdi.play", "#06120a"))
+        self.run_button.setIcon(icons.icon("mdi.play", t.ON_RUN))
         self.run_button.setToolTip("Run the selected tests  (F5)")
         self.run_button.setCursor(Qt.PointingHandCursor)
         self.run_button.clicked.connect(self.run_selected)
@@ -177,10 +178,18 @@ class MainWindow(QMainWindow):
         self.stop_button.setToolTip("Stop the current run  (Esc)")
         self.stop_button.clicked.connect(self.stop_run)
 
+        # En haut a droite, a l'ecart des actions : changer de theme n'est pas
+        # une etape du travail, c'est un reglage de confort.
+        self.theme_button = QPushButton()
+        self.theme_button.setObjectName("Icon")
+        self.theme_button.setCursor(Qt.PointingHandCursor)
+        self.theme_button.clicked.connect(self.toggle_theme)
+
         ligne.addWidget(self.workspace_combo)
         ligne.addWidget(self.browse_button)
         ligne.addWidget(self.load_button)
         ligne.addStretch(1)
+        ligne.addWidget(self.theme_button)
         ligne.addWidget(self.rerun_button)
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.run_button)
@@ -276,7 +285,7 @@ class MainWindow(QMainWindow):
         pied.setSpacing(t.SPACE_2)
 
         self.selection_label = QLabel("")
-        self.selection_label.setStyleSheet(theme.faint())
+        self.selection_label.setObjectName("Faint")
 
         self.filter_label = QLabel("")
         self.filter_label.setVisible(False)
@@ -324,10 +333,10 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
 
         self.status_label = QLabel("Ready")
-        self.status_label.setStyleSheet(theme.muted())
+        self.status_label.setObjectName("Muted")
 
         self.elapsed_label = QLabel("")
-        self.elapsed_label.setStyleSheet(theme.faint())
+        self.elapsed_label.setObjectName("Faint")
 
         self.pills = {
             statut: StatusPill(statut)
@@ -467,6 +476,72 @@ class MainWindow(QMainWindow):
             # jusqu'ici : les nodeids collectes ailleurs peuvent ne plus exister.
             if self.workspace is not None and not self.workspace.declared_interpreter:
                 self.load_workspace()
+
+    @pyqtSlot()
+    def toggle_theme(self) -> None:
+        """Passe de sombre a clair, et retient le choix."""
+        self.apply_theme("light" if t.is_dark() else "dark")
+
+    def apply_theme(self, nom: str) -> None:
+        """Change de palette a chaud et repeint tout ce qui ne suit pas seul.
+
+        La feuille de style globale se regenere entierement : tout ce qui lit
+        un jeton au moment de l'appel suit sans rien faire. Restent les
+        couleurs figees a la construction -- icones deja teintees, formats de
+        coloration, pastilles dont la teinte depend d'une donnee -- que les
+        `restyle()` ci-dessous rejouent.
+        """
+        from PyQt5.QtWidgets import QApplication
+
+        t.set_theme(nom)
+        self.settings.setValue(K_THEME, t.current_theme())
+
+        application = QApplication.instance()
+        if application is not None:
+            application.setStyleSheet(theme.app_stylesheet())
+
+        self._restyle()
+
+    def _restyle(self) -> None:
+        """Rejoue les couleurs qui ne viennent pas de la feuille globale."""
+        soleil = t.is_dark()
+        self.theme_button.setIcon(icons.icon(
+            "mdi.weather-sunny" if soleil else "mdi.weather-night", t.TEXT_MUTED))
+        self.theme_button.setToolTip(
+            "Switch to the light theme" if soleil else "Switch to the dark theme")
+
+        for glyphe, bouton in (
+                ("mdi.folder-open-outline", self.browse_button),
+                ("mdi.replay", self.rerun_button),
+                ("mdi.stop", self.stop_button)):
+            bouton.setIcon(icons.icon(glyphe, t.TEXT_MUTED))
+        self.run_button.setIcon(icons.icon("mdi.play", t.ON_RUN))
+
+        for glyphe, bouton in (
+                ("mdi.checkbox-multiple-marked-outline", self.select_all_button),
+                ("mdi.checkbox-multiple-blank-outline", self.select_none_button),
+                ("mdi.unfold-more-horizontal", self.expand_button),
+                ("mdi.unfold-less-horizontal", self.collapse_button)):
+            bouton.setIcon(icons.icon(glyphe, t.TEXT_MUTED))
+
+        self.filter_clear.setIcon(icons.icon("mdi.close", t.TEXT_MUTED))
+
+        # Balayage plutot qu'une liste tenue a la main : c'est en oubliant un
+        # widget de cette liste qu'on laisse un ilot de l'ancien theme, et
+        # l'oubli ne se voit que sur un ecran precis, dans un etat precis. Les
+        # `restyle()` sont idempotents, un double appel ne coute rien.
+        from PyQt5.QtWidgets import QWidget
+
+        for enfant in self.findChildren(QWidget):
+            rejouer = getattr(enfant, "restyle", None)
+            if callable(rejouer):
+                rejouer()
+
+        self._show_active_filter()
+
+        # L'arbre redessine ses icones de statut a la demande : il suffit de
+        # lui dire que tout a change.
+        self.model.layoutChanged.emit()
 
     def _connect_service(self) -> None:
         self.service.started.connect(self._on_run_started)
@@ -982,6 +1057,7 @@ class MainWindow(QMainWindow):
             self.tree.header().restoreState(colonnes)
 
         self._interpreter_override = self.settings.value(K_INTERPRETER, "", type=str)
+        self.apply_theme(self.settings.value(K_THEME, "dark", type=str))
 
     def closeEvent(self, event) -> None:
         self.results.source.save()

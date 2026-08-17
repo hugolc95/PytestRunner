@@ -83,11 +83,11 @@ class SourcePanel(QWidget):
         barre.setSpacing(t.SPACE_2)
 
         self.path_label = QLabel()
-        self.path_label.setStyleSheet(theme.faint())
+        self.path_label.setObjectName("Faint")
         self.path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
         self.status_label = QLabel()
-        self.status_label.setStyleSheet(theme.faint())
+        self.status_label.setObjectName("Faint")
 
         self.edit_button = QPushButton("Edit")
         self.edit_button.setObjectName("Ghost")
@@ -213,6 +213,12 @@ class SourcePanel(QWidget):
         return self._dirty
 
     # ------------------------------------------------------------- affichage
+
+    def restyle(self) -> None:
+        """Rejoue ce qui porte une couleur calculee, puis l'editeur."""
+        self.edit_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
+        self.editor.restyle()
+        self._refresh_button()
 
     def _refresh_button(self) -> None:
         modifiable = self._file.editable

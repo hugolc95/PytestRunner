@@ -111,6 +111,11 @@ class MarkerFilter(QPushButton):
 
     # ------------------------------------------------------------ ouverture
 
+    def restyle(self) -> None:
+        """Rejoue l'icone et le panneau avec la palette courante."""
+        self._refresh_label()
+        self.popup.restyle()
+
     def toggle_popup(self) -> None:
         if self.popup.isVisible():
             self.popup.hide()
@@ -173,8 +178,10 @@ class MarkerPopup(QFrame):
         self.search = QLineEdit()
         self.search.setPlaceholderText("Find a marker…")
         self.search.setClearButtonEnabled(True)
-        self.search.addAction(icons.icon("mdi.magnify", t.TEXT_FAINT),
-                              QLineEdit.LeadingPosition)
+        # Gardee sous la main : au changement de theme on lui repeint son
+        # icone, sinon `addAction` en empile une deuxieme a chaque bascule.
+        self._magnify = self.search.addAction(
+            icons.icon("mdi.magnify", t.TEXT_FAINT), QLineEdit.LeadingPosition)
         self.search.textChanged.connect(self._on_search)
         colonne.addWidget(self.search)
 
@@ -326,6 +333,10 @@ class MarkerPopup(QFrame):
         return tuple(n for n, c in self._boxes.items() if c.isChecked())
 
     # ------------------------------------------------------------ ouverture
+
+    def restyle(self) -> None:
+        self._magnify.setIcon(icons.icon("mdi.magnify", t.TEXT_FAINT))
+        self._refresh()
 
     def open_under(self, ancre: QWidget) -> None:
         """Ouvre le panneau sous le bouton, sans deborder de l'ecran."""

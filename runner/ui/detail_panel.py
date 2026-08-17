@@ -33,13 +33,17 @@ from runner.ui.widgets import EmptyState, ReaderResult
 
 # Nature de ligne -> teinte. La table vit ici et pas dans le domaine : c'est
 # une decision de theme, elle change avec la palette, pas avec pytest.
-_TEINTES = {
-    "exception": t.status_color(Status.FAILED),
-    "code": t.TEXT,
-    "frame": t.ACCENT,
-    "section": t.TEXT_FAINT,
-    "text": t.TEXT_MUTED,
-}
+# Calculee A CHAQUE APPEL : figee au niveau du module, elle aurait garde les
+# couleurs du theme charge a l'import.
+def _teinte(nature: str) -> str:
+    table = {
+        "exception": t.status_color(Status.FAILED),
+        "code": t.TEXT,
+        "frame": t.ACCENT,
+        "section": t.TEXT_FAINT,
+        "text": t.TEXT_MUTED,
+    }
+    return table.get(nature, t.TEXT_MUTED)
 
 
 class DetailPanel(QWidget):
@@ -51,6 +55,10 @@ class DetailPanel(QWidget):
         super().__init__(parent)
         self._nodeid = ""
         self._texte_brut = ""
+        # Ce qu'il faut pour refaire le rendu a l'identique : le HTML de la
+        # trace porte des couleurs resolues au moment ou il a ete construit, et
+        # ne suit donc pas un changement de theme.
+        self._dernier: tuple | None = None
 
         self.empty = EmptyState(
             "mdi.cursor-default-click-outline",
@@ -80,15 +88,13 @@ class DetailPanel(QWidget):
         # Le chemin au-dessus, en petit : il situe, il ne se lit pas. Le nom du
         # test en dessous, en grand : c'est lui qu'on cherchait.
         self.path_label = QLabel()
-        self.path_label.setStyleSheet(theme.faint())
+        self.path_label.setObjectName("Faint")
         self.path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
         self.name_label = QLabel()
         self.name_label.setWordWrap(True)
         self.name_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.name_label.setStyleSheet(
-            f"color: {t.TEXT}; font-size: {t.TEXT_LG}px; font-weight: 600;"
-            "background: transparent;")
+        self.name_label.setObjectName("Title")
 
         colonne.addWidget(self.path_label)
         colonne.addWidget(self.name_label)
@@ -126,7 +132,18 @@ class DetailPanel(QWidget):
     def clear(self) -> None:
         self._nodeid = ""
         self._texte_brut = ""
+        self._dernier = None
         self.stack.setCurrentWidget(self.empty)
+
+    def restyle(self) -> None:
+        """Refait le rendu avec la palette courante.
+
+        La trace est du HTML fabrique une fois : ses couleurs sont ecrites en
+        dur dans le document. Sans ce rejeu, l'exception restait rouge sombre
+        sur le fond blanc du theme clair.
+        """
+        if self._dernier is not None:
+            self.show_test(*self._dernier)
 
     def nodeid(self) -> str:
         return self._nodeid
@@ -140,6 +157,7 @@ class DetailPanel(QWidget):
             return
 
         self._nodeid = nodeid
+        self._dernier = (nodeid, readers, statuses, failures)
         self.stack.setCurrentWidget(self.stack.widget(1))
 
         chemin, _, reste = nodeid.partition("::")
@@ -223,7 +241,7 @@ class DetailPanel(QWidget):
         lignes = []
         for ligne in corps.splitlines():
             nature = classify_line(ligne)
-            teinte = _TEINTES.get(nature, t.TEXT_MUTED)
+            teinte = _teinte(nature)
             gras = "font-weight:600;" if nature == "exception" else ""
             nue = escape(strip_ansi(ligne)) or "&nbsp;"
             lignes.append(f'<span style="color:{teinte};{gras}">{nue}</span>')

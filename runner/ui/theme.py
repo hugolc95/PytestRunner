@@ -74,7 +74,7 @@ QPushButton:checked {{
 
 QPushButton#Primary {{
     background-color: {t.ACCENT};
-    color: #06101f;
+    color: {t.ON_ACCENT};
     border: 1px solid {t.ACCENT};
     font-weight: 600;
     padding: 0 {t.SPACE_4}px;
@@ -92,7 +92,7 @@ QPushButton#Primary:disabled {{
 /* Lancer : vert plein, comme dans l'ancienne interface. */
 QPushButton#Run {{
     background-color: {t.RUN};
-    color: #06120a;
+    color: {t.ON_RUN};
     border: 1px solid {t.RUN};
     font-weight: 600;
     padding: 0 {t.SPACE_4}px;
@@ -150,7 +150,7 @@ QCheckBox::indicator:hover {{ border-color: {t.ACCENT}; }}
 QCheckBox::indicator:checked {{
     background-color: {t.ACCENT};
     border-color: {t.ACCENT};
-    image: url({glyphs.check("#06101f")});
+    image: url({glyphs.check(t.ON_ACCENT)});
 }}
 
 /* Arreter n'est pas une action colorée : elle ne le devient qu'au survol,
@@ -236,7 +236,7 @@ QLineEdit, QComboBox {{
     padding: 0 {t.SPACE_2}px;
     min-height: {t.CONTROL_MD}px;
     selection-background-color: {t.ACCENT};
-    selection-color: #06101f;
+    selection-color: {t.ON_ACCENT};
 }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {t.ACCENT}; }}
 /* Une expression que pytest refuserait : le champ le dit avant qu'on lance. */
@@ -304,7 +304,7 @@ QTreeView::indicator:hover {{ border-color: {t.ACCENT}; }}
 QTreeView::indicator:checked {{
     background-color: {t.ACCENT};
     border-color: {t.ACCENT};
-    image: url({glyphs.check("#06101f")});
+    image: url({glyphs.check(t.ON_ACCENT)});
 }}
 QTreeView::indicator:indeterminate {{
     background-color: {t.rgba(t.ACCENT, 0.28)};
@@ -355,6 +355,26 @@ QTabBar::tab {{
 QTabBar::tab:hover {{ color: {t.TEXT}; }}
 QTabBar::tab:selected {{ color: {t.TEXT}; border-bottom-color: {t.ACCENT}; font-weight: 600; }}
 QStatusBar QLabel {{ background: transparent; }}
+
+/* Libelles discrets. Poses par nom d'objet et non widget par widget : une
+   couleur ecrite a la main dans un widget echappe au theme, et il faudrait la
+   rejouer a chaque bascule. Ici la feuille globale s'en charge seule. */
+QLabel#Muted {{
+    color: {t.TEXT_MUTED};
+    font-size: {t.TEXT_SM}px;
+    background: transparent;
+}}
+QLabel#Faint {{
+    color: {t.TEXT_FAINT};
+    font-size: {t.TEXT_XS}px;
+    background: transparent;
+}}
+QLabel#Title {{
+    color: {t.TEXT};
+    font-size: {t.TEXT_LG}px;
+    font-weight: 600;
+    background: transparent;
+}}
 
 /* ---------------------------------------------------------------- textes */
 QPlainTextEdit, QTextEdit {{
