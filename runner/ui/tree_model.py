@@ -27,7 +27,7 @@ class _Row:
     balayage complet par appel.
     """
 
-    __slots__ = ("node", "parent", "children", "row", "checked", "statuses")
+    __slots__ = ("node", "parent", "children", "row", "checked", "statuses", "agg")
 
     def __init__(self, node: TestNode, parent: "_Row | None", row: int):
         self.node = node
@@ -37,6 +37,11 @@ class _Row:
         # Statut par index de lecteur, pour les feuilles seulement : celui d'un
         # regroupement se deduit de ses enfants (voir status_for).
         self.statuses: dict[int, Status] = {}
+        # Statut agrege d'un regroupement, par lecteur, retenu apres calcul.
+        # Sans lui, chaque redessin refaisait le parcours de tout le sous-arbre
+        # -- sur un dossier replie de 2000 tests, 2000 visites par colonne et
+        # par image, pour une valeur qui n'avait pas bouge.
+        self.agg: dict[int, Status] = {}
         self.children: list[_Row] = [
             _Row(enfant, self, position)
             for position, enfant in enumerate(node.children)
@@ -96,6 +101,11 @@ class TestTreeModel(QAbstractItemModel):
         """Une colonne de statut par lecteur, ou une seule sans lecteur."""
         self.beginResetModel()
         self._readers = tuple(readers)
+        # Pas de purge des agregats ici : ils sont ranges par index de lecteur,
+        # exactement comme les statuts des feuilles dont ils derivent. Les deux
+        # vieillissent donc ensemble et restent coherents. Ce qui repart
+        # vraiment de zero, c'est `set_tree` -- il reconstruit les lignes -- et
+        # `clear_statuses`, qui vide les deux.
         self.endResetModel()
 
     @property
@@ -272,10 +282,19 @@ class TestTreeModel(QAbstractItemModel):
         Une feuille porte le sien ; un regroupement montre le PIRE de ses
         enfants, sans quoi un echec au fond d'une arborescence repliee resterait
         invisible.
+
+        Le resultat d'un regroupement est retenu : Qt appelle cette methode a
+        chaque redessin, pour chaque ligne visible et chaque colonne, et le
+        parcours complet du sous-arbre y etait refait a chaque fois.
         """
         if ligne.is_leaf:
             return ligne.statuses.get(reader_index, Status.PENDING)
-        return worst(self.status_for(e, reader_index) for e in ligne.children)
+
+        retenu = ligne.agg.get(reader_index)
+        if retenu is None:
+            retenu = worst(self.status_for(e, reader_index) for e in ligne.children)
+            ligne.agg[reader_index] = retenu
+        return retenu
 
     def apply_outcome(self, nodeid: str, status: Status, reader_index: int) -> bool:
         """Pose un resultat. Retourne False si le nodeid n'est pas dans l'arbre.
@@ -295,9 +314,16 @@ class TestTreeModel(QAbstractItemModel):
         self.dataChanged.emit(index, index, [Qt.DecorationRole, Qt.ToolTipRole])
 
         # Les parents montrent le pire de leurs enfants : leur cellule change
-        # aussi, sans qu'aucune donnee ne leur soit propre.
+        # aussi, sans qu'aucune donnee ne leur soit propre. Leur agregat est
+        # mis a jour ici plutot qu'invalide : un resultat ne peut qu'aggraver
+        # le pire connu, puisque tout repart de PENDING a chaque run
+        # (`clear_statuses`). Recalculer aurait signifie reparcourir le
+        # sous-arbre a chaque test qui se termine.
         parent = ligne.parent
         while parent is not None:
+            connu = parent.agg.get(reader_index)
+            parent.agg[reader_index] = (status if connu is None
+                                        else worst((connu, status)))
             index_parent = self.createIndex(parent.row, colonne, parent)
             self.dataChanged.emit(index_parent, index_parent, [Qt.DecorationRole])
             parent = parent.parent
@@ -313,6 +339,9 @@ class TestTreeModel(QAbstractItemModel):
         for racine in self._roots:
             for ligne in [racine, *racine.descendants()]:
                 ligne.statuses.clear()
+                # Les agregats retenus valaient pour le run precedent : les
+                # garder ferait afficher en rouge des dossiers remis a zero.
+                ligne.agg.clear()
 
         colonnes = self.columnCount() - 1
         for racine in self._roots:

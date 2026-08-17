@@ -75,8 +75,12 @@ def status_icon(status: Status, group: bool = False) -> QIcon:
     couleur = t.status_color(status)
     if group:
         # Un agregat ne doit pas peser autant qu'un resultat : meme teinte,
-        # moins d'encre.
-        couleur = t.rgba(couleur, 0.75)
+        # moins d'encre. La couleur est COMPOSEE en opaque, pas exprimee en
+        # `rgba()` : cette forme est valide en QSS mais pas comme QColor, et
+        # qtawesome retombait alors sur du noir -- soit, sur le fond sombre de
+        # l'arbre, un anneau invisible. Les dossiers semblaient ne rien
+        # recevoir de leurs enfants alors que le calcul etait juste.
+        couleur = t.blend(couleur, t.BG_SURFACE, 0.75)
     return icon(table.get(status, "mdi.circle-small"), couleur)
 
 
