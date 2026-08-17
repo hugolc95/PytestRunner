@@ -372,6 +372,9 @@ class MainWindow(QMainWindow):
         self._action(fichier, "Reload tests", QKeySequence.Refresh, self.load_workspace,
                      "mdi.refresh")
         fichier.addSeparator()
+        self.act_config = self._action(
+            fichier, "Edit the workspace configuration…", None,
+            self.open_config_dialog, "mdi.file-cog-outline")
         self._action(fichier, "Test Python interpreter…", None,
                      self.open_interpreter_dialog, "mdi.language-python")
         fichier.addSeparator()
@@ -484,6 +487,38 @@ class MainWindow(QMainWindow):
             # jusqu'ici : les nodeids collectes ailleurs peuvent ne plus exister.
             if self.workspace is not None and not self.workspace.declared_interpreter:
                 self.load_workspace()
+
+    @pyqtSlot()
+    def open_config_dialog(self) -> None:
+        """Ouvre le fichier de configuration du workspace charge.
+
+        Recharge la collecte apres un enregistrement : le fichier decide de
+        l'interpreteur, des lecteurs et du chemin des logs. Garder a l'ecran un
+        arbre collecte avec les reglages d'avant ferait travailler sur des
+        informations perimees sans que rien ne le signale.
+        """
+        from runner.ui.config_dialog import ConfigDialog
+
+        if self.workspace is None or not self.workspace.config_path:
+            ErrorDialog.show_error(
+                self, "No configuration file",
+                "This workspace has no YAML configuration file at its root. "
+                "Create a config.yml there, then load the workspace again.",
+                self.workspace.path if self.workspace else "")
+            return
+
+        avant = (self.workspace.readers, self.workspace.log_root,
+                 self.workspace.declared_interpreter, self.workspace.reader_mode)
+
+        dialogue = ConfigDialog(self.workspace.config_path,
+                                [r.name for r in self.workspace.readers], self)
+        dialogue.exec_()
+
+        self.workspace = Workspace.load(self.workspace.path)
+        apres = (self.workspace.readers, self.workspace.log_root,
+                 self.workspace.declared_interpreter, self.workspace.reader_mode)
+        if avant != apres:
+            self.load_workspace()
 
     @pyqtSlot()
     def toggle_theme(self) -> None:
@@ -1086,6 +1121,9 @@ class MainWindow(QMainWindow):
         self.act_rerun.setEnabled(rejouable)
         self.rerun_button.setEnabled(rejouable)
         self.act_diverge.setEnabled(len(self.model.readers) > 1)
+        # Sans workspace charge, il n'y a aucun fichier a editer.
+        self.act_config.setEnabled(
+            charge and bool(self.workspace.config_path))
 
     def _restore(self) -> None:
         geometrie = self.settings.value(K_GEOMETRY)

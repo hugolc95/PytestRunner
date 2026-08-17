@@ -1,0 +1,388 @@
+"""Editer la configuration du workspace : un formulaire, et le YAML en secours.
+
+Ouvrir le fichier dans un editeur externe pour changer un lecteur ou un chemin
+de logs oblige a connaitre la syntaxe YAML, et une indentation de travers rend
+tout le workspace incollectable. Le formulaire propose un champ par reglage,
+adapte a son type, et ne touche qu'aux lignes dont la valeur a change.
+
+L'onglet YAML reste la pour ce que le formulaire ne represente pas : ajouter
+une cle absente, ecrire une structure imbriquee, ou simplement relire le
+fichier tel qu'il est. Ce qu'on y tape fait alors foi, commentaires compris.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QDoubleSpinBox,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QPlainTextEdit,
+    QPushButton,
+    QScrollArea,
+    QSpinBox,
+    QTabWidget,
+    QVBoxLayout,
+    QWidget,
+)
+
+from runner.domain import config_file
+from runner.domain.workspace import CLES_LOGS, CLES_PYTHON, CLES_READER, CLES_READERS
+from runner.ui import tokens as t
+
+ONGLET_FORMULAIRE = 0
+ONGLET_YAML = 1
+
+# Reglages dont la valeur est un dossier, ou un fichier : ils recoivent un
+# bouton « Parcourir ». Taper un chemin a la main est la source d'erreur la
+# plus courante de ce fichier.
+CLES_DOSSIER = CLES_LOGS + ("output_dir", "report_path", "workspace", "root")
+CLES_FICHIER = CLES_PYTHON + ("config_file",)
+
+# Ce que fait un reglage, quand ce n'est pas evident depuis son nom.
+EXPLICATIONS = {
+    "log_path": "Folder where the conftest writes one .log per test.",
+    "log_directory": "Folder where the conftest writes one .log per test.",
+    "python_executable": "Python used to collect and run the tests. It needs "
+                         "pytest. Empty means the application's own setting.",
+    "reader": "The reader the tests read today.",
+    "readers": "Extra readers to test, one per line. The one above stays first.",
+    "reader_mode": "sequential runs the readers one after the other. Leave "
+                   "empty for the default, which runs them together.",
+    "import_mode": "pytest import mode. importlib accepts test files sharing "
+                   "a name across folders.",
+    "pythonpath": "Paths added to the tests' PYTHONPATH, one per line.",
+}
+
+
+def _joli(nom: str) -> str:
+    """`log_path` devient `Log path` : un libelle, pas un identifiant."""
+    return str(nom).replace("_", " ").replace("-", " ").strip().capitalize()
+
+
+class _Champ:
+    """Un reglage a l'ecran : son chemin, son widget, et sa valeur de depart."""
+
+    def __init__(self, chemin: tuple, widget, lire, depart):
+        self.chemin = chemin
+        self.widget = widget
+        self._lire = lire
+        self.depart = depart
+
+    def valeur(self):
+        return self._lire()
+
+    def a_change(self) -> bool:
+        return self.valeur() != self.depart
+
+
+class ConfigDialog(QDialog):
+    """Le fichier de configuration du workspace, editable sans quitter l'outil."""
+
+    def __init__(self, config_path: str, readers_connus=(), parent=None):
+        super().__init__(parent)
+        self.path = Path(config_path)
+        self._readers_connus = tuple(readers_connus)
+        self._champs: list[_Champ] = []
+
+        self.setWindowTitle(f"Configuration — {self.path.name}")
+        # Une QDialog n'a par defaut ni agrandissement ni reduction : sur une
+        # configuration fournie, on veut pouvoir la mettre en plein ecran.
+        self.setWindowFlags(self.windowFlags()
+                            | Qt.WindowMaximizeButtonHint
+                            | Qt.WindowMinimizeButtonHint)
+        self.setSizeGripEnabled(True)
+        self.resize(760, 620)
+
+        self.chemin_label = QLabel(str(self.path))
+        self.chemin_label.setObjectName("Faint")
+        self.chemin_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        self.form_host = QWidget()
+        self._form = QVBoxLayout(self.form_host)
+        self._form.setContentsMargins(t.SPACE_2, t.SPACE_2, t.SPACE_2, t.SPACE_2)
+        self._form.setSpacing(t.SPACE_4)
+
+        defilement = QScrollArea()
+        defilement.setWidgetResizable(True)
+        defilement.setWidget(self.form_host)
+
+        self.raw = QPlainTextEdit()
+        self.raw.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.raw.setPlaceholderText("key: value")
+
+        self.tabs = QTabWidget()
+        self.tabs.addTab(defilement, "Settings")
+        self.tabs.addTab(self.raw, "YAML")
+        self.tabs.currentChanged.connect(self._on_tab)
+
+        self.status = QLabel("")
+        self.status.setWordWrap(True)
+
+        self.reload_button = QPushButton("Reload")
+        self.reload_button.setObjectName("Ghost")
+        self.reload_button.clicked.connect(self.reload)
+
+        self.save_button = QPushButton("Save")
+        self.save_button.setObjectName("Primary")
+        self.save_button.clicked.connect(self.save)
+
+        self.close_button = QPushButton("Close")
+        self.close_button.setObjectName("Ghost")
+        self.close_button.clicked.connect(self.reject)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(t.SPACE_2)
+        actions.addWidget(self.status, 1)
+        actions.addWidget(self.reload_button)
+        actions.addWidget(self.close_button)
+        actions.addWidget(self.save_button)
+
+        colonne = QVBoxLayout(self)
+        colonne.setContentsMargins(t.SPACE_4, t.SPACE_4, t.SPACE_4, t.SPACE_3)
+        colonne.setSpacing(t.SPACE_3)
+        colonne.addWidget(self.chemin_label)
+        colonne.addWidget(self.tabs, 1)
+        colonne.addLayout(actions)
+
+        # Pas de feuille posee sur l'editeur : la feuille globale habille deja
+        # les QPlainTextEdit, en police a chasse fixe et aux couleurs du theme.
+        # Une feuille locale ne suivrait pas la bascule clair / sombre.
+        self.reload()
+
+    # ------------------------------------------------------------- chargement
+
+    def reload(self) -> None:
+        """Relit le fichier et rebatit les deux vues."""
+        donnees = config_file.charger(self.path)
+        texte = config_file.lire_texte(self.path)
+        self.raw.setPlainText(texte if texte is not None else "")
+        self._batir(donnees)
+        self._dire("")
+
+    def _batir(self, donnees: dict) -> None:
+        while self._form.count():
+            element = self._form.takeAt(0)
+            widget = element.widget()
+            if widget is not None:
+                widget.deleteLater()
+        self._champs = []
+
+        simples = {c: v for c, v in donnees.items() if not isinstance(v, dict)}
+        sections = {c: v for c, v in donnees.items() if isinstance(v, dict)}
+
+        if simples:
+            self._form.addWidget(self._groupe("Settings", (), simples))
+        for nom, contenu in sections.items():
+            self._form.addWidget(self._groupe(_joli(nom), (nom,), contenu))
+
+        if not simples and not sections:
+            vide = QLabel("This file has no setting yet. Add one in the YAML tab.")
+            vide.setObjectName("Muted")
+            vide.setWordWrap(True)
+            self._form.addWidget(vide)
+
+        self._form.addStretch(1)
+
+    def _groupe(self, titre: str, prefixe: tuple, contenu: dict) -> QWidget:
+        boite = QWidget()
+        colonne = QVBoxLayout(boite)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(t.SPACE_2)
+
+        etiquette = QLabel(titre)
+        etiquette.setObjectName("Title")
+        colonne.addWidget(etiquette)
+
+        formulaire = QFormLayout()
+        formulaire.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        formulaire.setSpacing(t.SPACE_2)
+
+        for nom, valeur in contenu.items():
+            if isinstance(valeur, dict):
+                # Une section dans une section : le formulaire s'arrete la, et
+                # le dit plutot que de faire disparaitre le reglage.
+                imbriquee = QLabel("nested section — edit it in the YAML tab")
+                imbriquee.setObjectName("Faint")
+                formulaire.addRow(_joli(nom), imbriquee)
+                continue
+            formulaire.addRow(_joli(nom),
+                              self._widget(prefixe + (nom,), nom, valeur))
+
+        colonne.addLayout(formulaire)
+        return boite
+
+    # ------------------------------------------------------------------ champs
+
+    def _widget(self, chemin: tuple, nom: str, valeur) -> QWidget:
+        cle = config_file.normaliser(nom)
+        boite = QWidget()
+        ligne = QVBoxLayout(boite)
+        ligne.setContentsMargins(0, 0, 0, 0)
+        ligne.setSpacing(2)
+
+        saisie, lire = self._saisie(cle, valeur)
+        ligne.addWidget(saisie)
+
+        explication = EXPLICATIONS.get(cle)
+        if explication:
+            aide = QLabel(explication)
+            aide.setObjectName("Faint")
+            aide.setWordWrap(True)
+            ligne.addWidget(aide)
+
+        self._champs.append(_Champ(chemin, saisie, lire, lire()))
+        return boite
+
+    def _saisie(self, cle: str, valeur):
+        """Le widget adapte au type de la valeur, et de quoi la relire."""
+        # `cle:` sans rien derriere se lit None. Rendu par `str()`, il
+        # remplissait le champ du mot « None » -- que rien ne distingue d'une
+        # valeur voulue, et qui serait ecrit tel quel a l'enregistrement.
+        if valeur is None:
+            valeur = ""
+
+        if isinstance(valeur, bool):
+            case = QCheckBox()
+            case.setChecked(valeur)
+            return case, case.isChecked
+
+        if isinstance(valeur, int):
+            champ = QSpinBox()
+            champ.setRange(-1_000_000, 1_000_000)
+            champ.setValue(valeur)
+            return champ, champ.value
+
+        if isinstance(valeur, float):
+            champ = QDoubleSpinBox()
+            champ.setRange(-1_000_000, 1_000_000)
+            champ.setDecimals(3)
+            champ.setValue(valeur)
+            return champ, champ.value
+
+        if isinstance(valeur, (list, tuple)):
+            champ = QPlainTextEdit("\n".join(str(v) for v in valeur))
+            champ.setFixedHeight(t.CONTROL_MD * 3)
+            return champ, lambda: [l.strip() for l in
+                                   champ.toPlainText().splitlines() if l.strip()]
+
+        if cle in CLES_READER or cle in CLES_READERS:
+            champ = QComboBox()
+            champ.setEditable(True)
+            # Le lecteur en cours reste choisissable meme debranche : sans
+            # cela, rouvrir la configuration ferait disparaitre le reglage.
+            propositions = list(dict.fromkeys(
+                [str(valeur)] + [str(r) for r in self._readers_connus]))
+            champ.addItems([p for p in propositions if p])
+            champ.setCurrentText(str(valeur))
+            return champ, champ.currentText
+
+        champ = QLineEdit(str(valeur))
+        if cle in CLES_DOSSIER or cle in CLES_FICHIER:
+            return self._avec_parcourir(champ, cle in CLES_FICHIER), champ.text
+        return champ, champ.text
+
+    def _avec_parcourir(self, champ: QLineEdit, fichier: bool) -> QWidget:
+        boite = QWidget()
+        ligne = QHBoxLayout(boite)
+        ligne.setContentsMargins(0, 0, 0, 0)
+        ligne.setSpacing(t.SPACE_2)
+
+        bouton = QPushButton("Browse…")
+        bouton.setObjectName("Ghost")
+        bouton.clicked.connect(lambda: self._parcourir(champ, fichier))
+
+        ligne.addWidget(champ, 1)
+        ligne.addWidget(bouton)
+        return boite
+
+    def _parcourir(self, champ: QLineEdit, fichier: bool) -> None:
+        depart = champ.text() or str(self.path.parent)
+        if fichier:
+            choisi, _ = QFileDialog.getOpenFileName(self, "Choose a file", depart)
+        else:
+            choisi = QFileDialog.getExistingDirectory(self, "Choose a folder",
+                                                      depart)
+        if choisi:
+            champ.setText(choisi)
+
+    # ------------------------------------------------------------- onglets
+
+    def _on_tab(self, index: int) -> None:
+        """Passer a l'onglet YAML relit le FICHIER, pas le formulaire.
+
+        Y afficher ce que le formulaire a en memoire donnerait un texte
+        reserialise, commentaires effaces -- exactement ce qu'on cherche a
+        eviter. Les modifications non enregistrees sont signalees plutot que
+        recopiees.
+        """
+        if index != ONGLET_YAML:
+            return
+        if self._modifications():
+            self._dire("Unsaved changes in the form are not shown here. "
+                       "Save first, or edit the file below directly.", alerte=True)
+        else:
+            self._dire("")
+
+    # --------------------------------------------------------- enregistrement
+
+    def _modifications(self) -> dict:
+        """Uniquement ce qui a change : le reste du fichier n'est pas touche."""
+        return {champ.chemin: champ.valeur()
+                for champ in self._champs if champ.a_change()}
+
+    def save(self) -> None:
+        if self.tabs.currentIndex() == ONGLET_YAML:
+            self._enregistrer_texte()
+        else:
+            self._enregistrer_formulaire()
+
+    def _enregistrer_formulaire(self) -> None:
+        changements = self._modifications()
+        if not changements:
+            self._dire("Nothing to save.")
+            return
+
+        ok, message = config_file.ecrire(self.path, changements)
+        if not ok:
+            self._dire(f"Could not write: {message}", alerte=True)
+            return
+
+        self.reload()
+        combien = len(changements)
+        self._dire(f"Saved {combien} setting{'s' if combien > 1 else ''}.")
+
+    def _enregistrer_texte(self) -> None:
+        texte = self.raw.toPlainText()
+        valide, probleme = config_file.valider(texte)
+        if not valide:
+            # Rien n'est ecrit : un YAML invalide rendrait le workspace
+            # incollectable, et l'erreur ressortirait bien plus tard sous la
+            # forme d'une collecte qui echoue sans raison apparente.
+            self._dire(f"Not saved — {probleme}", alerte=True)
+            return
+
+        ok, message = config_file.ecrire_texte(self.path, texte)
+        if not ok:
+            self._dire(f"Could not write: {message}", alerte=True)
+            return
+
+        self.reload()
+        self.tabs.setCurrentIndex(ONGLET_YAML)
+        self._dire("Saved.")
+
+    def _dire(self, message: str, alerte: bool = False) -> None:
+        from runner.domain.models import Status
+
+        self.status.setText(message)
+        couleur = t.status_color(Status.FAILED) if alerte else t.TEXT_MUTED
+        self.status.setStyleSheet(
+            f"color: {couleur}; font-size: {t.TEXT_SM}px; background: transparent;")
