@@ -160,10 +160,22 @@ def _attendre(qapp, condition, limite=10.0) -> bool:
     return False
 
 
-def _service(qapp):
+@pytest.fixture
+def service(qapp):
+    """Un service, ferme proprement a la fin du test.
+
+    Un `RunService` lache tel quel emmene ses QThread avec lui : Python le
+    ramasse, Qt detruit les fils encore enregistres, et le segment de memoire
+    part avec. Le plantage ne se voit pas sur le test coupable -- il tombe
+    beaucoup plus tard, sur un autre fichier.
+    """
     from runner.services.run_service import RunService
 
-    return RunService()
+    objet = RunService()
+    yield objet
+    objet.cancel()
+    objet.wait(5000)
+    qapp.processEvents()
 
 
 def _requete(sequential: bool) -> RunRequest:
@@ -171,8 +183,7 @@ def _requete(sequential: bool) -> RunRequest:
                       (Reader("A", 0), Reader("B", 1)), sequential=sequential)
 
 
-def test_in_parallel_mode_both_readers_are_under_way_at_once(qapp, faux_runs):
-    service = _service(qapp)
+def test_in_parallel_mode_both_readers_are_under_way_at_once(qapp, faux_runs, service):
     service.start(_requete(sequential=False), {})
     assert _attendre(qapp, lambda: not service.busy), "le run n'a jamais fini"
     service.wait()
@@ -184,11 +195,10 @@ def test_in_parallel_mode_both_readers_are_under_way_at_once(qapp, faux_runs):
         "les deux lecteurs ne se sont pas recouverts : ils se sont enchaines")
 
 
-def test_in_sequential_mode_the_second_reader_waits_for_the_first(qapp, faux_runs):
+def test_in_sequential_mode_the_second_reader_waits_for_the_first(qapp, faux_runs, service):
     """Le mode existe pour ce que l'isolation ne peut pas separer : du materiel
     qui ne supporte pas deux campagnes, un log unique. Se recouvrir ne serait
     pas une lenteur, ce serait la panne qu'on cherche a eviter."""
-    service = _service(qapp)
     service.start(_requete(sequential=True), {})
     assert _attendre(qapp, lambda: not service.busy), "le run n'a jamais fini"
     service.wait()
@@ -200,7 +210,7 @@ def test_in_sequential_mode_the_second_reader_waits_for_the_first(qapp, faux_run
         "le deuxieme lecteur a demarre avant la fin du premier")
 
 
-def test_the_run_never_looks_idle_between_two_sequential_readers(qapp, faux_runs):
+def test_the_run_never_looks_idle_between_two_sequential_readers(qapp, faux_runs, service):
     """`busy` retombant a faux au milieu du run rallumerait le bouton Run, et
     une deuxieme campagne partirait par-dessus la premiere.
 
@@ -210,7 +220,6 @@ def test_the_run_never_looks_idle_between_two_sequential_readers(qapp, faux_runs
     se place donc DANS le creux : `reader_finished` est emis avant que le
     service ne prenne le lecteur en file.
     """
-    service = _service(qapp)
     releves = []
     service.reader_finished.connect(lambda _r: releves.append(service.busy))
 
@@ -224,8 +233,7 @@ def test_the_run_never_looks_idle_between_two_sequential_readers(qapp, faux_runs
         "le service s'est declare libre alors qu'un lecteur restait a jouer")
 
 
-def test_stopping_a_sequential_run_does_not_start_the_next_reader(qapp, faux_runs):
-    service = _service(qapp)
+def test_stopping_a_sequential_run_does_not_start_the_next_reader(qapp, faux_runs, service):
     service.start(_requete(sequential=True), {})
     assert _attendre(qapp, lambda: _FauxRun.journal), "le premier n'a pas demarre"
 
@@ -238,14 +246,13 @@ def test_stopping_a_sequential_run_does_not_start_the_next_reader(qapp, faux_run
         "un lecteur de la file est parti malgre l'arret")
 
 
-def test_a_stopped_sequential_run_still_reports_that_it_is_over(qapp, faux_runs):
+def test_a_stopped_sequential_run_still_reports_that_it_is_over(qapp, faux_runs, service):
     """Les lecteurs restes en file ne rendront jamais de rapport.
 
     Compares au nombre de lecteurs PREVUS, ils empechaient `finished` d'etre
     emis : la fenetre restait en « run en cours », bouton Run eteint et Stop
     allume, jusqu'a la fermeture.
     """
-    service = _service(qapp)
     bilans = []
     service.finished.connect(bilans.append)
 
@@ -259,12 +266,11 @@ def test_a_stopped_sequential_run_still_reports_that_it_is_over(qapp, faux_runs)
     assert len(bilans[0]) == 1, "seul le lecteur demarre doit rendre un rapport"
 
 
-def test_the_reports_come_back_in_column_order(qapp, faux_runs):
+def test_the_reports_come_back_in_column_order(qapp, faux_runs, service):
     """Ils arrivent dans l'ordre ou les lecteurs finissent ; un bilan qui change
     de disposition d'un run a l'autre se relit mal."""
     faux_runs.durees = {0: 0.30, 1: 0.05}   # le deuxieme lecteur finit d'abord
 
-    service = _service(qapp)
     rendus, bilans = [], []
     service.reader_finished.connect(lambda r: rendus.append(r.reader.index))
     service.finished.connect(bilans.append)
@@ -293,6 +299,23 @@ def fenetre(qapp, tmp_path):
     f = MainWindow()
     yield f
     f.settings.clear()
+    _fermer(f, qapp)
+
+
+def _fermer(fenetre, qapp) -> None:
+    """Detruit vraiment la fenetre a la fin du test.
+
+    Une `MainWindow` simplement lachee reste vivante cote Qt, avec son service
+    et ses fils. Elles s'accumulaient d'un test a l'autre, et chaque
+    `setStyleSheet` d'application les repolissait TOUTES -- jusqu'au segment de
+    memoire, plusieurs fichiers de tests plus loin, sur un test innocent.
+    """
+    if fenetre.service.busy:
+        fenetre.service.cancel()
+        fenetre.service.wait(5000)
+    fenetre.close()
+    fenetre.deleteLater()
+    qapp.processEvents()
 
 
 def _charger(fenetre, espace: Workspace) -> None:

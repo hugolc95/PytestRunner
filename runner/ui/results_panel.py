@@ -34,6 +34,7 @@ from PyQt5.QtWidgets import (
 )
 
 from runner.domain import failures as failures_mod
+from runner.domain import logs
 from runner.domain.models import Reader, ReaderReport, Status
 from runner.domain.source import path_of as source_path
 from runner.ui import icons, theme
@@ -200,10 +201,16 @@ class ReaderViews(QWidget):
         if 0 <= index < len(self.views):
             self.views[index].append(texte)
 
-    def set_text(self, index: int, texte: str, entete: str = "") -> None:
+    def set_text(self, index: int, texte: str, entete: str = "",
+                 chemin: str = "") -> None:
         if 0 <= index < len(self.views):
             self.views[index].set_text(texte)
             self.headers[index].setText(entete)
+            # Le chemin en infobulle plutot qu'en clair : deux logs se
+            # ressemblent beaucoup et savoir DUQUEL on parle est la premiere
+            # chose qu'on verifie, mais l'afficher en entier mangerait la
+            # largeur de la console.
+            self.headers[index].setToolTip(chemin)
 
     def clear(self) -> None:
         for vue in self.views:
@@ -378,63 +385,46 @@ class ResultsPanel(QWidget):
         self._log_root = racine
 
     def show_logs_for(self, nodeid: str, readers: tuple[Reader, ...]) -> None:
-        """Charge le .log de ce test, un par lecteur.
-
-        Le conftest du workspace range ses logs par lecteur : le nom du lecteur
-        est un DOSSIER du chemin. Comparer par composant et non par sous-chaine
-        evite qu'un lecteur nomme `Reader` ne recupere le log de
-        `Cosmo11Secured Reader`.
-        """
+        """Charge le .log de ce test, un par lecteur."""
         if not nodeid or self._log_root is None:
             return
 
         cibles = readers or (Reader("", 0),)
         for lecteur in cibles:
-            chemin = _trouver_log(self._log_root, nodeid, lecteur.name)
+            chemin = logs.find_test_log(self._log_root, nodeid, lecteur.name)
             if chemin is None:
-                self.logs.set_text(
-                    lecteur.index,
-                    f"No log found for this test"
-                    + (f" on {lecteur.name}." if lecteur.name else "."),
-                    lecteur.name or "",
-                )
+                self.logs.set_text(lecteur.index,
+                                   self._rien_trouve(lecteur),
+                                   lecteur.name or "")
                 continue
             try:
                 contenu = chemin.read_text(encoding="utf-8", errors="replace")
             except OSError as exc:
-                contenu = f"Could not read {chemin}: {exc}"
+                contenu = f"Could not read {chemin}:\n{exc}"
+            # Le chemin en tete : deux logs se ressemblent beaucoup, et savoir
+            # DUQUEL on parle est la premiere chose qu'on veut verifier.
             self.logs.set_text(lecteur.index, contenu,
-                               lecteur.name or chemin.name)
+                               lecteur.name or chemin.name, str(chemin))
 
+    def _rien_trouve(self, lecteur: Reader) -> str:
+        """Dire ou l'on a cherche, et pas seulement qu'on n'a rien trouve.
 
-def _cle(valeur: str) -> str:
-    return "".join(c for c in str(valeur).lower() if c.isalnum())
+        « No log found » tout seul se lit comme une panne de l'outil. La liste
+        des dossiers examines montre au contraire tout de suite si le dossier
+        est vide, si le run n'a rien ecrit, ou si le reglage du chemin des logs
+        ne pointe pas la ou l'on croyait.
+        """
+        ou = logs.places_searched(self._log_root)
+        lignes = ["No log found for this test"
+                  + (f" on {lecteur.name}." if lecteur.name else ".")]
 
-
-def _trouver_log(racine: Path, nodeid: str, reader: str) -> Path | None:
-    """Fichier .log de ce test pour ce lecteur, le plus recent d'abord."""
-    if not racine.is_dir():
-        return None
-
-    fonction = nodeid.split("::")[-1]
-    attendu = _cle(fonction)
-    cle_lecteur = _cle(reader)
-
-    meilleur: tuple[float, Path] | None = None
-    examines = 0
-    for fichier in racine.rglob("*.log"):
-        examines += 1
-        if examines > 4000:  # un historique de plusieurs mois ne doit pas figer l'UI
-            break
-        if cle_lecteur and not any(_cle(p) == cle_lecteur for p in fichier.parts):
-            continue
-        if attendu and attendu not in _cle(fichier.stem):
-            continue
-        try:
-            date = fichier.stat().st_mtime
-        except OSError:
-            continue
-        if meilleur is None or date > meilleur[0]:
-            meilleur = (date, fichier)
-
-    return meilleur[1] if meilleur else None
+        if not ou:
+            lignes += ["", f"The log folder does not exist yet:",
+                       f"    {self._log_root}", "",
+                       "It is created by the workspace conftest on the first "
+                       "run. Check the log path setting if the run did write "
+                       "somewhere else."]
+        else:
+            lignes += ["", "Looked in, most recent first:"]
+            lignes += [f"    {chemin}" for chemin in ou]
+        return "\n".join(lignes)

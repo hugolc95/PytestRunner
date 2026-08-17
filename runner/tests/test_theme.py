@@ -402,6 +402,23 @@ def fenetre(qapp, tmp_path):
     f.model.set_readers((Reader("Reader A", 0),))
     yield f
     f.settings.clear()
+    fermer(f, qapp)
+
+
+def fermer(fenetre, qapp) -> None:
+    """Detruit vraiment la fenetre a la fin du test.
+
+    Une `MainWindow` simplement lachee reste vivante cote Qt, avec son service
+    et ses fils. Elles s'accumulaient d'un test a l'autre, et chaque
+    `setStyleSheet` d'application les repolissait TOUTES -- jusqu'au segment de
+    memoire, plusieurs fichiers de tests plus loin, sur un test innocent.
+    """
+    if fenetre.service.busy:
+        fenetre.service.cancel()
+        fenetre.service.wait(5000)
+    fenetre.close()
+    fenetre.deleteLater()
+    qapp.processEvents()
 
 
 def test_the_button_offers_the_theme_you_are_not_in(fenetre):
@@ -433,6 +450,8 @@ def test_the_chosen_theme_survives_a_restart(qapp, tmp_path):
         assert "dark" in seconde.theme_button.toolTip()
     finally:
         seconde.settings.clear()
+        fermer(premiere, qapp)
+        fermer(seconde, qapp)
 
 
 def test_the_window_really_repaints_in_the_new_theme(fenetre, qapp):
@@ -452,7 +471,6 @@ def test_the_window_really_repaints_in_the_new_theme(fenetre, qapp):
     assert clair != sombre
     assert clair.lightness() > sombre.lightness() + 60, (
         f"le theme clair n'eclaircit rien : {sombre.name()} -> {clair.name()}")
-    fenetre.hide()
 
 
 def _remplir(fenetre, tmp_path, onglet: int) -> None:
@@ -518,7 +536,6 @@ def test_no_background_stays_dark_under_the_light_theme(fenetre, qapp, tmp_path,
             if image.pixelColor(x, y).lightness() < 60:
                 sombres += 1
 
-    fenetre.hide()
     assert total and sombres / total < 0.02, (
         f"{100 * sombres / total:.1f} % du rendu est reste sombre apres "
         "le passage au theme clair")
@@ -590,8 +607,8 @@ def test_a_switched_window_shows_what_one_born_in_the_theme_shows(qapp, tmp_path
     vues = _couleurs_a_l_ecran(basculee) & propres_au_sombre
     admises = _couleurs_a_l_ecran(native) & propres_au_sombre
 
-    basculee.hide()
-    native.hide()
+    fermer(basculee, qapp)
+    fermer(native, qapp)
     assert not (vues - admises), (
         "des couleurs du theme sombre survivent a la bascule, absentes d'une "
         "fenetre nee claire : " + ", ".join(sorted(vues - admises)))
@@ -617,7 +634,7 @@ def test_the_reference_window_would_notice_a_forgotten_restyle(qapp, tmp_path):
     fenetre.apply_theme("light")
     qapp.processEvents()
     rejoue = _couleurs_a_l_ecran(fenetre) & propres_au_sombre
-    fenetre.hide()
+    fermer(fenetre, qapp)
 
     assert oublie - rejoue, (
         "un theme applique sans rejeu ne laisse aucune trace mesurable : "
