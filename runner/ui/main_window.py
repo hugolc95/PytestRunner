@@ -7,6 +7,7 @@ QThread, la fenetre ne fait qu'ecouter leurs signaux.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from PyQt5.QtCore import QModelIndex, QSettings, Qt, QTimer, pyqtSlot
@@ -28,6 +29,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from runner.domain import history
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Reader, RunRequest, Status
 from runner.domain.tree import build_tree, collapse_single_class
@@ -79,6 +81,10 @@ class MainWindow(QMainWindow):
         self.settings = QSettings(ORG, APP)
         self.workspace: Workspace | None = None
         self.service = RunService(self)
+        self.history = history.History()
+        # Identifiant du run en cours : partage par tous ses lecteurs,
+        # ce qui permet de les retrouver ensemble dans l'historique.
+        self._run_id: str | None = None
         self._collector: CollectWorker | None = None
         self._matches: list[str] = []
         self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
@@ -386,6 +392,9 @@ class MainWindow(QMainWindow):
         self.act_rerun = self._action(executer, "Re-run failed", "F6",
                                       self.rerun_failed, "mdi.replay")
         self.act_stop = self._action(executer, "Stop", "Esc", self.stop_run, "mdi.stop")
+        executer.addSeparator()
+        self._action(executer, "Run history…", "Ctrl+H",
+                     self.open_history, "mdi.history")
 
         selection = self.menuBar().addMenu("&Select")
         self.act_markers = self._action(
@@ -487,6 +496,14 @@ class MainWindow(QMainWindow):
             # jusqu'ici : les nodeids collectes ailleurs peuvent ne plus exister.
             if self.workspace is not None and not self.workspace.declared_interpreter:
                 self.load_workspace()
+
+    @pyqtSlot()
+    def open_history(self) -> None:
+        """Les runs passes. Accessible sans workspace charge : on vient
+        souvent y chercher ce qu'a donne le run d'hier."""
+        from runner.ui.history_window import HistoryWindow
+
+        HistoryWindow(self.history, self).exec_()
 
     @pyqtSlot()
     def open_config_dialog(self) -> None:
@@ -768,6 +785,7 @@ class MainWindow(QMainWindow):
             return
 
         lecteurs = self._readers_to_run()
+        self._run_id = history.nouvel_identifiant()
         requete = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,
@@ -775,6 +793,8 @@ class MainWindow(QMainWindow):
             readers=lecteurs,
             config_path=self.workspace.config_path,
             sequential=self.workspace.reader_mode == MODE_SEQUENTIEL,
+            run_id=self._run_id,
+            junit_dir=str(self.history.racine),
         )
         self.service.start(requete, self.workspace.env)
 
@@ -851,6 +871,7 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
 
         self.remaining_pill.setVisible(False)
+        self._archiver(rapports)
 
         annule = any(r.cancelled for r in rapports)
         echecs = sum(r.failed for r in rapports)
@@ -865,6 +886,40 @@ class MainWindow(QMainWindow):
         # l'afficherait deux fois.
         self.elapsed_label.clear()
         self._update_actions()
+
+    def _archiver(self, rapports: list) -> None:
+        """Depose un run par lecteur dans l'historique.
+
+        Un lecteur, une entree : chacun a ses compteurs, sa sortie et son
+        verdict. Un total agrege masquerait lequel a echoue, ce qui est
+        justement la question quand on teste la meme suite sur deux lecteurs.
+
+        Un run ANNULE n'est pas archive : ses compteurs sont ceux de ce qui a
+        eu le temps de passer, et compares aux runs entiers ils feraient
+        passer des tests jamais joues pour des tests instables.
+        """
+        if self._run_id is None or self.workspace is None:
+            return
+
+        joues = list(self.model.nodeids())
+        for rapport in rapports:
+            if rapport.cancelled:
+                continue
+            entree = history.RunEntry(
+                id=self._run_id,
+                timestamp=time.time(),
+                workspace=self.workspace.path,
+                reader=rapport.reader.name,
+                duration=rapport.duration,
+                exit_code=rapport.exit_code,
+                counts={s.name: n for s, n in rapport.counts.items()},
+                nodeids=tuple(joues),
+                failed_nodeids=tuple(
+                    self.model.failed_nodeids_for(rapport.reader.index)),
+                junit_path=rapport.junit_path,
+            )
+            self.history.add(entree, rapport.output)
+        self._run_id = None
 
     def _tick(self) -> None:
         self._seconds += 1

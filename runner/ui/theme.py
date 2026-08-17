@@ -332,6 +332,30 @@ QTreeView::branch:selected {{
     background-color: {t.blend(t.ACCENT, t.BG_SURFACE, 0.18)};
 }}
 QTreeView::branch:hover {{ background-color: {t.BG_HOVER}; }}
+/* ---------------------------------------------------------------- tables */
+/* L'historique est un tableau, pas un arbre : sans regle a lui, Qt n'y peint
+   la selection que sur la cellule cliquee. La ligne entiere doit ressortir --
+   c'est elle qu'on selectionne, et par paire pour une comparaison. */
+QTableView {{
+    background-color: {t.BG_SURFACE};
+    alternate-background-color: {t.BG_SURFACE};
+    color: {t.TEXT};
+    border: 1px solid {t.BORDER};
+    border-radius: {t.RADIUS_MD}px;
+    gridline-color: transparent;
+    selection-background-color: {t.blend(t.ACCENT, t.BG_SURFACE, 0.18)};
+    selection-color: {t.TEXT};
+}}
+QTableView::item {{
+    padding: {t.SPACE_1}px {t.SPACE_2}px;
+    border: none;
+}}
+QTableView::item:selected {{
+    background-color: {t.blend(t.ACCENT, t.BG_SURFACE, 0.18)};
+    color: {t.TEXT};
+}}
+QTableView::item:hover {{ background-color: {t.BG_HOVER}; }}
+
 QHeaderView::section {{
     background-color: {t.BG_APP};
     color: {t.TEXT_MUTED};

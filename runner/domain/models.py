@@ -120,6 +120,11 @@ class RunRequest:
     # requete et non lu depuis le workspace : le service qui lance les runs
     # n'a ainsi rien a savoir d'un fichier de configuration.
     sequential: bool = False
+    # Identifiant du run dans l'historique, et ou deposer le JUnit XML que
+    # pytest ecrit. Vides quand on ne veut pas d'historique : le domaine ne
+    # decide pas d'archiver, il obeit.
+    run_id: str = ""
+    junit_dir: str = ""
 
     @property
     def total_tests(self) -> int:
@@ -145,6 +150,8 @@ class ReaderReport:
     counts: dict[Status, int] = field(default_factory=dict)
     output: str = ""
     cancelled: bool = False
+    # Le JUnit XML que pytest a ecrit pour ce lecteur, s'il en a ecrit un.
+    junit_path: str = ""
 
     @property
     def failed(self) -> int:

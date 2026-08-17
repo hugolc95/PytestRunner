@@ -352,12 +352,35 @@ class TestTreeModel(QAbstractItemModel):
                     [Qt.DecorationRole, Qt.ToolTipRole],
                 )
 
+    def nodeids(self) -> list[str]:
+        """Tous les nodeids de l'arbre, dans l'ordre ou il les montre."""
+        retenus = []
+        for racine in self._roots:
+            for feuille in racine.leaves():
+                retenus.append(feuille.node.nodeid)
+        return retenus
+
     def failed_nodeids(self) -> list[str]:
         """Nodeids en echec sur au moins un lecteur."""
         retenus = []
         for racine in self._roots:
             for feuille in racine.leaves():
                 if any(s.is_bad for s in feuille.statuses.values()):
+                    retenus.append(feuille.node.nodeid)
+        return retenus
+
+    def failed_nodeids_for(self, reader_index: int) -> list[str]:
+        """Nodeids en echec sur CE lecteur.
+
+        L'historique garde une entree par lecteur : y mettre les echecs de
+        tous ferait apparaitre, dans le bilan d'un lecteur, des tests qui n'ont
+        echoue que sur l'autre.
+        """
+        retenus = []
+        for racine in self._roots:
+            for feuille in racine.leaves():
+                statut = feuille.statuses.get(reader_index)
+                if statut is not None and statut.is_bad:
                     retenus.append(feuille.node.nodeid)
         return retenus
 

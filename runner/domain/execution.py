@@ -156,6 +156,19 @@ class ReaderRun:
     def cancelled(self) -> bool:
         return self._cancelled
 
+    def _junit_path(self) -> str:
+        """Ou pytest doit ecrire son JUnit XML, ou "" si on n'en veut pas.
+
+        Un fichier par LECTEUR : deux processus pytest qui ecrivent le meme
+        chemin en meme temps se marcheraient dessus, et le rapport garde ne
+        serait celui de personne.
+        """
+        if not (self.request.run_id and self.request.junit_dir):
+            return ""
+        suffixe = f"_{self.reader.index}" if self.reader.name else ""
+        return str(Path(self.request.junit_dir)
+                   / f"{self.request.run_id}{suffixe}.xml")
+
     def _environnement(self, dossier_plugin: str) -> dict:
         env = dict(self._env)
         if self.reader.name:
@@ -180,10 +193,16 @@ class ReaderRun:
                 args_plugin, dossier_plugin), \
                 _fichier_arguments(self.request.nodeids) as args_nodeids:
 
+            junit = self._junit_path()
             commande = [
                 self.request.interpreter, "-u", "-m", "pytest",
                 *args_nodeids, *args_plugin, "-v", "--tb=short",
             ]
+            if junit:
+                # Option native de pytest : le XML est ecrit par lui, pas
+                # reconstruit a partir des compteurs. Aucune dependance, et un
+                # fichier que les serveurs d'integration savent deja lire.
+                commande.append(f"--junitxml={junit}")
 
             try:
                 self._process = subprocess.Popen(
@@ -217,4 +236,9 @@ class ReaderRun:
         rapport.exit_code = -1 if self._cancelled else (self._process.returncode or 0)
         rapport.cancelled = self._cancelled
         rapport.output = "".join(lignes)
+        # Le chemin n'est retenu que si pytest a VRAIMENT ecrit le fichier :
+        # un run annule avant la fin n'en laisse pas, et l'historique
+        # proposerait alors un export qui echouerait au moment du clic.
+        if junit and Path(junit).is_file():
+            rapport.junit_path = junit
         return rapport
