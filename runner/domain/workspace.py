@@ -22,6 +22,11 @@ CLES_READER = ("reader", "lecteur")
 CLES_READERS = ("readers", "lecteurs", "reader_list")
 CLES_LOGS = ("log_path", "log_directory", "log_dir", "logs_path", "logpath")
 CLES_PYTHON = ("python_executable", "python", "interpreter")
+CLES_READER_MODE = ("reader_mode", "readers_mode", "mode_lecteur")
+
+MODE_PARALLELE = "parallel"
+MODE_SEQUENTIEL = "sequential"
+MODES = (MODE_PARALLELE, MODE_SEQUENTIEL)
 
 
 def _normaliser(cle: str) -> str:
@@ -126,6 +131,23 @@ class Workspace:
             if nom and nom not in uniques:
                 uniques.append(nom)
         return tuple(Reader(nom, i) for i, nom in enumerate(uniques))
+
+    @property
+    def reader_mode(self) -> str:
+        """Comment enchainer les lecteurs : tous a la fois, ou l'un apres l'autre.
+
+        Parallele par defaut. Le fichier de configuration n'est plus un point
+        de contention -- chaque processus en lit une copie ou sa cle `Reader`
+        est deja posee (voir `reader_isolation`) -- donc rien a declarer pour
+        obtenir le mode rapide.
+
+        `reader_mode: sequential` reste possible pour ce que ce mecanisme ne
+        peut pas isoler : du materiel qui ne supporte pas deux campagnes en
+        meme temps, ou un workspace qui ecrit ses logs dans un fichier unique.
+        """
+        valeur = _trouver(self.settings or {}, CLES_READER_MODE)
+        mode = str(valeur).strip().lower() if valeur is not None else ""
+        return mode if mode in MODES else MODE_PARALLELE
 
     # -------------------------------------------------------------------- divers
 

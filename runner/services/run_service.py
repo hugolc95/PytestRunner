@@ -85,13 +85,24 @@ class RunService(QObject):
         self._done = 0
         self._total = 0
         self._request: RunRequest | None = None
+        self._en_attente: list[_ReaderWorker] = []
+        self._lances = 0
 
     @property
     def busy(self) -> bool:
-        return any(w.isRunning() for w in self._workers)
+        # La file compte autant que les fils en cours : en mode sequentiel, le
+        # lecteur suivant est demarre depuis un slot, et entre la fin d'un fil
+        # et ce slot il n'y a rien qui tourne. Sans la file, `busy` retomberait
+        # a faux au milieu du run -- le bouton Run redeviendrait cliquable et
+        # une deuxieme campagne partirait par-dessus la premiere.
+        return bool(self._en_attente) or any(w.isRunning() for w in self._workers)
 
     def start(self, request: RunRequest, env: dict) -> bool:
-        """Lance un lecteur par fil. Retourne False si un run tourne deja."""
+        """Lance les lecteurs. Retourne False si un run tourne deja.
+
+        Tous en meme temps par defaut, un fil chacun. En mode sequentiel, le
+        suivant ne part qu'a la fin du precedent.
+        """
         if self.busy:
             return False
 
@@ -112,13 +123,30 @@ class RunService(QObject):
             worker.done.connect(self._on_reader_done)
             self._workers.append(worker)
 
+        self._en_attente = list(self._workers)
+        self._lances = 0
         self.started.emit(request)
-        for worker in self._workers:
-            worker.start()
+
+        # La file est videe AVANT de demarrer quoi que ce soit : un fil peut
+        # finir pendant la boucle, et trouver alors une file deja a jour.
+        if request.sequential:
+            self._demarrer_suivant()
+        else:
+            partants, self._en_attente = self._en_attente, []
+            self._lances = len(partants)
+            for worker in partants:
+                worker.start()
         return True
+
+    def _demarrer_suivant(self) -> None:
+        self._lances += 1
+        self._en_attente.pop(0).start()
 
     def cancel(self) -> None:
         """Demande l'arret. Les fils se terminent d'eux-memes ensuite."""
+        # La file d'abord : sinon l'arret du lecteur en cours declencherait le
+        # depart du suivant, et Stop ne s'arreterait jamais.
+        self._en_attente = []
         for worker in self._workers:
             worker.cancel()
 
@@ -135,7 +163,19 @@ class RunService(QObject):
     def _on_reader_done(self, rapport: ReaderReport) -> None:
         self._reports.append(rapport)
         self.reader_finished.emit(rapport)
-        if len(self._reports) == len(self._workers):
+
+        # Mode sequentiel : au suivant. Un run annule a vide la file, donc
+        # rien ne repart derriere un Stop.
+        if self._en_attente:
+            self._demarrer_suivant()
+            return
+
+        # On compte les lecteurs DEMARRES, pas les lecteurs prevus : un Stop en
+        # sequentiel laisse la file pleine de lecteurs qui ne partiront jamais
+        # et ne rendront donc aucun rapport. Compares au nombre prevu, ils
+        # empecheraient `finished` d'etre emis -- l'interface resterait en
+        # « run en cours » jusqu'a la fermeture.
+        if len(self._reports) == self._lances:
             # Les rapports arrivent dans l'ordre ou les lecteurs finissent ;
             # les remettre dans l'ordre des colonnes evite un bilan qui change
             # de disposition d'un run a l'autre.

@@ -116,6 +116,10 @@ class RunRequest:
     nodeids: tuple[str, ...]
     readers: tuple[Reader, ...]
     config_path: str = ""
+    # Les lecteurs l'un apres l'autre plutot que tous a la fois. Porte par la
+    # requete et non lu depuis le workspace : le service qui lance les runs
+    # n'a ainsi rien a savoir d'un fichier de configuration.
+    sequential: bool = False
 
     @property
     def total_tests(self) -> int:

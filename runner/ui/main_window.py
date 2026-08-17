@@ -31,7 +31,7 @@ from PyQt5.QtWidgets import (
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Reader, RunRequest, Status
 from runner.domain.tree import build_tree, collapse_single_class
-from runner.domain.workspace import Workspace
+from runner.domain.workspace import MODE_SEQUENTIEL, Workspace
 from runner.services.run_service import CollectWorker, RunService
 from runner.ui import icons, theme
 from runner.ui import tokens as t
@@ -48,6 +48,7 @@ from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import (
     EmptyState,
     ErrorDialog,
+    ReaderBar,
     RemainingPill,
     SearchBar,
     StatusPill,
@@ -112,6 +113,13 @@ class MainWindow(QMainWindow):
         colonne.setSpacing(t.SPACE_3)
 
         colonne.addWidget(self._build_command_bar())
+
+        # Sous la barre de commande, pas dans l'arbre : le choix des lecteurs
+        # porte sur le RUN, comme les boutons juste au-dessus, et non sur la
+        # selection des tests.
+        self.readers_bar = ReaderBar()
+        self.readers_bar.changed.connect(self._on_readers_changed)
+        colonne.addWidget(self.readers_bar)
 
         self.split = QSplitter(Qt.Horizontal)
         self.split.setChildrenCollapsible(False)
@@ -609,8 +617,16 @@ class MainWindow(QMainWindow):
         self.remaining_pill.setVisible(False)
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
         lecteurs = self.workspace.readers if self.workspace else ()
+        # Les colonnes montrent TOUS les lecteurs declares, y compris ceux
+        # qu'on vient de decocher : les faire disparaitre effacerait de l'ecran
+        # les resultats qu'ils portaient au run precedent. Decocher restreint
+        # le prochain run, cela ne cache rien.
         self.model.set_readers(lecteurs)
         self.results.set_readers(lecteurs)
+        self.readers_bar.set_readers(
+            lecteurs,
+            sequential=bool(self.workspace)
+            and self.workspace.reader_mode == MODE_SEQUENTIEL)
         self.results.set_log_root(self.workspace.log_root if self.workspace else None)
         self._size_reader_columns()
 
@@ -716,14 +732,30 @@ class MainWindow(QMainWindow):
         if not python:
             return
 
+        lecteurs = self._readers_to_run()
         requete = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,
             nodeids=tuple(nodeids),
-            readers=self.workspace.readers,
+            readers=lecteurs,
             config_path=self.workspace.config_path,
+            sequential=self.workspace.reader_mode == MODE_SEQUENTIEL,
         )
         self.service.start(requete, self.workspace.env)
+
+    def _readers_to_run(self) -> tuple:
+        """Les lecteurs coches, dans l'ordre des colonnes.
+
+        Leur `index` est conserve tel quel : c'est lui qui range un resultat
+        dans la bonne colonne et la bonne console. Renumeroter les lecteurs
+        restants ferait atterrir les verdicts du deuxieme dans la colonne du
+        premier des qu'on en decoche un.
+        """
+        declares = self.workspace.readers if self.workspace else ()
+        if len(declares) <= 1:
+            return declares
+        retenus = set(self.readers_bar.selected_indexes())
+        return tuple(l for l in declares if l.index in retenus)
 
     @pyqtSlot()
     def stop_run(self) -> None:
@@ -828,6 +860,20 @@ class MainWindow(QMainWindow):
     @pyqtSlot(int, int)
     def _on_selection_changed(self, coches: int, total: int) -> None:
         self.selection_label.setText(f"{coches} of {total} tests selected")
+        self._update_actions()
+
+    @pyqtSlot()
+    def _on_readers_changed(self) -> None:
+        """Le prochain run ne parcourra plus les memes lecteurs : le dire."""
+        retenus = self._readers_to_run()
+        declares = self.workspace.readers if self.workspace else ()
+        if len(retenus) == len(declares):
+            self.status_label.setText(f"Running on all {len(declares)} readers")
+        elif retenus:
+            noms = ", ".join(l.short_name for l in retenus)
+            self.status_label.setText(f"Running on {noms}")
+        else:
+            self.status_label.setText("No reader selected")
         self._update_actions()
 
     @pyqtSlot(int)
@@ -1026,11 +1072,17 @@ class MainWindow(QMainWindow):
         occupe = self.service.busy
         coches, _ = self.model.counts()
 
-        self.run_button.setEnabled(charge and coches > 0 and not occupe)
+        # Tout decocher dans la barre des lecteurs ne laisse rien a parcourir.
+        # Le bouton s'eteint plutot que de repondre par une boite de dialogue :
+        # la cause est a l'ecran, juste au-dessus.
+        cible = not charge or bool(self._readers_to_run()) or not self.workspace.readers
+
+        self.run_button.setEnabled(charge and coches > 0 and not occupe and cible)
         self.stop_button.setEnabled(occupe)
         self.act_run.setEnabled(self.run_button.isEnabled())
         self.act_stop.setEnabled(occupe)
-        rejouable = charge and not occupe and bool(self.model.failed_nodeids())
+        rejouable = (charge and not occupe and cible
+                     and bool(self.model.failed_nodeids()))
         self.act_rerun.setEnabled(rejouable)
         self.rerun_button.setEnabled(rejouable)
         self.act_diverge.setEnabled(len(self.model.readers) > 1)

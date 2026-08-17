@@ -416,6 +416,86 @@ class ErrorDialog(QDialog):
         cls(titre, message, detail, parent).exec_()
 
 
+class ReaderToggle(QPushButton):
+    """Un lecteur, dans sa couleur, qu'on inclut ou non dans le prochain run."""
+
+    def __init__(self, reader, parent=None):
+        super().__init__(reader.short_name, parent)
+        self._index = reader.index
+        self.setCheckable(True)
+        self.setChecked(True)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip(reader.name)
+        self.toggled.connect(lambda _: self.restyle())
+        self.restyle()
+
+    def reader_index(self) -> int:
+        return self._index
+
+    def restyle(self) -> None:
+        # Eteinte plutot qu'absente : un lecteur decoche garde sa place et sa
+        # couleur en creux, donc on voit d'un coup d'oeil ce qu'on a exclu.
+        self.setStyleSheet(theme.pill_style(t.reader_color(self._index),
+                                            actif=self.isChecked()))
+
+
+class ReaderBar(QWidget):
+    """Les lecteurs du workspace, et lesquels le prochain run va parcourir.
+
+    Un seul lecteur ne se choisit pas : la barre reste alors cachee. Avec
+    plusieurs, tout tester est le cas courant -- tout est coche au depart, et
+    on decoche pour restreindre.
+    """
+
+    changed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._toggles: list[ReaderToggle] = []
+
+        self._ligne = QHBoxLayout(self)
+        self._ligne.setContentsMargins(0, 0, 0, 0)
+        self._ligne.setSpacing(t.SPACE_2)
+
+        self._label = QLabel("Run on")
+        self._label.setObjectName("Faint")
+        self._ligne.addWidget(self._label)
+
+        self._mode = QLabel("")
+        self._mode.setObjectName("Faint")
+
+        self._ligne.addStretch(1)
+        self._ligne.addWidget(self._mode)
+        self.setVisible(False)
+
+    def set_readers(self, readers, sequential: bool = False) -> None:
+        for bouton in self._toggles:
+            self._ligne.removeWidget(bouton)
+            bouton.deleteLater()
+        self._toggles.clear()
+
+        for position, lecteur in enumerate(readers):
+            bouton = ReaderToggle(lecteur)
+            bouton.toggled.connect(self.changed)
+            # Apres le libelle, avant l'espace elastique.
+            self._ligne.insertWidget(1 + position, bouton)
+            self._toggles.append(bouton)
+
+        # Le mode vient du workspace et ne se change pas d'ici : c'est une
+        # contrainte du materiel ou du code de test, pas une preference. Il est
+        # affiche parce qu'il explique la duree du run.
+        self._mode.setText("one reader at a time" if sequential else "")
+        self._mode.setVisible(sequential)
+        self.setVisible(len(readers) > 1)
+
+    def selected_indexes(self) -> tuple[int, ...]:
+        return tuple(b.reader_index() for b in self._toggles if b.isChecked())
+
+    # Pas de `restyle()` ici : le balayage de la fenetre atteint les boutons
+    # directement, ils portent le leur. En ajouter un a ce niveau ne ferait que
+    # les repeindre deux fois.
+
+
 def separator() -> QFrame:
     """Trait de 1 px entre deux zones."""
     trait = QFrame()
