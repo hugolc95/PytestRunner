@@ -265,3 +265,49 @@ def test_a_file_with_no_setting_says_so(qapp, tmp_path):
     assert dialogue._champs == []
     textes = [w.text() for w in dialogue.form_host.findChildren(type(dialogue.status))]
     assert any("no setting" in texte for texte in textes)
+
+
+# ------------------------------------------------------- place dans la fenetre
+
+@pytest.fixture
+def fenetre(qapp, tmp_path):
+    from PyQt5.QtCore import QSettings
+
+    from runner.ui.main_window import APP, ORG, MainWindow
+
+    QSettings(ORG, APP).clear()
+    f = MainWindow()
+    yield f
+    f.settings.clear()
+    f.close()
+    f.deleteLater()
+    qapp.processEvents()
+
+
+def test_the_config_button_sits_with_the_workspace_controls(fenetre):
+    """La configuration decrit CE dossier -- ses lecteurs, ses logs, son
+    interpreteur. Sa place est dans le groupe qui parle du workspace, pas
+    avec Re-run / Stop / Run qui parlent du prochain run."""
+    barre = fenetre.load_button.parentWidget().layout()
+    positions = {barre.itemAt(i).widget(): i for i in range(barre.count())
+                 if barre.itemAt(i).widget() is not None}
+
+    assert positions[fenetre.config_button] == positions[fenetre.load_button] + 1
+    assert positions[fenetre.config_button] < positions[fenetre.run_button]
+
+
+def test_the_config_button_is_off_without_a_workspace(fenetre):
+    assert not fenetre.config_button.isEnabled()
+
+
+def test_the_theme_button_is_not_in_the_row_of_run_actions(fenetre):
+    """Pose entre l'espace elastique et Re-run, il s'alignait avec les boutons
+    de run et se lisait comme une quatrieme action -- alors que c'est un
+    reglage de confort."""
+    from PyQt5.QtCore import Qt
+
+    barre = fenetre.run_button.parentWidget().layout()
+    dans_la_barre = {barre.itemAt(i).widget() for i in range(barre.count())}
+
+    assert fenetre.theme_button not in dans_la_barre
+    assert fenetre.menuBar().cornerWidget(Qt.TopRightCorner) is fenetre.theme_button

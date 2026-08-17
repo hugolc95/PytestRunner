@@ -165,6 +165,15 @@ class MainWindow(QMainWindow):
         self.load_button.setToolTip("Collect the tests of this workspace  (Ctrl+O)")
         self.load_button.clicked.connect(self.load_workspace)
 
+        # A cote de Load, avec le workspace : la configuration decrit CE
+        # dossier -- ses lecteurs, ses logs, son interpreteur. Sa place est
+        # dans le groupe qui parle du workspace, pas dans un menu.
+        self.config_button = QPushButton("Config")
+        self.config_button.setObjectName("Ghost")
+        self.config_button.setIcon(icons.icon("mdi.file-cog-outline", t.TEXT_MUTED))
+        self.config_button.setToolTip("Edit this workspace's configuration file")
+        self.config_button.clicked.connect(self.open_config_dialog)
+
         # Vert et non l'accent bleu : « lancer » et « arreter » sont les deux
         # gestes qu'on cherche sans lire, et vert/rouge est la convention de
         # tous les lanceurs de tests. C'est la seule entorse a la couleur
@@ -192,18 +201,15 @@ class MainWindow(QMainWindow):
         self.stop_button.setToolTip("Stop the current run  (Esc)")
         self.stop_button.clicked.connect(self.stop_run)
 
-        # En haut a droite, a l'ecart des actions : changer de theme n'est pas
-        # une etape du travail, c'est un reglage de confort.
-        self.theme_button = QPushButton()
-        self.theme_button.setObjectName("Icon")
-        self.theme_button.setCursor(Qt.PointingHandCursor)
-        self.theme_button.clicked.connect(self.toggle_theme)
-
+        # Le bouton de theme ne vit PAS dans cette barre : il part dans le coin
+        # de la barre de menus (voir `_build_menus`). Pose ici, il s'alignait
+        # avec Re-run / Stop / Run et se lisait comme une quatrieme action du
+        # run, alors que c'est un reglage de confort.
         ligne.addWidget(self.workspace_combo)
         ligne.addWidget(self.browse_button)
         ligne.addWidget(self.load_button)
+        ligne.addWidget(self.config_button)
         ligne.addStretch(1)
-        ligne.addWidget(self.theme_button)
         ligne.addWidget(self.rerun_button)
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.run_button)
@@ -372,6 +378,15 @@ class MainWindow(QMainWindow):
 
     def _build_menus(self) -> None:
         """Menus et raccourcis. Chaque action frequente en a un, visible ici."""
+        # Le theme se loge dans le coin de la barre de menus : tout en haut a
+        # droite, seul, loin des boutons de run. Un QMenuBar accepte un widget
+        # a cet endroit, ce qui evite de lui inventer une barre a lui.
+        self.theme_button = QPushButton()
+        self.theme_button.setObjectName("Icon")
+        self.theme_button.setCursor(Qt.PointingHandCursor)
+        self.theme_button.clicked.connect(self.toggle_theme)
+        self.menuBar().setCornerWidget(self.theme_button, Qt.TopRightCorner)
+
         fichier = self.menuBar().addMenu("&File")
         self._action(fichier, "Open workspace…", QKeySequence.Open, self.browse_workspace,
                      "mdi.folder-open-outline")
@@ -572,6 +587,7 @@ class MainWindow(QMainWindow):
 
         for glyphe, bouton in (
                 ("mdi.folder-open-outline", self.browse_button),
+                ("mdi.file-cog-outline", self.config_button),
                 ("mdi.replay", self.rerun_button),
                 ("mdi.stop", self.stop_button)):
             bouton.setIcon(icons.icon(glyphe, t.TEXT_MUTED))
@@ -1177,8 +1193,9 @@ class MainWindow(QMainWindow):
         self.rerun_button.setEnabled(rejouable)
         self.act_diverge.setEnabled(len(self.model.readers) > 1)
         # Sans workspace charge, il n'y a aucun fichier a editer.
-        self.act_config.setEnabled(
-            charge and bool(self.workspace.config_path))
+        editable = charge and bool(self.workspace.config_path)
+        self.act_config.setEnabled(editable)
+        self.config_button.setEnabled(editable)
 
     def _restore(self) -> None:
         geometrie = self.settings.value(K_GEOMETRY)
