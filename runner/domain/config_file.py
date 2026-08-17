@@ -101,20 +101,43 @@ def _fin_dominante(texte: str) -> str:
     return "\r\n" if texte.count("\r\n") * 2 >= texte.count("\n") else "\n"
 
 
-def _emplacements(texte: str) -> dict[str, int]:
-    """Numero de ligne de chaque cle de PREMIER niveau.
+def _emplacements(texte: str) -> dict[tuple[str, ...], int]:
+    """Numero de ligne de chaque cle, indexee par son CHEMIN complet.
 
-    Seul le premier niveau est modifiable ici : une cle indentee appartient a
-    une section, et deux sections peuvent porter la meme. Les reecrire au
-    jugé melangerait les reglages de l'une avec ceux de l'autre.
+    Deux sections peuvent porter la meme cle : `timeout` a la racine n'est pas
+    celui de `campaign`. Reperer les cles par leur seul nom melangerait les
+    reglages de l'une avec ceux de l'autre -- on suit donc l'indentation pour
+    reconstruire le chemin de chacune.
     """
-    trouves: dict[str, int] = {}
+    trouves: dict[tuple[str, ...], int] = {}
+    pile: list[tuple[int, str]] = []   # (indentation, nom) des sections ouvertes
+
     for numero, ligne in enumerate(texte.splitlines()):
         m = _LIGNE.match(ligne)
-        if m is None or m.group("indent"):
+        if m is None:
             continue
-        trouves.setdefault(normaliser(m.group("cle")), numero)
+        indent = len(m.group("indent").expandtabs(4))
+
+        # Une ligne moins indentee referme toutes les sections plus profondes.
+        while pile and pile[-1][0] >= indent:
+            pile.pop()
+
+        nom = normaliser(m.group("cle"))
+        chemin = tuple(p[1] for p in pile) + (nom,)
+        trouves.setdefault(chemin, numero)
+
+        # Une cle sans valeur ouvre une section : ce qui suit lui appartient.
+        if not m.group("valeur").strip():
+            pile.append((indent, nom))
+
     return trouves
+
+
+def _chemin_de(cle) -> tuple[str, ...]:
+    """Normalise ce que l'appelant designe : un nom, ou un chemin de section."""
+    if isinstance(cle, (tuple, list)):
+        return tuple(normaliser(c) for c in cle)
+    return (normaliser(cle),)
 
 
 def _etendue_liste(lignes: list[str], depart: int) -> int:
@@ -140,10 +163,15 @@ def _bloc_liste(cle: str, separateur: str, valeurs, fin: str) -> list[str]:
 def ecrire(chemin: Path, modifications: dict) -> tuple[bool, str]:
     """Applique ces changements au fichier. Rend (succes, message).
 
-    `modifications` est un dictionnaire cle -> nouvelle valeur, les cles etant
-    celles du premier niveau, telles qu'elles apparaissent dans le fichier ou
-    sous une forme normalisee. Une cle absente du fichier est ajoutee a la fin ;
-    une cle presente garde sa place, son indentation et son commentaire.
+    `modifications` est un dictionnaire cle -> nouvelle valeur. La cle est un
+    nom pour un reglage de premier niveau, ou un tuple pour designer celui
+    d'une section : `("campaign", "timeout")`. Casse, tirets et espaces sont
+    ignores dans le rapprochement.
+
+    Une cle presente garde sa place, son indentation et son commentaire. Une
+    cle ABSENTE est ajoutee a la fin du fichier, donc au premier niveau : le
+    formulaire ne propose que des reglages deja ecrits, et inventer une ligne
+    au milieu d'une section demanderait de deviner ou elle a sa place.
 
     L'ecriture passe par un temporaire du meme dossier, remplace d'un bloc :
     une coupure en plein enregistrement ne doit jamais laisser la configuration
@@ -165,12 +193,13 @@ def ecrire(chemin: Path, modifications: dict) -> tuple[bool, str]:
     ajouts: list[str] = []
 
     for cle, valeur in modifications.items():
-        numero = connues.get(normaliser(cle))
+        numero = connues.get(_chemin_de(cle))
         if numero is None:
+            nom = cle[-1] if isinstance(cle, (tuple, list)) else cle
             if isinstance(valeur, (list, tuple)):
-                ajouts += _bloc_liste(str(cle), ": ", valeur, fin_par_defaut)
+                ajouts += _bloc_liste(str(nom), ": ", valeur, fin_par_defaut)
             else:
-                ajouts.append(f"{cle}: {citer(valeur)}{fin_par_defaut}")
+                ajouts.append(f"{nom}: {citer(valeur)}{fin_par_defaut}")
             continue
 
         m = _LIGNE.match(lignes[numero].rstrip("\r\n"))
@@ -186,9 +215,14 @@ def ecrire(chemin: Path, modifications: dict) -> tuple[bool, str]:
                              valeur, fin)))
             continue
 
+        # L'ecart entre la valeur et le commentaire est repris tel quel : des
+        # commentaires alignes en colonne sur plusieurs lignes se
+        # desaligneraient tous des qu'on touche a l'un d'eux.
         commentaire = m.group("fin") or ""
         if commentaire:
-            commentaire = " " + commentaire.strip()
+            brut = m.group("valeur")
+            ecart = len(brut) - len(brut.rstrip()) or 1
+            commentaire = " " * ecart + commentaire.strip()
         remplacements.append((numero, numero, [
             f"{m.group('indent')}{m.group('cle')}{m.group('sep')}"
             f"{citer(valeur)}{commentaire}{fin}"]))

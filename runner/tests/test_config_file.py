@@ -83,6 +83,17 @@ def test_a_trailing_comment_stays_on_its_line(tmp_path):
     assert "TestBiosWrapperTU Reader" in ligne
 
 
+def test_the_gap_before_a_trailing_comment_is_kept(tmp_path):
+    """Des commentaires alignes en colonne se desaligneraient tous des qu'on
+    touche a l'un d'eux."""
+    chemin = _fichier(tmp_path, "timeout: 30    # secondes\nautre: 1       # oui\n")
+    ecrire(chemin, {"timeout": 60})
+
+    texte = chemin.read_text(encoding="utf-8")
+    assert "timeout: 60    # secondes" in texte
+    assert "autre: 1       # oui" in texte
+
+
 def test_the_order_of_the_keys_is_kept(tmp_path):
     chemin = _fichier(tmp_path)
     ecrire(chemin, {"timeout": 60, "Reader": "X"})
@@ -238,6 +249,56 @@ def test_a_nested_key_of_the_same_name_is_left_alone(tmp_path):
 
     donnees = charger(chemin)
     assert donnees["timeout"] == 60
+    assert donnees["campaign"]["timeout"] == 300
+
+
+def test_a_setting_inside_a_section_is_reached_by_its_path(tmp_path):
+    """Le formulaire propose aussi les reglages des sections. Les designer par
+    leur seul nom ne suffit pas : deux sections peuvent porter le meme."""
+    chemin = _fichier(
+        tmp_path, "timeout: 30\ncampaign:\n  timeout: 300\nsmoke:\n  timeout: 5\n")
+    ecrire(chemin, {("campaign", "timeout"): 600})
+
+    donnees = charger(chemin)
+    assert donnees["campaign"]["timeout"] == 600
+    assert donnees["timeout"] == 30
+    assert donnees["smoke"]["timeout"] == 5
+
+
+def test_a_nested_setting_keeps_its_indentation_and_comment(tmp_path):
+    chemin = _fichier(
+        tmp_path, "campaign:\n  # duree maximale\n  timeout: 300  # secondes\n")
+    ecrire(chemin, {("campaign", "timeout"): 600})
+
+    texte = chemin.read_text(encoding="utf-8")
+    assert "  timeout: 600  # secondes" in texte, texte
+    assert "# duree maximale" in texte
+
+
+def test_a_deeply_nested_setting_is_reached_too(tmp_path):
+    chemin = _fichier(tmp_path, "a:\n  b:\n    c: 1\nc: 9\n")
+    ecrire(chemin, {("a", "b", "c"): 2})
+
+    donnees = charger(chemin)
+    assert donnees["a"]["b"]["c"] == 2
+    assert donnees["c"] == 9
+
+
+def test_leaving_a_section_closes_it(tmp_path):
+    """Une cle moins indentee n'appartient plus a la section du dessus : sans
+    refermer, `autre` serait vu comme `campaign.autre` et resterait
+    introuvable sous son vrai nom."""
+    chemin = _fichier(tmp_path, "campaign:\n  timeout: 300\nautre: 1\n")
+    ecrire(chemin, {"autre": 2})
+
+    texte = chemin.read_text(encoding="utf-8")
+    # Le doublon compte autant que la valeur : introuvable sous son vrai nom,
+    # la cle est AJOUTEE a la fin. YAML garde la derniere, donc la lecture
+    # semble juste -- pendant que le fichier accumule une ligne a chaque
+    # enregistrement.
+    assert len([l for l in texte.splitlines() if l.startswith("autre:")]) == 1, texte
+    donnees = charger(chemin)
+    assert donnees["autre"] == 2
     assert donnees["campaign"]["timeout"] == 300
 
 
