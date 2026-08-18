@@ -22,10 +22,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QShortcut,
     QSplitter,
     QTabBar,
     QTabWidget,
@@ -68,6 +70,8 @@ class ReaderViews(QWidget):
         self._highlight_differences = highlight_differences
         self._defile = False
         self._readers: tuple[Reader, ...] = ()
+        self._difference_groups: list[tuple[frozenset[int], ...]] = []
+        self._difference_index = -1
 
         self.views: list[ConsoleView] = []
         self.headers: list[QLabel] = []
@@ -93,10 +97,52 @@ class ReaderViews(QWidget):
         self.compare.setVisible(False)
         self.compare.toggled.connect(self._on_compare_toggled)
 
+        # La navigation n'a de sens que lorsque la comparaison semantique est
+        # active. Elle reste donc entierement absente de la barre le reste du
+        # temps, au lieu d'ajouter deux boutons inertes a l'interface.
+        self.previous_difference = QPushButton()
+        self.previous_difference.setObjectName("IconSm")
+        self.previous_difference.setIcon(
+            icons.icon("mdi.chevron-up", t.TEXT_MUTED))
+        self.previous_difference.setToolTip(
+            "Previous meaningful difference  (Shift+F7)")
+        self.previous_difference.clicked.connect(
+            lambda: self.navigate_difference(-1))
+
+        self.difference_counter = QLabel("0 / 0")
+        self.difference_counter.setObjectName("Faint")
+        self.difference_counter.setAlignment(Qt.AlignCenter)
+        self.difference_counter.setMinimumWidth(48)
+
+        self.next_difference = QPushButton()
+        self.next_difference.setObjectName("IconSm")
+        self.next_difference.setIcon(
+            icons.icon("mdi.chevron-down", t.TEXT_MUTED))
+        self.next_difference.setToolTip("Next meaningful difference  (F7)")
+        self.next_difference.clicked.connect(
+            lambda: self.navigate_difference(1))
+
+        self.difference_navigation = QWidget()
+        navigation = QHBoxLayout(self.difference_navigation)
+        navigation.setContentsMargins(0, 0, 0, 0)
+        navigation.setSpacing(t.SPACE_1)
+        navigation.addWidget(self.previous_difference)
+        navigation.addWidget(self.difference_counter)
+        navigation.addWidget(self.next_difference)
+        self.difference_navigation.setVisible(False)
+
+        self._next_shortcut = QShortcut(QKeySequence("F7"), self)
+        self._next_shortcut.activated.connect(
+            lambda: self.navigate_difference(1))
+        self._previous_shortcut = QShortcut(QKeySequence("Shift+F7"), self)
+        self._previous_shortcut.activated.connect(
+            lambda: self.navigate_difference(-1))
+
         barre = QHBoxLayout()
         barre.setContentsMargins(0, 0, 0, 0)
         barre.setSpacing(t.SPACE_1)
         barre.addWidget(self.tabs, 1)
+        barre.addWidget(self.difference_navigation)
         barre.addWidget(self.compare)
 
         self.split = QSplitter(orientation)
@@ -191,6 +237,9 @@ class ReaderViews(QWidget):
 
         self.tabs.setVisible(multi)
         self.compare.setVisible(multi)
+        self.difference_navigation.setVisible(
+            multi and self.compare.isChecked()
+            and self._highlight_differences)
         self._restyle_reader_names()
         self._apply_layout()
 
@@ -206,6 +255,8 @@ class ReaderViews(QWidget):
             self.headers[position].setVisible(visible and comparer and nombre > 1)
 
     def _on_compare_toggled(self, checked: bool) -> None:
+        self.difference_navigation.setVisible(
+            checked and self._highlight_differences)
         self._apply_layout()
         self._update_difference_highlights(reveal=checked)
 
@@ -227,6 +278,16 @@ class ReaderViews(QWidget):
     def toggle_compare(self) -> None:
         if self.compare.isVisible():
             self.compare.setChecked(not self.compare.isChecked())
+
+    def navigate_difference(self, direction: int) -> None:
+        """Va a l'ecart suivant ou precedent, avec retour en boucle."""
+        if not self.compare.isChecked() or not self._difference_groups:
+            return
+        courant = self._difference_index
+        if courant < 0:
+            courant = 0 if direction < 0 else -1
+        self._show_difference((courant + direction)
+                              % len(self._difference_groups))
 
     # ---------------------------------------------------------------- contenu
 
@@ -251,6 +312,9 @@ class ReaderViews(QWidget):
         active = (self._highlight_differences and self.compare.isChecked()
                   and len(self._readers) > 1)
         if not active:
+            self._difference_groups.clear()
+            self._difference_index = -1
+            self._refresh_difference_navigation()
             for view in self.views:
                 view.highlight_lines()
             return
@@ -260,6 +324,7 @@ class ReaderViews(QWidget):
         ignored = [reader.name for reader in self._readers]
         ignored.extend(reader.short_name for reader in self._readers)
         differences = log_compare.compare_logs(texts, ignored)
+        self._build_difference_groups(differences)
 
         for index, view in enumerate(self.views):
             if index < count:
@@ -268,18 +333,61 @@ class ReaderViews(QWidget):
             else:
                 view.highlight_lines()
 
-        if reveal and differences.any:
-            # Chaque log se centre sur SA premiere divergence. Le garde evite
-            # que la synchronisation de scroll n'ecrase la position du voisin.
-            self._defile = True
-            try:
-                for index in range(count):
-                    if differences.changed[index]:
-                        priority = (differences.errors[index]
-                                    or differences.changed[index])
-                        self.views[index].reveal_line(min(priority))
-            finally:
-                self._defile = False
+        if reveal and self._difference_groups:
+            # A l'ouverture, une erreur explicite est plus utile que le tout
+            # premier ecart. La navigation conserve ensuite l'ordre du log.
+            priority = next((position for position, groups in
+                             enumerate(self._difference_groups)
+                             if any(group & errors for group, errors in
+                                    zip(groups, differences.errors))), 0)
+            self._show_difference(priority)
+
+    @staticmethod
+    def _contiguous_groups(indices: frozenset[int]) -> list[frozenset[int]]:
+        """Regroupe des lignes voisines en une seule difference navigable."""
+        groups: list[set[int]] = []
+        for index in sorted(indices):
+            if not groups or index > max(groups[-1]) + 1:
+                groups.append({index})
+            else:
+                groups[-1].add(index)
+        return [frozenset(group) for group in groups]
+
+    def _build_difference_groups(self, differences) -> None:
+        """Aligne les blocs differents de chaque lecteur par leur ordre."""
+        by_reader = [self._contiguous_groups(indices)
+                     for indices in differences.changed]
+        count = max((len(groups) for groups in by_reader), default=0)
+        self._difference_groups = [
+            tuple(groups[position] if position < len(groups) else frozenset()
+                  for groups in by_reader)
+            for position in range(count)
+        ]
+        if self._difference_index >= count:
+            self._difference_index = count - 1
+        self._refresh_difference_navigation()
+
+    def _show_difference(self, position: int) -> None:
+        """Centre chaque console sur son bloc correspondant."""
+        if not 0 <= position < len(self._difference_groups):
+            return
+        self._difference_index = position
+        self._defile = True
+        try:
+            for view, group in zip(self.views, self._difference_groups[position]):
+                if group:
+                    view.reveal_line(min(group))
+        finally:
+            self._defile = False
+        self._refresh_difference_navigation()
+
+    def _refresh_difference_navigation(self) -> None:
+        count = len(self._difference_groups)
+        enabled = count > 0
+        self.previous_difference.setEnabled(enabled)
+        self.next_difference.setEnabled(enabled)
+        shown = self._difference_index + 1 if enabled else 0
+        self.difference_counter.setText(f"{shown} / {count}")
 
     def _restyle_reader_names(self) -> None:
         courant = self.tabs.currentIndex()
@@ -309,6 +417,10 @@ class ReaderViews(QWidget):
         for vue in self.views:
             vue.restyle()
         self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
+        self.previous_difference.setIcon(
+            icons.icon("mdi.chevron-up", t.TEXT_MUTED))
+        self.next_difference.setIcon(
+            icons.icon("mdi.chevron-down", t.TEXT_MUTED))
         self._restyle_reader_names()
         self._update_difference_highlights()
 
