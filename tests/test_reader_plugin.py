@@ -100,7 +100,7 @@ def test_construire_texte_modifie_preserves_crlf(monkeypatch):
 
 def test_open_of_the_target_file_returns_the_virtual_text(monkeypatch, tmp_path):
     config = tmp_path / "config.yml"
-    config.write_text("Reader: Lecteur A\n", encoding="utf-8")
+    config.write_text("Reader: Lecteur A\n", encoding="utf-8", newline="\n")
 
     _charger_plugin(monkeypatch, reader="Lecteur B", config_path=str(config))
 
@@ -111,7 +111,7 @@ def test_open_of_the_target_file_returns_the_virtual_text(monkeypatch, tmp_path)
 
 def test_path_read_text_of_the_target_file_returns_the_virtual_text(monkeypatch, tmp_path):
     config = tmp_path / "config.yml"
-    config.write_text("Reader: Lecteur A\n", encoding="utf-8")
+    config.write_text("Reader: Lecteur A\n", encoding="utf-8", newline="\n")
 
     _charger_plugin(monkeypatch, reader="Lecteur B", config_path=str(config))
 

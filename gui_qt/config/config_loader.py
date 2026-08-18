@@ -230,6 +230,17 @@ def _subdirs(path: Path) -> list[Path]:
         return []
 
 
+def _run_timestamp(path: Path) -> str:
+    """Cle chronologique tiree d'un nom de dossier de run horodate."""
+
+    match = _RUN_DIR_RE.search(path.name)
+    if match is None:
+        return ""
+    # Garde YYYYMMDD et, s'ils suivent, HHMMSS. Les separateurs varient selon
+    # les workspaces mais l'ordre lexical des chiffres reste chronologique.
+    return "".join(c for c in path.name[match.start():] if c.isdigit())[:14]
+
+
 def run_directories(log_root: Path) -> list[Path]:
     """Dossiers de run sous la racine des logs, du plus recent au plus ancien.
 
@@ -261,7 +272,11 @@ def run_directories(log_root: Path) -> list[Path]:
         # directs, qui restent une decoupe plus fine que la racine entiere.
         horodates = _subdirs(log_root)
 
-    horodates.sort(key=_mtime, reverse=True)
+    # Windows peut donner le meme mtime a deux dossiers crees dans la meme
+    # seconde. Le nom horodate est alors le departage fiable ; le mtime reste
+    # le repli pour les dossiers sans date reconnue.
+    horodates.sort(key=lambda path: (_run_timestamp(path), _mtime(path)),
+                   reverse=True)
     return horodates[:MAX_RUN_DIRS_SCANNED]
 
 

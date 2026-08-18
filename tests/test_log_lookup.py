@@ -17,6 +17,7 @@ from gui_qt.config.config_loader import (
     find_test_log_by_search,
     nodeid_tokens,
     resolve_log_root,
+    run_directories,
 )
 
 NODEID = "NIST/TestSuiteCDS/test_PSO_CDS_RSA.py::TestSuite::test_pso[nom-RSA-mod2048-tg1-tc11]"
@@ -76,6 +77,16 @@ def test_the_log_of_the_most_recent_run_wins(tmp_path):
 
     assert find_test_log(str(ws), NODEID) == recent
     assert find_test_log(str(ws), NODEID).read_text(encoding="utf-8") == "recent"
+
+
+def test_timestamped_run_names_break_a_mtime_tie(monkeypatch, tmp_path):
+    older = tmp_path / "20260101_000000"
+    recent = tmp_path / "20260807_120000"
+    older.mkdir()
+    recent.mkdir()
+    monkeypatch.setattr("gui_qt.config.config_loader._mtime", lambda path: 0.0)
+
+    assert run_directories(tmp_path)[:2] == [recent, older]
 
 
 def test_the_right_parameter_is_picked_among_siblings(tmp_path):
