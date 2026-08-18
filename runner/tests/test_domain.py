@@ -120,6 +120,47 @@ def test_xdist_output_is_read_too():
     assert resultat == ("a/t.py::test_f", Status.FAILED)
 
 
+@pytest.mark.parametrize("ligne,nodeid,statut", [
+    (
+        ("tests/test_err_Put_Data_ECC_WrongDomain.py::TestSuitePutDataWrongPubKey::"
+         "test_putDataECC_WrongB[PutData Curve = prime192v2-B = all_FF] "
+         "PASSED [ 64%]"),
+        ("tests/test_err_Put_Data_ECC_WrongDomain.py::TestSuitePutDataWrongPubKey::"
+         "test_putDataECC_WrongB[PutData Curve = prime192v2-B = all_FF]"),
+        Status.PASSED,
+    ),
+    (
+        ("[gw2] [ 64%] PASSED tests/test_x.py::"
+         "test_case[PutData Curve = prime192v2-B = all_FF]"),
+        "tests/test_x.py::test_case[PutData Curve = prime192v2-B = all_FF]",
+        Status.PASSED,
+    ),
+    (
+        "tests/test_x.py::test_case[expected PASSED value] FAILED [ 64%]",
+        "tests/test_x.py::test_case[expected PASSED value]",
+        Status.FAILED,
+    ),
+    (
+        "folder with spaces/test_x.py::test_case PASSED [ 64%]",
+        "folder with spaces/test_x.py::test_case",
+        Status.PASSED,
+    ),
+])
+def test_nodeids_may_contain_spaces(ligne, nodeid, statut):
+    """Pytest conserve les espaces des `id=` dans le nodeid affiche.
+
+    Les perdre coupe toute la chaine de suivi : plus de verdict dans l'arbre,
+    plus de compteur et plus de progression, alors que pytest continue.
+    """
+    assert parsing.parse_status_line(ligne) == (nodeid, statut)
+
+
+def test_a_status_word_inside_a_skip_reason_is_not_the_verdict():
+    ligne = "tests/test_x.py::test_case SKIPPED (requires PASSED marker) [ 64%]"
+    assert parsing.parse_status_line(ligne) == (
+        "tests/test_x.py::test_case", Status.SKIPPED)
+
+
 def test_an_expected_failure_is_not_a_failure():
     """XFAIL veut dire "echec attendu" : le compter en rouge ferait paniquer
     pour un test qui se comporte exactement comme prevu."""
