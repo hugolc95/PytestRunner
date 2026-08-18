@@ -83,6 +83,10 @@ class TestTreeModel(QAbstractItemModel):
         self._roots: list[_Row] = []
         self._by_nodeid: dict[str, _Row] = {}
         self._readers: tuple[Reader, ...] = ()
+        # Decompte par statut des cases (test, lecteur) deja rendues. Tenu au
+        # fil de l'eau : le recalculer a chaque resultat reparcourrait tout
+        # l'arbre, ce qui redonnerait le gel quadratique deja corrige.
+        self._tally: dict[Status, int] = {}
 
     # ------------------------------------------------------------- chargement
 
@@ -307,6 +311,21 @@ class TestTreeModel(QAbstractItemModel):
         if ligne is None:
             return False
 
+        # Le decompte suit le CHANGEMENT d'etat de la case, pas le nombre de
+        # signaux recus. Compter les signaux part du principe que pytest
+        # rapporte chaque test une fois et une seule ; il en rapporte deux pour
+        # un test rejoue, ou pour une erreur de setup suivie d'un verdict. Le
+        # compteur derivait alors du contenu reel de l'arbre.
+        ancien = ligne.statuses.get(reader_index)
+        if ancien is status:
+            # Rien n'a change : le decompte serait de toute facon juste (on
+            # retirerait puis remettrait le meme statut), mais tout le chemin
+            # jusqu'a la racine serait repeint pour rien.
+            return True
+        if ancien is not None:
+            self._tally[ancien] = max(0, self._tally.get(ancien, 0) - 1)
+        self._tally[status] = self._tally.get(status, 0) + 1
+
         ligne.statuses[reader_index] = status
         colonne = 1 + reader_index if self._readers else 1
 
@@ -329,6 +348,19 @@ class TestTreeModel(QAbstractItemModel):
             parent = parent.parent
         return True
 
+    def status_counts(self) -> dict:
+        """Nombre de cases rendues par statut, tous lecteurs confondus.
+
+        Autoritaire : c'est l'etat de l'arbre, pas une somme de signaux. Le
+        nom ne peut pas etre `counts()`, deja pris par le decompte de la
+        SELECTION -- deux notions differentes qui se seraient ecrasees.
+        """
+        return {s: n for s, n in self._tally.items() if n}
+
+    def done(self) -> int:
+        """Cases deja rendues, tous statuts et tous lecteurs confondus."""
+        return sum(self._tally.values())
+
     def clear_statuses(self) -> None:
         """Efface les resultats sans reinitialiser le modele.
 
@@ -336,6 +368,7 @@ class TestTreeModel(QAbstractItemModel):
         l'utilisateur perdait la branche qu'il venait d'ouvrir pour choisir ses
         tests. Seules les cellules de statut changent, on ne signale qu'elles.
         """
+        self._tally.clear()
         for racine in self._roots:
             for ligne in [racine, *racine.descendants()]:
                 ligne.statuses.clear()
@@ -374,6 +407,21 @@ class TestTreeModel(QAbstractItemModel):
                 if statut.is_bad:
                     echecs.append((feuille.node.nodeid, i))
         return compteurs, echecs
+
+    def first_leaf_nodeid(self, index: QModelIndex) -> str:
+        """Nodeid d'un test quelconque sous ce noeud, ou "".
+
+        Un regroupement n'a pas d'identifiant a lui. Celui d'une de ses
+        feuilles suffit pourtant a retrouver le FICHIER -- il le porte avant
+        son premier `::` -- et c'est ce qui permet d'ouvrir la source d'un
+        module sur lequel on vient de cliquer.
+        """
+        ligne = index.internalPointer() if index.isValid() else None
+        if ligne is None:
+            return ""
+        for feuille in ligne.leaves():
+            return feuille.node.nodeid
+        return ""
 
     def nodeids(self) -> list[str]:
         """Tous les nodeids de l'arbre, dans l'ordre ou il les montre."""

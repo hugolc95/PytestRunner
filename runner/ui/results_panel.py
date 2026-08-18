@@ -353,17 +353,22 @@ class ResultsPanel(QWidget):
         self.show_logs_for(nodeid, self._readers)
 
     def show_group(self, path: str, name: str, readers, counts: dict,
-                   failures: list) -> None:
-        """Selectionne un regroupement : son bilan, et rien d'autre.
+                   failures: list, source: Path | None = None,
+                   jump_nodeid: str = "") -> None:
+        """Selectionne un regroupement : son bilan, et sa source s'il en a une.
 
-        Ni source ni logs : un dossier n'a pas de fichier de test a ouvrir, et
-        laisser ceux du test precedent dans les autres onglets ferait croire
-        qu'ils parlent de ce qu'on vient de cliquer.
+        Un module a un fichier, un dossier n'en a pas. Laisser celui du test
+        precedent quand il n'y en a pas ferait croire qu'il parle de ce qu'on
+        vient de cliquer ; le refuser a un module priverait du geste le plus
+        courant, cliquer un `.py` pour le lire.
+
+        Les logs, eux, restent vides : ils sont ecrits PAR TEST, et il n'y en
+        a aucun qui reponde pour un lot entier.
         """
         self._nodeid = ""
         self._statuses = {}
         self.detail.show_group(path, name, tuple(readers), counts, failures)
-        self.source.clear()
+        self.source.show_file(source, jump_nodeid)
         self.logs.clear()
 
     def update_statuses(self, nodeid: str, statuses: dict[int, Status]) -> None:

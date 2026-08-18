@@ -31,7 +31,8 @@ from PyQt5.QtWidgets import (
 
 from runner.domain import history
 from runner.domain import interpreter as interpreter_mod
-from runner.domain.models import Reader, RunRequest, Status
+from runner.domain.models import Kind, Reader, RunRequest, Status
+from runner.domain.source import path_of as source_path
 from runner.domain.tree import build_tree, collapse_single_class
 from runner.domain.workspace import MODE_SEQUENTIEL, Workspace
 from runner.services.run_service import CollectWorker, RunService
@@ -46,7 +47,7 @@ from runner.ui.results_panel import (
     ONGLET_SOURCE,
     ResultsPanel,
 )
-from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
+from runner.ui.tree_model import NODE_ROLE, NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import (
     EmptyState,
     ErrorDialog,
@@ -842,9 +843,9 @@ class MainWindow(QMainWindow):
 
         self.progress.setVisible(True)
         self.progress.setRange(0, max(1, request.total_tests))
-        self.progress.setValue(0)
-        for pastille in self.pills.values():
-            pastille.set_value(0)
+        # Les statuts viennent d'etre effaces : le decompte de l'arbre est a
+        # zero, et les pastilles s'y alignent comme partout ailleurs.
+        self._rafraichir_compteurs()
 
         # Un filtre pose sur le run precedent masquerait les resultats du
         # nouveau au fur et a mesure qu'ils arrivent.
@@ -868,19 +869,36 @@ class MainWindow(QMainWindow):
             # que l'arbre ne connait pas. Le signaler vaut mieux que le perdre.
             self.status_label.setText(f"Unexpected test id: {outcome.nodeid}")
 
-        pastille = self.pills.get(outcome.status)
-        if pastille is not None:
-            pastille.set_value(pastille.value() + 1)
-
+        self._rafraichir_compteurs()
         self.results.update_statuses(outcome.nodeid,
                                      self.model.statuses_for_nodeid(outcome.nodeid))
 
+    def _rafraichir_compteurs(self) -> None:
+        """Aligne les pastilles et l'avancement sur l'etat reel de l'arbre.
+
+        Elles s'incrementaient d'un a chaque signal recu, ce qui suppose que
+        pytest rapporte chaque test une fois et une seule. Il en rapporte deux
+        pour un test rejoue, ou pour une erreur de setup suivie d'un verdict :
+        le total affiche depassait alors le nombre de tests, et rien ne le
+        remettait d'aplomb avant le run suivant.
+        """
+        rendus = self.model.status_counts()
+        for statut, pastille in self.pills.items():
+            pastille.set_value(rendus.get(statut, 0))
+
+        faits = self.model.done()
+        self.progress.setValue(faits)
+        # Pas de `max(0, ...)` ici : la pastille borne deja, et c'est chez elle
+        # que la regle a sa place -- « je n'affiche pas un reste negatif » est
+        # son invariant, pas celui de la fenetre.
+        self.remaining_pill.set_value(self.progress.maximum() - faits)
+
     @pyqtSlot(int, int)
     def _on_progress(self, faits: int, total: int) -> None:
-        self.progress.setValue(faits)
-        restants = max(0, total - faits)
-        self.remaining_pill.set_value(restants)
-        self.status_label.setText(f"Running… {restants} left")
+        # Les nombres viennent de l'arbre, pas du compte de signaux porte par
+        # le service : c'est la meme raison que pour les pastilles.
+        self._rafraichir_compteurs()
+        self.status_label.setText(f"Running… {self.remaining_pill.value()} left")
 
     @pyqtSlot(list)
     def _on_run_finished(self, rapports: list) -> None:
@@ -973,8 +991,33 @@ class MainWindow(QMainWindow):
 
         compteurs, echecs = self.model.subtree_summary(premiere)
         chemin, nom = self._situer(premiere)
+        source, saut = self._source_du_groupe(premiere)
         self.results.show_group(chemin, nom, self.model.readers,
-                                compteurs, echecs)
+                                compteurs, echecs, source, saut)
+
+    def _source_du_groupe(self, index: QModelIndex) -> tuple:
+        """Fichier a montrer pour ce regroupement, et ou s'y placer.
+
+        Un dossier n'a pas de source. Un module en a une, et on l'ouvre en
+        haut. Un noeud de fonction -- un test parametre, qui porte ses cas en
+        enfants -- ouvre le fichier ET saute a sa definition : c'est ce qu'on
+        attend en cliquant sur un nom de test, parametre ou non.
+
+        Le nodeid manque a un regroupement, mais celui de n'importe laquelle
+        de ses feuilles porte le meme fichier avant son premier `::`.
+        """
+        noeud = self.model.data(index, NODE_ROLE)
+        if noeud is None or noeud.kind is Kind.FOLDER or self.workspace is None:
+            return None, ""
+
+        temoin = self.model.first_leaf_nodeid(index)
+        chemin = source_path(self.workspace.path, temoin)
+        if chemin is None:
+            return None, ""
+        # Le saut se deduit du nodeid : `function_line` y lit le dernier
+        # segment. Sur un module on n'en veut pas -- s'ouvrir sur le premier
+        # test venu ferait manquer tout ce qui le precede.
+        return chemin, (temoin if noeud.kind is Kind.TEST else "")
 
     def _situer(self, index: QModelIndex) -> tuple[str, str]:
         """Chemin des ancetres, et nom du noeud lui-meme."""

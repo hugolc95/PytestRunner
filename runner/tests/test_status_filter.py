@@ -232,15 +232,79 @@ def test_the_remaining_counter_starts_at_the_total(fenetre):
     assert not fenetre.remaining_pill.isHidden()
 
 
+def _lancer(fenetre, *readers):
+    from runner.domain.models import RunRequest
+
+    fenetre._on_run_started(RunRequest(
+        workspace="/w", interpreter="python", nodeids=tuple(NODEIDS),
+        readers=readers))
+
+
 def test_the_remaining_counter_goes_down(fenetre):
-    fenetre._on_progress(3, 10)
-    assert fenetre.remaining_pill.value() == 7
-    fenetre._on_progress(9, 10)
-    assert fenetre.remaining_pill.value() == 1
+    """Il suit l'ARBRE, pas le nombre de signaux recus.
+
+    Il se deduisait de l'argument du signal d'avancement, lui-meme une somme
+    de resultats recus. Deux verdicts pour un meme test -- un rejeu, une
+    erreur de setup suivie d'un verdict -- et le compteur avancait deux fois.
+    """
+    # Un run precedent a laisse ses resultats : le nouveau doit repartir du
+    # total. Sur un arbre deja vierge, oublier de remettre le decompte a zero
+    # ne se serait pas vu.
+    for nodeid in NODEIDS:
+        fenetre.model.apply_outcome(nodeid, Status.PASSED, 0)
+
+    _lancer(fenetre, Reader("A", 0))
+    assert fenetre.remaining_pill.value() == 4
+    assert fenetre.pills[Status.PASSED].value() == 0
+
+    fenetre.model.apply_outcome(NODEIDS[0], Status.PASSED, 0)
+    fenetre._on_progress(1, 4)
+    assert fenetre.remaining_pill.value() == 3
+
+    fenetre.model.apply_outcome(NODEIDS[1], Status.FAILED, 0)
+    fenetre._on_progress(2, 4)
+    assert fenetre.remaining_pill.value() == 2
+
+
+def test_the_same_test_reported_twice_counts_once(fenetre):
+    """Le cas qui faisait deriver les compteurs."""
+    _lancer(fenetre, Reader("A", 0))
+
+    fenetre.model.apply_outcome(NODEIDS[0], Status.FAILED, 0)
+    fenetre._on_progress(1, 4)
+    fenetre.model.apply_outcome(NODEIDS[0], Status.FAILED, 0)
+    fenetre._on_progress(2, 4)
+
+    assert fenetre.remaining_pill.value() == 3
+    assert fenetre.pills[Status.FAILED].value() == 1
+
+
+def test_a_verdict_that_changes_moves_from_one_pill_to_the_other(fenetre):
+    """Une erreur de setup suivie d'un verdict : la case change de statut, elle
+    ne s'ajoute pas."""
+    _lancer(fenetre, Reader("A", 0))
+
+    fenetre.model.apply_outcome(NODEIDS[0], Status.ERROR, 0)
+    fenetre._on_progress(1, 4)
+    assert fenetre.pills[Status.ERROR].value() == 1
+
+    fenetre.model.apply_outcome(NODEIDS[0], Status.PASSED, 0)
+    fenetre._on_progress(2, 4)
+
+    assert fenetre.pills[Status.ERROR].value() == 0
+    assert fenetre.pills[Status.PASSED].value() == 1
+    assert fenetre.remaining_pill.value() == 3
 
 
 def test_the_remaining_counter_never_goes_negative(fenetre):
-    fenetre._on_progress(12, 10)
+    """Plus de resultats que de passages prevus : le run declare un lecteur,
+    la suite en rapporte deux. Un « -4 left » se lirait comme un bug."""
+    _lancer(fenetre, Reader("A", 0))
+    for nodeid in NODEIDS:
+        for index in (0, 1):
+            fenetre.model.apply_outcome(nodeid, Status.PASSED, index)
+    fenetre._on_progress(8, 4)
+
     assert fenetre.remaining_pill.value() == 0
 
 

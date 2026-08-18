@@ -328,3 +328,86 @@ def test_the_group_card_follows_a_change_of_theme(joue, qapp):
 
     assert sombre == t.DARK["STATUS_COLORS"][Status.FAILED]
     assert clair == t.LIGHT["STATUS_COLORS"][Status.FAILED]
+
+
+# --------------------------------------------------- la source d'un regroupement
+
+@pytest.fixture
+def avec_source(joue, tmp_path):
+    """Le fichier de test existe reellement : sans lui, rien a ouvrir."""
+    fichier = tmp_path / "suite" / "apdu" / "test_select.py"
+    fichier.parent.mkdir(parents=True, exist_ok=True)
+    fichier.write_text(
+        "import pytest\n\n\n"
+        "def test_atr():\n"
+        "    assert True\n\n\n"
+        "@pytest.mark.parametrize('aid', ['A1', 'A2'])\n"
+        "def test_aid(aid):\n"
+        "    assert aid\n",
+        encoding="utf-8")
+    return joue
+
+
+def _source_chargee(fenetre) -> bool:
+    panneau = fenetre.results.source
+    return panneau.stack.currentWidget() is not panneau.empty
+
+
+def test_clicking_a_py_file_shows_its_source(avec_source):
+    """Le geste le plus courant apres avoir repere un fichier rouge."""
+    avec_source.tree.setCurrentIndex(
+        _index(avec_source, "suite", "apdu", "test_select.py"))
+
+    assert _source_chargee(avec_source)
+    assert "def test_atr" in avec_source.results.source.editor.toPlainText()
+
+
+def test_a_module_opens_at_the_top(avec_source):
+    """Sauter au premier test venu ferait manquer les imports et les fixtures
+    qui le precedent -- souvent la raison de l'echec."""
+    avec_source.tree.setCurrentIndex(
+        _index(avec_source, "suite", "apdu", "test_select.py"))
+
+    assert avec_source.results.source.editor.textCursor().blockNumber() == 0
+
+
+def test_clicking_a_function_jumps_to_its_definition(avec_source):
+    """Un test parametre est un regroupement, mais il porte un nom de
+    fonction : cliquer dessus doit y emmener, comme sur une feuille."""
+    avec_source.tree.setCurrentIndex(
+        _index(avec_source, "suite", "apdu", "test_select.py", "test_aid"))
+
+    texte = avec_source.results.source.editor.toPlainText()
+    attendue = texte.splitlines().index("def test_aid(aid):")
+    assert avec_source.results.source.editor.textCursor().blockNumber() == attendue
+
+
+def test_a_folder_has_no_source_to_show(avec_source):
+    """Garder celle du test precedent ferait croire qu'elle parle du dossier."""
+    avec_source.tree.setCurrentIndex(
+        _index(avec_source, "suite", "apdu", "test_select.py"))
+    assert _source_chargee(avec_source)
+
+    avec_source.tree.setCurrentIndex(_index(avec_source, "suite", "apdu"))
+    assert not _source_chargee(avec_source)
+
+
+def test_a_group_never_shows_the_logs_of_a_test(avec_source, tmp_path):
+    """Les logs sont ecrits PAR TEST : aucun ne repond pour un lot entier.
+
+    Un log est reellement pose sur le disque et charge : sans lui la vue etait
+    deja vide et le test ne prouvait rien.
+    """
+    journal = (tmp_path / "logs" / "20260818"
+               / "Cosmo11Secured Reader" / "suite" / "apdu")
+    journal.mkdir(parents=True, exist_ok=True)
+    (journal / "test_atr.log").write_text("APDU >> 00A4\n", encoding="utf-8")
+    avec_source.results.set_log_root(tmp_path / "logs")
+
+    avec_source.tree.setCurrentIndex(avec_source.model.index_for_nodeid(NODEIDS[0]))
+    assert "APDU" in avec_source.results.logs.views[0].text(), (
+        "le log n'a pas ete charge : il n'y aurait rien a effacer")
+
+    avec_source.tree.setCurrentIndex(
+        _index(avec_source, "suite", "apdu", "test_select.py"))
+    assert avec_source.results.logs.views[0].text() == ""
