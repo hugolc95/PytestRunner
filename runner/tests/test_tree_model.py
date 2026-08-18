@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 from PyQt5.QtCore import QModelIndex, Qt
+from PyQt5.QtGui import QColor
 
 from runner.domain.models import Reader, Status
 from runner.domain.tree import build_tree
@@ -48,6 +49,15 @@ def test_one_status_column_per_reader(model):
 
 def test_the_full_reader_name_stays_in_the_tooltip(model):
     assert model.headerData(1, Qt.Horizontal, Qt.ToolTipRole) == "Reader A"
+
+
+def test_each_reader_header_carries_its_own_colour(model):
+    from runner.ui import tokens as t
+
+    assert model.headerData(1, Qt.Horizontal, Qt.ForegroundRole) == QColor(
+        t.reader_color(READERS[0].index))
+    assert model.headerData(2, Qt.Horizontal, Qt.ForegroundRole) == QColor(
+        t.reader_color(READERS[1].index))
 
 
 def test_without_readers_a_single_status_column_remains(qapp):

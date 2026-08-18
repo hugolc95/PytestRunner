@@ -7,9 +7,11 @@ recoivent du texte et des couleurs, ils n'appellent rien.
 from __future__ import annotations
 
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QFontMetrics
 from PyQt5.QtWidgets import (
     QDialog,
     QFrame,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
@@ -23,6 +25,53 @@ from runner.domain.models import Status
 from runner.ui import icons
 from runner.ui import theme
 from runner.ui import tokens as t
+
+
+class ReaderHeaderView(QHeaderView):
+    """En-tete d'arbre qui conserve la couleur propre a chaque lecteur.
+
+    La feuille de style de Qt impose normalement une seule couleur a toutes les
+    sections et masque donc le ``ForegroundRole`` fourni par le modele. Le
+    texte est peint ici, tandis que le modele reste la source de la couleur.
+    """
+
+    def paintSection(self, painter, rect, logical_index) -> None:
+        if not rect.isValid():
+            return
+
+        painter.save()
+        painter.fillRect(rect, QColor(t.BG_APP))
+        painter.setPen(QColor(t.BORDER))
+        painter.drawLine(rect.bottomLeft(), rect.bottomRight())
+
+        modele = self.model()
+        texte = modele.headerData(logical_index, self.orientation(), Qt.DisplayRole)
+        couleur = modele.headerData(
+            logical_index, self.orientation(), Qt.ForegroundRole)
+        if not isinstance(couleur, QColor) or not couleur.isValid():
+            couleur = QColor(t.TEXT_MUTED)
+
+        fonte = QFont(self.font())
+        fonte.setPixelSize(t.TEXT_XS)
+        fonte.setWeight(QFont.DemiBold)
+        painter.setFont(fonte)
+        painter.setPen(couleur)
+
+        alignement = modele.headerData(
+            logical_index, self.orientation(), Qt.TextAlignmentRole)
+        if alignement is None:
+            alignement = int(Qt.AlignLeft | Qt.AlignVCenter)
+        else:
+            alignement = int(alignement) | int(Qt.AlignVCenter)
+
+        zone = rect.adjusted(t.SPACE_2, 0, -t.SPACE_2, 0)
+        elide = QFontMetrics(fonte).elidedText(
+            str(texte or ""), Qt.ElideRight, max(0, zone.width()))
+        painter.drawText(zone, alignement, elide)
+        painter.restore()
+
+    def restyle(self) -> None:
+        self.viewport().update()
 
 
 class EmptyState(QWidget):
