@@ -40,7 +40,9 @@ FICHIER = textwrap.dedent('''\
 @pytest.fixture
 def source(tmp_path):
     chemin = tmp_path / "test_demo.py"
-    chemin.write_text(FICHIER, encoding="utf-8")
+    # write_text traduit `\n` en `\r\n` sous Windows. Ici le fichier est
+    # volontairement un echantillon LF : ecrire les octets rend le test reel.
+    chemin.write_bytes(FICHIER.encode("utf-8"))
     return chemin
 
 

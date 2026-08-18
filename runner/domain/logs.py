@@ -38,8 +38,13 @@ MAX_PROFONDEUR = 3
 MAX_DOSSIERS_VISITES = 500
 
 # Un dossier de run porte une date : 20260810_112653, 2026-08-10_11-26-53,
-# 2026-08-10T11:26:53... On reconnait la date, le reste varie trop.
-_DATE = re.compile(r"\d{4}[-_.]?\d{2}[-_.]?\d{2}")
+# 2026-08-10T11:26:53... Le nom est plus fiable que son mtime : sous Windows,
+# deux dossiers crees dans le meme run peuvent avoir exactement le meme mtime.
+_DATE = re.compile(
+    r"(?P<annee>\d{4})[-_.]?(?P<mois>\d{2})[-_.]?(?P<jour>\d{2})"
+    r"(?:[T _.-]?(?P<heure>\d{2})[-_.:]?(?P<minute>\d{2})"
+    r"[-_.:]?(?P<seconde>\d{2}))?"
+)
 
 # Prime au fichier dont le nom se TERMINE par l'identifiant du parametre. Elle
 # doit l'emporter sur tout comptage de morceaux : c'est le seul moyen de
@@ -99,6 +104,24 @@ def _date_de(chemin: Path) -> float:
         return 0.0
 
 
+def _ordre_run(chemin: Path) -> tuple[int, float]:
+    """Horodate du nom, puis mtime seulement pour departager.
+
+    Trier uniquement sur le mtime rendait l'ordre aleatoire sous Windows quand
+    sa precision fusionnait deux creations proches. Or le conftest donne deja
+    l'ordre exact dans le nom du dossier.
+    """
+    trouve = _DATE.search(chemin.name)
+    if trouve is None:
+        return 0, _date_de(chemin)
+    morceaux = [
+        trouve.group("annee"), trouve.group("mois"), trouve.group("jour"),
+        trouve.group("heure") or "00", trouve.group("minute") or "00",
+        trouve.group("seconde") or "00",
+    ]
+    return int("".join(morceaux)), _date_de(chemin)
+
+
 def _sous_dossiers(chemin: Path) -> list[Path]:
     try:
         return [p for p in chemin.iterdir() if p.is_dir()]
@@ -148,7 +171,7 @@ def run_directories(log_root: Path) -> list[Path]:
         # directs, qui restent une decoupe plus fine que la racine entiere.
         horodates = _sous_dossiers(log_root)
 
-    horodates.sort(key=_date_de, reverse=True)
+    horodates.sort(key=_ordre_run, reverse=True)
     return horodates[:MAX_DOSSIERS_RUN]
 
 

@@ -114,8 +114,11 @@ def test_nested_run_folders_are_still_ordered_by_run(tmp_path):
                   "test_pso[nom-RSA-mod2048-tg1-tc11]", "hier", age=90000)
     aujourdhui = ecrire(tmp_path / "ProjetB" / "20260810_112653" / "NIST",
                         "test_pso[nom-RSA-mod2048-tg1-tc11]", "aujourdhui")
-    dater(hier.parent.parent, 90000)
-    dater(aujourdhui.parent.parent, 90000)
+    # Meme mtime au niveau des deux runs : Windows arrondit parfois deux
+    # dates proches a la meme valeur. Le nom horodate doit alors faire foi.
+    meme_moment = time.time() - 90000
+    os.utime(hier.parent.parent, (meme_moment, meme_moment))
+    os.utime(aujourdhui.parent.parent, (meme_moment, meme_moment))
     # Le dossier de PROJET du vieux run parait le plus recent des deux.
     dater(tmp_path / "ProjetB", 90000)
 
