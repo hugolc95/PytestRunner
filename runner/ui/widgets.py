@@ -584,6 +584,13 @@ class ReaderBar(QWidget):
     def selected_indexes(self) -> tuple[int, ...]:
         return tuple(b.reader_index() for b in self._toggles if b.isChecked())
 
+    def select_names(self, readers, names) -> None:
+        """Coche exactement les lecteurs nommes par un run historique."""
+        retenus = {str(name) for name in names}
+        by_index = {reader.index: reader.name for reader in readers}
+        for bouton in self._toggles:
+            bouton.setChecked(by_index.get(bouton.reader_index()) in retenus)
+
     # Pas de `restyle()` ici : le balayage de la fenetre atteint les boutons
     # directement, ils portent le leur. En ajouter un a ce niveau ne ferait que
     # les repeindre deux fois.
