@@ -1,6 +1,10 @@
 """Le compare des logs ignore le bruit et montre les ecarts de comportement."""
 
+from PyQt5.QtCore import Qt
+
 from runner.domain.log_compare import compare_logs, is_error_line, normalize_line
+from runner.domain.models import Reader
+from runner.ui.results_panel import ReaderViews
 
 
 def test_timestamps_durations_and_reader_names_are_not_differences():
@@ -44,3 +48,41 @@ INFO - Start of Teardown
 def test_apdu_values_are_never_normalized_away():
     assert normalize_line("INFO - APDU Status : 9E EE") != normalize_line(
         "INFO - APDU Status : 6F EE")
+
+
+def test_difference_navigation_only_appears_while_comparing(qapp):
+    views = ReaderViews(Qt.Horizontal, highlight_differences=True)
+    views.set_readers((Reader("Blue Reader", 0), Reader("Green Reader", 1)))
+    views.set_text(0, "same\nleft A\nsame 2\nleft B\nsame 3")
+    views.set_text(1, "same\nright A\nsame 2\nright B\nsame 3")
+
+    assert views.difference_navigation.isHidden()
+
+    views.compare.setChecked(True)
+
+    assert not views.difference_navigation.isHidden()
+    assert views.difference_counter.text() == "1 / 2"
+    assert views.views[0].view.textCursor().blockNumber() == 1
+
+    views.next_difference.click()
+    assert views.difference_counter.text() == "2 / 2"
+    assert views.views[0].view.textCursor().blockNumber() == 3
+
+    # La navigation boucle : apres le dernier ecart, on revient au premier.
+    views.next_difference.click()
+    assert views.difference_counter.text() == "1 / 2"
+
+    views.compare.setChecked(False)
+    assert views.difference_navigation.isHidden()
+
+
+def test_comparison_opens_on_the_difference_containing_an_error(qapp):
+    views = ReaderViews(Qt.Horizontal, highlight_differences=True)
+    views.set_readers((Reader("Blue Reader", 0), Reader("Green Reader", 1)))
+    views.set_text(0, "same\nleft A\nsame 2\nINFO - accepted\nsame 3")
+    views.set_text(1, "same\nright A\nsame 2\nERRO - rejected\nsame 3")
+
+    views.compare.setChecked(True)
+
+    assert views.difference_counter.text() == "2 / 2"
+    assert views.views[1].view.textCursor().blockNumber() == 3
