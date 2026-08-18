@@ -165,7 +165,9 @@ class ReaderViews(QWidget):
             # Un libelle dedie permet de garder la couleur du lecteur, meme au
             # survol et dans l'onglet selectionne.
             position = self.tabs.addTab("")
-            libelle = QLabel(lecteur.short_name)
+            # Un point discret porte la couleur comme dans une legende : plus
+            # lisible et plus moderne qu'un grand rectangle teinte.
+            libelle = QLabel(f"●  {lecteur.short_name}")
             libelle.setAlignment(Qt.AlignCenter)
             libelle.setAttribute(Qt.WA_TransparentForMouseEvents)
             libelle.setProperty("readerIndex", lecteur.index)
@@ -252,9 +254,9 @@ class ReaderViews(QWidget):
             couleur = t.reader_color(self._readers[position].index)
             entete.setStyleSheet(
                 f"color: {couleur};"
-                f"background-color: {t.rgba(couleur, 0.12)};"
-                f"border: 1px solid {t.rgba(couleur, 0.28)};"
-                f"border-radius: {t.RADIUS_PILL}px;"
+                f"background-color: {t.rgba(couleur, 0.07)};"
+                f"border: none; border-left: 3px solid {couleur};"
+                f"border-radius: {t.RADIUS_SM}px;"
                 f"font-size: {t.TEXT_XS}px; font-weight: 600;"
                 f"padding: {t.SPACE_1}px {t.SPACE_2}px;")
 
