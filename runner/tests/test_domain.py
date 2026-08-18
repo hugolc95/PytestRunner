@@ -171,6 +171,27 @@ def test_internal_outcome_protocol_keeps_the_exact_nodeid():
         "tests/test_x.py::test_case[id with spaces]", Status.PASSED)
 
 
+@pytest.mark.parametrize("reported", [
+    r"tests\\certif\\test_cosmo.py::test_case[RSA_2048-TRANSIENT_RESET]",
+    r"C:\\Projects\\COSMO11_ADR_TLS\\tests\\certif\\test_cosmo.py::test_case[RSA_2048-TRANSIENT_RESET]",
+    "CERTIF/TEST_COSMO.PY::test_case[RSA_2048-TRANSIENT_RESET]",
+])
+def test_runtime_paths_resolve_to_the_collected_nodeid(reported):
+    collected = (
+        "tests/certif/test_cosmo.py::test_case[RSA_2048-TRANSIENT_RESET]",
+    )
+    assert parsing.resolve_collected_nodeid(reported, collected) == collected[0]
+
+
+def test_a_short_runtime_path_is_not_guessed_when_it_is_ambiguous():
+    reported = "test_cosmo.py::test_case[RSA_2048-TRANSIENT_RESET]"
+    collected = (
+        "reader_a/test_cosmo.py::test_case[RSA_2048-TRANSIENT_RESET]",
+        "reader_b/test_cosmo.py::test_case[RSA_2048-TRANSIENT_RESET]",
+    )
+    assert parsing.resolve_collected_nodeid(reported, collected) == reported
+
+
 def test_a_status_word_inside_a_skip_reason_is_not_the_verdict():
     ligne = "tests/test_x.py::test_case SKIPPED (requires PASSED marker) [ 64%]"
     assert parsing.parse_status_line(ligne) == (
