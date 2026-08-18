@@ -84,6 +84,7 @@ class RunService(QObject):
         self._reports: list[ReaderReport] = []
         self._done = 0
         self._total = 0
+        self._seen_outcomes: set[tuple[int, str]] = set()
         self._request: RunRequest | None = None
         self._en_attente: list[_ReaderWorker] = []
         self._lances = 0
@@ -109,6 +110,7 @@ class RunService(QObject):
         self._workers = []
         self._reports = []
         self._done = 0
+        self._seen_outcomes = set()
         self._total = request.total_tests
         self._request = request
 
@@ -156,7 +158,10 @@ class RunService(QObject):
             worker.wait(timeout_ms)
 
     def _on_outcome(self, outcome: Outcome) -> None:
-        self._done += 1
+        cle = (outcome.reader_index, outcome.nodeid)
+        if cle not in self._seen_outcomes:
+            self._seen_outcomes.add(cle)
+            self._done += 1
         self.outcome.emit(outcome)
         self.progress.emit(self._done, self._total)
 

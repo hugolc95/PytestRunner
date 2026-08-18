@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import re
 
+from runner.domain.ansi import strip_ansi
 from runner.domain.models import Status
+
+OUTCOME_PREFIX = "PYTESTRUNNER_OUTCOME\t"
 
 # `chemin/test_x.py::TestC::test_f[cas] PASSED [ 42%]`, et la forme de
 # pytest-xdist `[gw0] [ 42%] PASSED chemin/test_x.py::test_f`.
@@ -38,13 +41,30 @@ _TRADUCTION = {
 
 def parse_status_line(ligne: str) -> tuple[str, Status] | None:
     """(nodeid, statut) si cette ligne cloture un test, sinon None."""
+    nue = strip_ansi(ligne).strip()
+
+    # Le plugin interne emet ce format independant de l'apparence choisie par
+    # pytest (couleurs, plugins de terminal, pourcentage, xdist...). C'est la
+    # source la plus fiable : le nodeid vient directement de l'objet pytest.
+    if nue.startswith(OUTCOME_PREFIX):
+        morceaux = nue.split("\t", 2)
+        if len(morceaux) == 3:
+            statut = _TRADUCTION.get(morceaux[1])
+            if statut is not None and morceaux[2]:
+                return morceaux[2], statut
+
     for motif in (_LIGNE, _LIGNE_XDIST):
-        m = motif.match(ligne.strip())
+        m = motif.match(nue)
         if m:
             statut = _TRADUCTION.get(m.group("statut"))
             if statut is not None:
                 return m.group("nodeid"), statut
     return None
+
+
+def is_outcome_protocol_line(ligne: str) -> bool:
+    """Vrai pour une ligne de transport interne, a ne pas montrer a l'UI."""
+    return strip_ansi(ligne).strip().startswith(OUTCOME_PREFIX)
 
 
 def parse_collected(ligne: str) -> int | None:

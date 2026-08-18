@@ -156,6 +156,21 @@ def test_nodeids_may_contain_spaces(ligne, nodeid, statut):
     assert parsing.parse_status_line(ligne) == (nodeid, statut)
 
 
+def test_colored_pytest_status_is_read():
+    ligne = ("tests/test_x.py::test_case "
+             "\x1b[32mPASSED\x1b[0m\x1b[32m [ 68%]\x1b[0m")
+    assert parsing.parse_status_line(ligne) == (
+        "tests/test_x.py::test_case", Status.PASSED)
+
+
+def test_internal_outcome_protocol_keeps_the_exact_nodeid():
+    ligne = ("PYTESTRUNNER_OUTCOME\tPASSED\t"
+             "tests/test_x.py::test_case[id with spaces]")
+    assert parsing.is_outcome_protocol_line(ligne)
+    assert parsing.parse_status_line(ligne) == (
+        "tests/test_x.py::test_case[id with spaces]", Status.PASSED)
+
+
 def test_a_status_word_inside_a_skip_reason_is_not_the_verdict():
     ligne = "tests/test_x.py::test_case SKIPPED (requires PASSED marker) [ 64%]"
     assert parsing.parse_status_line(ligne) == (
