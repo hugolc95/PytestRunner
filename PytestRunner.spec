@@ -27,6 +27,7 @@ from build_common import EXCLUDES, EXCLUDES_RUNNER
 # l'interface se lance mais toutes les icones sont vides : le module gere ce
 # cas sans planter, ce qui rend la panne d'autant plus discrete.
 QTAWESOME_DATA = collect_data_files("qtawesome")
+APP_ICON_DATA = [("assets/pytest_runner.ico", "assets")]
 
 
 a = Analysis(
@@ -35,7 +36,7 @@ a = Analysis(
     binaries=[],
     # config.yaml n'est PAS embarque : il est lu dans le workspace de
     # l'utilisateur, pas a cote de l'exe.
-    datas=QTAWESOME_DATA,
+    datas=QTAWESOME_DATA + APP_ICON_DATA,
     hiddenimports=["yaml", "qtawesome"],
     hookspath=[],
     hooksconfig={},
@@ -64,6 +65,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon="assets/pytest_runner.ico",
 )
 
 coll = COLLECT(
