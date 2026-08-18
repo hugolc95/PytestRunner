@@ -1,8 +1,8 @@
 """Lecture de la configuration d'un workspace : lecteurs, logs, interpreteur.
 
 Un workspace decrit comment ses tests doivent tourner. Le fichier ne s'appelle
-pas toujours `config.yml` : on examine tous les YAML de la racine, les noms
-standards d'abord.
+pas toujours `config.yml` et peut vivre dans un sous-dossier : on examine ses
+YAML, les noms standards d'abord.
 """
 
 from __future__ import annotations
@@ -15,6 +15,11 @@ from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Reader
 
 NOMS_STANDARDS = ("config.yaml", "config.yml")
+SUFFIXES_YAML = (".yml", ".yaml")
+DOSSIERS_IGNORES = {
+    ".git", ".hg", ".svn", ".idea", ".pytest_cache", "__pycache__",
+    ".venv", "venv", "env", "node_modules", "site-packages",
+}
 
 # Une meme notion porte des noms differents d'un projet a l'autre. La
 # comparaison ignore la casse, les tirets et les espaces.
@@ -64,24 +69,53 @@ def _trouver(donnees: dict, cles: tuple[str, ...]):
 
 
 def fichiers_config(workspace: str | None) -> list[Path]:
-    """YAML de la racine du workspace, les noms standards en tete."""
+    """YAML du workspace, y compris ses sous-dossiers.
+
+    Les noms standards restent prioritaires, mais une campagne rangee dans
+    ``.Campaign/campaign.yml`` doit etre selectionnable comme une configuration
+    posee a la racine. Les dossiers techniques lourds sont ignores : parcourir
+    un environnement Python pour y trouver ses propres YAML ralentirait le
+    chargement et remplirait le selecteur de fichiers sans rapport.
+    """
     if not workspace:
         return []
     racine = Path(workspace)
     if not racine.is_dir():
         return []
 
-    trouves = [racine / nom for nom in NOMS_STANDARDS if (racine / nom).is_file()]
+    trouves: list[Path] = []
     try:
-        autres = sorted(
-            (p for p in racine.iterdir()
-             if p.is_file() and p.suffix.lower() in (".yml", ".yaml")
-             and p.name not in NOMS_STANDARDS),
-            key=lambda p: p.name.lower(),
-        )
+        for dossier, sous_dossiers, fichiers in os.walk(racine):
+            sous_dossiers[:] = sorted(
+                (nom for nom in sous_dossiers if nom.lower() not in DOSSIERS_IGNORES),
+                key=str.lower,
+            )
+            base = Path(dossier)
+            trouves.extend(
+                base / nom for nom in fichiers
+                if Path(nom).suffix.lower() in SUFFIXES_YAML)
     except OSError:
-        autres = []
-    return trouves + autres
+        pass
+
+    def priorite(chemin: Path):
+        relatif = chemin.relative_to(racine)
+        profondeur = len(relatif.parts) - 1
+        nom = chemin.name.lower()
+        descriptif = any(mot in chemin.stem.lower()
+                         for mot in ("config", "campaign", "campagne"))
+        if profondeur == 0 and nom in NOMS_STANDARDS:
+            groupe = 0
+        elif nom in NOMS_STANDARDS:
+            groupe = 1
+        elif descriptif:
+            groupe = 2
+        elif profondeur == 0:
+            groupe = 3
+        else:
+            groupe = 4
+        return groupe, profondeur, relatif.as_posix().lower()
+
+    return sorted(trouves, key=priorite)
 
 
 @dataclass(frozen=True)

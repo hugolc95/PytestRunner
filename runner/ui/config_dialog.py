@@ -177,11 +177,15 @@ class ConfigDialog(QDialog):
     """Le fichier de configuration du workspace, editable sans quitter l'outil."""
 
     def __init__(self, config_path: str, readers_connus=(), parent=None,
-                 candidats=()):
+                 candidats=(), workspace_path: str = ""):
         super().__init__(parent)
         self.path = Path(config_path)
+        self._workspace_path = (Path(workspace_path) if workspace_path
+                                else self.path.parent)
         self._readers_connus = tuple(readers_connus)
         self._candidats = [Path(c) for c in candidats]
+        if self.path not in self._candidats:
+            self._candidats.insert(0, self.path)
         self._champs: list[_Champ] = []
 
         self.setWindowTitle(f"Configuration — {self.path.name}")
@@ -197,10 +201,10 @@ class ConfigDialog(QDialog):
         self.chemin_label.setObjectName("Faint")
         self.chemin_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
-        # Le selecteur n'apparait que s'il y a un choix a faire. Un projet qui
-        # n'a qu'un fichier n'a pas besoin qu'on lui demande lequel ; un projet
-        # qui en a plusieurs voyait l'outil en prendre un sans le dire, et
-        # travailler avec les lecteurs et les logs d'un autre.
+        # Le selecteur reste accessible meme si un seul fichier a ete detecte :
+        # le YAML voulu peut etre plus loin dans l'arborescence ou en dehors
+        # des candidats automatiques. Un projet qui en a plusieurs voyait
+        # auparavant l'outil en prendre un sans permettre d'en choisir un autre.
         self.file_row = QWidget()
         rangee = QHBoxLayout(self.file_row)
         rangee.setContentsMargins(0, 0, 0, 0)
@@ -210,15 +214,21 @@ class ConfigDialog(QDialog):
         etiquette.setObjectName("Muted")
         self.file_combo = QComboBox()
         for candidat in self._candidats:
-            self.file_combo.addItem(candidat.name, str(candidat))
+            self._ajouter_candidat(candidat)
         position = self.file_combo.findData(str(self.path))
         if position >= 0:
             self.file_combo.setCurrentIndex(position)
         self.file_combo.currentIndexChanged.connect(self._changer_de_fichier)
 
+        self.choose_file_button = QPushButton("Browse…")
+        self.choose_file_button.setObjectName("Ghost")
+        self.choose_file_button.setToolTip(
+            "Choose another .yml or .yaml file, including in a subfolder")
+        self.choose_file_button.clicked.connect(self._choisir_fichier)
+
         rangee.addWidget(etiquette)
         rangee.addWidget(self.file_combo, 1)
-        self.file_row.setVisible(len(self._candidats) > 1)
+        rangee.addWidget(self.choose_file_button)
 
         self.form_host = QWidget()
         self._form = QVBoxLayout(self.form_host)
@@ -274,6 +284,31 @@ class ConfigDialog(QDialog):
         self.reload()
 
     # ------------------------------------------------------------- chargement
+
+    def _libelle_candidat(self, chemin: Path) -> str:
+        try:
+            return chemin.relative_to(self._workspace_path).as_posix()
+        except ValueError:
+            return str(chemin)
+
+    def _ajouter_candidat(self, chemin: Path) -> int:
+        position = self.file_combo.count()
+        self.file_combo.addItem(self._libelle_candidat(chemin), str(chemin))
+        self.file_combo.setItemData(position, str(chemin), Qt.ToolTipRole)
+        return position
+
+    def _choisir_fichier(self) -> None:
+        choisi, _ = QFileDialog.getOpenFileName(
+            self, "Choose the workspace configuration", str(self.path.parent),
+            "YAML files (*.yml *.yaml)")
+        if not choisi:
+            return
+        position = self.file_combo.findData(choisi)
+        if position < 0:
+            chemin = Path(choisi)
+            self._candidats.append(chemin)
+            position = self._ajouter_candidat(chemin)
+        self.file_combo.setCurrentIndex(position)
 
     def _changer_de_fichier(self, _index: int) -> None:
         """Bascule sur un autre YAML du workspace.

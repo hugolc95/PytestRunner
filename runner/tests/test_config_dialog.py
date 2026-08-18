@@ -8,6 +8,8 @@ dialogue ne lui envoie effectivement que ce qui a change.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from PyQt5.QtWidgets import (
     QCheckBox,
@@ -346,6 +348,20 @@ def test_the_config_button_is_off_without_a_workspace(fenetre):
     assert not fenetre.config_button.isEnabled()
 
 
+def test_the_window_is_named_pytest_runner(fenetre):
+    assert fenetre.windowTitle() == "Pytest Runner"
+
+
+def test_the_config_button_is_on_even_when_no_yaml_was_detected(fenetre, tmp_path):
+    from runner.domain.workspace import Workspace
+
+    fenetre.workspace = Workspace(str(tmp_path), "", {})
+    fenetre._update_actions()
+
+    assert fenetre.config_button.isEnabled()
+    assert fenetre.act_config.isEnabled()
+
+
 def test_the_theme_button_is_not_in_the_row_of_run_actions(fenetre):
     """Pose entre l'espace elastique et Re-run, il s'alignait avec les boutons
     de run et se lisait comme une quatrieme action -- alors que c'est un
@@ -415,17 +431,62 @@ def _dialogue_deux(qapp, deux_fichiers, courant="campagne.yml"):
 
     return ConfigDialog(
         str(deux_fichiers / courant), ["Cosmo11Secured Reader"],
-        candidats=[str(c) for c in fichiers_config(str(deux_fichiers))])
+        candidats=[str(c) for c in fichiers_config(str(deux_fichiers))],
+        workspace_path=str(deux_fichiers))
 
 
-def test_the_file_picker_appears_only_when_there_is_a_choice(qapp, deux_fichiers,
-                                                             fichier):
-    """Un projet qui n'a qu'un fichier n'a pas besoin qu'on lui demande."""
-    seul = ConfigDialog(str(fichier), candidats=[str(fichier)])
-    assert seul.file_row.isHidden()
+def test_the_file_picker_is_available_even_with_one_detected_file(qapp, fichier):
+    """Le fichier voulu peut etre dans un sous-dossier non detecte."""
+    dialogue = ConfigDialog(str(fichier), candidats=[str(fichier)])
 
-    plusieurs = _dialogue_deux(qapp, deux_fichiers)
-    assert not plusieurs.file_row.isHidden()
+    assert not dialogue.file_row.isHidden()
+    assert dialogue.choose_file_button.isEnabled()
+
+
+def test_browse_can_choose_a_yaml_in_a_subfolder(qapp, tmp_path, monkeypatch):
+    racine = tmp_path / "config.yml"
+    racine.write_text("Reader: Root\n", encoding="utf-8")
+    dossier = tmp_path / ".Campaign"
+    dossier.mkdir()
+    imbrique = dossier / "campaign.yml"
+    imbrique.write_text("Reader: Nested\n", encoding="utf-8")
+    dialogue = ConfigDialog(str(racine), candidats=[str(racine)],
+                            workspace_path=str(tmp_path))
+    monkeypatch.setattr(
+        "runner.ui.config_dialog.QFileDialog.getOpenFileName",
+        lambda *_args: (str(imbrique), "YAML files (*.yml *.yaml)"))
+
+    dialogue.choose_file_button.click()
+
+    assert dialogue.path == imbrique
+    assert dialogue.file_combo.currentText() == ".Campaign/campaign.yml"
+    assert _champ(dialogue, "Reader").depart == "Nested"
+
+
+def test_choosing_the_first_config_remembers_its_relative_subfolder(
+        fenetre, tmp_path, monkeypatch):
+    from runner.domain.workspace import Workspace
+
+    dossier = tmp_path / ".Campaign"
+    dossier.mkdir()
+    config = dossier / "campaign.yml"
+    config.write_text("Reader: Nested\n", encoding="utf-8")
+    # Force le cas signale : workspace deja charge mais aucun YAML retenu.
+    fenetre.workspace = Workspace(str(tmp_path), "", {})
+    fenetre._update_actions()
+    monkeypatch.setattr(
+        "runner.ui.main_window.QFileDialog.getOpenFileName",
+        lambda *_args: (str(config), "YAML files (*.yml *.yaml)"))
+    monkeypatch.setattr("runner.ui.config_dialog.ConfigDialog.exec_", lambda _self: 0)
+    recharges = []
+    monkeypatch.setattr(fenetre, "load_workspace", lambda: recharges.append(True))
+
+    fenetre.open_config_dialog()
+
+    assert fenetre._config_retenue(str(tmp_path)) == str(
+        Path(".Campaign") / "campaign.yml")
+    assert Path(fenetre.workspace.config_path) == config
+    assert recharges == [True]
 
 
 def test_the_picker_starts_on_the_file_being_edited(qapp, deux_fichiers):
