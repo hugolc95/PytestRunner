@@ -127,14 +127,13 @@ class MainWindow(QMainWindow):
         colonne.setSpacing(t.SPACE_3)
 
         colonne.addWidget(self._build_command_bar())
-        colonne.addWidget(self._build_run_bar())
 
-        # Sous les boutons de run, pas dans l'arbre : le choix des lecteurs
-        # porte sur le RUN, comme les boutons juste au-dessus, et non sur la
-        # selection des tests.
+        # Le choix des lecteurs porte sur le RUN : il partage donc la rangee
+        # des actions Run / Stop / Re-run, plutot que d'occuper une ligne a
+        # lui seul au-dessus de l'arbre.
         self.readers_bar = ReaderBar()
         self.readers_bar.changed.connect(self._on_readers_changed)
-        colonne.addWidget(self.readers_bar)
+        colonne.addWidget(self._build_run_bar())
 
         self.split = QSplitter(Qt.Horizontal)
         self.split.setChildrenCollapsible(False)
@@ -250,6 +249,10 @@ class MainWindow(QMainWindow):
         ligne.addWidget(self.run_button)
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.rerun_button)
+        # Separe visuellement les actions de leur cible materielle, tout en
+        # gardant l'ensemble sur une seule rangee compacte.
+        ligne.addSpacing(t.SPACE_6)
+        ligne.addWidget(self.readers_bar)
         ligne.addStretch(1)
         return barre
 
