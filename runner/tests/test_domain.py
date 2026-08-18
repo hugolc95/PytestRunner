@@ -7,6 +7,7 @@ Qt, c'est que la logique a fui dans l'interface.
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -225,6 +226,26 @@ def test_a_config_file_with_another_name_is_found(tmp_path):
     ws = Workspace.load(str(tmp_path))
     assert ws.config_path.endswith("configWorkspace.yml")
     assert ws.readers[0].name == "A"
+
+
+def test_a_config_file_in_a_workspace_subfolder_is_found(tmp_path):
+    campagne = tmp_path / ".Campaign"
+    campagne.mkdir()
+    config = campagne / "campaign.yml"
+    config.write_text("Reader: Nested Reader\n", encoding="utf-8")
+
+    ws = Workspace.load(str(tmp_path))
+
+    assert Path(ws.config_path) == config
+    assert ws.readers[0].name == "Nested Reader"
+
+
+def test_config_discovery_skips_virtual_environments(tmp_path):
+    parasite = tmp_path / ".venv"
+    parasite.mkdir()
+    (parasite / "config.yml").write_text("Reader: Wrong\n", encoding="utf-8")
+
+    assert Workspace.load(str(tmp_path)).config_path == ""
 
 
 def test_a_relative_log_path_is_anchored_to_the_workspace(tmp_path):

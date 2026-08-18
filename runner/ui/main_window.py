@@ -63,6 +63,7 @@ from runner.ui.widgets import (
 )
 
 ORG, APP = "PytestRunner", "Runner"
+WINDOW_TITLE = "Pytest Runner"
 
 # Cles QSettings. Regroupees ici : une cle ecrite a la main quelque part finit
 # par diverger de celle qu'on relit.
@@ -84,7 +85,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Runner")
+        self.setWindowTitle(WINDOW_TITLE)
         self.setMinimumSize(1100, 640)
 
         self.settings = QSettings(ORG, APP)
@@ -180,7 +181,8 @@ class MainWindow(QMainWindow):
         self.config_button = QPushButton("Config")
         self.config_button.setObjectName("Ghost")
         self.config_button.setIcon(icons.icon("mdi.file-cog-outline", t.TEXT_MUTED))
-        self.config_button.setToolTip("Edit this workspace's configuration file")
+        self.config_button.setToolTip(
+            "Choose or edit this workspace's YAML configuration file")
         self.config_button.clicked.connect(self.open_config_dialog)
 
         # L'historique parle du workspace lui aussi : ce sont ses runs. Sorti
@@ -575,29 +577,37 @@ class MainWindow(QMainWindow):
         """
         from runner.ui.config_dialog import ConfigDialog
 
-        if self.workspace is None or not self.workspace.config_path:
+        if self.workspace is None:
             ErrorDialog.show_error(
                 self, "No configuration file",
-                "This workspace has no YAML configuration file at its root. "
-                "Create a config.yml there, then load the workspace again.",
-                self.workspace.path if self.workspace else "")
+                "Load a workspace before choosing its configuration file.", "")
             return
 
         avant = (self.workspace.config_path, self.workspace.readers,
                  self.workspace.log_root, self.workspace.declared_interpreter,
                  self.workspace.reader_mode)
 
+        racine = self.workspace.path
+        if not self.workspace.config_path:
+            choisi, _ = QFileDialog.getOpenFileName(
+                self, "Choose the workspace configuration", racine,
+                "YAML files (*.yml *.yaml)")
+            if not choisi:
+                return
+            self._retenir_config(racine, choisi)
+            self.workspace = Workspace.load(racine, self._config_retenue(racine))
+
         dialogue = ConfigDialog(
             self.workspace.config_path,
             [r.name for r in self.workspace.readers], self,
-            candidats=[str(c) for c in fichiers_config(self.workspace.path)])
+            candidats=[str(c) for c in fichiers_config(racine)],
+            workspace_path=racine)
         dialogue.exec_()
 
         # Le fichier qu'on vient d'editer devient CELUI du workspace : avoir
         # choisi dans la liste ne servirait a rien si le prochain chargement
         # reprenait la detection automatique.
-        racine = self.workspace.path
-        self._retenir_config(racine, Path(dialogue.path).name)
+        self._retenir_config(racine, str(dialogue.path))
         self.workspace = Workspace.load(racine, self._config_retenue(racine))
 
         apres = (self.workspace.config_path, self.workspace.readers,
@@ -769,7 +779,7 @@ class MainWindow(QMainWindow):
         if lecteurs:
             details += f" · {len(lecteurs)} readers"
         self.status_label.setText(f"{nom} — {details}")
-        self.setWindowTitle(f"Runner — {nom}" if nom else "Runner")
+        self.setWindowTitle(f"{WINDOW_TITLE} — {nom}" if nom else WINDOW_TITLE)
         self._update_actions()
 
     @pyqtSlot(str)
@@ -809,7 +819,7 @@ class MainWindow(QMainWindow):
             entete.resizeSection(colonne, max(largeur, 72))
 
     def _config_retenue(self, workspace: str) -> str:
-        """Nom du fichier de configuration choisi pour ce workspace, ou "".
+        """Chemin du fichier de configuration choisi pour ce workspace, ou "".
 
         Range par workspace : on passe d'un projet a l'autre, et le fichier
         retenu pour l'un ne veut rien dire pour l'autre.
@@ -817,11 +827,20 @@ class MainWindow(QMainWindow):
         table = self.settings.value(K_CONFIG, {}) or {}
         return str(table.get(workspace, "")) if isinstance(table, dict) else ""
 
-    def _retenir_config(self, workspace: str, nom: str) -> None:
+    def _retenir_config(self, workspace: str, chemin: str) -> None:
         table = self.settings.value(K_CONFIG, {}) or {}
         if not isinstance(table, dict):
             table = {}
-        table[workspace] = nom
+        config = Path(chemin)
+        if not config.is_absolute():
+            config = Path(workspace) / config
+        try:
+            # Relatif au workspace : le projet peut etre deplace ou clone sur
+            # un autre PC sans que le choix memorise devienne caduc.
+            retenu = str(config.resolve().relative_to(Path(workspace).resolve()))
+        except ValueError:
+            retenu = str(config.resolve())
+        table[workspace] = retenu
         self.settings.setValue(K_CONFIG, table)
 
     def _remember_workspace(self, chemin: str) -> None:
@@ -1328,8 +1347,9 @@ class MainWindow(QMainWindow):
         self.act_rerun.setEnabled(rejouable)
         self.rerun_button.setEnabled(rejouable)
         self.act_diverge.setEnabled(len(self.model.readers) > 1)
-        # Sans workspace charge, il n'y a aucun fichier a editer.
-        editable = charge and bool(self.workspace.config_path)
+        # Sans YAML detecte, le meme bouton permet d'en CHOISIR un dans un
+        # sous-dossier. Le griser empechait precisement de reparer ce cas.
+        editable = charge
         self.act_config.setEnabled(editable)
         self.config_button.setEnabled(editable)
 
