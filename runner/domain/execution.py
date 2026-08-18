@@ -193,6 +193,7 @@ class ReaderRun:
         lignes: list[str] = []
         verdicts: dict[str, Status] = {}
         saut_apres_protocole = False
+        nodeids = parsing.NodeidResolver(self.request.nodeids)
 
         # Le fichier d'arguments et le plugin doivent survivre au processus :
         # tout le run se deroule donc a l'interieur des deux contextes.
@@ -246,6 +247,12 @@ class ReaderRun:
 
                 if resultat is not None:
                     nodeid, statut = resultat
+                    # Le tree conserve les nodeids de la collecte. Pytest et
+                    # certains plugins peuvent rendre le meme test avec un
+                    # chemin absolu, un autre rootdir ou des antislashs :
+                    # remettre ici l'identifiant collecte garde toute la
+                    # chaine (tree, Detail, compteurs, progression) coherente.
+                    nodeid = nodeids.resolve(nodeid)
                     precedent = verdicts.get(nodeid)
                     if precedent is statut:
                         continue

@@ -301,3 +301,56 @@ def test_workspace_forcing_colored_output_still_updates_results(qapp, tmp_path):
     assert rapports[0].counts == {Status.PASSED: 2}
     assert "PYTESTRUNNER_OUTCOME" not in "".join(lignes)
     assert "PYTESTRUNNER_OUTCOME" not in rapports[0].output
+
+
+def test_a_plugin_reporting_absolute_windows_paths_still_updates_results(
+        qapp, tmp_path):
+    """Reproduit le run visible dans la video : Output avance, l'UI restait a 0.
+
+    Certains plugins reecrivent le chemin du report alors que le tree conserve
+    le nodeid relatif de la collecte. Le verdict doit etre rattache a ce nodeid
+    collecte, qui est l'identite autoritaire pour toute l'interface.
+    """
+    (tmp_path / "conftest.py").write_text(textwrap.dedent(r'''
+        import pytest
+
+        @pytest.hookimpl(hookwrapper=True)
+        def pytest_runtest_makereport(item, call):
+            outcome = yield
+            report = outcome.get_result()
+            report.nodeid = "C:\\Projects\\COSMO11_ADR_TLS\\" + report.nodeid.replace("/", "\\")
+    '''), encoding="utf-8")
+    (tmp_path / "test_certif.py").write_text(textwrap.dedent('''
+        import pytest
+
+        @pytest.mark.parametrize("value", [
+            pytest.param(1, id="RSA_2048_PKCS_SHA256-TRANSIENT_RESET"),
+            pytest.param(2, id="MLDSA_44-TRANSIENT_DESELECT"),
+        ])
+        def test_cosmo11_secured(value):
+            assert value > 0
+    '''), encoding="utf-8")
+
+    nodeids = (
+        "test_certif.py::test_cosmo11_secured[RSA_2048_PKCS_SHA256-TRANSIENT_RESET]",
+        "test_certif.py::test_cosmo11_secured[MLDSA_44-TRANSIENT_DESELECT]",
+    )
+    request = RunRequest(
+        workspace=str(tmp_path), interpreter=sys.executable,
+        nodeids=nodeids, readers=(),
+    )
+    service = RunService()
+    outcomes: list = []
+    progress: list = []
+    reports: list = []
+    service.outcome.connect(outcomes.append)
+    service.progress.connect(lambda done, total: progress.append((done, total)))
+    service.finished.connect(reports.extend)
+
+    assert service.start(request, dict(os.environ))
+    assert _attendre(lambda: bool(reports))
+    service.wait(5000)
+
+    assert [outcome.nodeid for outcome in outcomes] == list(nodeids)
+    assert progress[-1] == (2, 2)
+    assert reports[0].counts == {Status.PASSED: 2}

@@ -67,6 +67,72 @@ def is_outcome_protocol_line(ligne: str) -> bool:
     return strip_ansi(ligne).strip().startswith(OUTCOME_PREFIX)
 
 
+class NodeidResolver:
+    """Rapproche les nodeids du run de ceux conserves pendant la collecte.
+
+    Pytest peut presenter le meme fichier relativement a deux ``rootdir``
+    differents entre la collecte et l'execution. Sous Windows, un plugin peut
+    en plus rendre le chemin absolu, changer la casse du lecteur ou employer
+    des antislashs. L'ancien code exigeait une egalite caractere par caractere :
+    le verdict arrivait bien, mais l'arbre le rejetait et tous les compteurs
+    restaient a zero.
+
+    La partie Python du nodeid (classe, fonction et parametre) reste comparee
+    exactement. Seul le chemin est normalise, et un suffixe n'est accepte que
+    s'il designe un UNIQUE test collecte. En cas d'ambiguite on rend la valeur
+    recue : l'interface pourra la signaler au lieu d'affecter le mauvais test.
+    L'index est construit une seule fois par lecteur. Sur une suite de 10 000
+    tests, reparcourir toute la collecte pour chacun des 10 000 verdicts
+    recreerait exactement le gel que cette classe doit corriger.
+    """
+
+    @staticmethod
+    def _morceaux(nodeid: str):
+        chemin, separateur, reste = nodeid.partition("::")
+        if not separateur:
+            return (), ""
+        # Le chemin seul est insensible a la casse : c'est necessaire sur
+        # Windows, sans rendre les noms de tests/IDs de parametres permissifs.
+        chemin = re.sub(r"/+", "/", chemin.replace("\\", "/"))
+        parties = tuple(
+            partie.casefold() for partie in chemin.split("/")
+            if partie and partie != "."
+        )
+        return parties, reste
+
+    def __init__(self, collected):
+        self._exact: set[str] = set()
+        self._par_reste: dict[str, list[tuple[tuple[str, ...], str]]] = {}
+        for nodeid in collected:
+            connu = str(nodeid)
+            self._exact.add(connu)
+            chemin, reste = self._morceaux(connu)
+            if chemin and reste:
+                self._par_reste.setdefault(reste, []).append((chemin, connu))
+
+    def resolve(self, reported: str) -> str:
+        reported = strip_ansi(str(reported or "")).strip()
+        if reported in self._exact:
+            return reported
+
+        chemin_recu, reste_recu = self._morceaux(reported)
+        if not chemin_recu or not reste_recu:
+            return reported
+
+        candidats: list[str] = []
+        for chemin_connu, connu in self._par_reste.get(reste_recu, ()):
+            commun = min(len(chemin_recu), len(chemin_connu))
+            if chemin_recu[-commun:] == chemin_connu[-commun:]:
+                candidats.append(connu)
+
+        return candidats[0] if len(candidats) == 1 else reported
+
+
+def resolve_collected_nodeid(reported: str, collected) -> str:
+    """Raccourci sans etat, pratique hors d'une boucle de resultats."""
+    return NodeidResolver(collected).resolve(reported)
+
+
 def parse_collected(ligne: str) -> int | None:
     """Nombre de tests annonce par `collected N items`, sinon None."""
     m = _COLLECTE.search(ligne)
