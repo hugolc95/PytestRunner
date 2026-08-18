@@ -25,6 +25,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -54,7 +56,8 @@ EXPLICATIONS = {
     "python_executable": "Python used to collect and run the tests. It needs "
                          "pytest. Empty means the application's own setting.",
     "reader": "The reader the tests read today.",
-    "readers": "Extra readers to test, one per line. The one above stays first.",
+    "readers": "Extra readers to test with. The one above stays first — "
+           "use + and − to change this list.",
     "reader_mode": "sequential runs the readers one after the other. Leave "
                    "empty for the default, which runs them together.",
     "import_mode": "pytest import mode. importlib accepts test files sharing "
@@ -66,6 +69,92 @@ EXPLICATIONS = {
 def _joli(nom: str) -> str:
     """`log_path` devient `Log path` : un libelle, pas un identifiant."""
     return str(nom).replace("_", " ").replace("-", " ").strip().capitalize()
+
+
+class ReaderList(QWidget):
+    """La liste des lecteurs supplementaires, avec de quoi en ajouter.
+
+    Une zone de texte libre marchait, mais demandait de savoir qu'un lecteur
+    par ligne etait la regle -- et une ligne vide ou une faute de frappe y
+    passaient inapercues. Ici chaque lecteur est une entree qu'on ajoute,
+    renomme ou retire.
+
+    Ne touche jamais a la cle `Reader` : celle-la est le lecteur que les tests
+    lisent aujourd'hui, et se change dans son propre champ.
+    """
+
+    def __init__(self, valeurs, connus=(), parent=None):
+        super().__init__(parent)
+        self._connus = tuple(connus)
+
+        self.list = QListWidget()
+        self.list.setObjectName("Readers")
+        # Trois lignes visibles : au-dela la fenetre se remplit d'une liste
+        # qui, la plupart du temps, en compte une ou deux.
+        self.list.setFixedHeight(t.CONTROL_MD * 3)
+        for valeur in valeurs:
+            self._ajouter_entree(str(valeur))
+
+        self.add_button = QPushButton("+")
+        self.add_button.setObjectName("IconSm")
+        self.add_button.setToolTip("Add a reader")
+        self.add_button.clicked.connect(self.ajouter)
+
+        self.remove_button = QPushButton("−")
+        self.remove_button.setObjectName("IconSm")
+        self.remove_button.setToolTip("Remove the selected reader")
+        self.remove_button.clicked.connect(self.retirer)
+
+        boutons = QVBoxLayout()
+        boutons.setContentsMargins(0, 0, 0, 0)
+        boutons.setSpacing(t.SPACE_1)
+        boutons.addWidget(self.add_button)
+        boutons.addWidget(self.remove_button)
+        boutons.addStretch(1)
+
+        ligne = QHBoxLayout(self)
+        ligne.setContentsMargins(0, 0, 0, 0)
+        ligne.setSpacing(t.SPACE_2)
+        ligne.addWidget(self.list, 1)
+        ligne.addLayout(boutons)
+
+        self.list.itemSelectionChanged.connect(self._maj)
+        self._maj()
+
+    def _ajouter_entree(self, texte: str) -> QListWidgetItem:
+        item = QListWidgetItem(texte)
+        item.setFlags(item.flags() | Qt.ItemIsEditable)
+        self.list.addItem(item)
+        return item
+
+    def ajouter(self) -> None:
+        """Ajoute un lecteur et ouvre son edition tout de suite.
+
+        Pre-rempli avec un lecteur connu pas encore liste, quand il y en a :
+        c'est presque toujours celui qu'on voulait, et cela evite de retaper
+        un nom long ou la moindre faute rend le run muet.
+        """
+        deja = set(self.valeurs())
+        propose = next((r for r in self._connus if r not in deja), "")
+        item = self._ajouter_entree(propose)
+        self.list.setCurrentItem(item)
+        self.list.editItem(item)
+        self._maj()
+
+    def retirer(self) -> None:
+        for item in self.list.selectedItems():
+            self.list.takeItem(self.list.row(item))
+        self._maj()
+
+    def valeurs(self) -> list:
+        """Les lecteurs, sans les vides : une entree laissee blanche donnerait
+        une ligne `- ""` dans le fichier, et un run sur un lecteur sans nom."""
+        return [self.list.item(i).text().strip()
+                for i in range(self.list.count())
+                if self.list.item(i).text().strip()]
+
+    def _maj(self) -> None:
+        self.remove_button.setEnabled(bool(self.list.selectedItems()))
 
 
 class _Champ:
@@ -87,10 +176,12 @@ class _Champ:
 class ConfigDialog(QDialog):
     """Le fichier de configuration du workspace, editable sans quitter l'outil."""
 
-    def __init__(self, config_path: str, readers_connus=(), parent=None):
+    def __init__(self, config_path: str, readers_connus=(), parent=None,
+                 candidats=()):
         super().__init__(parent)
         self.path = Path(config_path)
         self._readers_connus = tuple(readers_connus)
+        self._candidats = [Path(c) for c in candidats]
         self._champs: list[_Champ] = []
 
         self.setWindowTitle(f"Configuration — {self.path.name}")
@@ -105,6 +196,29 @@ class ConfigDialog(QDialog):
         self.chemin_label = QLabel(str(self.path))
         self.chemin_label.setObjectName("Faint")
         self.chemin_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        # Le selecteur n'apparait que s'il y a un choix a faire. Un projet qui
+        # n'a qu'un fichier n'a pas besoin qu'on lui demande lequel ; un projet
+        # qui en a plusieurs voyait l'outil en prendre un sans le dire, et
+        # travailler avec les lecteurs et les logs d'un autre.
+        self.file_row = QWidget()
+        rangee = QHBoxLayout(self.file_row)
+        rangee.setContentsMargins(0, 0, 0, 0)
+        rangee.setSpacing(t.SPACE_2)
+
+        etiquette = QLabel("File")
+        etiquette.setObjectName("Muted")
+        self.file_combo = QComboBox()
+        for candidat in self._candidats:
+            self.file_combo.addItem(candidat.name, str(candidat))
+        position = self.file_combo.findData(str(self.path))
+        if position >= 0:
+            self.file_combo.setCurrentIndex(position)
+        self.file_combo.currentIndexChanged.connect(self._changer_de_fichier)
+
+        rangee.addWidget(etiquette)
+        rangee.addWidget(self.file_combo, 1)
+        self.file_row.setVisible(len(self._candidats) > 1)
 
         self.form_host = QWidget()
         self._form = QVBoxLayout(self.form_host)
@@ -149,6 +263,7 @@ class ConfigDialog(QDialog):
         colonne = QVBoxLayout(self)
         colonne.setContentsMargins(t.SPACE_4, t.SPACE_4, t.SPACE_4, t.SPACE_3)
         colonne.setSpacing(t.SPACE_3)
+        colonne.addWidget(self.file_row)
         colonne.addWidget(self.chemin_label)
         colonne.addWidget(self.tabs, 1)
         colonne.addLayout(actions)
@@ -159,6 +274,27 @@ class ConfigDialog(QDialog):
         self.reload()
 
     # ------------------------------------------------------------- chargement
+
+    def _changer_de_fichier(self, _index: int) -> None:
+        """Bascule sur un autre YAML du workspace.
+
+        Les modifications non enregistrees du fichier courant sont perdues :
+        on le dit, plutot que de les emporter silencieusement vers un fichier
+        auquel elles n'appartiennent pas.
+        """
+        choisi = self.file_combo.currentData()
+        if not choisi or Path(choisi) == self.path:
+            return
+
+        perdues = len(self._modifications())
+        self.path = Path(choisi)
+        self.setWindowTitle(f"Configuration — {self.path.name}")
+        self.chemin_label.setText(str(self.path))
+        self.reload()
+        if perdues:
+            quoi = ("1 unsaved change was" if perdues == 1
+                    else f"{perdues} unsaved changes were")
+            self._dire(f"Switched file — {quoi} dropped.", alerte=True)
 
     def reload(self) -> None:
         """Relit le fichier et rebatit les deux vues."""
@@ -269,6 +405,9 @@ class ConfigDialog(QDialog):
             return champ, champ.value
 
         if isinstance(valeur, (list, tuple)):
+            if cle in CLES_READERS:
+                champ = ReaderList(valeur, self._readers_connus)
+                return champ, champ.valeurs
             champ = QPlainTextEdit("\n".join(str(v) for v in valeur))
             champ.setFixedHeight(t.CONTROL_MD * 3)
             return champ, lambda: [l.strip() for l in

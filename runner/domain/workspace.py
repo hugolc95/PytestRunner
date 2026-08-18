@@ -93,8 +93,26 @@ class Workspace:
     settings: dict = None  # type: ignore[assignment]
 
     @classmethod
-    def load(cls, path: str) -> "Workspace":
-        """Lit le premier fichier de configuration exploitable du workspace."""
+    def load(cls, path: str, config: str = "") -> "Workspace":
+        """Lit la configuration du workspace.
+
+        `config` impose un fichier precis. Sans lui, le premier exploitable
+        gagne -- ce qui suffit quand il n'y en a qu'un, et devient un tirage
+        quand le projet en compte plusieurs. Un depot avec un `config.yaml`
+        d'exemple a cote du vrai fichier de campagne se retrouvait alors lu a
+        l'envers, avec les mauvais lecteurs et le mauvais dossier de logs, sans
+        que rien ne le signale.
+        """
+        if config:
+            demande = Path(config)
+            if not demande.is_absolute():
+                demande = Path(path) / demande
+            if demande.is_file():
+                return cls(path=path, config_path=str(demande),
+                           settings=_charger(demande))
+            # Le fichier retenu a ete renomme ou supprime : on retombe sur la
+            # detection plutot que de rendre un workspace sans reglages.
+
         for candidat in fichiers_config(path):
             donnees = _charger(candidat)
             if donnees:

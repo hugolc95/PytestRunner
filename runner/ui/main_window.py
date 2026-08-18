@@ -34,7 +34,11 @@ from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Kind, Reader, RunRequest, Status
 from runner.domain.source import path_of as source_path
 from runner.domain.tree import build_tree, collapse_single_class
-from runner.domain.workspace import MODE_SEQUENTIEL, Workspace
+from runner.domain.workspace import (
+    MODE_SEQUENTIEL,
+    Workspace,
+    fichiers_config,
+)
 from runner.services.run_service import CollectWorker, RunService
 from runner.ui import icons, theme
 from runner.ui import tokens as t
@@ -69,6 +73,9 @@ K_LAST = "workspace/last"
 K_TREE_COLS = "tree/columns"
 K_INTERPRETER = "interpreter/override"
 K_THEME = "window/theme"
+# Fichier de configuration retenu, par workspace. Un projet peut en
+# compter plusieurs, et le premier trouve n'est pas forcement le bon.
+K_CONFIG = "workspace/config"
 
 
 class MainWindow(QMainWindow):
@@ -120,8 +127,9 @@ class MainWindow(QMainWindow):
         colonne.setSpacing(t.SPACE_3)
 
         colonne.addWidget(self._build_command_bar())
+        colonne.addWidget(self._build_run_bar())
 
-        # Sous la barre de commande, pas dans l'arbre : le choix des lecteurs
+        # Sous les boutons de run, pas dans l'arbre : le choix des lecteurs
         # porte sur le RUN, comme les boutons juste au-dessus, et non sur la
         # selection des tests.
         self.readers_bar = ReaderBar()
@@ -175,6 +183,43 @@ class MainWindow(QMainWindow):
         self.config_button.setToolTip("Edit this workspace's configuration file")
         self.config_button.clicked.connect(self.open_config_dialog)
 
+        # L'historique parle du workspace lui aussi : ce sont ses runs. Sorti
+        # du menu, parce qu'on y va pour comparer au run precedent, ce qui
+        # arrive bien plus souvent qu'un detour par la barre de menus.
+        self.history_button = QPushButton("History")
+        self.history_button.setObjectName("Ghost")
+        self.history_button.setIcon(icons.icon("mdi.history", t.TEXT_MUTED))
+        self.history_button.setToolTip("Runs already recorded  (Ctrl+H)")
+        self.history_button.clicked.connect(self.open_history)
+
+        # Cette barre ne parle que du WORKSPACE : ou il est, et ce qui le
+        # decrit. Les actions de run ont leur propre rangee, juste en dessous.
+        ligne.addWidget(self.workspace_combo)
+        ligne.addWidget(self.browse_button)
+        ligne.addWidget(self.load_button)
+        ligne.addWidget(self.config_button)
+        ligne.addWidget(self.history_button)
+        ligne.addStretch(1)
+        return barre
+
+    def _build_run_bar(self) -> QWidget:
+        """Lancer, arreter, rejouer -- sur une rangee a eux.
+
+        Ces boutons vivaient au bout de la barre du workspace, a l'oppose de
+        l'arbre : on cochait des tests a gauche, puis on traversait toute la
+        fenetre pour les lancer, a chaque fois. Les mettre en tete de cette
+        meme barre les rapprochait mais les melangeait au chemin du workspace,
+        qui ne se touche qu'une fois par session.
+
+        Une rangee a eux, juste au-dessus de l'arbre, resout les deux : ils
+        sont a portee, et on voit du premier coup d'oeil ce qui agit sur le
+        run et ce qui decrit le projet.
+        """
+        barre = QWidget()
+        ligne = QHBoxLayout(barre)
+        ligne.setContentsMargins(0, 0, 0, 0)
+        ligne.setSpacing(t.SPACE_2)
+
         # Vert et non l'accent bleu : « lancer » et « arreter » sont les deux
         # gestes qu'on cherche sans lire, et vert/rouge est la convention de
         # tous les lanceurs de tests. C'est la seule entorse a la couleur
@@ -202,18 +247,10 @@ class MainWindow(QMainWindow):
         self.stop_button.setToolTip("Stop the current run  (Esc)")
         self.stop_button.clicked.connect(self.stop_run)
 
-        # Le bouton de theme ne vit PAS dans cette barre : il part dans le coin
-        # de la barre de menus (voir `_build_menus`). Pose ici, il s'alignait
-        # avec Re-run / Stop / Run et se lisait comme une quatrieme action du
-        # run, alors que c'est un reglage de confort.
-        ligne.addWidget(self.workspace_combo)
-        ligne.addWidget(self.browse_button)
-        ligne.addWidget(self.load_button)
-        ligne.addWidget(self.config_button)
-        ligne.addStretch(1)
-        ligne.addWidget(self.rerun_button)
-        ligne.addWidget(self.stop_button)
         ligne.addWidget(self.run_button)
+        ligne.addWidget(self.stop_button)
+        ligne.addWidget(self.rerun_button)
+        ligne.addStretch(1)
         return barre
 
     def _build_left(self) -> QWidget:
@@ -541,16 +578,26 @@ class MainWindow(QMainWindow):
                 self.workspace.path if self.workspace else "")
             return
 
-        avant = (self.workspace.readers, self.workspace.log_root,
-                 self.workspace.declared_interpreter, self.workspace.reader_mode)
+        avant = (self.workspace.config_path, self.workspace.readers,
+                 self.workspace.log_root, self.workspace.declared_interpreter,
+                 self.workspace.reader_mode)
 
-        dialogue = ConfigDialog(self.workspace.config_path,
-                                [r.name for r in self.workspace.readers], self)
+        dialogue = ConfigDialog(
+            self.workspace.config_path,
+            [r.name for r in self.workspace.readers], self,
+            candidats=[str(c) for c in fichiers_config(self.workspace.path)])
         dialogue.exec_()
 
-        self.workspace = Workspace.load(self.workspace.path)
-        apres = (self.workspace.readers, self.workspace.log_root,
-                 self.workspace.declared_interpreter, self.workspace.reader_mode)
+        # Le fichier qu'on vient d'editer devient CELUI du workspace : avoir
+        # choisi dans la liste ne servirait a rien si le prochain chargement
+        # reprenait la detection automatique.
+        racine = self.workspace.path
+        self._retenir_config(racine, Path(dialogue.path).name)
+        self.workspace = Workspace.load(racine, self._config_retenue(racine))
+
+        apres = (self.workspace.config_path, self.workspace.readers,
+                 self.workspace.log_root, self.workspace.declared_interpreter,
+                 self.workspace.reader_mode)
         if avant != apres:
             self.load_workspace()
 
@@ -590,6 +637,7 @@ class MainWindow(QMainWindow):
         for glyphe, bouton in (
                 ("mdi.folder-open-outline", self.browse_button),
                 ("mdi.file-cog-outline", self.config_button),
+                ("mdi.history", self.history_button),
                 ("mdi.replay", self.rerun_button),
                 ("mdi.stop", self.stop_button)):
             bouton.setIcon(icons.icon(glyphe, t.TEXT_MUTED))
@@ -654,7 +702,7 @@ class MainWindow(QMainWindow):
         if self._collector is not None and self._collector.isRunning():
             return
 
-        self.workspace = Workspace.load(chemin)
+        self.workspace = Workspace.load(chemin, self._config_retenue(chemin))
         self._remember_workspace(chemin)
 
         python = self._require_interpreter()
@@ -754,6 +802,22 @@ class MainWindow(QMainWindow):
             largeur = metriques.horizontalAdvance(str(titre)) + t.SPACE_8
             entete.setSectionResizeMode(colonne, QHeaderView.Fixed)
             entete.resizeSection(colonne, max(largeur, 72))
+
+    def _config_retenue(self, workspace: str) -> str:
+        """Nom du fichier de configuration choisi pour ce workspace, ou "".
+
+        Range par workspace : on passe d'un projet a l'autre, et le fichier
+        retenu pour l'un ne veut rien dire pour l'autre.
+        """
+        table = self.settings.value(K_CONFIG, {}) or {}
+        return str(table.get(workspace, "")) if isinstance(table, dict) else ""
+
+    def _retenir_config(self, workspace: str, nom: str) -> None:
+        table = self.settings.value(K_CONFIG, {}) or {}
+        if not isinstance(table, dict):
+            table = {}
+        table[workspace] = nom
+        self.settings.setValue(K_CONFIG, table)
 
     def _remember_workspace(self, chemin: str) -> None:
         recents = [chemin] + [p for p in self.settings.value(K_RECENT, [], type=list)

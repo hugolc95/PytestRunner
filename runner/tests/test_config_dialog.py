@@ -18,7 +18,7 @@ from PyQt5.QtWidgets import (
 )
 
 from runner.domain.config_file import charger
-from runner.ui.config_dialog import ONGLET_YAML, ConfigDialog
+from runner.ui.config_dialog import ONGLET_YAML, ConfigDialog, ReaderList
 
 CONFIG = """\
 # La campagne de reference.
@@ -81,7 +81,7 @@ def test_a_setting_in_a_section_keeps_its_path(dialogue):
 @pytest.mark.parametrize("chemin, classe", [
     (("verbose",), QCheckBox),
     (("timeout",), QSpinBox),
-    (("Readers",), QPlainTextEdit),
+    (("Readers",), ReaderList),
     (("Reader",), QComboBox),
     (("LOG_PATH",), QLineEdit),
 ])
@@ -178,11 +178,19 @@ def test_a_section_setting_is_saved_where_it_belongs(dialogue, fichier):
     assert donnees["timeout"] == 30, "le reglage de la racine a ete ecrase"
 
 
-def test_a_list_is_saved_line_by_line(dialogue, fichier):
-    _champ(dialogue, "Readers").widget.setPlainText("A Reader\nB Reader\n")
+def test_a_plain_list_is_still_a_text_box(qapp, tmp_path):
+    """Seuls les lecteurs ont droit a leur liste : les autres reglages a
+    valeurs multiples restent une zone de texte, une par ligne."""
+    chemin = tmp_path / "config.yml"
+    chemin.write_text("pythonpath:\n  - src\n", encoding="utf-8")
+    dialogue = ConfigDialog(str(chemin))
+
+    champ = _champ(dialogue, "pythonpath")
+    assert isinstance(champ.widget, QPlainTextEdit)
+    champ.widget.setPlainText("src\nlib\n")
     dialogue.save()
 
-    assert charger(fichier)["Readers"] == ["A Reader", "B Reader"]
+    assert charger(chemin)["pythonpath"] == ["src", "lib"]
 
 
 def test_a_checkbox_saves_a_real_boolean(dialogue, fichier):
@@ -239,7 +247,7 @@ def test_unsaved_form_changes_are_flagged_when_leaving_for_the_yaml(dialogue):
     _champ(dialogue, "timeout").widget.setValue(60)
     dialogue.tabs.setCurrentIndex(ONGLET_YAML)
 
-    assert "Unsaved" in dialogue.status.text()
+    assert "Unsaved changes in the form" in dialogue.status.text()
 
 
 def test_switching_tabs_with_nothing_pending_says_nothing(dialogue):
@@ -284,6 +292,42 @@ def fenetre(qapp, tmp_path):
     qapp.processEvents()
 
 
+def _hauteur(fenetre, widget) -> int:
+    return widget.mapTo(fenetre, widget.rect().topLeft()).y()
+
+
+def test_the_run_actions_have_a_row_of_their_own(fenetre):
+    """Ils etaient a l'autre bout de la barre du workspace : on cochait des
+    tests a gauche, puis on traversait toute la fenetre pour les lancer.
+
+    Les mettre en tete de cette meme barre les rapprochait, mais les melait au
+    chemin du workspace -- qu'on ne touche qu'une fois par session. Une rangee
+    a eux repond aux deux : a portee, et sans confusion sur ce qui agit.
+    """
+    barre = fenetre.run_button.parentWidget().layout()
+    dedans = {barre.itemAt(i).widget() for i in range(barre.count())}
+
+    assert {fenetre.run_button, fenetre.stop_button, fenetre.rerun_button} <= dedans
+    assert fenetre.workspace_combo not in dedans
+    assert fenetre.load_button not in dedans
+
+
+def test_the_run_row_sits_between_the_workspace_and_the_tree(fenetre):
+    fenetre.show()
+    try:
+        assert (_hauteur(fenetre, fenetre.workspace_combo)
+                < _hauteur(fenetre, fenetre.run_button)
+                < _hauteur(fenetre, fenetre.search))
+    finally:
+        fenetre.hide()
+
+
+def test_the_history_button_is_reachable_without_a_menu(fenetre):
+    barre = fenetre.load_button.parentWidget().layout()
+    dans_la_barre = {barre.itemAt(i).widget() for i in range(barre.count())}
+    assert fenetre.history_button in dans_la_barre
+
+
 def test_the_config_button_sits_with_the_workspace_controls(fenetre):
     """La configuration decrit CE dossier -- ses lecteurs, ses logs, son
     interpreteur. Sa place est dans le groupe qui parle du workspace, pas
@@ -293,7 +337,9 @@ def test_the_config_button_sits_with_the_workspace_controls(fenetre):
                  if barre.itemAt(i).widget() is not None}
 
     assert positions[fenetre.config_button] == positions[fenetre.load_button] + 1
-    assert positions[fenetre.config_button] < positions[fenetre.run_button]
+    assert positions[fenetre.config_button] > positions[fenetre.workspace_combo]
+    # Les actions de run ne partagent plus cette barre du tout.
+    assert fenetre.run_button not in positions
 
 
 def test_the_config_button_is_off_without_a_workspace(fenetre):
@@ -311,3 +357,159 @@ def test_the_theme_button_is_not_in_the_row_of_run_actions(fenetre):
 
     assert fenetre.theme_button not in dans_la_barre
     assert fenetre.menuBar().cornerWidget(Qt.TopRightCorner) is fenetre.theme_button
+
+
+# ------------------------------------------------- choisir le fichier a lire
+
+DEUXIEME = "Reader: Un Autre Reader\nLOG_PATH: ailleurs\n"
+
+
+@pytest.fixture
+def deux_fichiers(tmp_path):
+    """Un workspace avec deux YAML : l'exemple, et celui de la campagne."""
+    (tmp_path / "config.yaml").write_text(DEUXIEME, encoding="utf-8")
+    campagne = tmp_path / "campagne.yml"
+    with open(campagne, "w", encoding="utf-8", newline="") as f:
+        f.write(CONFIG)
+    return tmp_path
+
+
+def test_the_first_file_found_is_not_always_the_right_one(deux_fichiers):
+    """Le defaut signale : deux YAML, et l'outil en prend un sans le dire.
+
+    `config.yaml` porte un nom standard, il passe donc devant -- meme quand
+    c'est un exemple et que la vraie campagne est ailleurs. Tout en decoule :
+    les lecteurs, le dossier de logs, l'interpreteur.
+    """
+    from runner.domain.workspace import Workspace
+
+    auto = Workspace.load(str(deux_fichiers))
+    assert auto.config_path.endswith("config.yaml")
+    assert [r.name for r in auto.readers] == ["Un Autre Reader"]
+
+    choisi = Workspace.load(str(deux_fichiers), "campagne.yml")
+    assert choisi.config_path.endswith("campagne.yml")
+    assert [r.name for r in choisi.readers] == ["Cosmo11Secured Reader",
+                                                "TestBiosWrapperTU Reader"]
+
+
+def test_a_chosen_file_that_disappeared_falls_back(deux_fichiers):
+    """Renomme ou supprime entre deux sessions : mieux vaut la detection qu'un
+    workspace sans aucun reglage."""
+    from runner.domain.workspace import Workspace
+
+    espace = Workspace.load(str(deux_fichiers), "efface.yml")
+    assert espace.config_path.endswith("config.yaml")
+
+
+def test_an_absolute_choice_works_too(deux_fichiers):
+    from runner.domain.workspace import Workspace
+
+    espace = Workspace.load(str(deux_fichiers),
+                            str(deux_fichiers / "campagne.yml"))
+    assert espace.config_path.endswith("campagne.yml")
+
+
+def _dialogue_deux(qapp, deux_fichiers, courant="campagne.yml"):
+    from runner.domain.workspace import fichiers_config
+
+    return ConfigDialog(
+        str(deux_fichiers / courant), ["Cosmo11Secured Reader"],
+        candidats=[str(c) for c in fichiers_config(str(deux_fichiers))])
+
+
+def test_the_file_picker_appears_only_when_there_is_a_choice(qapp, deux_fichiers,
+                                                             fichier):
+    """Un projet qui n'a qu'un fichier n'a pas besoin qu'on lui demande."""
+    seul = ConfigDialog(str(fichier), candidats=[str(fichier)])
+    assert seul.file_row.isHidden()
+
+    plusieurs = _dialogue_deux(qapp, deux_fichiers)
+    assert not plusieurs.file_row.isHidden()
+
+
+def test_the_picker_starts_on_the_file_being_edited(qapp, deux_fichiers):
+    dialogue = _dialogue_deux(qapp, deux_fichiers)
+    assert dialogue.file_combo.currentText() == "campagne.yml"
+
+
+def test_switching_file_reloads_the_form(qapp, deux_fichiers):
+    dialogue = _dialogue_deux(qapp, deux_fichiers)
+    assert _champ(dialogue, "LOG_PATH").depart == "traces_apdu"
+
+    position = dialogue.file_combo.findText("config.yaml")
+    dialogue.file_combo.setCurrentIndex(position)
+
+    assert dialogue.path.name == "config.yaml"
+    assert _champ(dialogue, "LOG_PATH").depart == "ailleurs"
+
+
+def test_switching_file_says_what_it_dropped(qapp, deux_fichiers):
+    """Les emporter vers l'autre fichier ecrirait des reglages la ou ils
+    n'appartiennent pas ; les perdre en silence est pire encore."""
+    dialogue = _dialogue_deux(qapp, deux_fichiers)
+    _champ(dialogue, "timeout").widget.setValue(999)
+
+    dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("config.yaml"))
+
+    assert "unsaved change was dropped" in dialogue.status.text()
+    assert charger(deux_fichiers / "campagne.yml")["timeout"] == 30
+
+
+# ------------------------------------------- ajouter et retirer un lecteur
+
+def test_the_extra_readers_are_a_list_you_can_add_to(dialogue):
+    from runner.ui.config_dialog import ReaderList
+
+    champ = _champ(dialogue, "Readers")
+    assert isinstance(champ.widget, ReaderList)
+    assert champ.widget.valeurs() == ["TestBiosWrapperTU Reader"]
+
+
+def test_adding_a_reader_offers_one_we_know(dialogue, fichier):
+    """Retaper un nom long est l'occasion d'une faute qui rend le run muet."""
+    liste = _champ(dialogue, "Readers").widget
+    liste.ajouter()
+
+    assert liste.valeurs() == ["TestBiosWrapperTU Reader", "Cosmo11Secured Reader"]
+    dialogue.save()
+    assert charger(fichier)["Readers"] == ["TestBiosWrapperTU Reader",
+                                           "Cosmo11Secured Reader"]
+
+
+def test_removing_a_reader_takes_it_out_of_the_file(dialogue, fichier):
+    liste = _champ(dialogue, "Readers").widget
+    liste.list.setCurrentRow(0)
+    liste.retirer()
+    dialogue.save()
+
+    assert charger(fichier)["Readers"] == []
+
+
+def test_the_main_reader_is_never_touched(dialogue, fichier):
+    """`Reader` est le lecteur que les tests lisent aujourd'hui : ajouter ou
+    retirer dans la liste ne doit jamais y toucher."""
+    liste = _champ(dialogue, "Readers").widget
+    liste.ajouter()
+    liste.list.setCurrentRow(0)
+    liste.retirer()
+    dialogue.save()
+
+    assert charger(fichier)["Reader"] == "Cosmo11Secured Reader"
+
+
+def test_a_blank_entry_never_reaches_the_file(dialogue, fichier):
+    """Elle donnerait une ligne `- ""` et un run sur un lecteur sans nom."""
+    liste = _champ(dialogue, "Readers").widget
+    liste._ajouter_entree("   ")
+    dialogue.save()
+
+    assert charger(fichier)["Readers"] == ["TestBiosWrapperTU Reader"]
+
+
+def test_remove_is_off_until_something_is_selected(dialogue):
+    liste = _champ(dialogue, "Readers").widget
+    assert not liste.remove_button.isEnabled()
+
+    liste.list.setCurrentRow(0)
+    assert liste.remove_button.isEnabled()

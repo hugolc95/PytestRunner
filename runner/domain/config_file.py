@@ -155,6 +155,11 @@ def _etendue_liste(lignes: list[str], depart: int) -> int:
 
 
 def _bloc_liste(cle: str, separateur: str, valeurs, fin: str) -> list[str]:
+    if not valeurs:
+        # `Readers:` sans rien derriere se relit None, pas une liste vide. Le
+        # reglage changerait alors de TYPE en se vidant, et le formulaire lui
+        # proposerait un champ texte au lieu de sa liste a la reouverture.
+        return [f"{cle}{separateur.rstrip()} []{fin}"]
     lignes = [f"{cle}{separateur.rstrip()}{fin}"]
     lignes += [f"  - {citer(v)}{fin}" for v in valeurs]
     return lignes

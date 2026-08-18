@@ -332,22 +332,34 @@ QTreeView::branch:selected {{
     background-color: {t.blend(t.ACCENT, t.BG_SURFACE, 0.18)};
 }}
 QTreeView::branch:hover {{ background-color: {t.BG_HOVER}; }}
-/* Liste des echecs d'un regroupement. Chaque ligne emmene au test : le
-   survol doit le faire sentir, sinon rien ne dit qu'on peut cliquer. */
+/* Toutes les listes, et non une regle par nom d'objet : sans regle, Qt
+   reprend son bleu systeme pour la ligne selectionnee -- etranger au theme,
+   et bien plus vif que tout le reste de la fenetre. La premiere liste ajoutee
+   apres coup retombait dans le piege. */
+QListWidget {{
+    background-color: {t.BG_INPUT};
+    border: 1px solid {t.BORDER};
+    border-radius: {t.RADIUS_MD}px;
+    font-size: {t.TEXT_SM}px;
+    outline: none;
+}}
+QListWidget::item {{
+    padding: {t.SPACE_1}px {t.SPACE_2}px;
+    border-radius: {t.RADIUS_SM}px;
+    color: {t.TEXT};
+}}
+QListWidget::item:hover {{ background-color: {t.BG_HOVER}; }}
+QListWidget::item:selected {{
+    background-color: {t.blend(t.ACCENT, t.BG_SURFACE, 0.18)};
+    color: {t.TEXT};
+}}
+
+/* Les echecs d'un regroupement : sans cadre, ils font partie de la fiche, et
+   en chasse fixe parce que ce sont des identifiants de tests. */
 QListWidget#Failures {{
     background-color: transparent;
     border: none;
     font-family: {t.FONT_MONO};
-    font-size: {t.TEXT_SM}px;
-    outline: none;
-}}
-QListWidget#Failures::item {{
-    padding: {t.SPACE_1}px {t.SPACE_2}px;
-    border-radius: {t.RADIUS_SM}px;
-}}
-QListWidget#Failures::item:hover {{ background-color: {t.BG_HOVER}; }}
-QListWidget#Failures::item:selected {{
-    background-color: {t.blend(t.ACCENT, t.BG_SURFACE, 0.18)};
 }}
 
 /* ---------------------------------------------------------------- tables */
