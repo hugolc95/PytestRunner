@@ -1,6 +1,32 @@
-# Campaign Mode
+# Campagnes automatiques dans l'interface principale
 
-Le mode Campaign permet de lancer une suite sous plusieurs configurations.
+Une campagne n'est plus un mode ou une fenetre separee. L'utilisateur charge
+son workspace, coche ses tests et utilise toujours **Run tests**.
+
+Quand un fichier `campaign.yml` couvre les tests selectionnes, Pytest Runner :
+
+1. affiche un badge discret `CAMPAIGN` sur la Test Suite concernee ;
+2. execute automatiquement chaque setup et son batch pytest dans l'ordre YAML ;
+3. conserve le pire verdict dans le tree si le meme test est rejoue ;
+4. ajoute les filtres `All / Configuration A / Configuration B` dans Detail,
+   Output et Logs, uniquement pour ce run ;
+5. fige les logs apres chaque configuration afin que la suivante ne les
+   ecrase pas dans l'interface.
+
+Les tests qui ne sont couverts par aucune campagne gardent exactement le
+fonctionnement pytest habituel. Une selection mixte commence par ces tests,
+puis execute les campagnes detectees.
+
+## Pourquoi
+
+Certaines suites ne sont valides qu'avec la sequence decrite par leur YAML.
+Les lancer directement les unes apres les autres donnerait des resultats faux.
+La contrainte reste donc dans le moteur, sans ajouter un nouveau geste dans
+l'interface.
+
+## Principe
+
+Une campagne permet de lancer une suite sous plusieurs configurations.
 
 Exemple :
 

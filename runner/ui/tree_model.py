@@ -8,6 +8,8 @@ dessine que la partie visible.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from PyQt5.QtCore import QAbstractItemModel, QModelIndex, Qt, pyqtSignal
 from PyQt5.QtGui import QColor
 
@@ -18,6 +20,7 @@ from runner.ui import tokens as t
 # Roles propres a ce modele, au-dela de ceux de Qt.
 NODE_ROLE = Qt.UserRole + 1
 NODEID_ROLE = Qt.UserRole + 2
+CAMPAIGN_ROLE = Qt.UserRole + 3
 
 
 class _Row:
@@ -85,6 +88,8 @@ class TestTreeModel(QAbstractItemModel):
         self._by_nodeid: dict[str, _Row] = {}
         self._search_index: tuple[tuple[str, str], ...] = ()
         self._readers: tuple[Reader, ...] = ()
+        self._campaign_by_nodeid: dict[str, str] = {}
+        self._campaign_roots: dict[_Row, str] = {}
         # Decompte par statut des cases (test, lecteur) deja rendues. Tenu au
         # fil de l'eau : le recalculer a chaque resultat reparcourrait tout
         # l'arbre, ce qui redonnerait le gel quadratique deja corrige.
@@ -105,8 +110,69 @@ class TestTreeModel(QAbstractItemModel):
         # allocations repetees etaient visibles dans le fil de l'interface.
         self._search_index = tuple(
             (nodeid, nodeid.casefold()) for nodeid in self._by_nodeid)
+        self._rebuild_campaign_roots()
         self.endResetModel()
         self._emit_selection()
+
+    def set_campaigns(self, by_nodeid: dict[str, str]) -> None:
+        """Associe les tests a leur YAML et marque leur ancetre commun.
+
+        Le modele ne connait pas le format YAML. Il recoit seulement la
+        relation test/campagne, puis choisit la ligne la moins haute qui
+        contient les tests de cette campagne : c'est la Test Suite que
+        l'utilisateur reconnait dans son arbre.
+        """
+        self.beginResetModel()
+        self._campaign_by_nodeid = dict(by_nodeid)
+        self._rebuild_campaign_roots()
+        self.endResetModel()
+
+    def _rebuild_campaign_roots(self) -> None:
+        self._campaign_roots = {}
+        groupes: dict[str, list[_Row]] = {}
+        for nodeid, campagne in self._campaign_by_nodeid.items():
+            ligne = self._by_nodeid.get(nodeid)
+            if ligne is not None:
+                groupes.setdefault(campagne, []).append(ligne)
+
+        for campagne, lignes in groupes.items():
+            fichier = Path(campagne)
+            dossier = fichier.parent
+            if "campaign" in dossier.name.casefold():
+                dossier = dossier.parent
+            suite_name = dossier.name.casefold()
+            explicite = None
+            for ligne in lignes:
+                courant = ligne.parent
+                while courant is not None:
+                    if courant.node.name.casefold() == suite_name:
+                        explicite = courant
+                        break
+                    courant = courant.parent
+                if explicite is not None:
+                    break
+            if explicite is not None:
+                self._campaign_roots[explicite] = campagne
+                continue
+
+            chemins: list[list[_Row]] = []
+            for ligne in lignes:
+                chemin: list[_Row] = []
+                courant: _Row | None = ligne
+                while courant is not None:
+                    chemin.append(courant)
+                    courant = courant.parent
+                chemins.append(list(reversed(chemin)))
+            commun: _Row | None = None
+            for niveau in zip(*chemins):
+                if all(element is niveau[0] for element in niveau):
+                    commun = niveau[0]
+                else:
+                    break
+            if commun is not None and commun.is_leaf and commun.parent is not None:
+                commun = commun.parent
+            if commun is not None:
+                self._campaign_roots[commun] = campagne
 
     def set_readers(self, readers: tuple[Reader, ...]) -> None:
         """Une colonne de statut par lecteur, ou une seule sans lecteur."""
@@ -202,8 +268,14 @@ class TestTreeModel(QAbstractItemModel):
             return ligne.node
         if role == NODEID_ROLE:
             return ligne.node.nodeid
+        if role == CAMPAIGN_ROLE:
+            return self._campaign_roots.get(ligne, "")
         if role == Qt.ToolTipRole:
-            return ligne.node.nodeid or ligne.node.name
+            campagne = self._campaign_roots.get(ligne)
+            base = ligne.node.nodeid or ligne.node.name
+            if campagne:
+                return f"{base}\nCampaign execution required: {campagne}"
+            return base
         if role == Qt.ForegroundRole and ligne.node.kind is Kind.FOLDER:
             from PyQt5.QtGui import QColor
 
@@ -317,7 +389,8 @@ class TestTreeModel(QAbstractItemModel):
             ligne.agg[reader_index] = retenu
         return retenu
 
-    def apply_outcome(self, nodeid: str, status: Status, reader_index: int) -> bool:
+    def apply_outcome(self, nodeid: str, status: Status, reader_index: int,
+                      aggregate: bool = False) -> bool:
         """Pose un resultat. Retourne False si le nodeid n'est pas dans l'arbre.
 
         Un resultat inconnu arrive quand la collecte n'est pas reproductible
@@ -334,6 +407,8 @@ class TestTreeModel(QAbstractItemModel):
         # un test rejoue, ou pour une erreur de setup suivie d'un verdict. Le
         # compteur derivait alors du contenu reel de l'arbre.
         ancien = ligne.statuses.get(reader_index)
+        if aggregate and ancien is not None:
+            status = worst((ancien, status))
         if ancien is status:
             # Rien n'a change : le decompte serait de toute facon juste (on
             # retirerait puis remettrait le meme statut), mais tout le chemin

@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 
 from PyQt5.QtCore import QModelIndex, QSettings, Qt, QTimer, pyqtSlot
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QColor, QKeySequence, QPainter, QPen
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QProgressBar,
     QPushButton,
+    QStyledItemDelegate,
     QSplitter,
     QStackedWidget,
     QTreeView,
@@ -29,6 +30,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
+from runner.domain import campaign as campaign_mod
 from runner.domain import history
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Kind, Reader, RunRequest, Status
@@ -51,7 +53,7 @@ from runner.ui.results_panel import (
     ONGLET_SOURCE,
     ResultsPanel,
 )
-from runner.ui.tree_model import NODE_ROLE, NODEID_ROLE, TestTreeModel
+from runner.ui.tree_model import CAMPAIGN_ROLE, NODE_ROLE, NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import (
     EmptyState,
     ErrorDialog,
@@ -80,6 +82,31 @@ K_THEME = "window/theme"
 K_CONFIG = "workspace/config"
 
 
+class CampaignBadgeDelegate(QStyledItemDelegate):
+    """Dessine un badge discret sans modifier le texte de la Test Suite."""
+
+    def paint(self, painter: QPainter, option, index) -> None:
+        super().paint(painter, option, index)
+        if not index.data(CAMPAIGN_ROLE):
+            return
+        largeur, hauteur = 76, 20
+        rect = option.rect.adjusted(0, 0, -8, 0)
+        badge = rect.__class__(rect.right() - largeur, rect.center().y() - hauteur // 2,
+                              largeur, hauteur)
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setPen(QPen(QColor(t.ACCENT), 1))
+        painter.setBrush(QColor(t.rgba(t.ACCENT, 0.12)))
+        painter.drawRoundedRect(badge, 9, 9)
+        painter.setPen(QColor(t.ACCENT))
+        police = painter.font()
+        police.setPointSize(max(7, police.pointSize() - 2))
+        police.setBold(True)
+        painter.setFont(police)
+        painter.drawText(badge, Qt.AlignCenter, "CAMPAIGN")
+        painter.restore()
+
+
 class MainWindow(QMainWindow):
     """Fenetre unique de l'application."""
 
@@ -98,6 +125,7 @@ class MainWindow(QMainWindow):
         self._collector: CollectWorker | None = None
         self._matches: list[str] = []
         self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
+        self._campaigns: tuple[campaign_mod.CampaignDefinition, ...] = ()
         self._match_index = -1
         # Rejouer un run historique peut demander de charger d'abord son
         # workspace. La requete attend alors la fin de la collecte.
@@ -111,6 +139,7 @@ class MainWindow(QMainWindow):
         self._elapsed.setInterval(1000)
         self._elapsed.timeout.connect(self._tick)
         self._seconds = 0
+        self._active_campaign = False
 
         self.model = TestTreeModel(self)
         self.model.selection_changed.connect(self._on_selection_changed)
@@ -316,6 +345,7 @@ class MainWindow(QMainWindow):
         self.tree = QTreeView()
         self.tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.tree))
         self.tree.setModel(self.model)
+        self.tree.setItemDelegateForColumn(0, CampaignBadgeDelegate(self.tree))
         self.tree.setUniformRowHeights(True)
         self.tree.setAllColumnsShowFocus(True)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -800,6 +830,9 @@ class MainWindow(QMainWindow):
         self._clear_status_filter()
         self.remaining_pill.setVisible(False)
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
+        self._campaigns = campaign_mod.discover_campaigns(
+            self.workspace.path if self.workspace else "", nodeids)
+        self.model.set_campaigns(campaign_mod.memberships(self._campaigns))
         lecteurs = self.workspace.readers if self.workspace else ()
         # Les colonnes montrent TOUS les lecteurs declares, y compris ceux
         # qu'on vient de decocher : les faire disparaitre effacerait de l'ecran
@@ -829,6 +862,10 @@ class MainWindow(QMainWindow):
         details = f"{len(nodeids)} tests"
         if lecteurs:
             details += f" · {len(lecteurs)} readers"
+        if self._campaigns:
+            details += f" · {len(self._campaigns)} campaign"
+            if len(self._campaigns) > 1:
+                details += "s"
         self.status_label.setText(f"{nom} — {details}")
         self.setWindowTitle(f"{WINDOW_TITLE} — {nom}" if nom else WINDOW_TITLE)
         self._update_actions()
@@ -945,6 +982,8 @@ class MainWindow(QMainWindow):
             return
 
         lecteurs = self._readers_to_run()
+        campagnes, ordinaires = campaign_mod.build_runs(
+            self._campaigns, nodeids)
         self._run_id = history.nouvel_identifiant()
         requete = RunRequest(
             workspace=self.workspace.path,
@@ -955,6 +994,9 @@ class MainWindow(QMainWindow):
             sequential=self.workspace.reader_mode == MODE_SEQUENTIEL,
             run_id=self._run_id,
             junit_dir=str(self.history.racine),
+            regular_nodeids=ordinaires,
+            campaigns=campagnes,
+            log_root=str(self.workspace.log_root),
         )
         self.service.start(requete, self.workspace.env)
 
@@ -980,8 +1022,9 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(object)
     def _on_run_started(self, request: RunRequest) -> None:
+        self._active_campaign = request.is_campaign
         self.model.clear_statuses()
-        self.results.begin_run()
+        self.results.begin_run(request)
 
         self.progress.setVisible(True)
         self.progress.setRange(0, max(1, request.total_tests))
@@ -999,21 +1042,28 @@ class MainWindow(QMainWindow):
         self._seconds = 0
         self.elapsed_label.setText("0s")
         self._elapsed.start()
-        self.status_label.setText(f"Running {len(request.nodeids)} tests…")
+        if request.is_campaign:
+            configurations = sum(len(c.phases) for c in request.campaigns)
+            self.status_label.setText(
+                f"Running campaign · {configurations} configurations…")
+        else:
+            self.status_label.setText(f"Running {len(request.nodeids)} tests…")
         self._update_actions()
 
     @pyqtSlot(object)
     def _on_outcome(self, outcome) -> None:
-        connu = self.model.apply_outcome(outcome.nodeid, outcome.status,
-                                         outcome.reader_index)
+        connu = self.model.apply_outcome(
+            outcome.nodeid, outcome.status, outcome.reader_index,
+            aggregate=bool(outcome.campaign))
         if not connu:
             # Collecte non reproductible : le test a tourne sous un identifiant
             # que l'arbre ne connait pas. Le signaler vaut mieux que le perdre.
             self.status_label.setText(f"Unexpected test id: {outcome.nodeid}")
 
         self._rafraichir_compteurs()
-        self.results.update_statuses(outcome.nodeid,
-                                     self.model.statuses_for_nodeid(outcome.nodeid))
+        self.results.update_statuses(
+            outcome.nodeid,
+            self.model.statuses_for_nodeid(outcome.nodeid), outcome)
 
     def _rafraichir_compteurs(self) -> None:
         """Aligne les pastilles et l'avancement sur l'etat reel de l'arbre.
@@ -1029,7 +1079,8 @@ class MainWindow(QMainWindow):
             pastille.set_value(rendus.get(statut, 0))
 
         faits = self.model.done()
-        self.progress.setValue(faits)
+        if not self._active_campaign:
+            self.progress.setValue(faits)
         # Pas de `max(0, ...)` ici : la pastille borne deja, et c'est chez elle
         # que la regle a sa place -- « je n'affiche pas un reste negatif » est
         # son invariant, pas celui de la fenetre.
@@ -1040,11 +1091,16 @@ class MainWindow(QMainWindow):
         # Les nombres viennent de l'arbre, pas du compte de signaux porte par
         # le service : c'est la meme raison que pour les pastilles.
         self._rafraichir_compteurs()
+        if self._active_campaign:
+            self.progress.setMaximum(max(1, total))
+            self.progress.setValue(faits)
+            self.remaining_pill.set_value(total - faits)
         self.status_label.setText(f"Running… {self.remaining_pill.value()} left")
 
     @pyqtSlot(list)
     def _on_run_finished(self, rapports: list) -> None:
         self._elapsed.stop()
+        self._active_campaign = False
         self.progress.setVisible(False)
 
         self.remaining_pill.setVisible(False)

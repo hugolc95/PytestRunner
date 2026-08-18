@@ -108,6 +108,28 @@ class Reader:
 
 
 @dataclass(frozen=True)
+class CampaignPhase:
+    """Une configuration de campagne : setup, puis un batch pytest."""
+
+    id: str
+    name: str
+    setup: str | tuple[str, ...] | None
+    nodeids: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class CampaignRun:
+    """Partie d'une campagne couverte par la selection courante."""
+
+    name: str
+    path: str
+    workspace: str
+    phases: tuple[CampaignPhase, ...]
+    pythonpath: tuple[str, ...] = ()
+    python_executable: str = ""
+
+
+@dataclass(frozen=True)
 class RunRequest:
     """Tout ce qu'il faut pour lancer un run, sans rien connaitre de l'UI."""
 
@@ -125,10 +147,26 @@ class RunRequest:
     # decide pas d'archiver, il obeit.
     run_id: str = ""
     junit_dir: str = ""
+    # Les tests ordinaires et ceux gouvernes par une campagne sont separes
+    # dans le plan. ``nodeids`` reste la selection unique montree dans l'arbre
+    # et archivee dans l'historique.
+    regular_nodeids: tuple[str, ...] = ()
+    campaigns: tuple[CampaignRun, ...] = ()
+    log_root: str = ""
 
     @property
     def total_tests(self) -> int:
-        return len(self.nodeids) * max(1, len(self.readers))
+        executions = len(self.regular_nodeids)
+        executions += sum(len(phase.nodeids)
+                          for campagne in self.campaigns
+                          for phase in campagne.phases)
+        if not self.regular_nodeids and not self.campaigns:
+            executions = len(self.nodeids)
+        return executions * max(1, len(self.readers))
+
+    @property
+    def is_campaign(self) -> bool:
+        return bool(self.campaigns)
 
 
 @dataclass(frozen=True)
@@ -138,6 +176,24 @@ class Outcome:
     nodeid: str
     status: Status
     reader_index: int = 0
+    campaign: str = ""
+    phase_id: str = ""
+    phase_name: str = ""
+    occurrence: int = 0
+
+
+@dataclass
+class PhaseReport:
+    """Sortie et verdicts d'une configuration pour un lecteur."""
+
+    id: str
+    name: str
+    campaign: str
+    output: str = ""
+    statuses: dict[str, Status] = field(default_factory=dict)
+    setup_ok: bool = True
+    logs: dict[str, str] = field(default_factory=dict)
+    log_paths: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -152,6 +208,7 @@ class ReaderReport:
     cancelled: bool = False
     # Le JUnit XML que pytest a ecrit pour ce lecteur, s'il en a ecrit un.
     junit_path: str = ""
+    phases: list[PhaseReport] = field(default_factory=list)
 
     @property
     def failed(self) -> int:

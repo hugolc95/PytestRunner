@@ -505,6 +505,34 @@ QTabBar#ReaderTabs::tab:hover {{
 QTabBar#ReaderTabs::tab:selected {{
     background-color: {t.BG_SURFACE};
 }}
+
+/* Visible uniquement pendant une campagne. Ce niveau represente une
+   configuration, pas une nouvelle page : boutons compacts, sans soulignement
+   de navigation qui entrerait en concurrence avec Detail / Output / Logs. */
+QTabBar#CampaignTabs {{
+    background-color: transparent;
+    border: none;
+}}
+QTabBar#CampaignTabs::tab {{
+    min-height: {t.CONTROL_SM - 4}px;
+    padding: 0 {t.SPACE_3}px;
+    margin-right: {t.SPACE_1}px;
+    color: {t.TEXT_MUTED};
+    background-color: transparent;
+    border: 1px solid {t.BORDER};
+    border-radius: {t.RADIUS_PILL}px;
+    font-size: {t.TEXT_XS}px;
+    font-weight: 600;
+}}
+QTabBar#CampaignTabs::tab:hover {{
+    color: {t.TEXT};
+    background-color: {t.BG_HOVER};
+}}
+QTabBar#CampaignTabs::tab:selected {{
+    color: {t.ACCENT};
+    background-color: {t.rgba(t.ACCENT, 0.13)};
+    border-color: {t.ACCENT};
+}}
 QStatusBar QLabel {{ background: transparent; }}
 
 /* Libelles discrets. Poses par nom d'objet et non widget par widget : une

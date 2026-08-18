@@ -18,6 +18,7 @@ from __future__ import annotations
 import itertools
 import json
 import os
+import tempfile
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -35,7 +36,14 @@ FENETRE_FLAKY = 50
 def dossier() -> Path:
     """Dossier de stockage, cree si besoin."""
     base = Path.home() / ".pytest_runner" / "history"
-    base.mkdir(parents=True, exist_ok=True)
+    try:
+        base.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        # Session Linux en lecture seule, compte de service ou profil Windows
+        # temporairement indisponible : l'historique ne doit pas empecher
+        # l'application de s'ouvrir. Le profil normal reste toujours prioritaire.
+        base = Path(tempfile.gettempdir()) / "pytest_runner" / "history"
+        base.mkdir(parents=True, exist_ok=True)
     return base
 
 

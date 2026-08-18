@@ -84,7 +84,7 @@ class RunService(QObject):
         self._reports: list[ReaderReport] = []
         self._done = 0
         self._total = 0
-        self._seen_outcomes: set[tuple[int, str]] = set()
+        self._seen_outcomes: set[tuple] = set()
         self._request: RunRequest | None = None
         self._en_attente: list[_ReaderWorker] = []
         self._lances = 0
@@ -158,7 +158,11 @@ class RunService(QObject):
             worker.wait(timeout_ms)
 
     def _on_outcome(self, outcome: Outcome) -> None:
-        cle = (outcome.reader_index, outcome.nodeid)
+        # Une campagne peut executer le meme nodeid dans plusieurs
+        # configurations. ``occurrence`` les distingue pour la progression,
+        # tandis que le tree garde leur pire verdict agrege.
+        cle = (outcome.reader_index, outcome.nodeid,
+               outcome.phase_id, outcome.occurrence)
         if cle not in self._seen_outcomes:
             self._seen_outcomes.add(cle)
             self._done += 1

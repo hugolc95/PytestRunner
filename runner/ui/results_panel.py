@@ -37,7 +37,7 @@ from PyQt5.QtWidgets import (
 
 from runner.domain import failures as failures_mod
 from runner.domain import log_compare, logs
-from runner.domain.models import Reader, ReaderReport, Status
+from runner.domain.models import Outcome, PhaseReport, Reader, ReaderReport, RunRequest, Status
 from runner.domain.source import path_of as source_path
 from runner.ui import icons, theme
 from runner.ui import tokens as t
@@ -451,7 +451,10 @@ class ResultsPanel(QWidget):
         self._log_root: Path | None = None
         self._readers: tuple[Reader, ...] = ()
         self._sorties: dict[int, str] = {}
-        self._index_echecs: dict[int, dict] = {}
+        self._index_echecs: dict[tuple[int, str], dict] = {}
+        self._phase_reports: dict[int, dict[str, PhaseReport]] = {}
+        self._live_phase_statuses: dict[str, dict[int, dict[str, Status]]] = {}
+        self._phase_id = ""
         self._nodeid = ""
         self._statuses: dict[int, Status] = {}
 
@@ -492,8 +495,27 @@ class ResultsPanel(QWidget):
         self.tabs.setTabToolTip(ONGLET_LOGS,
                                 "The .log files of the selected test  (Ctrl+4)")
 
+        self.phase_label = QLabel("Configuration")
+        self.phase_label.setObjectName("Faint")
+        self.phase_tabs = QTabBar()
+        self.phase_tabs.setObjectName("CampaignTabs")
+        self.phase_tabs.setDrawBase(False)
+        self.phase_tabs.setExpanding(False)
+        self.phase_tabs.setUsesScrollButtons(True)
+        self.phase_tabs.currentChanged.connect(self._on_phase)
+
+        self.phase_bar = QWidget()
+        phases = QHBoxLayout(self.phase_bar)
+        phases.setContentsMargins(t.SPACE_2, 0, t.SPACE_2, 0)
+        phases.setSpacing(t.SPACE_2)
+        phases.addWidget(self.phase_label)
+        phases.addWidget(self.phase_tabs, 1)
+        self.phase_bar.setVisible(False)
+
         colonne = QVBoxLayout(self)
         colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(t.SPACE_1)
+        colonne.addWidget(self.phase_bar)
         colonne.addWidget(self.tabs)
 
     # ------------------------------------------------------------- navigation
@@ -530,13 +552,17 @@ class ResultsPanel(QWidget):
         self._statuses = {}
         self._sorties.clear()
         self._index_echecs.clear()
+        self._phase_reports.clear()
+        self._live_phase_statuses.clear()
+        self._phase_id = ""
+        self.phase_bar.setVisible(False)
         self.detail.clear()
         self.source.save()
         self.source.clear()
         self.output.set_readers(readers)
         self.logs.set_readers(readers)
 
-    def begin_run(self) -> None:
+    def begin_run(self, request: RunRequest | None = None) -> None:
         """Vide les vues sans changer d'onglet.
 
         Basculer d'office sur la console au lancement volait l'ecran a
@@ -547,6 +573,23 @@ class ResultsPanel(QWidget):
         self.logs.clear()
         self._sorties.clear()
         self._index_echecs.clear()
+        self._phase_reports.clear()
+        self._live_phase_statuses.clear()
+        self._phase_id = ""
+        self.phase_tabs.blockSignals(True)
+        while self.phase_tabs.count():
+            self.phase_tabs.removeTab(0)
+        self.phase_tabs.addTab("All")
+        if request is not None:
+            for campagne in request.campaigns:
+                for phase in campagne.phases:
+                    position = self.phase_tabs.addTab(phase.name)
+                    self.phase_tabs.setTabData(position, phase.id)
+                    self.phase_tabs.setTabToolTip(
+                        position, f"{campagne.name} · {phase.name}")
+        self.phase_tabs.setCurrentIndex(0)
+        self.phase_tabs.blockSignals(False)
+        self.phase_bar.setVisible(self.phase_tabs.count() > 1)
         self._refresh_detail()
 
     def set_report(self, rapport: ReaderReport) -> None:
@@ -558,7 +601,10 @@ class ResultsPanel(QWidget):
         """
         index = rapport.reader.index
         self._sorties[index] = rapport.output
-        self._index_echecs.pop(index, None)
+        self._phase_reports[index] = {phase.id: phase for phase in rapport.phases}
+        for cle in [cle for cle in self._index_echecs if cle[0] == index]:
+            self._index_echecs.pop(cle, None)
+        self._apply_phase_content()
         self._refresh_detail()
 
     def append_output(self, index: int, texte: str) -> None:
@@ -594,12 +640,16 @@ class ResultsPanel(QWidget):
         self.source.show_file(source, jump_nodeid)
         self.logs.clear()
 
-    def update_statuses(self, nodeid: str, statuses: dict[int, Status]) -> None:
+    def update_statuses(self, nodeid: str, statuses: dict[int, Status],
+                        outcome: Outcome | None = None) -> None:
         """Rafraichit la fiche si elle porte sur ce test, sans toucher aux logs.
 
         Appele a chaque resultat pendant un run : relire les .log a ce
         rythme-la balayerait le disque des centaines de fois.
         """
+        if outcome is not None and outcome.phase_id:
+            self._live_phase_statuses.setdefault(outcome.phase_id, {}) \
+                .setdefault(outcome.reader_index, {})[nodeid] = outcome.status
         if nodeid and nodeid == self._nodeid:
             self._statuses = dict(statuses)
             self._refresh_detail()
@@ -608,20 +658,58 @@ class ResultsPanel(QWidget):
         if not self._nodeid:
             self.detail.clear()
             return
+        statuses = self._statuses_for_phase(self._nodeid)
         cibles = self._readers or (Reader("", 0),)
         echecs = {
             lecteur.index: failures_mod.failure_for(
                 self._echecs_de(lecteur.index), self._nodeid)
             for lecteur in cibles
         }
-        self.detail.show_test(self._nodeid, self._readers, self._statuses, echecs)
+        self.detail.show_test(self._nodeid, self._readers, statuses, echecs)
+
+    def _statuses_for_phase(self, nodeid: str) -> dict[int, Status]:
+        if not self._phase_id:
+            return dict(self._statuses)
+        resultat: dict[int, Status] = {}
+        for lecteur in self._readers or (Reader("", 0),):
+            phase = self._phase_reports.get(lecteur.index, {}).get(self._phase_id)
+            if phase is not None:
+                resultat[lecteur.index] = phase.statuses.get(nodeid, Status.PENDING)
+            else:
+                resultat[lecteur.index] = self._live_phase_statuses \
+                    .get(self._phase_id, {}).get(lecteur.index, {}) \
+                    .get(nodeid, Status.PENDING)
+        return resultat
 
     def _echecs_de(self, reader_index: int) -> dict:
-        index = self._index_echecs.get(reader_index)
+        cle = (reader_index, self._phase_id)
+        index = self._index_echecs.get(cle)
         if index is None:
-            index = failures_mod.index_failures(self._sorties.get(reader_index, ""))
-            self._index_echecs[reader_index] = index
+            sortie = self._sorties.get(reader_index, "")
+            if self._phase_id:
+                phase = self._phase_reports.get(reader_index, {}).get(self._phase_id)
+                sortie = phase.output if phase is not None else ""
+            index = failures_mod.index_failures(sortie)
+            self._index_echecs[cle] = index
         return index
+
+    def _on_phase(self, index: int) -> None:
+        self._phase_id = str(self.phase_tabs.tabData(index) or "")
+        self._apply_phase_content()
+        self._refresh_detail()
+        if self._nodeid:
+            self.show_logs_for(self._nodeid, self._readers)
+
+    def _apply_phase_content(self) -> None:
+        for lecteur in self._readers or (Reader("", 0),):
+            texte = self._sorties.get(lecteur.index, "")
+            entete = lecteur.name
+            if self._phase_id:
+                phase = self._phase_reports.get(lecteur.index, {}).get(self._phase_id)
+                texte = phase.output if phase is not None else "Configuration still running…"
+                if phase is not None:
+                    entete = f"{lecteur.name} · {phase.name}".strip(" ·")
+            self.output.set_text(lecteur.index, texte, entete)
 
     # ------------------------------------------------------------------ logs
 
@@ -635,6 +723,22 @@ class ResultsPanel(QWidget):
 
         cibles = readers or (Reader("", 0),)
         for lecteur in cibles:
+            if self._phase_id:
+                phase = self._phase_reports.get(lecteur.index, {}).get(self._phase_id)
+                if phase is not None:
+                    if nodeid in phase.logs:
+                        contenu = phase.logs[nodeid]
+                        chemin = phase.log_paths.get(nodeid, "")
+                    else:
+                        contenu = (
+                            f"No log was produced for this test during "
+                            f"{phase.name}.\n\nThe logs from another configuration "
+                            "are intentionally not reused.")
+                        chemin = ""
+                    self.logs.set_text(
+                        lecteur.index, contenu,
+                        f"{lecteur.name or 'Run'} · {phase.name}", chemin)
+                    continue
             chemin = logs.find_test_log(self._log_root, nodeid, lecteur.name)
             if chemin is None:
                 self.logs.set_text(lecteur.index,
