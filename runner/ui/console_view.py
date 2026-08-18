@@ -15,19 +15,21 @@ qu'on cherche, et un suivi automatique qui se coupe des qu'on remonte lire.
 from __future__ import annotations
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QTextCharFormat, QTextCursor
+from PyQt5.QtGui import QColor, QTextCharFormat, QTextCursor, QTextFormat
 from PyQt5.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from runner.domain import ansi, console
 from runner.domain.console import Lens, LensFilter
+from runner.domain.models import Status
 from runner.ui import icons, theme
 from runner.ui import tokens as t
 
@@ -233,6 +235,36 @@ class ConsoleView(QWidget):
         from PyQt5.QtWidgets import QApplication
 
         QApplication.clipboard().setText(self.text())
+
+    def highlight_lines(self, lines=(), error_lines=()) -> None:
+        """Surligne des lignes completes, plus fortement pour les erreurs."""
+        errors = set(error_lines)
+        selections = []
+        for number in sorted(set(lines)):
+            block = self.view.document().findBlockByNumber(number)
+            if not block.isValid():
+                continue
+            selection = QTextEdit.ExtraSelection()
+            selection.cursor = QTextCursor(block)
+            colour = QColor(t.STATUS_COLORS[
+                Status.FAILED if number in errors else Status.SKIPPED])
+            colour.setAlpha(64 if number in errors else 38)
+            selection.format.setBackground(colour)
+            selection.format.setProperty(QTextFormat.FullWidthSelection, True)
+            if number in errors:
+                selection.format.setFontWeight(75)
+                selection.format.setForeground(
+                    QColor(t.STATUS_COLORS[Status.FAILED]))
+            selections.append(selection)
+        self.view.setExtraSelections(selections)
+
+    def reveal_line(self, number: int) -> None:
+        """Place une ligne au centre sans modifier le contenu de la console."""
+        block = self.view.document().findBlockByNumber(number)
+        if not block.isValid():
+            return
+        self.view.setTextCursor(QTextCursor(block))
+        self.view.centerCursor()
 
     # --------------------------------------------------------------- lentille
 

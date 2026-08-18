@@ -286,6 +286,25 @@ def test_clearing_a_run_keeps_reader_names_above_compared_consoles(panel):
         lecteur.short_name for lecteur in READERS]
 
 
+def test_log_compare_highlights_the_meaningful_error_not_durations(panel):
+    left = "INFO - Duration : 2.53 ms\nINFO - Expected Status : 9EEE\n"
+    right = ("INFO - Duration : 0.26 ms\nINFO - Expected Status : 9EEE\n"
+             "ERRO - Wrong Status Word, received: 6FEE ; authorized : {'9EEE'}\n")
+    panel.logs.set_text(0, left)
+    panel.logs.set_text(1, right)
+
+    panel.logs.compare.setChecked(True)
+
+    left_highlights = panel.logs.views[0].view.extraSelections()
+    right_highlights = panel.logs.views[1].view.extraSelections()
+    assert left_highlights == []
+    assert [item.cursor.block().text() for item in right_highlights] == [
+        "ERRO - Wrong Status Word, received: 6FEE ; authorized : {'9EEE'}"]
+
+    panel.logs.compare.setChecked(False)
+    assert panel.logs.views[1].view.extraSelections() == []
+
+
 def test_selecting_a_reader_emphasises_it_without_losing_its_colour(panel):
     from runner.ui import tokens as t
 

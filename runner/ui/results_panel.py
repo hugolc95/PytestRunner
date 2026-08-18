@@ -34,7 +34,7 @@ from PyQt5.QtWidgets import (
 )
 
 from runner.domain import failures as failures_mod
-from runner.domain import logs
+from runner.domain import log_compare, logs
 from runner.domain.models import Reader, ReaderReport, Status
 from runner.domain.source import path_of as source_path
 from runner.ui import icons, theme
@@ -60,10 +60,12 @@ class ReaderViews(QWidget):
     reader_selected = pyqtSignal(int)
 
     def __init__(self, orientation=Qt.Vertical, sync_scroll: bool = False,
-                 show_lens: bool = True, parent=None):
+                 show_lens: bool = True, highlight_differences: bool = False,
+                 parent=None):
         super().__init__(parent)
         self._sync = sync_scroll
         self._show_lens = show_lens
+        self._highlight_differences = highlight_differences
         self._defile = False
         self._readers: tuple[Reader, ...] = ()
 
@@ -84,9 +86,12 @@ class ReaderViews(QWidget):
         self.compare.setObjectName("IconSm")
         self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
         self.compare.setCheckable(True)
-        self.compare.setToolTip("Compare every reader  (Ctrl+Shift+D)")
+        self.compare.setToolTip(
+            "Compare reader logs and highlight meaningful differences"
+            if highlight_differences else
+            "Compare every reader  (Ctrl+Shift+D)")
         self.compare.setVisible(False)
-        self.compare.toggled.connect(lambda _: self._apply_layout())
+        self.compare.toggled.connect(self._on_compare_toggled)
 
         barre = QHBoxLayout()
         barre.setContentsMargins(0, 0, 0, 0)
@@ -200,6 +205,10 @@ class ReaderViews(QWidget):
             boite.setVisible(visible)
             self.headers[position].setVisible(visible and comparer and nombre > 1)
 
+    def _on_compare_toggled(self, checked: bool) -> None:
+        self._apply_layout()
+        self._update_difference_highlights(reveal=checked)
+
     def _on_tab(self, index: int) -> None:
         self._apply_layout()
         self._restyle_reader_names()
@@ -235,6 +244,42 @@ class ReaderViews(QWidget):
             # chose qu'on verifie, mais l'afficher en entier mangerait la
             # largeur de la console.
             self.headers[index].setToolTip(chemin)
+            self._update_difference_highlights()
+
+    def _update_difference_highlights(self, reveal: bool = False) -> None:
+        """Compare les logs et colore seulement les ecarts significatifs."""
+        active = (self._highlight_differences and self.compare.isChecked()
+                  and len(self._readers) > 1)
+        if not active:
+            for view in self.views:
+                view.highlight_lines()
+            return
+
+        count = len(self._readers)
+        texts = [self.views[index].text() for index in range(count)]
+        ignored = [reader.name for reader in self._readers]
+        ignored.extend(reader.short_name for reader in self._readers)
+        differences = log_compare.compare_logs(texts, ignored)
+
+        for index, view in enumerate(self.views):
+            if index < count:
+                view.highlight_lines(differences.changed[index],
+                                     differences.errors[index])
+            else:
+                view.highlight_lines()
+
+        if reveal and differences.any:
+            # Chaque log se centre sur SA premiere divergence. Le garde evite
+            # que la synchronisation de scroll n'ecrase la position du voisin.
+            self._defile = True
+            try:
+                for index in range(count):
+                    if differences.changed[index]:
+                        priority = (differences.errors[index]
+                                    or differences.changed[index])
+                        self.views[index].reveal_line(min(priority))
+            finally:
+                self._defile = False
 
     def _restyle_reader_names(self) -> None:
         courant = self.tabs.currentIndex()
@@ -265,6 +310,7 @@ class ReaderViews(QWidget):
             vue.restyle()
         self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
         self._restyle_reader_names()
+        self._update_difference_highlights()
 
     def clear(self) -> None:
         for vue in self.views:
@@ -279,6 +325,7 @@ class ReaderViews(QWidget):
                 entete.setToolTip(lecteur.name)
             else:
                 entete.clear()
+        self._update_difference_highlights()
 
 
 class ResultsPanel(QWidget):
@@ -303,7 +350,9 @@ class ResultsPanel(QWidget):
         self.source = SourcePanel()
 
         self.output = ReaderViews(Qt.Vertical)
-        self.logs = ReaderViews(Qt.Horizontal, sync_scroll=True, show_lens=False)
+        self.logs = ReaderViews(
+            Qt.Horizontal, sync_scroll=True, show_lens=False,
+            highlight_differences=True)
 
         # Les trois panneaux suivent le meme lecteur : lire le log de l'un en
         # regardant la sortie de l'autre n'a pas de sens.
