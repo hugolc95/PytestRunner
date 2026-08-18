@@ -279,6 +279,21 @@ class History:
         self._entrees = []
         self._enregistrer()
 
+    def remove_run(self, identifiant: str) -> int:
+        """Efface un lancement complet, donc toutes ses entrees Reader.
+
+        Un meme ``id`` est partage par les lecteurs d'un lancement. Supprimer
+        une seule ligne laisserait un demi-run dans la nouvelle vue groupee et
+        ferait croire que l'autre lecteur n'avait jamais ete execute.
+        """
+        retirees = [e for e in self._entrees if e.id == identifiant]
+        if not retirees:
+            return 0
+        self._oublier(retirees)
+        self._entrees = [e for e in self._entrees if e.id != identifiant]
+        self._enregistrer()
+        return len(retirees)
+
     def _oublier(self, entrees) -> None:
         """Supprime les fichiers des entrees qui sortent de l'historique.
 
