@@ -1281,19 +1281,11 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_search(self, texte: str) -> None:
-        requete = texte.strip().lower()
-        self._matches = []
-        if requete:
-            for nodeid in self._all_nodeids():
-                if requete in nodeid.lower():
-                    self._matches.append(nodeid)
+        self._matches = self.model.matching_nodeids(texte)
         self._match_index = 0 if self._matches else -1
         if self._matches:
             self._reveal(self._matches[0])
         self.search.set_matches(self._match_index + 1, len(self._matches))
-
-    def _all_nodeids(self) -> list:
-        return [nodeid for nodeid in self.model._by_nodeid]  # noqa: SLF001
 
     def _goto_match(self, pas: int) -> None:
         if not self._matches:

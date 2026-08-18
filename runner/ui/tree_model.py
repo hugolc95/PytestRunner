@@ -83,6 +83,7 @@ class TestTreeModel(QAbstractItemModel):
         super().__init__(parent)
         self._roots: list[_Row] = []
         self._by_nodeid: dict[str, _Row] = {}
+        self._search_index: tuple[tuple[str, str], ...] = ()
         self._readers: tuple[Reader, ...] = ()
         # Decompte par statut des cases (test, lecteur) deja rendues. Tenu au
         # fil de l'eau : le recalculer a chaque resultat reparcourrait tout
@@ -99,6 +100,11 @@ class TestTreeModel(QAbstractItemModel):
             for ligne in [racine, *racine.descendants()]:
                 if ligne.node.nodeid:
                     self._by_nodeid[ligne.node.nodeid] = ligne
+        # `casefold()` n'est fait qu'a la collecte, pas a chaque caractere
+        # saisi dans la recherche. Sur plusieurs milliers de parametres, ces
+        # allocations repetees etaient visibles dans le fil de l'interface.
+        self._search_index = tuple(
+            (nodeid, nodeid.casefold()) for nodeid in self._by_nodeid)
         self.endResetModel()
         self._emit_selection()
 
@@ -116,6 +122,14 @@ class TestTreeModel(QAbstractItemModel):
     @property
     def readers(self) -> tuple[Reader, ...]:
         return self._readers
+
+    def matching_nodeids(self, query: str) -> list[str]:
+        """Nodeids contenant ``query``, dans l'ordre stable de l'arbre."""
+        cherche = query.strip().casefold()
+        if not cherche:
+            return []
+        return [nodeid for nodeid, normalise in self._search_index
+                if cherche in normalise]
 
     # ------------------------------------------------------ interface Qt
 

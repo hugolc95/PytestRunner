@@ -6,7 +6,7 @@ recoivent du texte et des couleurs, ils n'appellent rien.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QFontMetrics
 from PyQt5.QtWidgets import (
     QDialog,
@@ -324,6 +324,12 @@ class SearchBar(QWidget):
         super().__init__(parent)
         from PyQt5.QtWidgets import QLineEdit
 
+        self._last_emitted = ""
+        self._typing_timer = QTimer(self)
+        self._typing_timer.setSingleShot(True)
+        self._typing_timer.setInterval(120)
+        self._typing_timer.timeout.connect(self._emit_query)
+
         ligne = QHBoxLayout(self)
         ligne.setContentsMargins(0, 0, 0, 0)
         ligne.setSpacing(t.SPACE_1)
@@ -335,8 +341,8 @@ class SearchBar(QWidget):
         # repeindre son icone, et non en ajouter une deuxieme a cote.
         self._magnify = self.field.addAction(
             icons.icon("mdi.magnify", t.TEXT_FAINT), QLineEdit.LeadingPosition)
-        self.field.textChanged.connect(self.query_changed)
-        self.field.returnPressed.connect(self.next_match)
+        self.field.textChanged.connect(self._queue_query)
+        self.field.returnPressed.connect(self._submit)
 
         self.counter = QLabel("")
         self.counter.setObjectName("Faint")
@@ -366,6 +372,44 @@ class SearchBar(QWidget):
         self._magnify.setIcon(icons.icon("mdi.magnify", t.TEXT_FAINT))
         self.prev_button.setIcon(icons.icon("mdi.chevron-up", t.TEXT_MUTED))
         self.next_button.setIcon(icons.icon("mdi.chevron-down", t.TEXT_MUTED))
+
+    def _queue_query(self, texte: str) -> None:
+        """Regroupe une rafale de frappes en une seule recherche.
+
+        Une recherche change la selection de l'arbre et peut charger les logs
+        du premier resultat. La rejouer apres chaque lettre rendait donc la
+        saisie saccadee sur une grande suite. Une suppression reste immediate
+        pour rendre tout de suite l'arbre a son etat normal.
+        """
+        if not texte.strip():
+            self._typing_timer.stop()
+            self.set_matches(0, 0)
+            self._emit_query()
+            return
+
+        self.counter.setText("…")
+        self.prev_button.setEnabled(False)
+        self.next_button.setEnabled(False)
+        self._typing_timer.start()
+
+    def _emit_query(self) -> None:
+        texte = self.field.text()
+        if texte == self._last_emitted:
+            return
+        self._last_emitted = texte
+        self.query_changed.emit(texte)
+
+    def _submit(self) -> None:
+        # Entree ne doit jamais naviguer dans les resultats de la requete
+        # precedente si le delai de frappe n'est pas encore ecoule. Dans ce
+        # cas elle valide la recherche et reste sur le PREMIER resultat ; les
+        # appuis suivants seulement passent au suivant.
+        en_attente = (self._typing_timer.isActive()
+                      or self.field.text() != self._last_emitted)
+        self._typing_timer.stop()
+        self._emit_query()
+        if not en_attente:
+            self.next_match.emit()
 
     def set_matches(self, position: int, total: int) -> None:
         """Met a jour le compteur. `position` est en base 1, 0 si aucun."""

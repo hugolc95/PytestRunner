@@ -337,6 +337,56 @@ def test_the_search_bar_keeps_exactly_one_magnifier(qapp):
         f"{len(barre.field.actions())} icones dans le champ au lieu de {depart}")
 
 
+def test_rapid_search_typing_is_coalesced_into_one_query(qapp):
+    """Selectionner/deplier l'arbre apres chaque lettre bloquait la saisie."""
+    from PyQt5.QtTest import QTest
+
+    from runner.ui.widgets import SearchBar
+
+    barre = SearchBar()
+    requetes = []
+    barre.query_changed.connect(requetes.append)
+
+    for texte in ("t", "te", "tes", "test"):
+        barre.field.setText(texte)
+    qapp.processEvents()
+    assert requetes == []
+    assert barre.counter.text() == "…"
+
+    QTest.qWait(170)
+    assert requetes == ["test"]
+
+
+def test_clearing_search_is_immediate(qapp):
+    from PyQt5.QtTest import QTest
+
+    from runner.ui.widgets import SearchBar
+
+    barre = SearchBar()
+    requetes = []
+    barre.query_changed.connect(requetes.append)
+    barre.field.setText("checksum")
+    QTest.qWait(170)
+
+    barre.field.clear()
+    assert requetes == ["checksum", ""]
+
+
+def test_clearing_before_the_delay_removes_the_pending_indicator(qapp):
+    from runner.ui.widgets import SearchBar
+
+    barre = SearchBar()
+    requetes = []
+    barre.query_changed.connect(requetes.append)
+    barre.field.setText("checksum")
+    assert barre.counter.text() == "…"
+
+    barre.field.clear()
+
+    assert barre.counter.text() == ""
+    assert requetes == []  # aucune recherche couteuse n'avait encore eu lieu
+
+
 def test_the_marker_popup_keeps_exactly_one_magnifier(qapp):
     from runner.ui.marker_bar import MarkerFilter
 

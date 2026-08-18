@@ -60,6 +60,12 @@ def test_each_reader_header_carries_its_own_colour(model):
         t.reader_color(READERS[1].index))
 
 
+def test_search_is_case_insensitive_and_keeps_tree_order(model):
+    assert model.matching_nodeids("TEST_ONE") == NODEIDS[:2]
+    assert model.matching_nodeids("[Y]") == [NODEIDS[1]]
+    assert model.matching_nodeids("absent") == []
+
+
 def test_without_readers_a_single_status_column_remains(qapp):
     m = TestTreeModel()
     m.set_tree(build_tree(NODEIDS))

@@ -414,9 +414,9 @@ QTabBar::tab:selected {{ color: {t.TEXT}; border-bottom-color: {t.ACCENT}; font-
 QTabBar#PrimaryTabs::tab {{
     color: {t.TEXT_MUTED};
     background-color: transparent;
-    border: 1px solid transparent;
-    border-bottom: 3px solid transparent;
-    border-radius: {t.RADIUS_SM}px;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: {t.RADIUS_MD}px;
     padding: {t.SPACE_2}px {t.SPACE_3}px;
     font-size: {t.TEXT_MD}px;
     font-weight: 600;
@@ -424,31 +424,33 @@ QTabBar#PrimaryTabs::tab {{
 QTabBar#PrimaryTabs::tab:hover {{
     color: {t.TEXT};
     background-color: {t.BG_HOVER};
-    border-color: {t.BORDER};
 }}
 QTabBar#PrimaryTabs::tab:selected {{
     color: {t.TEXT};
     background-color: {t.ACCENT_SOFT};
-    border-color: {t.BORDER};
     border-bottom-color: {t.ACCENT};
     font-weight: 700;
 }}
 
-QTabBar#ReaderTabs::tab {{
-    background-color: {t.BG_RAISED};
+QTabBar#ReaderTabs {{
+    background-color: {t.BG_APP};
     border: 1px solid {t.BORDER};
-    border-radius: {t.RADIUS_PILL}px;
+    border-radius: {t.RADIUS_LG}px;
+    padding: {t.SPACE_1}px;
+}}
+QTabBar#ReaderTabs::tab {{
+    background-color: transparent;
+    border: none;
+    border-radius: {t.RADIUS_MD}px;
     padding: {t.SPACE_1}px {t.SPACE_2}px;
-    margin: 0 {t.SPACE_1}px 0 0;
+    margin: 0 1px;
     font-size: {t.TEXT_XS}px;
 }}
 QTabBar#ReaderTabs::tab:hover {{
     background-color: {t.BG_HOVER};
-    border-color: {t.BORDER_STRONG};
 }}
 QTabBar#ReaderTabs::tab:selected {{
     background-color: {t.BG_SURFACE};
-    border-color: {t.BORDER_STRONG};
 }}
 QStatusBar QLabel {{ background: transparent; }}
 
