@@ -496,6 +496,78 @@ class ReaderBar(QWidget):
     # les repeindre deux fois.
 
 
+class StatusRibbon(QWidget):
+    """Repartition des statuts d'un lot de tests, en une barre.
+
+    Douze nombres alignes demandent d'etre lus et compares ; une barre se voit.
+    C'est la seule chose qu'on veut savoir en cliquant un dossier : est-ce que
+    c'est majoritairement vert, et combien de rouge.
+
+    Les segments gardent l'ordre des statuts, toujours le meme : le rouge est
+    au meme endroit d'une barre a l'autre, donc deux lecteurs se comparent d'un
+    coup d'oeil sans lire les nombres.
+    """
+
+    ORDRE = (Status.PASSED, Status.FAILED, Status.ERROR, Status.SKIPPED,
+             Status.RUNNING, Status.PENDING)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._counts: dict = {}
+        self.setFixedHeight(t.SPACE_2)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+
+    def set_counts(self, counts: dict) -> None:
+        self._counts = {s: n for s, n in counts.items() if n > 0}
+        self.setToolTip(" · ".join(
+            f"{self._counts[s]} {s.name.lower()}"
+            for s in self.ORDRE if s in self._counts))
+        self.update()
+
+    def restyle(self) -> None:
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        from PyQt5.QtGui import QColor, QPainter
+
+        peintre = QPainter(self)
+        peintre.setRenderHint(QPainter.Antialiasing)
+        largeur, hauteur = self.width(), self.height()
+        rayon = hauteur / 2
+
+        # Le fond porte la barre quand rien n'a encore tourne : sans lui, un
+        # lot entierement en attente ne dessinerait rien du tout et se lirait
+        # comme un widget casse.
+        peintre.setPen(Qt.NoPen)
+        peintre.setBrush(QColor(t.BG_RAISED))
+        peintre.drawRoundedRect(0, 0, largeur, hauteur, rayon, rayon)
+
+        total = sum(self._counts.values())
+        if not total:
+            return
+
+        # Les arrondis des extremites sont obtenus en dessinant dans la forme
+        # du fond : chaque segment reste rectangulaire, seul l'ensemble est
+        # arrondi. Arrondir chaque segment creerait des encoches entre eux.
+        from PyQt5.QtGui import QPainterPath
+
+        forme = QPainterPath()
+        forme.addRoundedRect(0, 0, largeur, hauteur, rayon, rayon)
+        peintre.setClipPath(forme)
+
+        depart = 0.0
+        for statut in self.ORDRE:
+            nombre = self._counts.get(statut, 0)
+            if not nombre:
+                continue
+            part = largeur * nombre / total
+            peintre.setBrush(QColor(t.status_color(statut)))
+            # Un demi-pixel de recouvrement : sans lui, l'arrondi des bornes
+            # laisse une raie du fond entre deux segments voisins.
+            peintre.drawRect(int(depart), 0, int(part + 1), hauteur)
+            depart += part
+
+
 def separator() -> QFrame:
     """Trait de 1 px entre deux zones."""
     trait = QFrame()

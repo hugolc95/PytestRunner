@@ -336,6 +336,7 @@ class MainWindow(QMainWindow):
     def _build_right(self) -> QWidget:
         self.results = ResultsPanel()
         self.results.reader_selected.connect(self._on_reader_selected)
+        self.results.test_chosen.connect(self._goto_test)
         return self.results
 
     def _build_status_bar(self) -> None:
@@ -954,14 +955,45 @@ class MainWindow(QMainWindow):
         self._select_test(index)
 
     def _select_test(self, index: QModelIndex) -> None:
-        """Montre la fiche du test pointe. Un regroupement n'en a pas."""
+        """Montre la fiche de ce qui est pointe : un test, ou un regroupement.
+
+        Un regroupement ne restait auparavant lie a rien : la fiche gardait le
+        test precedent a l'ecran, et l'on croyait lire le dossier qu'on venait
+        de cliquer.
+        """
         if not index.isValid():
             return
-        nodeid = self.model.data(index.siblingAtColumn(0), NODEID_ROLE)
+        premiere = index.siblingAtColumn(0)
+        nodeid = self.model.data(premiere, NODEID_ROLE)
         if nodeid:
             self.results.show_test(
                 nodeid, self.model.statuses_for_nodeid(nodeid),
                 self.workspace.path if self.workspace else "")
+            return
+
+        compteurs, echecs = self.model.subtree_summary(premiere)
+        chemin, nom = self._situer(premiere)
+        self.results.show_group(chemin, nom, self.model.readers,
+                                compteurs, echecs)
+
+    def _situer(self, index: QModelIndex) -> tuple[str, str]:
+        """Chemin des ancetres, et nom du noeud lui-meme."""
+        nom = self.model.data(index) or ""
+        ancetres = []
+        parent = index.parent()
+        while parent.isValid():
+            ancetres.append(self.model.data(parent) or "")
+            parent = parent.parent()
+        return " / ".join(reversed(ancetres)), nom
+
+    @pyqtSlot(str)
+    def _goto_test(self, nodeid: str) -> None:
+        """Un echec clique dans la fiche de groupe : l'arbre y va."""
+        index = self.model.index_for_nodeid(nodeid)
+        if not index.isValid():
+            return
+        self.tree.setCurrentIndex(index)
+        self.tree.scrollTo(index)
 
     @pyqtSlot(int, int)
     def _on_selection_changed(self, coches: int, total: int) -> None:

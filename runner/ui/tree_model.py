@@ -352,6 +352,29 @@ class TestTreeModel(QAbstractItemModel):
                     [Qt.DecorationRole, Qt.ToolTipRole],
                 )
 
+    def subtree_summary(self, index: QModelIndex) -> tuple[dict, list]:
+        """Bilan de ce que contient ce noeud : compteurs et echecs.
+
+        Rend `({index de lecteur: {statut: nombre}}, [(nodeid, lecteur), ...])`.
+        Les echecs gardent l'ordre de l'arbre : la liste se relit comme la
+        colonne de gauche, et non dans un ordre invente ici.
+        """
+        ligne = index.internalPointer() if index.isValid() else None
+        if ligne is None:
+            return {}, []
+
+        indices = [r.index for r in self._readers] or [0]
+        compteurs = {i: {} for i in indices}
+        echecs: list[tuple[str, int]] = []
+
+        for feuille in ligne.leaves():
+            for i in indices:
+                statut = feuille.statuses.get(i, Status.PENDING)
+                compteurs[i][statut] = compteurs[i].get(statut, 0) + 1
+                if statut.is_bad:
+                    echecs.append((feuille.node.nodeid, i))
+        return compteurs, echecs
+
     def nodeids(self) -> list[str]:
         """Tous les nodeids de l'arbre, dans l'ordre ou il les montre."""
         retenus = []

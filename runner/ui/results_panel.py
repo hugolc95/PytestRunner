@@ -223,6 +223,7 @@ class ResultsPanel(QWidget):
     """Fiche du test, sortie brute et logs, derriere un etat vide au demarrage."""
 
     reader_selected = pyqtSignal(int)
+    test_chosen = pyqtSignal(str)   # relaye la fiche de groupe vers l'arbre
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -235,6 +236,7 @@ class ResultsPanel(QWidget):
 
         self.detail = DetailPanel()
         self.detail.open_output.connect(self.show_output)
+        self.detail.test_chosen.connect(self.test_chosen)
 
         self.source = SourcePanel()
 
@@ -349,6 +351,20 @@ class ResultsPanel(QWidget):
         self._refresh_detail()
         self.source.show_file(source_path(workspace, nodeid), nodeid)
         self.show_logs_for(nodeid, self._readers)
+
+    def show_group(self, path: str, name: str, readers, counts: dict,
+                   failures: list) -> None:
+        """Selectionne un regroupement : son bilan, et rien d'autre.
+
+        Ni source ni logs : un dossier n'a pas de fichier de test a ouvrir, et
+        laisser ceux du test precedent dans les autres onglets ferait croire
+        qu'ils parlent de ce qu'on vient de cliquer.
+        """
+        self._nodeid = ""
+        self._statuses = {}
+        self.detail.show_group(path, name, tuple(readers), counts, failures)
+        self.source.clear()
+        self.logs.clear()
 
     def update_statuses(self, nodeid: str, statuses: dict[int, Status]) -> None:
         """Rafraichit la fiche si elle porte sur ce test, sans toucher aux logs.

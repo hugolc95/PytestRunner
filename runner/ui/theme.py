@@ -332,6 +332,24 @@ QTreeView::branch:selected {{
     background-color: {t.blend(t.ACCENT, t.BG_SURFACE, 0.18)};
 }}
 QTreeView::branch:hover {{ background-color: {t.BG_HOVER}; }}
+/* Liste des echecs d'un regroupement. Chaque ligne emmene au test : le
+   survol doit le faire sentir, sinon rien ne dit qu'on peut cliquer. */
+QListWidget#Failures {{
+    background-color: transparent;
+    border: none;
+    font-family: {t.FONT_MONO};
+    font-size: {t.TEXT_SM}px;
+    outline: none;
+}}
+QListWidget#Failures::item {{
+    padding: {t.SPACE_1}px {t.SPACE_2}px;
+    border-radius: {t.RADIUS_SM}px;
+}}
+QListWidget#Failures::item:hover {{ background-color: {t.BG_HOVER}; }}
+QListWidget#Failures::item:selected {{
+    background-color: {t.blend(t.ACCENT, t.BG_SURFACE, 0.18)};
+}}
+
 /* ---------------------------------------------------------------- tables */
 /* L'historique est un tableau, pas un arbre : sans regle a lui, Qt n'y peint
    la selection que sur la cellule cliquee. La ligne entiere doit ressortir --

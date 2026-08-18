@@ -1,12 +1,16 @@
-"""Fiche d'un test : son verdict sur chaque lecteur, et pourquoi il a echoue.
+"""Ce qu'on sait de ce qui est pointe dans l'arbre. Deux fiches, deux questions.
 
-C'est la reponse a la question qu'on se pose vraiment devant un run rouge :
-« celui-la, qu'est-ce qui s'est passe ? ». La console contient la reponse,
-mais melangee a des centaines de lignes de verdicts que l'arbre affiche deja,
-et sans lien visible avec le test qu'on vient de cliquer.
+Sur un TEST : « celui-la, qu'est-ce qui s'est passe ? ». La console contient
+la reponse, mais melangee a des centaines de lignes de verdicts que l'arbre
+affiche deja, et sans lien visible avec le test qu'on vient de cliquer. Ici le
+lien est explicite : un test selectionne, une trace par lecteur qui a echoue,
+et rien d'autre.
 
-Ici le lien est explicite : un test selectionne, une trace par lecteur qui a
-echoue, et rien d'autre.
+Sur un REGROUPEMENT -- dossier, fichier, test parametre : « ce lot, ca donne
+quoi ? ». Une barre par lecteur pour la proportion, les compteurs pour les
+nombres, et la liste de ce qui est rouge dedans. Un regroupement n'etait lie a
+rien : la fiche gardait le test precedent a l'ecran, et l'on croyait lire le
+dossier qu'on venait de cliquer.
 """
 
 from __future__ import annotations
@@ -14,9 +18,12 @@ from __future__ import annotations
 from html import escape
 
 from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPushButton,
     QStackedWidget,
     QTextEdit,
@@ -29,7 +36,12 @@ from runner.domain.failures import Failure, classify_line
 from runner.domain.models import Reader, Status
 from runner.ui import theme
 from runner.ui import tokens as t
-from runner.ui.widgets import EmptyState, ReaderResult
+from runner.ui.widgets import (
+    EmptyState,
+    ReaderBadge,
+    ReaderResult,
+    StatusRibbon,
+)
 
 # Nature de ligne -> teinte. La table vit ici et pas dans le domaine : c'est
 # une decision de theme, elle change avec la palette, pas avec pytest.
@@ -47,9 +59,18 @@ def _teinte(nature: str) -> str:
 
 
 class DetailPanel(QWidget):
-    """Ce qu'on sait d'un test, pour tous ses lecteurs a la fois."""
+    """Ce qu'on sait de ce qui est pointe dans l'arbre.
+
+    Deux fiches, parce qu'on ne pose pas la meme question selon ou l'on
+    clique. Sur un test : « celui-la, qu'est-ce qui s'est passe ? ». Sur un
+    dossier ou un fichier : « ce lot, ca donne quoi, et qu'est-ce qui est
+    rouge dedans ? ».
+    """
 
     open_output = pyqtSignal()
+    test_chosen = pyqtSignal(str)   # un echec clique dans la fiche de groupe
+
+    PAGE_VIDE, PAGE_TEST, PAGE_GROUPE = 0, 1, 2
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -59,17 +80,19 @@ class DetailPanel(QWidget):
         # trace porte des couleurs resolues au moment ou il a ete construit, et
         # ne suit donc pas un changement de theme.
         self._dernier: tuple | None = None
+        self._dernier_groupe: tuple | None = None
 
         self.empty = EmptyState(
             "mdi.cursor-default-click-outline",
-            "No test selected",
-            "Click a test in the tree to see its verdict on every reader — "
-            "and the traceback when it fails.",
+            "Nothing selected",
+            "Click a test to see its verdict on every reader — or a folder to "
+            "see how the whole thing is doing.",
         )
 
         self.stack = QStackedWidget()
         self.stack.addWidget(self.empty)
         self.stack.addWidget(self._build_content())
+        self.stack.addWidget(self._build_group())
 
         colonne = QVBoxLayout(self)
         colonne.setContentsMargins(0, 0, 0, 0)
@@ -127,12 +150,169 @@ class DetailPanel(QWidget):
         colonne.addLayout(actions)
         return contenu
 
+    # --------------------------------------------------- fiche de regroupement
+
+    def _build_group(self) -> QWidget:
+        contenu = QWidget()
+        colonne = QVBoxLayout(contenu)
+        colonne.setContentsMargins(0, t.SPACE_2, 0, 0)
+        colonne.setSpacing(t.SPACE_2)
+
+        self.group_path = QLabel()
+        self.group_path.setObjectName("Faint")
+        self.group_name = QLabel()
+        self.group_name.setObjectName("Title")
+        self.group_name.setWordWrap(True)
+        self.group_total = QLabel()
+        self.group_total.setObjectName("Muted")
+
+        colonne.addWidget(self.group_path)
+        colonne.addWidget(self.group_name)
+        colonne.addWidget(self.group_total)
+
+        # Une barre par lecteur, empilees : c'est en les superposant qu'on voit
+        # que l'un est plus rouge que l'autre.
+        self.ribbons_host = QWidget()
+        self._ribbons = QVBoxLayout(self.ribbons_host)
+        self._ribbons.setContentsMargins(0, t.SPACE_2, 0, t.SPACE_2)
+        self._ribbons.setSpacing(t.SPACE_3)
+        colonne.addWidget(self.ribbons_host)
+
+        self.failures_title = QLabel()
+        self.failures_title.setObjectName("Muted")
+        colonne.addWidget(self.failures_title)
+
+        self.failures = QListWidget()
+        self.failures.setObjectName("Failures")
+        self.failures.itemActivated.connect(self._sur_echec)
+        self.failures.itemClicked.connect(self._sur_echec)
+        colonne.addWidget(self.failures, 1)
+        return contenu
+
+    def show_group(self, path: str, name: str, readers: tuple[Reader, ...],
+                   counts: dict, failures: list) -> None:
+        """Fiche d'un dossier, d'un fichier ou d'un test parametre.
+
+        `counts` donne, par index de lecteur, le nombre de tests par statut.
+        `failures` liste des couples (nodeid, index du lecteur).
+        """
+        self._dernier_groupe = (path, name, readers, counts, failures)
+        self._nodeid = ""
+        self.stack.setCurrentIndex(self.PAGE_GROUPE)
+
+        self.group_path.setText(path)
+        # La racine n'a pas d'ancetre : l'etiquette vide prendrait quand meme
+        # sa hauteur et decalerait le titre sans rien dire.
+        self.group_path.setVisible(bool(path))
+        self.group_name.setText(name)
+
+        total = sum(sum(c.values()) for c in counts.values()) or 0
+        tests = total // max(1, len(readers) or 1)
+        self.group_total.setText(f"{tests} test{'s' if tests > 1 else ''}"
+                                 + (f" × {len(readers)} readers" if len(readers) > 1
+                                    else ""))
+        self._remplir_rubans(readers, counts)
+        self._remplir_echecs(readers, failures)
+
+    def _remplir_rubans(self, readers, counts: dict) -> None:
+        while self._ribbons.count():
+            element = self._ribbons.takeAt(0)
+            widget = element.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        for lecteur in readers or (Reader("", 0),):
+            propres = counts.get(lecteur.index, {})
+            bloc = QWidget()
+            ligne = QVBoxLayout(bloc)
+            ligne.setContentsMargins(0, 0, 0, 0)
+            ligne.setSpacing(t.SPACE_1)
+
+            entete = QHBoxLayout()
+            entete.setContentsMargins(0, 0, 0, 0)
+            if lecteur.name:
+                entete.addWidget(ReaderBadge(lecteur.short_name, lecteur.index))
+            entete.addStretch(1)
+            entete.addWidget(self._chiffres(propres))
+            ligne.addLayout(entete)
+
+            ruban = StatusRibbon()
+            ruban.set_counts(propres)
+            ligne.addWidget(ruban)
+            self._ribbons.addWidget(bloc)
+
+    def _chiffres(self, propres: dict) -> QLabel:
+        """Les compteurs en clair, a cote de la barre.
+
+        La barre donne la proportion, pas le nombre : « presque tout vert »
+        peut cacher deux echecs comme vingt.
+        """
+        morceaux = []
+        for statut in StatusRibbon.ORDRE:
+            nombre = propres.get(statut, 0)
+            if not nombre:
+                continue
+            morceaux.append(
+                f'<span style="color:{t.status_color(statut)}">{nombre}</span>'
+                f' <span style="color:{t.TEXT_FAINT}">{statut.name.lower()}</span>')
+
+        etiquette = QLabel(" &nbsp; ".join(morceaux) or
+                           f'<span style="color:{t.TEXT_FAINT}">not run yet</span>')
+        etiquette.setTextFormat(Qt.RichText)
+        etiquette.setStyleSheet(
+            f"font-size: {t.TEXT_SM}px; background: transparent;")
+        return etiquette
+
+    def _remplir_echecs(self, readers, failures: list) -> None:
+        self.failures.clear()
+        noms = {r.index: r.short_name for r in readers}
+
+        if not failures:
+            # Rien de rouge : le dire franchement plutot que de laisser une
+            # zone vide, qu'on prend pour un affichage qui n'a pas fini.
+            self.failures_title.setText("")
+            vide = QListWidgetItem("Nothing is failing in here.")
+            vide.setFlags(Qt.NoItemFlags)
+            self.failures.addItem(vide)
+            return
+
+        # Une ligne par TEST, et les lecteurs a cote. Une ligne par couple
+        # test-lecteur affichait deux fois le meme nom des qu'un test tombait
+        # sur les deux, alors que ce qu'on cherche est la liste de ce qui est
+        # casse -- pas le detail des combinaisons.
+        par_test: dict[str, list[int]] = {}
+        for nodeid, index_lecteur in failures:
+            par_test.setdefault(nodeid, []).append(index_lecteur)
+
+        combien = len(par_test)
+        self.failures_title.setText(
+            f"Failing ({combien} test{'s' if combien > 1 else ''})")
+
+        for nodeid, lecteurs in par_test.items():
+            court = nodeid.split("::", 1)[-1].replace("::", " › ")
+            suffixe = ""
+            if len(readers) > 1:
+                suffixe = "   —   " + ", ".join(noms[i] for i in lecteurs)
+            item = QListWidgetItem(court + suffixe)
+            item.setToolTip(nodeid)
+            item.setData(Qt.UserRole, nodeid)
+            item.setForeground(QColor(t.status_color(Status.FAILED)))
+            self.failures.addItem(item)
+
+    def _sur_echec(self, item) -> None:
+        """Cliquer un echec y emmene : c'est le geste suivant, une fois sur
+        deux, apres avoir vu la liste."""
+        nodeid = item.data(Qt.UserRole)
+        if nodeid:
+            self.test_chosen.emit(nodeid)
+
     # ---------------------------------------------------------------- contenu
 
     def clear(self) -> None:
         self._nodeid = ""
         self._texte_brut = ""
         self._dernier = None
+        self._dernier_groupe = None
         self.stack.setCurrentWidget(self.empty)
 
     def restyle(self) -> None:
@@ -142,7 +322,12 @@ class DetailPanel(QWidget):
         dur dans le document. Sans ce rejeu, l'exception restait rouge sombre
         sur le fond blanc du theme clair.
         """
-        if self._dernier is not None:
+        # La fiche affichee est refaite, l'autre attend son tour : elle sera
+        # rebatie a son prochain affichage, avec la palette d'alors.
+        if self.stack.currentIndex() == self.PAGE_GROUPE:
+            if self._dernier_groupe is not None:
+                self.show_group(*self._dernier_groupe)
+        elif self._dernier is not None:
             self.show_test(*self._dernier)
 
     def nodeid(self) -> str:
