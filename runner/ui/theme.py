@@ -227,6 +227,20 @@ QToolButton {{
 }}
 QToolButton:hover {{ background-color: {t.BG_HOVER}; }}
 QToolButton:checked {{ background-color: {t.rgba(t.ACCENT, 0.16)}; }}
+QToolButton#HistoryAction {{
+    background-color: {t.BG_RAISED};
+    color: {t.TEXT};
+    border: 1px solid {t.BORDER_STRONG};
+    border-radius: {t.RADIUS_MD}px;
+    padding: 0 {t.SPACE_3}px;
+    min-height: {t.CONTROL_MD}px;
+    font-size: {t.TEXT_SM}px;
+    font-weight: 500;
+}}
+QToolButton#HistoryAction:hover {{
+    background-color: {t.BG_HOVER};
+    border-color: {t.TEXT_FAINT};
+}}
 
 /* ---------------------------------------------------------------- champs */
 QLineEdit, QComboBox {{
@@ -430,6 +444,45 @@ QTabBar#PrimaryTabs::tab:selected {{
     background-color: {t.ACCENT_SOFT};
     border-bottom-color: {t.ACCENT};
     font-weight: 700;
+}}
+
+/* History utilise quatre onglets de meme importance. Une largeur minimale
+   fixe empeche les libelles Issues / Output / Details de se tasser ou de se
+   chevaucher lorsque la fenetre est redimensionnee. */
+QTabBar#HistoryTabs::tab {{
+    min-width: 92px;
+    max-width: 92px;
+    min-height: {t.CONTROL_MD}px;
+    padding: 0 {t.SPACE_3}px;
+    margin-right: {t.SPACE_1}px;
+    color: {t.TEXT_MUTED};
+    background-color: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: {t.RADIUS_MD}px;
+    font-size: {t.TEXT_SM}px;
+    font-weight: 600;
+}}
+QTabBar#HistoryTabs::tab:hover {{
+    color: {t.TEXT};
+    background-color: {t.BG_HOVER};
+}}
+QTabBar#HistoryTabs::tab:selected {{
+    color: {t.TEXT};
+    background-color: {t.ACCENT_SOFT};
+    border-bottom-color: {t.ACCENT};
+    font-weight: 700;
+}}
+
+QFrame#HistorySummary, QFrame#HistoryAside {{
+    background-color: {t.BG_APP};
+    border: 1px solid {t.BORDER};
+    border-radius: {t.RADIUS_MD}px;
+}}
+QFrame#HistoryReaderCard {{
+    background-color: {t.BG_SURFACE};
+    border: 1px solid {t.BORDER};
+    border-radius: {t.RADIUS_MD}px;
 }}
 
 QTabBar#ReaderTabs {{

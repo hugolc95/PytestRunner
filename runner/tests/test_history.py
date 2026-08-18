@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import time
+from pathlib import Path
 
 import pytest
 
@@ -113,6 +114,19 @@ def test_clearing_removes_the_saved_output_too(historique, tmp_path):
 
     assert historique.entries() == []
     assert not (tmp_path / garde.output_file.split("/")[-1]).exists()
+
+
+def test_removing_a_run_removes_all_its_readers_and_outputs(historique):
+    a = historique.add(entree("run", reader="A"), output="A")
+    b = historique.add(entree("run", reader="B"), output="B")
+    historique.add(entree("keep", reader="A"), output="keep")
+
+    removed = historique.remove_run("run")
+
+    assert removed == 2
+    assert [entry.id for entry in historique.entries()] == ["keep"]
+    assert not Path(a.output_file).exists()
+    assert not Path(b.output_file).exists()
 
 
 # --------------------------------------------------------------- robustesse

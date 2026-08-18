@@ -99,6 +99,9 @@ class MainWindow(QMainWindow):
         self._matches: list[str] = []
         self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
         self._match_index = -1
+        # Rejouer un run historique peut demander de charger d'abord son
+        # workspace. La requete attend alors la fin de la collecte.
+        self._pending_history_run = None
         # Reglage global, distinct de celui qu'un workspace peut imposer dans
         # sa configuration -- celui-la garde toujours la priorite.
         self._interpreter_override = ""
@@ -562,9 +565,57 @@ class MainWindow(QMainWindow):
     def open_history(self) -> None:
         """Les runs passes. Accessible sans workspace charge : on vient
         souvent y chercher ce qu'a donne le run d'hier."""
-        from runner.ui.history_window import HistoryWindow
+        from runner.ui.history_dashboard import HistoryWindow
 
-        HistoryWindow(self.history, self).exec_()
+        dialogue = HistoryWindow(self.history, self)
+        dialogue.rerun_requested.connect(self._rerun_history)
+        dialogue.exec_()
+
+    @pyqtSlot(object)
+    def _rerun_history(self, group) -> None:
+        """Recharge au besoin le workspace, puis rejoue le lancement choisi."""
+        if self.service.busy:
+            self.status_label.setText("A run is already in progress")
+            return
+        self._pending_history_run = group
+        courant = self.workspace.path if self.workspace else ""
+        if courant and Path(courant) == Path(group.workspace):
+            self._launch_pending_history_run()
+            return
+        self.workspace_combo.setCurrentText(group.workspace)
+        self.load_workspace()
+
+    def _launch_pending_history_run(self) -> None:
+        group = self._pending_history_run
+        if group is None or self.workspace is None:
+            return
+        if Path(self.workspace.path) != Path(group.workspace):
+            return
+
+        disponibles = set(self.model.nodeids())
+        nodeids = [nodeid for nodeid in group.nodeids if nodeid in disponibles]
+        if not nodeids:
+            self._pending_history_run = None
+            ErrorDialog.show_error(
+                self, "Could not re-run history",
+                "None of the tests from this run exists in the current collection.")
+            return
+
+        declares = self.workspace.readers
+        demandes = set(group.reader_names)
+        trouves = {reader.name for reader in declares if reader.name in demandes}
+        if demandes and declares and not trouves:
+            self._pending_history_run = None
+            ErrorDialog.show_error(
+                self, "Could not re-run history",
+                "None of the readers from this run is declared by the workspace.",
+                "Recorded: " + ", ".join(sorted(demandes)))
+            return
+
+        if len(declares) > 1 and demandes:
+            self.readers_bar.select_names(declares, trouves)
+        self._pending_history_run = None
+        self._start(nodeids)
 
     @pyqtSlot()
     def open_config_dialog(self) -> None:
@@ -781,9 +832,12 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"{nom} — {details}")
         self.setWindowTitle(f"{WINDOW_TITLE} — {nom}" if nom else WINDOW_TITLE)
         self._update_actions()
+        if self._pending_history_run is not None:
+            QTimer.singleShot(0, self._launch_pending_history_run)
 
     @pyqtSlot(str)
     def _on_collect_failed(self, message: str) -> None:
+        self._pending_history_run = None
         self.progress.setVisible(False)
         self.progress.setRange(0, 100)
         self.load_button.setEnabled(True)
