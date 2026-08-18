@@ -22,9 +22,12 @@ from runner.domain.reader_isolation import (
 )
 
 
-def test_without_a_config_file_the_plugin_stays_out_of_the_way():
+def test_without_a_config_file_only_result_transport_stays_active():
     with reader_plugin("") as (args, dossier):
-        assert args == [] and dossier == ""
+        assert args == ["-p", PLUGIN_MODULE]
+        assert (Path(dossier) / f"{PLUGIN_MODULE}.py").is_file()
+
+    assert not Path(dossier).exists()
 
 
 def test_the_plugin_is_written_and_cleaned_up(tmp_path):

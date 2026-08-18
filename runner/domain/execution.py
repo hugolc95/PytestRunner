@@ -186,6 +186,8 @@ class ReaderRun:
         debut = time.monotonic()
         rapport = ReaderReport(reader=self.reader, counts={})
         lignes: list[str] = []
+        verdicts: dict[str, Status] = {}
+        saut_apres_protocole = False
 
         # Le fichier d'arguments et le plugin doivent survivre au processus :
         # tout le run se deroule donc a l'interieur des deux contextes.
@@ -221,12 +223,34 @@ class ReaderRun:
             for ligne in iter(self._process.stdout.readline, ""):
                 if self._cancelled:
                     break
-                lignes.append(ligne)
-                on_line(ligne)
-
                 resultat = parsing.parse_status_line(ligne)
+
+                # Le protocole alimente l'arbre mais ne pollue ni la console,
+                # ni l'onglet Output, ni l'historique conserve.
+                protocole = parsing.is_outcome_protocol_line(ligne)
+                if protocole:
+                    saut_apres_protocole = True
+                elif saut_apres_protocole and not ligne.strip():
+                    # pytest termine ensuite la ligne de son terminal. Le saut
+                    # initial du protocole l'a deja fait : masquer ce doublon.
+                    saut_apres_protocole = False
+                else:
+                    saut_apres_protocole = False
+                    lignes.append(ligne)
+                    on_line(ligne)
+
                 if resultat is not None:
                     nodeid, statut = resultat
+                    precedent = verdicts.get(nodeid)
+                    if precedent is statut:
+                        continue
+                    if precedent is not None:
+                        restant = rapport.counts.get(precedent, 0) - 1
+                        if restant > 0:
+                            rapport.counts[precedent] = restant
+                        else:
+                            rapport.counts.pop(precedent, None)
+                    verdicts[nodeid] = statut
                     rapport.counts[statut] = rapport.counts.get(statut, 0) + 1
                     on_outcome(Outcome(nodeid, statut, self.reader.index))
 

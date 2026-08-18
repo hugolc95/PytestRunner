@@ -36,6 +36,7 @@ import io
 import os
 import pathlib
 import re
+import sys
 
 import pytest
 
@@ -52,6 +53,13 @@ _A_CITER = set(":#{}[],&*?|<>=!%@`\\"'\\\\")
 _texte = None
 _cible = None
 _erreur = ""
+
+# Canal machine lisible par Pytest Runner. Les lignes humaines de pytest ne
+# sont pas une API : leur forme varie avec la couleur, xdist et les plugins du
+# workspace. Ce prefixe reste volontairement simple et reserve.
+_OUTCOME_PREFIX = "PYTESTRUNNER_OUTCOME"
+_OUTCOMES = {}
+_RANK = {"PASSED": 0, "SKIPPED": 1, "FAILED": 2, "ERROR": 3}
 
 
 def _citer(valeur):
@@ -161,6 +169,47 @@ def pytest_runtest_setup(item):
             "Continuing would have run every reader against the same value "
             "with nothing to signal it." % (_READER, _erreur)
         )
+
+
+def _record_outcome(nodeid, status):
+    precedent = _OUTCOMES.get(nodeid)
+    if precedent is None or _RANK[status] > _RANK[precedent]:
+        _OUTCOMES[nodeid] = status
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_logreport(report):
+    """Retient le verdict final sans dependre du rendu du terminal pytest."""
+    if report.when in ("setup", "teardown"):
+        if report.failed:
+            _record_outcome(report.nodeid, "ERROR")
+        elif report.skipped:
+            _record_outcome(report.nodeid, "SKIPPED")
+        return
+
+    if report.when == "call":
+        if report.failed:
+            _record_outcome(report.nodeid, "FAILED")
+        elif report.skipped:
+            _record_outcome(report.nodeid, "SKIPPED")
+        elif report.passed:
+            _record_outcome(report.nodeid, "PASSED")
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_runtest_logfinish(nodeid, location):
+    """Emet exactement un verdict apres setup, call et teardown."""
+    status = _OUTCOMES.pop(nodeid, None)
+    # Avec xdist, seul le controleur doit ecrire dans le pipe de l'application.
+    # Ecrire dans stdout depuis un worker pourrait perturber son transport.
+    if status is not None and "PYTEST_XDIST_WORKER" not in os.environ:
+        # sys.__stdout__ contourne la capture pytest, tout en restant branche
+        # sur le pipe lu par l'application.
+        # Le terminal pytest n'a pas encore toujours termine sa propre ligne.
+        # Le saut initial garantit que le protocole commence au premier
+        # caractere d'une nouvelle ligne et reste donc reconnaissable.
+        sys.__stdout__.write("\\n%s\t%s\t%s\\n" % (_OUTCOME_PREFIX, status, nodeid))
+        sys.__stdout__.flush()
 '''
 
 
@@ -168,13 +217,10 @@ def pytest_runtest_setup(item):
 def reader_plugin(config_path: str):
     """Fournit (arguments pytest, dossier a mettre dans PYTHONPATH).
 
-    Sans fichier de configuration, ne fait rien : le lecteur ne passe alors que
-    par la variable d'environnement, inoffensive si personne ne la lit.
+    Le plugin est toujours charge car il transporte aussi les verdicts dans un
+    format stable. Sans configuration, seule la virtualisation du Reader reste
+    inactive.
     """
-    if not config_path:
-        yield [], ""
-        return
-
     dossier = tempfile.mkdtemp(prefix="runner_reader_")
     try:
         (Path(dossier) / f"{PLUGIN_MODULE}.py").write_text(_SOURCE, encoding="utf-8")

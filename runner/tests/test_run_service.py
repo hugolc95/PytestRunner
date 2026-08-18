@@ -239,3 +239,49 @@ def test_progress_and_outcomes_survive_spaces_in_parameter_ids(qapp, tmp_path):
     assert all(outcome.status is Status.PASSED for outcome in outcomes)
     assert progression[-1] == (2, 2)
     assert fini[0][0].counts == {Status.PASSED: 2}
+
+
+def test_workspace_forcing_colored_output_still_updates_results(qapp, tmp_path):
+    """Un addopts local ne doit pas couper progression, arbre et Detail."""
+    (tmp_path / "pytest.ini").write_text(
+        "[pytest]\naddopts = --color=yes -n 2\n", encoding="utf-8")
+    (tmp_path / "test_colored.py").write_text(textwrap.dedent('''
+        import pytest
+
+        @pytest.mark.parametrize("value", [
+            pytest.param(1, id="RSA_2048_PKCS_SHA256-TRANSIENT_RESET"),
+            pytest.param(2, id="ecdsa-brainpoolP320r1 to ml-dsa-65-TRANSIENT_DESELECT"),
+        ])
+        def test_workspace(value):
+            assert value > 0
+    '''), encoding="utf-8")
+
+    nodeids = (
+        "test_colored.py::test_workspace[RSA_2048_PKCS_SHA256-TRANSIENT_RESET]",
+        ("test_colored.py::test_workspace["
+         "ecdsa-brainpoolP320r1 to ml-dsa-65-TRANSIENT_DESELECT]"),
+    )
+    requete = RunRequest(
+        workspace=str(tmp_path), interpreter=sys.executable,
+        nodeids=nodeids, readers=(),
+    )
+    service = RunService()
+    outcomes: list = []
+    progression: list = []
+    rapports: list = []
+    lignes: list[str] = []
+    service.outcome.connect(outcomes.append)
+    service.progress.connect(lambda faits, total: progression.append((faits, total)))
+    service.line.connect(lambda _reader, ligne: lignes.append(ligne))
+    service.finished.connect(rapports.extend)
+
+    assert service.start(requete, {})
+    assert _attendre(lambda: bool(rapports))
+    service.wait(5000)
+
+    # xdist termine les workers dans un ordre non deterministe.
+    assert {outcome.nodeid for outcome in outcomes} == set(nodeids)
+    assert progression[-1] == (2, 2)
+    assert rapports[0].counts == {Status.PASSED: 2}
+    assert "PYTESTRUNNER_OUTCOME" not in "".join(lignes)
+    assert "PYTESTRUNNER_OUTCOME" not in rapports[0].output
