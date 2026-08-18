@@ -36,9 +36,12 @@ jobs:
           pip install PyQt5==5.15.11 PyYAML==6.0.3 qtawesome==1.4.2 pyinstaller==6.11.1
 
       - name: Run application tests
+        # PytestRunner.spec empaquette main_runner.py (runner/), pas l'ancienne
+        # interface main_qt.py. Tester tests/ ici bloquait la publication du
+        # nouvel exe sur une regression sans rapport avec le binaire livre.
         run: |
-          pip install pytest pytest-qt
-          pytest tests -q
+          pip install pytest pytest-qt pytest-xdist
+          pytest runner/tests -q
         env:
           QT_QPA_PLATFORM: offscreen
 
