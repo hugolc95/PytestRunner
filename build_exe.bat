@@ -15,6 +15,14 @@ REM n'importe quel Python 3.9+ avec PyQt5 fait l'affaire, 32 ou 64 bits.
 setlocal
 cd /d "%~dp0"
 
+set "PYTHON=%~dp0.venv\Scripts\python.exe"
+if not exist "%PYTHON%" (
+    echo Environnement virtuel introuvable : %PYTHON%
+    echo Creez-le avec :
+    echo     C:\Python313-32\python.exe -m venv .venv
+    exit /b 1
+)
+
 set "CIBLE=%~1"
 if "%CIBLE%"=="" set "CIBLE=new"
 
@@ -62,28 +70,29 @@ exit /b 0
 
 REM --------------------------------------------------------------------------
 :verifier_dependances
-python -c "import PyQt5" 2>nul
+"%PYTHON%" -c "from PyQt5 import QtCore" 2>nul
 if errorlevel 1 (
-    echo PyQt5 est introuvable pour ce Python.
+    echo PyQt5.QtCore est introuvable ou incompatible avec ce Python.
     echo Installez les dependances de build avec :
-    echo     python -m pip install PyQt5 PyYAML qtawesome pyinstaller
+    echo     .venv\Scripts\python.exe -m pip install -r requirements.txt
+    echo     .venv\Scripts\python.exe -m pip install pyinstaller
     exit /b 1
 )
 
 REM qtawesome ne sert qu'a l'interface courante, mais l'installer dans tous les
 REM cas evite un build silencieusement sans icones si l'on change de cible.
-python -c "import qtawesome" 2>nul
+"%PYTHON%" -c "import qtawesome" 2>nul
 if errorlevel 1 (
     echo qtawesome est introuvable : sans lui, l'interface courante se lance
     echo mais toutes ses icones sont vides. Installation...
-    python -m pip install qtawesome
+    "%PYTHON%" -m pip install --no-index --find-links wheels qtawesome
     if errorlevel 1 exit /b 1
 )
 
-python -c "import PyInstaller" 2>nul
+"%PYTHON%" -c "import PyInstaller" 2>nul
 if errorlevel 1 (
     echo PyInstaller est introuvable. Installation...
-    python -m pip install pyinstaller
+    "%PYTHON%" -m pip install pyinstaller
     if errorlevel 1 exit /b 1
 )
 exit /b 0
@@ -93,7 +102,7 @@ REM --------------------------------------------------------------------------
 :construire
 echo.
 echo === Construction : %~2 ===
-python -m PyInstaller --clean --noconfirm %~1
+"%PYTHON%" -m PyInstaller --clean --noconfirm %~1
 if errorlevel 1 (
     echo.
     echo Echec du build de %~1.
