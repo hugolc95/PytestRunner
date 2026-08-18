@@ -7,6 +7,7 @@ isolation des lecteurs, remontee des resultats.
 
 from __future__ import annotations
 
+import sys
 import textwrap
 
 import pytest
@@ -194,3 +195,47 @@ def test_progress_counts_every_reader(qapp, suite):
     assert _attendre(lambda: bool(fini))
     service.wait(5000)
     assert vus[-1] == (2, 2)
+
+
+def test_progress_and_outcomes_survive_spaces_in_parameter_ids(qapp, tmp_path):
+    """Reproduit le gel observe sur les longues suites PutData ECC.
+
+    La console recevait toujours les lignes, mais le parseur abandonnait les
+    nodeids des que `id=` contenait un espace. Le service doit continuer a
+    emettre les outcomes qui alimentent l'arbre et la barre de progression.
+    """
+    (tmp_path / "test_spaced_id.py").write_text(textwrap.dedent('''
+        import pytest
+
+        @pytest.mark.parametrize("value", [
+            pytest.param(1, id="PutData Curve = prime192v2-B = all_FF"),
+            pytest.param(2, id="PutData Curve = secp224r1-B = zero"),
+        ])
+        def test_put_data(value):
+            assert value > 0
+    '''), encoding="utf-8")
+
+    nodeids = (
+        "test_spaced_id.py::test_put_data[PutData Curve = prime192v2-B = all_FF]",
+        "test_spaced_id.py::test_put_data[PutData Curve = secp224r1-B = zero]",
+    )
+    requete = RunRequest(
+        workspace=str(tmp_path), interpreter=sys.executable,
+        nodeids=nodeids, readers=(),
+    )
+    service = RunService()
+    outcomes: list = []
+    progression: list = []
+    fini: list = []
+    service.outcome.connect(outcomes.append)
+    service.progress.connect(lambda faits, total: progression.append((faits, total)))
+    service.finished.connect(fini.append)
+
+    assert service.start(requete, {})
+    assert _attendre(lambda: bool(fini))
+    service.wait(5000)
+
+    assert [outcome.nodeid for outcome in outcomes] == list(nodeids)
+    assert all(outcome.status is Status.PASSED for outcome in outcomes)
+    assert progression[-1] == (2, 2)
+    assert fini[0][0].counts == {Status.PASSED: 2}

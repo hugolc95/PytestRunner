@@ -10,11 +10,16 @@ from runner.domain.models import Status
 # pytest-xdist `[gw0] [ 42%] PASSED chemin/test_x.py::test_f`.
 _STATUTS = "PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS"
 
+# Le nodeid peut contenir des espaces dans les IDs de parametres, et meme un
+# mot qui ressemble a un statut. On le capture donc jusqu'au DERNIER statut
+# suivi d'une vraie fin de ligne pytest : raison optionnelle, puis pourcentage.
 _LIGNE = re.compile(
-    rf"^(?P<nodeid>\S+::\S*?)\s+(?P<statut>{_STATUTS})\b"
+    rf"^(?P<nodeid>.+::.+)\s+(?P<statut>{_STATUTS})\b"
+    rf"(?:\s+\(.*\))?(?:\s+\[\s*\d+%\])?\s*$"
 )
 _LIGNE_XDIST = re.compile(
-    rf"^\[gw\d+\]\s+\[\s*\d+%\]\s+(?P<statut>{_STATUTS})\s+(?P<nodeid>\S+::\S*)"
+    rf"^\[gw\d+\]\s+\[\s*\d+%\]\s+(?P<statut>{_STATUTS})\s+"
+    rf"(?P<nodeid>.+::.+?)\s*$"
 )
 
 _COLLECTE = re.compile(r"collected\s+(\d+)\s+item")
