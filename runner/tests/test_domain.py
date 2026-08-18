@@ -269,8 +269,10 @@ def test_a_relative_log_path_is_anchored_to_the_workspace(tmp_path):
 
 
 def test_an_absolute_log_path_is_left_alone(tmp_path):
-    (tmp_path / "config.yml").write_text("LOG_PATH: /var/logs\n", encoding="utf-8")
-    assert str(Workspace.load(str(tmp_path)).log_root) == "/var/logs"
+    absolu = tmp_path.parent / "outside-workspace-logs"
+    (tmp_path / "config.yml").write_text(
+        f"LOG_PATH: {absolu.as_posix()}\n", encoding="utf-8")
+    assert Workspace.load(str(tmp_path)).log_root == absolu
 
 
 def test_the_interpreter_falls_back_to_the_current_one(tmp_path):

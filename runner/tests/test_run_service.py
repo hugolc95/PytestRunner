@@ -7,6 +7,7 @@ isolation des lecteurs, remontee des resultats.
 
 from __future__ import annotations
 
+import os
 import sys
 import textwrap
 
@@ -14,6 +15,7 @@ import pytest
 from PyQt5.QtCore import QEventLoop, QTimer
 from PyQt5.QtWidgets import QApplication
 
+from runner.domain.execution import ReaderRun
 from runner.domain.models import Reader, RunRequest, Status
 from runner.domain.workspace import Workspace
 from runner.services.run_service import CollectWorker, RunService
@@ -90,6 +92,20 @@ def test_a_broken_workspace_reports_a_readable_error(qapp, tmp_path):
 
 
 # ----------------------------------------------------------------------- run
+
+def test_a_partial_environment_keeps_the_windows_process_baseline(
+        tmp_path, monkeypatch):
+    """Une surcouche ne doit jamais retirer SYSTEMROOT/PATH du sous-processus."""
+    monkeypatch.setenv("PYTESTRUNNER_BASELINE_TEST", "kept")
+    requete = RunRequest(
+        workspace=str(tmp_path), interpreter=sys.executable,
+        nodeids=("test_x.py::test_f",), readers=(),
+    )
+
+    env = ReaderRun(requete, Reader("", 0), {"CUSTOM_RUN_VALUE": "yes"})._environnement("")
+
+    assert env["PYTESTRUNNER_BASELINE_TEST"] == "kept"
+    assert env["CUSTOM_RUN_VALUE"] == "yes"
 
 @pytest.fixture
 def lance(qapp, suite):
@@ -231,7 +247,7 @@ def test_progress_and_outcomes_survive_spaces_in_parameter_ids(qapp, tmp_path):
     service.progress.connect(lambda faits, total: progression.append((faits, total)))
     service.finished.connect(fini.append)
 
-    assert service.start(requete, {})
+    assert service.start(requete, dict(os.environ))
     assert _attendre(lambda: bool(fini))
     service.wait(5000)
 
@@ -275,7 +291,7 @@ def test_workspace_forcing_colored_output_still_updates_results(qapp, tmp_path):
     service.line.connect(lambda _reader, ligne: lignes.append(ligne))
     service.finished.connect(rapports.extend)
 
-    assert service.start(requete, {})
+    assert service.start(requete, dict(os.environ))
     assert _attendre(lambda: bool(rapports))
     service.wait(5000)
 

@@ -170,7 +170,12 @@ class ReaderRun:
                    / f"{self.request.run_id}{suffixe}.xml")
 
     def _environnement(self, dossier_plugin: str) -> dict:
-        env = dict(self._env)
+        # Sous Windows, creer un processus avec un environnement partiel peut
+        # retirer SYSTEMROOT et les variables dont Python a besoin pour
+        # initialiser ses codecs et charger les DLL. `env` est une surcouche,
+        # pas un remplacement de l'environnement du poste.
+        env = dict(os.environ)
+        env.update(self._env)
         if self.reader.name:
             env[ENV_READER] = self.reader.name
             if self.request.config_path:
