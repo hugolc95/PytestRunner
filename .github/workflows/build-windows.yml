@@ -33,7 +33,7 @@ jobs:
         # destinees a l'installation hors ligne sur les postes.
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt5==5.15.11 PyYAML==6.0.3 pyinstaller==6.11.1
+          pip install PyQt5==5.15.11 PyYAML==6.0.3 qtawesome==1.4.2 pyinstaller==6.11.1
 
       - name: Run application tests
         run: |

@@ -20,13 +20,15 @@ sys.path.insert(0, SPECPATH)  # noqa: F821 - injecte par PyInstaller
 
 from build_common import EXCLUDES, EXCLUDES_CLASSIC
 
+APP_ICON_DATA = [("assets/pytest_runner.ico", "assets")]
+
 a = Analysis(
     ["main_qt.py"],
     pathex=[],
     binaries=[],
     # config.yaml n'est PAS embarque : il est lu dans le workspace de
     # l'utilisateur, pas a cote de l'exe.
-    datas=[],
+    datas=APP_ICON_DATA,
     hiddenimports=["yaml"],
     hookspath=[],
     hooksconfig={},
@@ -53,6 +55,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon="assets/pytest_runner.ico",
 )
 
 coll = COLLECT(
