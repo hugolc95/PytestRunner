@@ -21,6 +21,7 @@ from runner.ui.results_panel import (
 )
 from runner.ui.theme import app_stylesheet
 from runner.ui.tree_model import TestTreeModel
+from runner.ui.widgets import ReaderHeaderView
 
 NODEIDS = ["suite/apdu/test_select.py::test_select_aid[A1]",
            "suite/apdu/test_select.py::test_select_aid[A2]"]
@@ -87,6 +88,45 @@ def test_the_selected_row_is_one_colour_from_edge_to_edge(qapp):
     assert ecart <= 2, (
         f"la ligne selectionnee change de couleur en chemin : "
         f"{branche.name()} a gauche, {item.name()} a droite")
+
+
+def test_reader_colours_are_really_painted_in_the_tree_header(qapp):
+    """Le QSS de QHeaderView ne doit pas ecraser les couleurs du modele."""
+    from PyQt5.QtCore import Qt
+    from PyQt5.QtWidgets import QHeaderView, QTreeView
+
+    qapp.setStyleSheet(app_stylesheet())
+    lecteurs = (Reader("Reader A", 0), Reader("Reader B", 1))
+    modele = TestTreeModel()
+    modele.set_tree(build_tree(NODEIDS))
+    modele.set_readers(lecteurs)
+
+    vue = QTreeView()
+    vue.setHeader(ReaderHeaderView(Qt.Horizontal, vue))
+    vue.setModel(modele)
+    entete = vue.header()
+    entete.setSectionResizeMode(QHeaderView.Fixed)
+    for section in range(modele.columnCount()):
+        entete.resizeSection(section, 150)
+    vue.resize(460, 180)
+    vue.show()
+    qapp.processEvents()
+
+    image = entete.grab().toImage()
+    for section, lecteur in enumerate(lecteurs, start=1):
+        attendu = QColor(t.reader_color(lecteur.index))
+        gauche = entete.sectionViewportPosition(section)
+        droite = gauche + entete.sectionSize(section)
+        proches = 0
+        for x in range(max(0, gauche), min(image.width(), droite)):
+            for y in range(image.height()):
+                pixel = image.pixelColor(x, y)
+                ecart = max(abs(pixel.red() - attendu.red()),
+                            abs(pixel.green() - attendu.green()),
+                            abs(pixel.blue() - attendu.blue()))
+                proches += ecart <= 24 and pixel.alpha() > 128
+        assert proches >= 3, (
+            f"le lecteur {lecteur.name} n'est pas peint en {attendu.name()}")
 
 
 # ---------------------------------------------------------------------------

@@ -252,6 +252,50 @@ def test_the_detail_tab_is_the_one_that_opens(panel):
     assert panel.tabs.currentIndex() == ONGLET_DETAIL
 
 
+def test_main_tabs_are_larger_than_reader_tabs(panel, qapp):
+    """La navigation principale ne doit plus se confondre avec un filtre."""
+    from runner.ui.theme import app_stylesheet
+
+    qapp.setStyleSheet(app_stylesheet())
+    panel.resize(900, 500)
+    panel.show()
+    qapp.processEvents()
+
+    principaux = panel.tabs.tabBar()
+    lecteurs = panel.output.tabs
+    assert principaux.objectName() == "PrimaryTabs"
+    assert lecteurs.objectName() == "ReaderTabs"
+    assert principaux.tabRect(0).height() > lecteurs.tabRect(0).height()
+
+
+def test_reader_names_keep_the_same_colour_in_output_logs_and_compare(panel):
+    from runner.ui import tokens as t
+
+    for vues in (panel.output, panel.logs):
+        for position, lecteur in enumerate(READERS):
+            couleur = t.reader_color(lecteur.index)
+            assert couleur in vues._tab_labels[position].styleSheet()
+            assert couleur in vues.headers[position].styleSheet()
+
+
+def test_clearing_a_run_keeps_reader_names_above_compared_consoles(panel):
+    panel.output.compare.setChecked(True)
+    panel.begin_run()
+
+    assert [header.text() for header in panel.output.headers[:2]] == [
+        lecteur.short_name for lecteur in READERS]
+
+
+def test_selecting_a_reader_emphasises_it_without_losing_its_colour(panel):
+    from runner.ui import tokens as t
+
+    panel.output.tabs.setCurrentIndex(1)
+    libelle = panel.output._tab_labels[1]
+
+    assert t.reader_color(READERS[1].index) in libelle.styleSheet()
+    assert "font-weight: 700" in libelle.styleSheet()
+
+
 def test_starting_a_run_does_not_steal_the_current_tab(panel):
     """L'avancement se lit dans l'arbre : la console n'a pas a s'imposer.
 

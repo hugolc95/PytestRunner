@@ -56,6 +56,7 @@ from runner.ui.widgets import (
     EmptyState,
     ErrorDialog,
     ReaderBar,
+    ReaderHeaderView,
     RemainingPill,
     SearchBar,
     StatusPill,
@@ -305,6 +306,7 @@ class MainWindow(QMainWindow):
         colonne.addWidget(self.tree_toolbar)
 
         self.tree = QTreeView()
+        self.tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.tree))
         self.tree.setModel(self.model)
         self.tree.setUniformRowHeights(True)
         self.tree.setAllColumnsShowFocus(True)

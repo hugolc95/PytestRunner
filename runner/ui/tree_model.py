@@ -9,6 +9,7 @@ dessine que la partie visible.
 from __future__ import annotations
 
 from PyQt5.QtCore import QAbstractItemModel, QModelIndex, Qt, pyqtSignal
+from PyQt5.QtGui import QColor
 
 from runner.domain.models import Kind, Reader, Status, TestNode, worst
 from runner.ui import icons
@@ -153,6 +154,8 @@ class TestTreeModel(QAbstractItemModel):
             return "Status"
         if role == Qt.ToolTipRole and 0 < section <= len(self._readers):
             return self._readers[section - 1].name
+        if role == Qt.ForegroundRole and 0 < section <= len(self._readers):
+            return QColor(t.reader_color(self._readers[section - 1].index))
         if role == Qt.TextAlignmentRole and section > 0:
             return int(Qt.AlignCenter)
         return None

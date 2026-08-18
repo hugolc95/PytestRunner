@@ -69,8 +69,10 @@ class ReaderViews(QWidget):
 
         self.views: list[ConsoleView] = []
         self.headers: list[QLabel] = []
+        self._tab_labels: list[QLabel] = []
 
         self.tabs = QTabBar()
+        self.tabs.setObjectName("ReaderTabs")
         self.tabs.setDrawBase(False)
         self.tabs.setExpanding(False)
         self.tabs.setElideMode(Qt.ElideRight)
@@ -153,18 +155,36 @@ class ReaderViews(QWidget):
             self._add_view()
 
         self.tabs.blockSignals(True)
+        for libelle in self._tab_labels:
+            libelle.deleteLater()
+        self._tab_labels.clear()
         while self.tabs.count():
             self.tabs.removeTab(0)
         for lecteur in (self._readers if multi else ()):
-            position = self.tabs.addTab(lecteur.short_name)
+            # Le texte natif d'un onglet herite de la couleur globale du QSS.
+            # Un libelle dedie permet de garder la couleur du lecteur, meme au
+            # survol et dans l'onglet selectionne.
+            position = self.tabs.addTab("")
+            libelle = QLabel(lecteur.short_name)
+            libelle.setAlignment(Qt.AlignCenter)
+            libelle.setAttribute(Qt.WA_TransparentForMouseEvents)
+            libelle.setProperty("readerIndex", lecteur.index)
+            self.tabs.setTabButton(position, QTabBar.LeftSide, libelle)
+            self._tab_labels.append(libelle)
             self.tabs.setTabToolTip(position, lecteur.name)
-            from PyQt5.QtGui import QColor
-
-            self.tabs.setTabTextColor(position, QColor(t.reader_color(lecteur.index)))
         self.tabs.blockSignals(False)
+
+        for position, entete in enumerate(self.headers):
+            if position < len(self._readers):
+                lecteur = self._readers[position]
+                entete.setText(lecteur.short_name)
+                entete.setToolTip(lecteur.name)
+            else:
+                entete.clear()
 
         self.tabs.setVisible(multi)
         self.compare.setVisible(multi)
+        self._restyle_reader_names()
         self._apply_layout()
 
     def _apply_layout(self) -> None:
@@ -180,6 +200,7 @@ class ReaderViews(QWidget):
 
     def _on_tab(self, index: int) -> None:
         self._apply_layout()
+        self._restyle_reader_names()
         self.reader_selected.emit(index)
 
     def select_silently(self, index: int) -> None:
@@ -190,6 +211,7 @@ class ReaderViews(QWidget):
             self.tabs.setCurrentIndex(index)
             self.tabs.blockSignals(False)
             self._apply_layout()
+            self._restyle_reader_names()
 
     def toggle_compare(self) -> None:
         if self.compare.isVisible():
@@ -212,11 +234,49 @@ class ReaderViews(QWidget):
             # largeur de la console.
             self.headers[index].setToolTip(chemin)
 
+    def _restyle_reader_names(self) -> None:
+        courant = self.tabs.currentIndex()
+        for position, (lecteur, libelle) in enumerate(
+                zip(self._readers, self._tab_labels)):
+            couleur = t.reader_color(lecteur.index)
+            libelle.setStyleSheet(
+                f"color: {couleur}; background: transparent;"
+                f"font-size: {t.TEXT_XS}px;"
+                f"font-weight: {700 if position == courant else 600};"
+                f"padding: 0 {t.SPACE_1}px;")
+
+        for position, entete in enumerate(self.headers):
+            if position >= len(self._readers):
+                entete.setStyleSheet("")
+                continue
+            couleur = t.reader_color(self._readers[position].index)
+            entete.setStyleSheet(
+                f"color: {couleur};"
+                f"background-color: {t.rgba(couleur, 0.12)};"
+                f"border: 1px solid {t.rgba(couleur, 0.28)};"
+                f"border-radius: {t.RADIUS_PILL}px;"
+                f"font-size: {t.TEXT_XS}px; font-weight: 600;"
+                f"padding: {t.SPACE_1}px {t.SPACE_2}px;")
+
+    def restyle(self) -> None:
+        for vue in self.views:
+            vue.restyle()
+        self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
+        self._restyle_reader_names()
+
     def clear(self) -> None:
         for vue in self.views:
             vue.clear()
-        for entete in self.headers:
-            entete.clear()
+        # Le contenu disparait, pas l'identite des colonnes. En comparaison,
+        # un en-tete vide au debut d'un run rendrait les consoles impossibles
+        # a attribuer jusqu'au premier rapport complet.
+        for position, entete in enumerate(self.headers):
+            if position < len(self._readers):
+                lecteur = self._readers[position]
+                entete.setText(lecteur.short_name)
+                entete.setToolTip(lecteur.name)
+            else:
+                entete.clear()
 
 
 class ResultsPanel(QWidget):
@@ -249,6 +309,7 @@ class ResultsPanel(QWidget):
         self.logs.reader_selected.connect(self._on_reader, Qt.UniqueConnection)
 
         self.tabs = QTabWidget()
+        self.tabs.tabBar().setObjectName("PrimaryTabs")
         self.tabs.addTab(self.detail,
                          icons.icon("mdi.text-box-search-outline", t.TEXT_MUTED),
                          "Detail")
@@ -277,8 +338,7 @@ class ResultsPanel(QWidget):
     def restyle(self) -> None:
         """Fait redescendre le changement de theme dans tout le panneau."""
         for vues in (self.output, self.logs):
-            for vue in vues.views:
-                vue.restyle()
+            vues.restyle()
         self.source.restyle()
         for position, glyphe in (
                 (ONGLET_DETAIL, "mdi.text-box-search-outline"),
