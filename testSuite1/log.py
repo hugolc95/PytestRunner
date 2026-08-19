@@ -11,6 +11,10 @@ import re
 from pathlib import Path
 
 
+FILE_LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
+CONSOLE_LOG_FORMAT = "%(levelname)s - %(message)s"
+
+
 def safe_path_name(value: object) -> str:
     """Retourne un nom de fichier valide, notamment sous Windows."""
     cleaned = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", str(value)).strip(" .")
@@ -71,6 +75,22 @@ def next_available_build_number(log_root: Path, datestamp: str) -> int:
     return max(numbers, default=0) + 1
 
 
+def configure_console_logging(logger: logging.Logger, log_level: int) -> None:
+    """Retire l'horodatage des handlers affiches dans la console/PyCharm.
+
+    ``FileHandler`` herite de ``StreamHandler`` : il faut donc l'exclure
+    explicitement pour conserver l'horodatage dans les fichiers ``.log``.
+    """
+    formatter = logging.Formatter(CONSOLE_LOG_FORMAT)
+    for console_handler in logger.handlers:
+        if (
+            isinstance(console_handler, logging.StreamHandler)
+            and not isinstance(console_handler, logging.FileHandler)
+        ):
+            console_handler.setLevel(log_level)
+            console_handler.setFormatter(formatter)
+
+
 def setup_logging(
     *,
     test_file: Path,
@@ -121,8 +141,9 @@ def setup_logging(
         numbered=incremental_log,
     )
     handler.setLevel(log_level)
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
+    handler.setFormatter(logging.Formatter(FILE_LOG_FORMAT))
 
     logger.setLevel(log_level)
+    configure_console_logging(logger, log_level)
     logger.addHandler(handler)
     return log_path, handler
