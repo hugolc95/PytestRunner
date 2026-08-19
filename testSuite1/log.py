@@ -114,6 +114,10 @@ def setup_logging(
 
         logs/date/reader/chemin/test_B0042_001.log
     """
+    if callable(reader):
+        reader = reader()
+    reader = "" if reader is None else str(reader)
+
     test_file = Path(test_file).resolve()
     log_directory = Path(log_directory).resolve()
     relative_directory = relative_test_directory(test_file, workspace_root)
