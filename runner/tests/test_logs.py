@@ -72,6 +72,16 @@ def test_the_log_is_found_with_no_manifest_at_all(tmp_path):
     assert find_test_log(tmp_path, NODEID) == attendu
 
 
+def test_build_log_with_module_and_test_in_filename_is_found(tmp_path):
+    attendu = ecrire(
+        tmp_path / "20260819" / "Run_0042" / "HID OMNIKEY"
+        / "NIST" / "TestSuiteCDS",
+        "test_PSO_CDS_RSA__test_pso[nom-RSA-mod2048-tg1-tc11]",
+    )
+
+    assert find_test_log(tmp_path, NODEID, "HID OMNIKEY") == attendu
+
+
 def test_the_test_identity_may_be_carried_by_the_folders(tmp_path):
     """Le conftest recree l'arborescence : le nom du fichier ne porte alors
     que le parametre, le reste est dans le chemin."""
@@ -403,6 +413,22 @@ def test_the_panel_loads_one_log_per_reader(panneau, tmp_path):
 
     assert "vu par A" in panneau.logs.views[0].text()
     assert "vu par B" in panneau.logs.views[1].text()
+
+
+def test_the_panel_refreshes_a_log_created_after_selection(panneau, tmp_path):
+    from runner.domain.models import Reader
+
+    lecteur = Reader("LecteurA", 0)
+    panneau.set_readers((lecteur,))
+    panneau.set_log_root(tmp_path)
+    panneau.show_test(NODEID_SIMPLE, {}, str(tmp_path))
+
+    assert "No log found" in panneau.logs.views[0].text()
+
+    _logs_par_lecteur(tmp_path, {"LecteurA": "cree pendant le build"})
+    panneau.refresh_logs()
+
+    assert "cree pendant le build" in panneau.logs.views[0].text()
 
 
 def test_the_panel_says_where_it_looked(panneau, tmp_path):
