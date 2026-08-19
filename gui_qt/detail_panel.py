@@ -408,12 +408,10 @@ class DetailPanel(QWidget):
         self.log_view = self.log_views[0]
 
         self.open_full_log_button = QToolButton()
-        self.open_full_log_button.setText("Open in Notepad++")
+        self.open_full_log_button.setText("↗")
         self.open_full_log_button.setAutoRaise(True)
         self.open_full_log_button.setCursor(Qt.PointingHandCursor)
-        self.open_full_log_button.setToolTip(
-            "Open the complete log of the active reader in Notepad++"
-        )
+        self.open_full_log_button.setToolTip("Open log")
         self.open_full_log_button.setEnabled(False)
         self.open_full_log_button.clicked.connect(self._open_current_log)
         self.log_stack.toolbar.addWidget(self.open_full_log_button)
@@ -549,7 +547,7 @@ class DetailPanel(QWidget):
     def _show_log_context_menu(self, index: int, view: QPlainTextEdit, position):
         menu = view.createStandardContextMenu()
         menu.addSeparator()
-        action = menu.addAction("Open complete log in Notepad++")
+        action = menu.addAction("Open log")
         action.setEnabled(self._log_path(index) is not None)
         action.triggered.connect(lambda: self._open_log(index))
         menu.exec_(view.mapToGlobal(position))
