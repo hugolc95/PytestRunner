@@ -700,7 +700,7 @@ class ResultsPanel(QWidget):
 
     def show_group(self, path: str, name: str, readers, counts: dict,
                    failures: list, source: Path | None = None,
-                   jump_nodeid: str = "") -> None:
+                   jump_nodeid: str = "", campaign=None) -> None:
         """Selectionne un regroupement : son bilan, et sa source s'il en a une.
 
         Un module a un fichier, un dossier n'en a pas. Laisser celui du test
@@ -708,13 +708,23 @@ class ResultsPanel(QWidget):
         vient de cliquer ; le refuser a un module priverait du geste le plus
         courant, cliquer un `.py` pour le lire.
 
+        `campaign` prend le pas sur `source` : la ligne qui porte le badge
+        Campaign n'a le plus souvent PAS de fichier .py propre (c'est un
+        dossier), et meme quand elle en a un, ce qu'on cherche en cliquant
+        cette ligne precise est le YAML qui la gouverne, pas un .py parmi
+        d'autres. Detail montre sa structure (les configurations), Source son
+        texte -- deux lectures d'une meme chose, pas la meme.
+
         Les logs, eux, restent vides : ils sont ecrits PAR TEST, et il n'y en
         a aucun qui reponde pour un lot entier.
         """
         self._nodeid = ""
         self._statuses = {}
-        self.detail.show_group(path, name, tuple(readers), counts, failures)
-        self.source.show_file(source, jump_nodeid)
+        self.detail.show_group(path, name, tuple(readers), counts, failures, campaign)
+        if campaign is not None:
+            self.source.show_file(Path(campaign.path))
+        else:
+            self.source.show_file(source, jump_nodeid)
         self.logs.clear()
 
     def update_statuses(self, nodeid: str, statuses: dict[int, Status],

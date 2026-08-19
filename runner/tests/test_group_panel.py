@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 from PyQt5.QtCore import QModelIndex, Qt
+from PyQt5.QtWidgets import QLabel
 
 from runner.domain.models import Reader, Status
 from runner.domain.tree import build_tree
@@ -252,6 +253,98 @@ def test_a_group_does_not_leave_the_previous_source_behind(joue, tmp_path):
     assert joue.results.source.stack.currentWidget() is joue.results.source.empty
     assert joue.results.source.path() is None
     assert joue.results.logs.views[0].text() == ""
+
+
+# ------------------------------------------------------- la ligne Campaign
+
+@pytest.fixture
+def avec_campagne(avec_source, tmp_path):
+    """Une campagne qui couvre `test_atr` et `test_aid[A1]` -- deux feuilles
+    dont l'ancetre commun est `test_select.py`, pas `suite` ni `apdu`. Assise
+    sur `avec_source` : le fichier existe reellement, pour verifier que la
+    campagne prend le pas sur SA source normale sans que le test ne prouve
+    rien faute de fichier a montrer.
+
+    Le fichier de campagne n'est pas range sous un dossier nomme comme l'un
+    des ancetres de l'arbre : `_rebuild_campaign_roots` retomberait alors sur
+    ce nom-la plutot que sur l'ancetre commun des tests couverts, ce que ce
+    test doit justement verifier.
+    """
+    from runner.domain import campaign as campaign_mod
+
+    fenetre = avec_source
+    campagne_path = tmp_path / "campaign.yaml"
+    campagne_path.write_text(
+        """\
+name: ATR configurations
+campaign:
+  - name: Configuration A
+    config: setup_a.py
+    tests:
+      - suite/apdu/test_select.py::test_atr
+  - name: Configuration B
+    config: setup_b.py
+    tests:
+      - suite/apdu/test_select.py::test_aid[A1]
+""",
+        encoding="utf-8",
+    )
+    couverts = (NODEIDS[0], NODEIDS[1])
+    campagnes = campaign_mod.discover_campaigns(str(tmp_path), couverts)
+    assert campagnes, "la campagne de test n'a pas ete detectee"
+
+    fenetre._campaigns = campagnes
+    fenetre.model.set_campaigns(campaign_mod.memberships(campagnes))
+    return fenetre
+
+
+def test_clicking_the_campaign_row_shows_its_configurations_in_detail(avec_campagne):
+    avec_campagne.tree.setCurrentIndex(
+        _index(avec_campagne, "suite", "apdu", "test_select.py"))
+
+    fiche = _fiche(avec_campagne)
+    # `isVisible()` reflete la fenetre entiere, jamais montree dans ce test :
+    # c'est l'intention -- posee par `setVisible()` dans `_remplir_campagne`
+    # -- qu'on verifie, via ce que la ligne contient reellement.
+    assert not fiche.campaign_host.isHidden()
+    assert fiche.campaign_title.text() == "Campaign · 2 configurations"
+    assert fiche._campaign_cards.count() == 2
+
+
+def test_the_campaign_card_names_its_setup_and_test_count(avec_campagne):
+    avec_campagne.tree.setCurrentIndex(
+        _index(avec_campagne, "suite", "apdu", "test_select.py"))
+
+    fiche = _fiche(avec_campagne)
+    premiere = fiche._campaign_cards.itemAt(0).widget()
+    assert "Configuration A" in premiere.findChild(QLabel).text()
+    textes = " ".join(label.text() for label in premiere.findChildren(QLabel))
+    assert "setup_a.py" in textes
+    assert "1 test" in textes
+
+
+def test_clicking_the_campaign_row_shows_its_yaml_in_source(avec_campagne):
+    avec_campagne.tree.setCurrentIndex(
+        _index(avec_campagne, "suite", "apdu", "test_select.py"))
+
+    assert _source_chargee(avec_campagne)
+    texte = avec_campagne.results.source.editor.toPlainText()
+    assert "ATR configurations" in texte
+    assert avec_campagne.results.source.path().name == "campaign.yaml"
+
+
+def test_a_row_that_does_not_carry_the_campaign_shows_neither(avec_campagne):
+    """`test_aid[A1]` est couvert par la campagne, mais ce n'est pas LUI qui
+    porte le badge -- son ancetre commun avec `test_atr` le porte. Cliquer ce
+    descendant ne doit donc pas montrer les cartes de configuration : elles
+    parleraient d'une campagne plus large que ce que la ligne represente."""
+    avec_campagne.tree.setCurrentIndex(
+        _index(avec_campagne, "suite", "apdu", "test_select.py", "test_aid"))
+
+    fiche = _fiche(avec_campagne)
+    assert fiche.campaign_host.isHidden()
+    assert fiche._campaign_cards.count() == 0
+    assert avec_campagne.results.source.path().name == "test_select.py"
 
 
 # ---------------------------------------------------------------- la barre

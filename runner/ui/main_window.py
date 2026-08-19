@@ -96,7 +96,12 @@ class CampaignBadgeDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setPen(QPen(QColor(t.ACCENT), 1))
-        painter.setBrush(QColor(t.rgba(t.ACCENT, 0.12)))
+        # `t.rgba()` rend une chaine QSS (`rgba(r, g, b, a)`), que `QColor`
+        # n'analyse pas -- `QColor(...)` en sort invalide, donc noire et
+        # opaque. Invisible en sombre (noir sur quasi-noir), le badge devenait
+        # un pave sombre plaque sur un fond clair. `blend()` donne l'equivalent
+        # OPAQUE en `#rrggbb`, que `QColor` sait lire.
+        painter.setBrush(QColor(t.blend(t.ACCENT, t.BG_SURFACE, 0.12)))
         painter.drawRoundedRect(badge, 9, 9)
         painter.setPen(QColor(t.ACCENT))
         police = painter.font()
@@ -1197,8 +1202,23 @@ class MainWindow(QMainWindow):
         compteurs, echecs = self.model.subtree_summary(premiere)
         chemin, nom = self._situer(premiere)
         source, saut = self._source_du_groupe(premiere)
+        campagne = self._campagne_de(premiere)
         self.results.show_group(chemin, nom, self.model.readers,
-                                compteurs, echecs, source, saut)
+                                compteurs, echecs, source, saut, campagne)
+
+    def _campagne_de(self, index: QModelIndex) -> campaign_mod.CampaignDefinition | None:
+        """La campagne que CETTE ligne represente, si elle porte le badge.
+
+        `CAMPAIGN_ROLE` ne vaut que sur la ligne choisie par
+        `_rebuild_campaign_roots` comme ancetre commun -- un de ses
+        descendants (une classe, un test) n'en montre qu'une part, et lui
+        attribuer le meme contenu laisserait croire que la campagne se limite
+        a cette part.
+        """
+        chemin = self.model.data(index, CAMPAIGN_ROLE)
+        if not chemin:
+            return None
+        return next((c for c in self._campaigns if c.path == chemin), None)
 
     def _source_du_groupe(self, index: QModelIndex) -> tuple:
         """Fichier a montrer pour ce regroupement, et ou s'y placer.

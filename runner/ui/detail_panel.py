@@ -20,6 +20,7 @@ from html import escape
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -32,6 +33,7 @@ from PyQt5.QtWidgets import (
 )
 
 from runner.domain.ansi import strip_ansi
+from runner.domain.campaign import CampaignDefinition, CampaignScenario
 from runner.domain.failures import Failure, classify_line
 from runner.domain.models import Reader, Status
 from runner.ui import theme
@@ -170,6 +172,19 @@ class DetailPanel(QWidget):
         colonne.addWidget(self.group_name)
         colonne.addWidget(self.group_total)
 
+        # La structure de la campagne (ses configurations), separee du bilan
+        # de run qui suit : l'une dit ce qui va se passer, l'autre ce qui
+        # s'est passe. Repliee des qu'aucune campagne ne couvre la ligne.
+        self.campaign_title = QLabel()
+        self.campaign_title.setObjectName("Muted")
+        colonne.addWidget(self.campaign_title)
+
+        self.campaign_host = QWidget()
+        self._campaign_cards = QVBoxLayout(self.campaign_host)
+        self._campaign_cards.setContentsMargins(0, 0, 0, t.SPACE_2)
+        self._campaign_cards.setSpacing(t.SPACE_2)
+        colonne.addWidget(self.campaign_host)
+
         # Une barre par lecteur, empilees : c'est en les superposant qu'on voit
         # que l'un est plus rouge que l'autre.
         self.ribbons_host = QWidget()
@@ -190,13 +205,16 @@ class DetailPanel(QWidget):
         return contenu
 
     def show_group(self, path: str, name: str, readers: tuple[Reader, ...],
-                   counts: dict, failures: list) -> None:
+                   counts: dict, failures: list,
+                   campaign: CampaignDefinition | None = None) -> None:
         """Fiche d'un dossier, d'un fichier ou d'un test parametre.
 
         `counts` donne, par index de lecteur, le nombre de tests par statut.
-        `failures` liste des couples (nodeid, index du lecteur).
+        `failures` liste des couples (nodeid, index du lecteur). `campaign`
+        n'est pas None que sur la ligne qui porte le badge -- c'est elle qui
+        represente la campagne entiere, pas l'un de ses descendants.
         """
-        self._dernier_groupe = (path, name, readers, counts, failures)
+        self._dernier_groupe = (path, name, readers, counts, failures, campaign)
         self._nodeid = ""
         self.stack.setCurrentIndex(self.PAGE_GROUPE)
 
@@ -211,8 +229,64 @@ class DetailPanel(QWidget):
         self.group_total.setText(f"{tests} test{'s' if tests > 1 else ''}"
                                  + (f" × {len(readers)} readers" if len(readers) > 1
                                     else ""))
+        self._remplir_campagne(campaign)
         self._remplir_rubans(readers, counts)
         self._remplir_echecs(readers, failures)
+
+    def _remplir_campagne(self, campaign: CampaignDefinition | None) -> None:
+        while self._campaign_cards.count():
+            element = self._campaign_cards.takeAt(0)
+            widget = element.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self.campaign_title.setVisible(campaign is not None)
+        self.campaign_host.setVisible(campaign is not None)
+        if campaign is None:
+            return
+
+        combien = len(campaign.scenarios)
+        self.campaign_title.setText(
+            f"Campaign · {combien} configuration{'s' if combien != 1 else ''}")
+        for scenario in campaign.scenarios:
+            self._campaign_cards.addWidget(self._build_campaign_card(scenario))
+
+    def _build_campaign_card(self, scenario: CampaignScenario) -> QWidget:
+        """Une configuration : son setup, et combien de tests elle couvre.
+
+        Une carte plutot qu'une ligne de plus dans le texte : les scenarios
+        d'une campagne sont des etapes distinctes, executees l'une apres
+        l'autre, pas une simple liste a plat.
+        """
+        carte = QFrame()
+        carte.setObjectName("Surface")
+        colonne = QVBoxLayout(carte)
+        colonne.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
+        colonne.setSpacing(t.SPACE_1)
+
+        entete = QHBoxLayout()
+        entete.setContentsMargins(0, 0, 0, 0)
+        titre = QLabel(scenario.name)
+        titre.setStyleSheet(
+            f"font-weight:600; font-size:{t.TEXT_SM}px; background:transparent;")
+        nombre = len(scenario.tests)
+        compte = QLabel(f"{nombre} test{'s' if nombre != 1 else ''}")
+        compte.setObjectName("Muted")
+        entete.addWidget(titre, 1)
+        entete.addWidget(compte)
+        colonne.addLayout(entete)
+
+        if scenario.setup:
+            commande = (scenario.setup if isinstance(scenario.setup, str)
+                       else " ".join(scenario.setup))
+            setup_label = QLabel(commande)
+            setup_label.setWordWrap(True)
+            setup_label.setStyleSheet(
+                f"font-family:{t.FONT_MONO}; font-size:{t.TEXT_XS}px;"
+                f" color:{t.TEXT_MUTED}; background:transparent;")
+            colonne.addWidget(setup_label)
+
+        return carte
 
     def _remplir_rubans(self, readers, counts: dict) -> None:
         while self._ribbons.count():

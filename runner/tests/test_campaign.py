@@ -120,6 +120,63 @@ def test_an_empty_folder_under_tests_is_dropped_rather_than_kept_verbatim(
     assert all("::" in nodeid for nodeid in found[0].nodeids)
 
 
+def test_the_campaign_badge_follows_the_theme_instead_of_painting_black():
+    """`QColor(rgba(...))` echoue en silence et rend un noir opaque -- invisible
+    sur le fond sombre de l'arbre, mais un pave noir plaque sur son fond clair.
+    Verifie sur le PIXEL peint, pas sur la couleur demandee : c'est justement
+    ce que `QColor` peut refuser sans le dire.
+    """
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+
+    from runner.ui.main_window import APP, ORG, MainWindow
+    from runner.ui.tree_model import CAMPAIGN_ROLE
+
+    qapp = QApplication.instance() or QApplication([])
+    QSettings(ORG, APP).clear()
+    nodeids = ("Suite/test_x.py::test_a", "Suite/test_x.py::test_b")
+
+    fenetre = MainWindow()
+    fenetre.model.set_tree(build_tree(nodeids))
+    fenetre.model.set_campaigns({n: "campaign.yml" for n in nodeids})
+    fenetre.left_stack.setCurrentWidget(fenetre.tree)
+    fenetre.tree.expandAll()
+    fenetre.resize(900, 300)
+
+    try:
+        for nom in ("dark", "light"):
+            fenetre.apply_theme(nom)
+            fenetre.show()
+            qapp.processEvents()
+
+            # Le badge n'est pas sur une feuille mais sur l'ancetre commun
+            # (voir `_rebuild_campaign_roots`) : on le retrouve comme le fait
+            # deja `test_marks_only_the_common_campaign_suite`, plutot que de
+            # deviner sa position dans l'arbre.
+            marquees = []
+            pile = [fenetre.model.index(r, 0) for r in range(fenetre.model.rowCount())]
+            while pile:
+                index = pile.pop()
+                if index.data(CAMPAIGN_ROLE):
+                    marquees.append(index)
+                pile.extend(fenetre.model.index(r, 0, index)
+                           for r in range(fenetre.model.rowCount(index)))
+            assert len(marquees) == 1, f"{nom} : {len(marquees)} ligne(s) marquee(s)"
+
+            rect = fenetre.tree.visualRect(marquees[0])
+            # Meme geometrie que `CampaignBadgeDelegate.paint()` : la pastille
+            # (76x20) est ancree a 8px du bord droit de la colonne. On prend un
+            # pixel pres du bord interieur, loin du texte centre.
+            x = rect.right() - 80
+            y = rect.center().y() - 7
+
+            pixel = fenetre.tree.viewport().grab().toImage().pixelColor(x, y)
+            assert (pixel.red(), pixel.green(), pixel.blue()) != (0, 0, 0), (
+                f"{nom} : la pastille Campaign est peinte en noir opaque")
+    finally:
+        fenetre.hide()
+
+
 def test_marks_only_the_common_campaign_suite(tmp_path):
     from PyQt5.QtWidgets import QApplication
 
