@@ -16,6 +16,7 @@ import time
 import pytest
 
 from runner.domain.logs import (
+    find_logs_for_build,
     find_test_log,
     nodeid_tokens,
     places_searched,
@@ -338,6 +339,33 @@ def test_the_most_recent_run_is_named_first(tmp_path):
     dater(vieux, 90000)
 
     assert places_searched(tmp_path)[0] == recent
+
+
+# --------------------------------------------------------------- par build
+
+def test_all_normal_logs_of_a_build_are_found(tmp_path):
+    a = ecrire(tmp_path / "20260819" / "Run_0042" / "Reader A" / "suite",
+               "test_a")
+    b = ecrire(tmp_path / "20260819" / "Run_0042" / "Reader A" / "suite",
+               "test_b")
+    ecrire(tmp_path / "20260819" / "Run_0041" / "Reader A", "old")
+
+    assert find_logs_for_build(tmp_path, 42, "Reader A") == [a, b]
+
+
+def test_all_incremental_logs_of_a_build_are_found(tmp_path):
+    dossier = tmp_path / "20260819" / "Reader A" / "suite"
+    a = ecrire(dossier, "test_a_B0042_001")
+    b = ecrire(dossier, "test_a_B0042_002")
+    ecrire(dossier, "test_a_B0041_001")
+
+    assert find_logs_for_build(tmp_path, 42, "Reader A") == [a, b]
+
+
+def test_build_lookup_never_borrows_another_readers_logs(tmp_path):
+    ecrire(tmp_path / "20260819" / "Run_0042" / "Reader A", "test_a")
+
+    assert find_logs_for_build(tmp_path, 42, "Reader B") == []
 
 
 def test_a_missing_log_folder_is_reported_as_such(tmp_path):

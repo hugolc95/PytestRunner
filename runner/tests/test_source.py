@@ -383,6 +383,8 @@ def test_a_run_always_starts_from_the_file_on_screen(fenetre, tmp_path):
     fenetre._start(["test_demo.py::test_atr"])
 
     assert lances, "le run n'a pas ete lance"
+    assert lances[0].build_number == fenetre._build_number
+    assert lances[0].build_number > 0
     assert chemin.read_text(encoding="utf-8") == "def test_atr(): assert False\n"
     assert not fenetre.results.source.dirty
 

@@ -86,6 +86,37 @@ def test_reader_entries_from_one_launch_are_grouped(historique):
     assert groups[0].failed_nodeids == ("t2",)
 
 
+def test_a_group_exposes_the_shared_build_number(tmp_path):
+    history = History(tmp_path)
+    ajoute(history, "run", reader="A", build_number=42, log_root="/logs")
+    ajoute(history, "run", reader="B", build_number=42, log_root="/logs")
+
+    group = group_entries(history.entries())[0]
+    assert group.build_number == 42
+    assert group.log_root == "/logs"
+
+
+def test_history_shows_the_build_and_opens_its_log_folder(
+        qapp, tmp_path, monkeypatch):
+    import runner.ui.history_dashboard as dashboard
+
+    log_file = tmp_path / "logs" / "20260819" / "Run_0042" / "test.log"
+    log_file.parent.mkdir(parents=True)
+    log_file.write_text("ok", encoding="utf-8")
+    history = History(tmp_path / "history")
+    ajoute(history, "run", build_number=42, log_root=str(tmp_path / "logs"))
+    window = HistoryWindow(history)
+    select_run(window)
+
+    assert "Build #0042" in window.detail_meta.text()
+    opened = []
+    monkeypatch.setattr(dashboard.QDesktopServices, "openUrl",
+                        lambda url: opened.append(url) or True)
+    window.open_logs()
+
+    assert opened[0].toLocalFile() == str(log_file.parent)
+
+
 def test_runs_are_listed_newest_first(fenetre):
     groups = [item.data(Qt.UserRole) for item in run_items(fenetre)]
     assert [group.id for group in groups] == ["recent", "old"]
