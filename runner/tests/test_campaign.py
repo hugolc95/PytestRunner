@@ -57,6 +57,69 @@ def test_discovers_nested_campaign_and_resolves_collected_nodeids(tmp_path):
     assert found[0].scenarios[0].setup == "setup_a.py"
 
 
+def _campaign_avec_dossiers(workspace: Path) -> Path:
+    """Une campagne qui liste des DOSSIERS et un FICHIER entier, comme le
+    fait un vrai campaign.yaml : plus court a ecrire, et un test ajoute au
+    dossier plus tard y entre sans toucher au YAML."""
+    path = workspace / "flexiPQC" / "Campaigns" / "campaign.yaml"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """\
+campaign:
+  - config: ../Tests/00_CardConfig/test_001_SetConfig.py
+    tests:
+      - ../Tests/02_MLDSA_flexicoded
+      - ../Tests/00_CardConfig/test_999_single_file.py
+""",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_a_folder_or_whole_file_under_tests_expands_to_every_test_it_contains(
+    tmp_path,
+):
+    """Le YAML n'a pas toujours un nodeid precis sous `tests:` : parfois un
+    dossier entier, parfois un fichier .py entier -- comme les scripts de
+    `config:`, relatifs au fichier Campaign lui-meme, `..` compris.
+    """
+    _campaign_avec_dossiers(tmp_path)
+    collected = (
+        "flexiPQC/Tests/02_MLDSA_flexicoded/test_foo.py::test_a",
+        "flexiPQC/Tests/02_MLDSA_flexicoded/test_foo.py::test_b",
+        "flexiPQC/Tests/00_CardConfig/test_999_single_file.py::test_x",
+        # Un dossier voisin qui ne doit PAS etre couvert : sans cela, le test
+        # ne prouverait pas que seul le dossier nomme est retenu.
+        "flexiPQC/Tests/03_MLKEM_activated/test_bar.py::test_c",
+    )
+
+    found = discover_campaigns(str(tmp_path), collected)
+
+    assert len(found) == 1
+    assert set(found[0].nodeids) == {
+        "flexiPQC/Tests/02_MLDSA_flexicoded/test_foo.py::test_a",
+        "flexiPQC/Tests/02_MLDSA_flexicoded/test_foo.py::test_b",
+        "flexiPQC/Tests/00_CardConfig/test_999_single_file.py::test_x",
+    }
+
+
+def test_an_empty_folder_under_tests_is_dropped_rather_than_kept_verbatim(
+    tmp_path,
+):
+    """Un chemin qui ne couvre rien (dossier vide, faute de frappe) ne doit
+    pas laisser un identifiant litteral dans les nodeids : ce dernier ne
+    correspondrait a aucun test de l'arbre, et la campagne resterait invisible
+    sans qu'aucune erreur ne le signale."""
+    _campaign_avec_dossiers(tmp_path)
+    collected = ("flexiPQC/Tests/00_CardConfig/test_999_single_file.py::test_x",)
+
+    found = discover_campaigns(str(tmp_path), collected)
+
+    assert len(found) == 1
+    assert "../Tests/02_MLDSA_flexicoded" not in found[0].nodeids
+    assert all("::" in nodeid for nodeid in found[0].nodeids)
+
+
 def test_marks_only_the_common_campaign_suite(tmp_path):
     from PyQt5.QtWidgets import QApplication
 

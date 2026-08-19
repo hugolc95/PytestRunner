@@ -70,6 +70,49 @@ def _commande(value: Any) -> str | tuple[str, ...] | None:
     raise ValueError(f"Invalid campaign setup command: {value!r}")
 
 
+def _normalized_parts(chemin: str) -> tuple[str, ...]:
+    """Composants d'un chemin, casse et separateurs ignores, `.`/`..` retires.
+
+    Une entree `tests:` qui designe un dossier ou un fichier entier suit le
+    meme repere que `config:` : relative au fichier Campaign, `..` compris.
+    Ce n'est pas un chemin disque a resoudre -- seuls les noms de dossiers
+    traverses comptent pour retrouver les tests qu'ils contiennent, et `..`
+    n'en est jamais un.
+    """
+    brut = chemin.replace("\\", "/")
+    return tuple(partie.casefold() for partie in brut.split("/")
+                if partie and partie not in (".", ".."))
+
+
+def _expand_path_entry(chemin: str,
+                       fichiers_collectes: list[tuple[tuple[str, ...], str]],
+                       ) -> list[str]:
+    """Nodeids collectes couverts par une entree `tests:` sans ``::``.
+
+    Une campagne peut lister un dossier entier ou un fichier ``.py`` complet
+    plutot qu'un nodeid precis -- plus court a ecrire, et plus resistant : un
+    test ajoute au dossier plus tard entre dans la campagne sans toucher au
+    YAML. Le dossier/fichier est repere par SES noms de composants, cherches
+    dans le chemin de chaque test collecte -- une correspondance exacte de
+    caracteres se romprait a la premiere difference de rootdir ou d'antislash.
+    """
+    cibles = _normalized_parts(chemin)
+    if not cibles:
+        return []
+
+    est_fichier = cibles[-1].endswith(".py")
+    trouves: list[str] = []
+    for parties, nodeid in fichiers_collectes:
+        if est_fichier:
+            if parties[-len(cibles):] == cibles:
+                trouves.append(nodeid)
+        else:
+            n = len(cibles)
+            if any(parties[i:i + n] == cibles for i in range(len(parties) - n)):
+                trouves.append(nodeid)
+    return trouves
+
+
 def _test(value: Any) -> CampaignTest:
     if isinstance(value, str):
         return CampaignTest(value.strip())
@@ -94,6 +137,16 @@ def load_campaign(path: str | Path, collected=()) -> CampaignDefinition:
         racine = (fichier.parent / racine).resolve()
 
     resolver = NodeidResolver(collected)
+    # Index des tests collectes par composants de CHEMIN, pour les entrees
+    # `tests:` qui designent un dossier ou un fichier entier plutot qu'un seul
+    # nodeid. Construit une fois : le refaire pour chaque entree reparcourrait
+    # toute la collecte a chaque ligne du YAML.
+    fichiers_collectes = [
+        (parties, str(nodeid)) for nodeid in collected
+        for parties, reste in (NodeidResolver._morceaux(str(nodeid)),)
+        if parties and reste
+    ]
+
     scenarios: list[CampaignScenario] = []
     for position, brut in enumerate(bruts, 1):
         if not isinstance(brut, dict):
@@ -104,7 +157,16 @@ def load_campaign(path: str | Path, collected=()) -> CampaignDefinition:
         tests = []
         for entree in tests_bruts:
             test = _test(entree)
-            tests.append(CampaignTest(resolver.resolve(test.nodeid), test.repeat))
+            if "::" in test.nodeid:
+                tests.append(CampaignTest(resolver.resolve(test.nodeid), test.repeat))
+                continue
+            # Un dossier ou un fichier .py entier : chaque test qu'il contient
+            # rejoint la campagne, avec le meme nombre de repetitions. Une
+            # entree qui ne couvre rien du tout (chemin errone, dossier encore
+            # vide) est ignoree plutot que de garder un identifiant qu'aucun
+            # test ne portera jamais.
+            for nodeid_resolu in _expand_path_entry(test.nodeid, fichiers_collectes):
+                tests.append(CampaignTest(nodeid_resolu, test.repeat))
         scenarios.append(CampaignScenario(
             str(brut.get("name") or f"Configuration {position}"),
             _commande(brut.get("setup") or brut.get("config") or brut.get("script")),
