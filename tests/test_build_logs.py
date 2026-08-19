@@ -1,6 +1,8 @@
 """Organisation des logs par build et mode incremental."""
 
+import io
 import logging
+import re
 from pathlib import Path
 
 from gui_qt.config.config_loader import find_logs_for_build
@@ -69,6 +71,46 @@ def test_manual_build_fallback_sees_both_log_modes(tmp_path):
     _create_log(tmp_path, incremental=True, build=11)
 
     assert next_available_build_number(workspace / "logs", "20260819") == 12
+
+
+def test_console_has_no_timestamp_but_log_file_keeps_it(tmp_path):
+    console_output = io.StringIO()
+    console_handler = logging.StreamHandler(console_output)
+    console_handler.setFormatter(
+        logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    )
+    logger = logging.getLogger(f"console-format-{id(tmp_path)}")
+    logger.handlers.clear()
+    logger.propagate = False
+    logger.addHandler(console_handler)
+
+    workspace = tmp_path / "workspace"
+    test_file = workspace / "tests" / "test_example.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_example():\n    pass\n", encoding="utf-8")
+
+    log_path, file_handler = setup_logging(
+        test_file=test_file,
+        test_name="test_example",
+        log_directory=workspace / "logs",
+        session_datestamp="20260819",
+        workspace_root=workspace,
+        reader="Reader",
+        build_number=42,
+        incremental_log=False,
+        logger=logger,
+    )
+    logger.info("message test")
+
+    logger.removeHandler(file_handler)
+    file_handler.close()
+    logger.removeHandler(console_handler)
+
+    assert console_output.getvalue() == "INFO - message test\n"
+    assert re.fullmatch(
+        r"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2},\d{3} - INFO - message test\n",
+        log_path.read_text(encoding="utf-8"),
+    )
 
 
 def test_run_history_lookup_finds_normal_and_incremental_builds(tmp_path):
