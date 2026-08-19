@@ -113,6 +113,31 @@ def test_console_has_no_timestamp_but_log_file_keeps_it(tmp_path):
     )
 
 
+def test_a_reader_getter_is_evaluated_instead_of_used_as_a_folder_name(tmp_path):
+    workspace = tmp_path / "workspace"
+    test_file = workspace / "tests" / "test_example.py"
+    test_file.parent.mkdir(parents=True)
+    test_file.write_text("def test_example():\n    pass\n", encoding="utf-8")
+
+    logger = logging.getLogger(f"reader-getter-{id(tmp_path)}")
+    path, handler = setup_logging(
+        test_file=test_file,
+        test_name="test_example",
+        log_directory=workspace / "logs",
+        session_datestamp="20260819",
+        workspace_root=workspace,
+        reader=lambda: "Cosmo11",
+        build_number=8,
+        incremental_log=False,
+        logger=logger,
+    )
+    logger.removeHandler(handler)
+    handler.close()
+
+    assert "Cosmo11" in path.parts
+    assert not any("function" in part or "0x" in part for part in path.parts)
+
+
 def test_run_history_lookup_finds_normal_and_incremental_builds(tmp_path):
     workspace, normal = _create_log(tmp_path, incremental=False, build=20)
     _, incremental = _create_log(tmp_path, incremental=True, build=21)
