@@ -433,6 +433,8 @@ def test_the_new_log_tab_opens_the_active_reader_in_notepad_plus_plus(
     panneau.logs.open_external.click()
 
     assert opened == [ecrits["LecteurB"]]
+    assert panneau.logs.open_external.text() == ""
+    assert panneau.logs.open_external.toolTip() == "Open log"
 
 
 def test_each_new_log_view_has_the_notepad_plus_plus_context_menu(
