@@ -157,6 +157,20 @@ def test_clicking_a_test_shows_its_log(panel, tmp_path):
     assert "test_cible.log" in panel.log_header.text()
 
 
+def test_log_is_refreshed_when_it_is_created_after_selection(panel, tmp_path):
+    build_workspace(tmp_path)
+    nodeid = "module/test_exemple.py::test_cible"
+    panel.set_workspace(str(tmp_path))
+    panel.show_for(nodeid, nodeid)
+
+    assert panel.log_view.toPlainText() == ""
+
+    write_log(tmp_path, nodeid, "cree pendant le build\n")
+    panel.refresh_log()
+
+    assert panel.log_view.toPlainText() == "cree pendant le build\n"
+
+
 def test_a_test_without_log_says_where_it_looked(panel, tmp_path):
     build_workspace(tmp_path)
     panel.set_workspace(str(tmp_path))
