@@ -123,6 +123,7 @@ def test_the_complete_log_can_be_opened_in_notepad_plus_plus(
         tmp_path / "logs" / "20260813" / "Cosmo11Secured Reader"
         / "module" / "test_cible.log"
     ]
+    assert panel.open_full_log_button.toolTip() == "Open log"
 
 
 def test_right_click_is_enabled_on_each_log_view(panel):
