@@ -67,6 +67,18 @@ def test_the_log_is_found_without_any_manifest(tmp_path):
     assert find_test_log(str(ws), NODEID) == attendu
 
 
+def test_build_log_with_module_and_test_in_filename_is_found(tmp_path):
+    """Format produit par log.py : date/Run/build/reader/tree/module__test."""
+    ws = make_workspace(tmp_path)
+    attendu = write_log(
+        ws / "traces_apdu" / "20260819" / "Run_0042" / "HID OMNIKEY"
+        / "NIST" / "TestSuiteCDS",
+        "test_PSO_CDS_RSA__test_pso[nom-RSA-mod2048-tg1-tc11]",
+    )
+
+    assert find_test_log(str(ws), NODEID, reader="HID OMNIKEY") == attendu
+
+
 def test_the_log_of_the_most_recent_run_wins(tmp_path):
     """Les logs sont ranges par run : c'est celui qui vient de tourner qui
     interesse l'utilisateur."""
