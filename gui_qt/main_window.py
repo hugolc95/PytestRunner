@@ -1389,6 +1389,7 @@ class MainWindow(QMainWindow):
                 build_number=self._current_build_number,
             )
         self._refresh_history_window()
+        self.details.refresh_log()
 
     def _refresh_history_window(self):
         if self.history_window is not None:
