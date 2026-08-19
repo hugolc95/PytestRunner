@@ -451,6 +451,10 @@ def test_each_new_log_view_has_the_notepad_plus_plus_context_menu(
         for view in panneau.logs.views[:2]
     )
     requested = []
+    # ResultsPanel connecte normalement ce signal a l'ouverture de Notepad++.
+    # Ce test ne doit pas lancer une application externe ni afficher une boite
+    # de dialogue : il verifie uniquement que la bonne vue emet le bon index.
+    panneau.logs.open_file_requested.disconnect()
     panneau.logs.open_file_requested.connect(requested.append)
     panneau.logs._request_external_open(1)
     assert requested == [1]
