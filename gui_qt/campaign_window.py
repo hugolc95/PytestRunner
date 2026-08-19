@@ -1336,4 +1336,5 @@ class CampaignPanel(QWidget):
             source="campaign",
             build_number=self._current_build_number,
         )
+        self.details.refresh_log()
         self.history_updated.emit()
