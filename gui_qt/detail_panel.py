@@ -347,6 +347,7 @@ class DetailPanel(QWidget):
         # Fichier de configuration retenu pour ce workspace : il porte le
         # LOG_PATH quand il ne s'appelle pas config.yml.
         self.config_path: str | None = None
+        self._current_nodeid: str | None = None
         self._current_source: Path | None = None
         self._source_newline = "\n"
         self._source_editable = False
@@ -666,6 +667,7 @@ class DetailPanel(QWidget):
         self.config_path = config_path
 
     def clear_details(self):
+        self._current_nodeid = None
         self.save_source()
         self._show_no_source("Click a test in the tree to see its source code.")
         for vue in self.log_views:
@@ -683,8 +685,18 @@ class DetailPanel(QWidget):
         `target` porte le chemin (fichier, classe ou fonction), `nodeid` n'existe
         que pour les feuilles executables.
         """
+        self._current_nodeid = nodeid
         self._load_source(target, nodeid)
         self._load_log(nodeid)
+
+    def refresh_log(self):
+        """Recharge le log du test selectionne apres la fin d'un run.
+
+        Le test peut avoir ete selectionne avant que son fichier existe. Sans
+        ce rafraichissement, l'onglet gardait alors son ancien etat vide alors
+        que le conftest venait d'ecrire le ``.log`` au bon endroit.
+        """
+        self._load_log(self._current_nodeid)
 
     def _load_source(self, target: str | None, nodeid: str | None):
         # Changer de fichier ne doit jamais perdre une frappe en attente.
