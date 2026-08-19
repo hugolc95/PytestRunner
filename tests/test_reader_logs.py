@@ -104,6 +104,37 @@ def test_a_single_reader_keeps_one_log_view(panel, tmp_path):
     assert panel.log_view.toPlainText().strip() == "A"
 
 
+def test_the_complete_log_can_be_opened_in_notepad_plus_plus(
+    panel, tmp_path, monkeypatch
+):
+    build_workspace(tmp_path)
+    write_reader_logs(tmp_path, {"Cosmo11Secured Reader": "A"})
+    panel.set_workspace(str(tmp_path))
+    panel.show_for(NODEID, NODEID)
+
+    opened = []
+    monkeypatch.setattr(
+        "gui_qt.detail_panel.open_in_notepad_plus_plus",
+        lambda parent, path: opened.append(path) or True,
+    )
+    panel.open_full_log_button.click()
+
+    assert opened == [
+        tmp_path / "logs" / "20260813" / "Cosmo11Secured Reader"
+        / "module" / "test_cible.log"
+    ]
+
+
+def test_right_click_is_enabled_on_each_log_view(panel):
+    from PyQt5.QtCore import Qt
+
+    panel.set_readers(["Cosmo11Secured Reader", "Reader"])
+    assert all(
+        view.contextMenuPolicy() == Qt.CustomContextMenu
+        for view in panel.log_views[:2]
+    )
+
+
 def test_two_readers_show_their_two_logs_side_by_side(panel, tmp_path):
     build_workspace(tmp_path)
     write_reader_logs(tmp_path, {"Cosmo11Secured Reader": "vu par A",
