@@ -145,7 +145,19 @@ class ConsoleView(QWidget):
         ligne.addWidget(self.wrap_button)
         ligne.addWidget(self.follow_button)
         ligne.addWidget(self.copy_button)
+        self._tools = ligne
         return barre
+
+    def add_tool(self, bouton: QPushButton) -> None:
+        """Ajoute un bouton au bout de la barre d'outils de CETTE console.
+
+        Ce que la console sait faire est ici ; ce qu'on peut faire du contenu
+        d'une console precise appartient a sa propre barre. Un appelant qui
+        gere plusieurs consoles cote a cote peut ainsi donner a chacune son
+        bouton, au lieu d'un seul bouton partage dont on devrait deviner sur
+        laquelle il porte.
+        """
+        self._tools.addWidget(bouton)
 
     def _icon_toggle(self, glyph: str, infobulle: str, slot,
                      coche: bool = False) -> QPushButton:

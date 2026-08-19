@@ -102,15 +102,12 @@ class ReaderViews(QWidget):
         self.compare.setVisible(False)
         self.compare.toggled.connect(self._on_compare_toggled)
 
-        self.open_external = QPushButton()
-        self.open_external.setObjectName("IconSm")
-        self.open_external.setIcon(
-            icons.icon("mdi.open-in-new", t.TEXT_MUTED))
-        self.open_external.setToolTip("Open log")
-        self.open_external.setVisible(external_open)
-        self.open_external.setEnabled(False)
-        self.open_external.clicked.connect(
-            lambda: self._request_external_open(self._current_index()))
+        # Pas de bouton d'ouverture ici : il en faut UN PAR CONSOLE, pose dans
+        # la barre de chaque vue a cote de son bouton de copie (voir
+        # `_add_view`). Un bouton unique en tete portait sur l'onglet courant,
+        # notion qui n'existe plus des qu'on compare : les deux logs sont a
+        # l'ecran, et rien ne disait lequel des deux allait s'ouvrir.
+        self.open_buttons: list[QPushButton] = []
 
         # La navigation n'a de sens que lorsque la comparaison semantique est
         # active. Elle reste donc entierement absente de la barre le reste du
@@ -159,7 +156,6 @@ class ReaderViews(QWidget):
         barre.addWidget(self.tabs, 1)
         barre.addWidget(self.difference_navigation)
         barre.addWidget(self.compare)
-        barre.addWidget(self.open_external)
 
         self.split = QSplitter(orientation)
         self.split.setChildrenCollapsible(False)
@@ -195,6 +191,7 @@ class ReaderViews(QWidget):
 
         if self._external_open:
             index = len(self.views) - 1
+            vue.add_tool(self._make_open_button(index))
             vue.view.setContextMenuPolicy(Qt.CustomContextMenu)
             vue.view.customContextMenuRequested.connect(
                 lambda position, i=index, v=vue.view:
@@ -206,6 +203,22 @@ class ReaderViews(QWidget):
                 getattr(vue, sens)().valueChanged.connect(
                     lambda valeur, s=sens, v=vue: self._propager(s, v, valeur))
         return vue
+
+    def _make_open_button(self, index: int) -> QPushButton:
+        """Le bouton « Open log » de la console numero `index`.
+
+        Desactive tant que ce lecteur n'a pas de fichier a ouvrir : grise, il
+        dit que ce log n'existe pas encore, la ou un bouton actif qui ne fait
+        rien laisserait croire que Notepad++ a echoue.
+        """
+        bouton = QPushButton()
+        bouton.setObjectName("IconSm")
+        bouton.setIcon(icons.icon("mdi.open-in-new", t.TEXT_MUTED))
+        bouton.setToolTip("Open this log")
+        bouton.setEnabled(False)
+        bouton.clicked.connect(lambda: self._request_external_open(index))
+        self.open_buttons.append(bouton)
+        return bouton
 
     def _propager(self, sens: str, source, valeur: int) -> None:
         """Fait suivre les autres vues : cote a cote, chacune ne montre qu'une
@@ -232,7 +245,7 @@ class ReaderViews(QWidget):
 
         if self._external_open:
             self._paths = [None] * len(self.views)
-            self._update_external_button()
+            self._update_external_buttons()
 
         self.tabs.blockSignals(True)
         for libelle in self._tab_labels:
@@ -292,7 +305,6 @@ class ReaderViews(QWidget):
     def _on_tab(self, index: int) -> None:
         self._apply_layout()
         self._restyle_reader_names()
-        self._update_external_button()
         self.reader_selected.emit(index)
 
     def select_silently(self, index: int) -> None:
@@ -304,12 +316,6 @@ class ReaderViews(QWidget):
             self.tabs.blockSignals(False)
             self._apply_layout()
             self._restyle_reader_names()
-            self._update_external_button()
-
-    def _current_index(self) -> int:
-        if len(self._readers) > 1:
-            return max(0, self.tabs.currentIndex())
-        return 0
 
     def path_at(self, index: int) -> Path | None:
         if not 0 <= index < len(self._paths):
@@ -317,10 +323,14 @@ class ReaderViews(QWidget):
         path = self._paths[index]
         return path if path is not None and path.is_file() else None
 
-    def _update_external_button(self) -> None:
-        if self._external_open:
-            self.open_external.setEnabled(
-                self.path_at(self._current_index()) is not None)
+    def _update_external_buttons(self) -> None:
+        """Chaque bouton suit SON log, pas l'onglet courant.
+
+        Cote a cote, un lecteur peut avoir son fichier quand l'autre ne l'a pas
+        encore : les deux boutons doivent alors dire deux choses differentes.
+        """
+        for index, bouton in enumerate(self.open_buttons):
+            bouton.setEnabled(self.path_at(index) is not None)
 
     def _request_external_open(self, index: int) -> None:
         if self.path_at(index) is not None:
@@ -365,7 +375,7 @@ class ReaderViews(QWidget):
             # chose qu'on verifie, mais l'afficher en entier mangerait la
             # largeur de la console.
             self.headers[index].setToolTip(chemin)
-            self._update_external_button()
+            self._update_external_buttons()
             self._update_difference_highlights()
 
     def _update_difference_highlights(self, reveal: bool = False) -> None:
@@ -478,8 +488,8 @@ class ReaderViews(QWidget):
         for vue in self.views:
             vue.restyle()
         self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
-        self.open_external.setIcon(
-            icons.icon("mdi.open-in-new", t.TEXT_MUTED))
+        for bouton in self.open_buttons:
+            bouton.setIcon(icons.icon("mdi.open-in-new", t.TEXT_MUTED))
         self.previous_difference.setIcon(
             icons.icon("mdi.chevron-up", t.TEXT_MUTED))
         self.next_difference.setIcon(
@@ -492,7 +502,7 @@ class ReaderViews(QWidget):
             vue.clear()
         if self._external_open:
             self._paths = [None] * len(self.views)
-            self._update_external_button()
+            self._update_external_buttons()
         # Le contenu disparait, pas l'identite des colonnes. En comparaison,
         # un en-tete vide au debut d'un run rendrait les consoles impossibles
         # a attribuer jusqu'au premier rapport complet.

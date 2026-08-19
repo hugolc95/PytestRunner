@@ -415,26 +415,64 @@ def test_the_panel_loads_one_log_per_reader(panneau, tmp_path):
     assert "vu par B" in panneau.logs.views[1].text()
 
 
-def test_the_new_log_tab_opens_the_active_reader_in_notepad_plus_plus(
-    panneau, tmp_path, monkeypatch
-):
+def test_each_log_view_has_its_own_open_button(panneau, tmp_path, monkeypatch):
+    """Un bouton par console, comme le bouton de copie.
+
+    Le bouton unique de la barre du haut portait sur « l'onglet courant ».
+    Cette notion n'existe plus des qu'on compare : les deux logs sont a
+    l'ecran cote a cote, et rien ne disait lequel des deux allait s'ouvrir.
+    """
     ecrits = _logs_par_lecteur(
         tmp_path, {"LecteurA": "vu par A", "LecteurB": "vu par B"}
     )
     panneau.set_log_root(tmp_path)
     panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
-    panneau.logs.tabs.setCurrentIndex(1)
+    panneau.logs.compare.setChecked(True)
 
     opened = []
     monkeypatch.setattr(
         "runner.ui.results_panel.open_in_notepad_plus_plus",
         lambda parent, path: opened.append(path) or True,
     )
-    panneau.logs.open_external.click()
 
-    assert opened == [ecrits["LecteurB"]]
-    assert panneau.logs.open_external.text() == ""
-    assert panneau.logs.open_external.toolTip() == "Open log"
+    # Les deux consoles sont visibles en meme temps : chacune doit ouvrir SON
+    # fichier, sans dependre de l'onglet selectionne.
+    panneau.logs.open_buttons[1].click()
+    panneau.logs.open_buttons[0].click()
+
+    assert opened == [ecrits["LecteurB"], ecrits["LecteurA"]]
+
+
+def test_an_open_button_lives_in_the_toolbar_of_its_own_console(panneau, tmp_path):
+    _logs_par_lecteur(tmp_path, {"LecteurA": "A", "LecteurB": "B"})
+    panneau.set_log_root(tmp_path)
+    panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
+
+    for vue, bouton in zip(panneau.logs.views, panneau.logs.open_buttons):
+        # Dans la meme barre que la copie, et pas ailleurs dans la fenetre.
+        assert bouton.parentWidget() is vue.copy_button.parentWidget()
+        assert bouton.text() == ""
+        assert bouton.toolTip() == "Open this log"
+
+
+def test_an_open_button_is_off_while_its_reader_has_no_log(panneau, tmp_path):
+    """Deux lecteurs, un seul log ecrit : les deux boutons doivent dire deux
+    choses differentes. Un bouton actif qui n'ouvre rien laisserait croire que
+    Notepad++ a echoue."""
+    _logs_par_lecteur(tmp_path, {"LecteurA": "vu par A"})
+    panneau.set_log_root(tmp_path)
+    panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
+
+    assert panneau.logs.path_at(0) is not None
+    assert panneau.logs.path_at(1) is None
+    assert panneau.logs.open_buttons[0].isEnabled()
+    assert not panneau.logs.open_buttons[1].isEnabled()
+
+
+def test_the_pytest_output_has_no_open_button(panneau):
+    """Ces boutons ouvrent un fichier de log. La sortie pytest n'en est pas
+    un : elle n'existe que dans le tampon de la console."""
+    assert panneau.output.open_buttons == []
 
 
 def test_each_new_log_view_has_the_notepad_plus_plus_context_menu(
