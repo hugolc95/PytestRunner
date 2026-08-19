@@ -1065,6 +1065,7 @@ class MainWindow(QMainWindow):
         # La duree est deja dans le resume : la laisser aussi a cote
         # l'afficherait deux fois.
         self.elapsed_label.clear()
+        self.results.refresh_logs()
         self._update_actions()
 
     def _archiver(self, rapports: list) -> None:
