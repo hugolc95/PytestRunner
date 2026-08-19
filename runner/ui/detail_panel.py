@@ -38,6 +38,7 @@ from runner.domain.failures import Failure, classify_line
 from runner.domain.models import Reader, Status
 from runner.ui import theme
 from runner.ui import tokens as t
+from runner.ui.campaign_results import CampaignResultsView
 from runner.ui.widgets import (
     EmptyState,
     ReaderBadge,
@@ -185,6 +186,16 @@ class DetailPanel(QWidget):
         self._campaign_cards.setSpacing(t.SPACE_2)
         colonne.addWidget(self.campaign_host)
 
+        # Le resultat de CHAQUE test, par configuration -- pas le bilan agrege
+        # que les rubans donnent aux regroupements ordinaires. Un meme test
+        # peut tourner plusieurs fois avec des verdicts differents ; les
+        # rubans les auraient fondus en un seul (le pire), ce qui est
+        # justement ce qu'on cherche a eviter ici. Les deux widgets ne
+        # coexistent donc jamais : voir `_remplir_campagne`.
+        self.campaign_results_view = CampaignResultsView()
+        self.campaign_results_view.setMinimumHeight(160)
+        colonne.addWidget(self.campaign_results_view, 1)
+
         # Une barre par lecteur, empilees : c'est en les superposant qu'on voit
         # que l'un est plus rouge que l'autre.
         self.ribbons_host = QWidget()
@@ -206,15 +217,20 @@ class DetailPanel(QWidget):
 
     def show_group(self, path: str, name: str, readers: tuple[Reader, ...],
                    counts: dict, failures: list,
-                   campaign: CampaignDefinition | None = None) -> None:
+                   campaign: CampaignDefinition | None = None,
+                   campaign_results: dict | None = None) -> None:
         """Fiche d'un dossier, d'un fichier ou d'un test parametre.
 
         `counts` donne, par index de lecteur, le nombre de tests par statut.
         `failures` liste des couples (nodeid, index du lecteur). `campaign`
         n'est pas None que sur la ligne qui porte le badge -- c'est elle qui
         represente la campagne entiere, pas l'un de ses descendants.
+        `campaign_results` : nom du scenario -> nodeid -> index de lecteur ->
+        statut, pour montrer le resultat de CHAQUE execution plutot que
+        l'agregat que les rubans donneraient.
         """
-        self._dernier_groupe = (path, name, readers, counts, failures, campaign)
+        self._dernier_groupe = (path, name, readers, counts, failures,
+                                campaign, campaign_results)
         self._nodeid = ""
         self.stack.setCurrentIndex(self.PAGE_GROUPE)
 
@@ -229,11 +245,12 @@ class DetailPanel(QWidget):
         self.group_total.setText(f"{tests} test{'s' if tests > 1 else ''}"
                                  + (f" × {len(readers)} readers" if len(readers) > 1
                                     else ""))
-        self._remplir_campagne(campaign)
+        self._remplir_campagne(campaign, campaign_results or {}, readers)
         self._remplir_rubans(readers, counts)
         self._remplir_echecs(readers, failures)
 
-    def _remplir_campagne(self, campaign: CampaignDefinition | None) -> None:
+    def _remplir_campagne(self, campaign: CampaignDefinition | None,
+                          resultats: dict, readers: tuple[Reader, ...]) -> None:
         while self._campaign_cards.count():
             element = self._campaign_cards.takeAt(0)
             widget = element.widget()
@@ -242,7 +259,16 @@ class DetailPanel(QWidget):
 
         self.campaign_title.setVisible(campaign is not None)
         self.campaign_host.setVisible(campaign is not None)
+        self.campaign_results_view.setVisible(campaign is not None)
+        # Les deux vues repondent a la meme question -- « qu'est-ce qui s'est
+        # passe ? » -- et se contrediraient affichees ensemble : les rubans
+        # fondent plusieurs executions du meme test en un seul statut, ce que
+        # la vue Campaign detaille justement.
+        self.ribbons_host.setVisible(campaign is None)
+        self.failures_title.setVisible(campaign is None)
+        self.failures.setVisible(campaign is None)
         if campaign is None:
+            self.campaign_results_view.set_data(None, {})
             return
 
         combien = len(campaign.scenarios)
@@ -250,6 +276,7 @@ class DetailPanel(QWidget):
             f"Campaign · {combien} configuration{'s' if combien != 1 else ''}")
         for scenario in campaign.scenarios:
             self._campaign_cards.addWidget(self._build_campaign_card(scenario))
+        self.campaign_results_view.set_data(campaign, resultats, readers)
 
     def _build_campaign_card(self, scenario: CampaignScenario) -> QWidget:
         """Une configuration : son setup, et combien de tests elle couvre.

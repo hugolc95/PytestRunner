@@ -530,6 +530,11 @@ class ResultsPanel(QWidget):
         self._index_echecs: dict[tuple[int, str], dict] = {}
         self._phase_reports: dict[int, dict[str, PhaseReport]] = {}
         self._live_phase_statuses: dict[str, dict[int, dict[str, Status]]] = {}
+        # phase_id -> (nom de la campagne, nom du scenario). Un identifiant de
+        # phase (`campaign_index:phase_index`) ne veut rien dire pour un YAML
+        # de campagne, qui ne connait que des NOMS -- c'est par eux que
+        # `campaign_results()` retrouve les resultats d'une phase en cours.
+        self._live_phase_names: dict[str, tuple[str, str]] = {}
         self._phase_id = ""
         self._nodeid = ""
         self._statuses: dict[int, Status] = {}
@@ -631,6 +636,7 @@ class ResultsPanel(QWidget):
         self._index_echecs.clear()
         self._phase_reports.clear()
         self._live_phase_statuses.clear()
+        self._live_phase_names.clear()
         self._phase_id = ""
         self.phase_bar.setVisible(False)
         self.detail.clear()
@@ -652,6 +658,7 @@ class ResultsPanel(QWidget):
         self._index_echecs.clear()
         self._phase_reports.clear()
         self._live_phase_statuses.clear()
+        self._live_phase_names.clear()
         self._phase_id = ""
         self.phase_tabs.blockSignals(True)
         while self.phase_tabs.count():
@@ -720,12 +727,47 @@ class ResultsPanel(QWidget):
         """
         self._nodeid = ""
         self._statuses = {}
-        self.detail.show_group(path, name, tuple(readers), counts, failures, campaign)
+        resultats = self.campaign_results(campaign) if campaign is not None else None
+        self.detail.show_group(path, name, tuple(readers), counts, failures,
+                               campaign, resultats)
         if campaign is not None:
             self.source.show_file(Path(campaign.path))
         else:
             self.source.show_file(source, jump_nodeid)
         self.logs.clear()
+
+    def campaign_results(self, campaign) -> dict[str, dict[str, dict[int, Status]]]:
+        """Statut de chaque test de cette campagne, par configuration puis lecteur.
+
+        Cherche par NOM de campagne et de configuration, pas par
+        `phase.id` : cet identifiant technique (`campaign_index:phase_index`)
+        depend de l'ordre de decouverte du run courant, alors que le YAML ne
+        connait que des noms. Une phase deja terminee vit dans
+        `_phase_reports` ; une phase encore en cours n'existe que dans
+        `_live_phase_statuses`, repere via `_live_phase_names`.
+        """
+        resultat: dict[str, dict[str, dict[int, Status]]] = {}
+        for scenario in campaign.scenarios:
+            par_test: dict[str, dict[int, Status]] = {}
+
+            for lecteur_index, phases in self._phase_reports.items():
+                for phase in phases.values():
+                    if phase.campaign == campaign.name and phase.name == scenario.name:
+                        for nodeid, statut in phase.statuses.items():
+                            par_test.setdefault(nodeid, {})[lecteur_index] = statut
+
+            for phase_id, (nom_campagne, nom_scenario) in self._live_phase_names.items():
+                if nom_campagne != campaign.name or nom_scenario != scenario.name:
+                    continue
+                for lecteur_index, statuts in self._live_phase_statuses.get(
+                        phase_id, {}).items():
+                    for nodeid, statut in statuts.items():
+                        # Une phase deja dans `_phase_reports` est definitive ;
+                        # ne pas ecraser son verdict par un residu en direct.
+                        par_test.setdefault(nodeid, {}).setdefault(lecteur_index, statut)
+
+            resultat[scenario.name] = par_test
+        return resultat
 
     def update_statuses(self, nodeid: str, statuses: dict[int, Status],
                         outcome: Outcome | None = None) -> None:
@@ -737,6 +779,8 @@ class ResultsPanel(QWidget):
         if outcome is not None and outcome.phase_id:
             self._live_phase_statuses.setdefault(outcome.phase_id, {}) \
                 .setdefault(outcome.reader_index, {})[nodeid] = outcome.status
+            self._live_phase_names[outcome.phase_id] = (
+                outcome.campaign, outcome.phase_name)
         if nodeid and nodeid == self._nodeid:
             self._statuses = dict(statuses)
             self._refresh_detail()

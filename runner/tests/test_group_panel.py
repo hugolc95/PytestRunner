@@ -347,6 +347,192 @@ def test_a_row_that_does_not_carry_the_campaign_shows_neither(avec_campagne):
     assert avec_campagne.results.source.path().name == "test_select.py"
 
 
+def test_the_campaign_row_hides_the_generic_summary(avec_campagne):
+    """Les rubans et la liste d'echecs fondent plusieurs executions du meme
+    test en un seul statut -- exactement ce que la vue Campaign detaille. Les
+    montrer ensemble contredirait l'une ou l'autre."""
+    avec_campagne.tree.setCurrentIndex(
+        _index(avec_campagne, "suite", "apdu", "test_select.py"))
+    fiche = _fiche(avec_campagne)
+    assert fiche.ribbons_host.isHidden()
+    assert fiche.failures.isHidden()
+    assert not fiche.campaign_results_view.isHidden()
+
+    avec_campagne.tree.setCurrentIndex(_index(avec_campagne, "suite", "apdu"))
+    assert not fiche.ribbons_host.isHidden()
+    assert not fiche.failures.isHidden()
+    assert fiche.campaign_results_view.isHidden()
+
+
+# ------------------------------------------- le resultat de chaque execution
+
+@pytest.fixture
+def avec_campagne_le_meme_test_partout(avec_source, tmp_path):
+    """`test_atr` couvert par LES DEUX configurations -- le cas qui motive la
+    fonctionnalite : un meme test, deux verdicts possibles, qu'aucune vue ne
+    doit fondre en un seul."""
+    from runner.domain import campaign as campaign_mod
+
+    fenetre = avec_source
+    (tmp_path / "campaign.yaml").write_text(
+        """\
+name: ATR configurations
+campaign:
+  - name: Configuration A
+    config: setup_a.py
+    tests:
+      - suite/apdu/test_select.py::test_atr
+  - name: Configuration B
+    config: setup_b.py
+    tests:
+      - suite/apdu/test_select.py::test_atr
+""",
+        encoding="utf-8",
+    )
+    campagnes = campaign_mod.discover_campaigns(str(tmp_path), (NODEIDS[0],))
+    assert campagnes, "la campagne de test n'a pas ete detectee"
+
+    fenetre._campaigns = campagnes
+    fenetre.model.set_campaigns(campaign_mod.memberships(campagnes))
+    fenetre._campagne = campagnes[0]
+    return fenetre
+
+
+def _jouer_campagne(fenetre, campagne, par_scenario: dict, lecteur=None):
+    """Simule un run termine : un `PhaseReport` par scenario, comme
+    `execution.py` les construit vraiment."""
+    from runner.domain.models import PhaseReport, Reader, ReaderReport
+
+    lecteur = lecteur or Reader("", 0)
+    phases = [
+        PhaseReport(f"0:{position}", scenario.name, campagne.name,
+                    statuses=par_scenario.get(scenario.name, {}))
+        for position, scenario in enumerate(campagne.scenarios)
+    ]
+    fenetre.results.set_readers((lecteur,))
+    fenetre.results.set_report(ReaderReport(reader=lecteur, phases=phases))
+
+
+def test_the_same_test_can_disagree_across_configurations(
+    avec_campagne_le_meme_test_partout,
+):
+    """Le coeur de la demande : `test_atr` passe en A, echoue en B -- les deux
+    doivent rester lisibles separement, dans la liste comme dans la matrice."""
+    fenetre = avec_campagne_le_meme_test_partout
+    campagne = fenetre._campagne
+    _jouer_campagne(fenetre, campagne, {
+        "Configuration A": {NODEIDS[0]: Status.PASSED},
+        "Configuration B": {NODEIDS[0]: Status.FAILED},
+    })
+
+    resultats = fenetre.results.campaign_results(campagne)
+    assert resultats["Configuration A"][NODEIDS[0]] == {0: Status.PASSED}
+    assert resultats["Configuration B"][NODEIDS[0]] == {0: Status.FAILED}
+
+    fenetre.tree.setCurrentIndex(
+        _index(fenetre, "suite", "apdu", "test_select.py"))
+    vue = _fiche(fenetre).campaign_results_view
+
+    config_a = vue.tree.topLevelItem(0)
+    config_b = vue.tree.topLevelItem(1)
+    assert config_a.child(0).text(1) == "PASSED"
+    assert config_b.child(0).text(1) == "FAILED"
+
+    vue.matrix_button.click()
+    assert vue.table.item(0, 0).text() == "PASSED"
+    assert vue.table.item(0, 1).text() == "FAILED"
+
+
+def test_the_matrix_rows_are_not_shuffled(avec_campagne):
+    """Chaque ligne doit rester CELLE du test qu'elle nomme : melangees, la
+    case d'un test dans sa PROPRE configuration se retrouverait vide plutot
+    que d'afficher son resultat."""
+    from runner.domain.models import PhaseReport, ReaderReport
+    from runner.ui.campaign_results import _libelle_test
+
+    fenetre = avec_campagne
+    campagne = fenetre._campaigns[0]
+    fenetre.results.set_readers((Reader("", 0),))
+    fenetre.results.set_report(ReaderReport(reader=Reader("", 0), phases=[
+        PhaseReport("0:0", "Configuration A", campagne.name,
+                    statuses={NODEIDS[0]: Status.PASSED}),
+        PhaseReport("0:1", "Configuration B", campagne.name,
+                    statuses={NODEIDS[1]: Status.FAILED}),
+    ]))
+
+    fenetre.tree.setCurrentIndex(
+        _index(fenetre, "suite", "apdu", "test_select.py"))
+    vue = _fiche(fenetre).campaign_results_view
+    vue.matrix_button.click()
+
+    def _ligne(etiquette):
+        for r in range(vue.table.rowCount()):
+            if vue.table.verticalHeaderItem(r).text() == etiquette:
+                return r
+        raise AssertionError(f"{etiquette} introuvable")
+
+    # Chaque test n'est couvert que par SA propre configuration : la case
+    # correspondante doit porter son resultat, jamais vide.
+    assert vue.table.item(_ligne(_libelle_test(NODEIDS[0])), 0).text() == "PASSED"
+    assert vue.table.item(_ligne(_libelle_test(NODEIDS[1])), 1).text() == "FAILED"
+
+
+def test_a_test_not_yet_run_says_so_instead_of_a_status(
+    avec_campagne_le_meme_test_partout,
+):
+    fenetre = avec_campagne_le_meme_test_partout
+    campagne = fenetre._campagne
+    _jouer_campagne(fenetre, campagne, {"Configuration A": {NODEIDS[0]: Status.PASSED}})
+
+    fenetre.tree.setCurrentIndex(
+        _index(fenetre, "suite", "apdu", "test_select.py"))
+    vue = _fiche(fenetre).campaign_results_view
+
+    assert vue.tree.topLevelItem(1).child(0).text(1) == "not run"
+    vue.matrix_button.click()
+    assert vue.table.item(0, 1).text() == "not run"
+
+
+def test_a_running_phase_shows_its_results_before_the_reader_finishes(
+    avec_campagne_le_meme_test_partout,
+):
+    """`_phase_reports` ne se remplit qu'a la toute fin du lecteur : pendant
+    le run, seuls les evenements en direct existent. Sans eux, cliquer la
+    ligne Campaign en cours de run montrerait tout vide."""
+    from runner.domain.models import Outcome
+
+    fenetre = avec_campagne_le_meme_test_partout
+    campagne = fenetre._campagne
+    fenetre.results.set_readers((Reader("", 0),))
+
+    fenetre.results.update_statuses(NODEIDS[0], {}, outcome=Outcome(
+        NODEIDS[0], Status.PASSED, 0, campagne.name, "0:0", "Configuration A"))
+
+    resultats = fenetre.results.campaign_results(campagne)
+    assert resultats["Configuration A"][NODEIDS[0]] == {0: Status.PASSED}
+    assert resultats["Configuration B"] == {}
+
+
+def test_a_finished_report_is_not_overwritten_by_a_live_leftover(
+    avec_campagne_le_meme_test_partout,
+):
+    """Un residu en direct d'un ANCIEN clic ne doit jamais ecraser le verdict
+    definitif d'une phase deja terminee."""
+    from runner.domain.models import Outcome
+
+    fenetre = avec_campagne_le_meme_test_partout
+    campagne = fenetre._campagne
+    _jouer_campagne(fenetre, campagne, {
+        "Configuration A": {NODEIDS[0]: Status.PASSED},
+    })
+    # Un residu en direct, perime, pretend le contraire.
+    fenetre.results.update_statuses(NODEIDS[0], {}, outcome=Outcome(
+        NODEIDS[0], Status.FAILED, 0, campagne.name, "0:0", "Configuration A"))
+
+    resultats = fenetre.results.campaign_results(campagne)
+    assert resultats["Configuration A"][NODEIDS[0]] == {0: Status.PASSED}
+
+
 # ---------------------------------------------------------------- la barre
 
 def test_the_ribbon_paints_every_status_it_is_given(qapp):
