@@ -44,7 +44,7 @@ from runner.ui import tokens as t
 from runner.ui.console_view import ConsoleView
 from runner.ui.detail_panel import DetailPanel
 from runner.ui.source_panel import SourcePanel
-from gui_qt.dialogs import open_in_notepad_plus_plus
+from runner.ui.external_log import open_in_notepad_plus_plus
 
 ONGLET_DETAIL = 0
 ONGLET_SOURCE = 1
