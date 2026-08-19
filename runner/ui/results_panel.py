@@ -650,6 +650,11 @@ class ResultsPanel(QWidget):
             self.logs.set_text(lecteur.index, contenu,
                                lecteur.name or chemin.name, str(chemin))
 
+    def refresh_logs(self) -> None:
+        """Recharge les logs du test encore selectionne apres un run."""
+        if self._nodeid:
+            self.show_logs_for(self._nodeid, self._readers)
+
     def _rien_trouve(self, lecteur: Reader) -> str:
         """Dire ou l'on a cherche, et pas seulement qu'on n'a rien trouve.
 
