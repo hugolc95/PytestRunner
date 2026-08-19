@@ -102,11 +102,11 @@ class ReaderViews(QWidget):
         self.compare.setVisible(False)
         self.compare.toggled.connect(self._on_compare_toggled)
 
-        self.open_external = QPushButton("Open in Notepad++")
+        self.open_external = QPushButton()
+        self.open_external.setObjectName("IconSm")
         self.open_external.setIcon(
             icons.icon("mdi.open-in-new", t.TEXT_MUTED))
-        self.open_external.setToolTip(
-            "Open the complete log of the active reader in Notepad++")
+        self.open_external.setToolTip("Open log")
         self.open_external.setVisible(external_open)
         self.open_external.setEnabled(False)
         self.open_external.clicked.connect(
@@ -329,7 +329,7 @@ class ReaderViews(QWidget):
     def _show_external_context_menu(self, index: int, view, position) -> None:
         menu = view.createStandardContextMenu()
         menu.addSeparator()
-        action = menu.addAction("Open complete log in Notepad++")
+        action = menu.addAction("Open log")
         action.setEnabled(self.path_at(index) is not None)
         action.triggered.connect(lambda: self._request_external_open(index))
         menu.exec_(view.mapToGlobal(position))
