@@ -40,6 +40,7 @@ from gui_qt.config.config_loader import (
     run_directories,
 )
 from gui_qt.highlighters import LogHighlighter, PythonHighlighter, PytestOutputHighlighter
+from gui_qt.dialogs import open_in_notepad_plus_plus
 from gui_qt.styles import styles
 from gui_qt.styles.styles import console_style, theme_toggle_button
 from gui_qt.test_tree_view import short_reader_label
@@ -226,6 +227,7 @@ class ReaderStack(QWidget):
         barre.setSpacing(4)
         barre.addWidget(self.tabs, 1)
         barre.addWidget(self.compare_button)
+        self.toolbar = barre
 
         self.split = QSplitter(orientation)
 
@@ -347,6 +349,7 @@ class DetailPanel(QWidget):
         # Fichier de configuration retenu pour ce workspace : il porte le
         # LOG_PATH quand il ne s'appelle pas config.yml.
         self.config_path: str | None = None
+        self._current_nodeid: str | None = None
         self._current_source: Path | None = None
         self._source_newline = "\n"
         self._source_editable = False
@@ -397,11 +400,23 @@ class DetailPanel(QWidget):
         self.log_split = self.log_stack.split
         self.log_views: list[QPlainTextEdit] = self.log_stack.views
         self.log_headers: list[QLabel] = self.log_stack.headers
+        self._log_paths: list[Path | None] = [None]
 
         self.log_header = QLabel("Click a test in the tree to see its log.")
         self.log_header.setWordWrap(True)
         self.log_stack.add_view(self._new_log_view(), self.log_header)
         self.log_view = self.log_views[0]
+
+        self.open_full_log_button = QToolButton()
+        self.open_full_log_button.setText("↗")
+        self.open_full_log_button.setAutoRaise(True)
+        self.open_full_log_button.setCursor(Qt.PointingHandCursor)
+        self.open_full_log_button.setToolTip("Open log")
+        self.open_full_log_button.setEnabled(False)
+        self.open_full_log_button.clicked.connect(self._open_current_log)
+        self.log_stack.toolbar.addWidget(self.open_full_log_button)
+
+        self._configure_log_context_menu(self.log_view, 0)
 
         # Coloration a l'affichage : la sortie brute reste intacte pour
         # l'historique, les traces d'echec et la detection des statuts.
@@ -498,6 +513,8 @@ class DetailPanel(QWidget):
             entete.setWordWrap(True)
             self.log_highlighters.append(LogHighlighter(vue.document()))
             self.log_stack.add_view(vue, entete)
+            self._log_paths.append(None)
+            self._configure_log_context_menu(vue, len(self.log_views) - 1)
 
         self._reader_labels = labels
         self.console_stack.set_readers(labels)
@@ -518,7 +535,44 @@ class DetailPanel(QWidget):
         """Console et Log restent sur le meme lecteur, quel que soit l'onglet
         par lequel on l'a choisi."""
         autre.select_silently(index)
+        self._update_open_log_button()
         self.reader_selected.emit(index)
+
+    def _configure_log_context_menu(self, view: QPlainTextEdit, index: int):
+        view.setContextMenuPolicy(Qt.CustomContextMenu)
+        view.customContextMenuRequested.connect(
+            lambda position, i=index, v=view: self._show_log_context_menu(i, v, position)
+        )
+
+    def _show_log_context_menu(self, index: int, view: QPlainTextEdit, position):
+        menu = view.createStandardContextMenu()
+        menu.addSeparator()
+        action = menu.addAction("Open log")
+        action.setEnabled(self._log_path(index) is not None)
+        action.triggered.connect(lambda: self._open_log(index))
+        menu.exec_(view.mapToGlobal(position))
+
+    def _log_path(self, index: int) -> Path | None:
+        if not 0 <= index < len(self._log_paths):
+            return None
+        path = self._log_paths[index]
+        return path if path is not None and path.is_file() else None
+
+    def _current_log_index(self) -> int:
+        return max(0, self.log_tabs.currentIndex()) if len(self._log_paths) > 1 else 0
+
+    def _update_open_log_button(self):
+        self.open_full_log_button.setEnabled(
+            self._log_path(self._current_log_index()) is not None
+        )
+
+    def _open_current_log(self):
+        self._open_log(self._current_log_index())
+
+    def _open_log(self, index: int):
+        path = self._log_path(index)
+        if path is not None:
+            open_in_notepad_plus_plus(self, path)
 
     def _on_detach_toggled(self, detache: bool):
         self.detach_button.setToolTip(
@@ -571,7 +625,7 @@ class DetailPanel(QWidget):
             for index in range(barre.count()):
                 barre.setTabTextColor(index, QColor(styles.reader_color(index)))
         for bouton in (self.compare_button, self.log_compare_button,
-                       self.detach_button):
+                       self.open_full_log_button, self.detach_button):
             bouton.setStyleSheet(theme_toggle_button())
         self.source_view.setStyleSheet(console_style())
         # Les logs par lecteur portent la meme pastille de couleur que leur
@@ -666,6 +720,9 @@ class DetailPanel(QWidget):
         self.config_path = config_path
 
     def clear_details(self):
+        self._current_nodeid = None
+        self._log_paths = [None] * len(self.log_views)
+        self._update_open_log_button()
         self.save_source()
         self._show_no_source("Click a test in the tree to see its source code.")
         for vue in self.log_views:
@@ -683,8 +740,18 @@ class DetailPanel(QWidget):
         `target` porte le chemin (fichier, classe ou fonction), `nodeid` n'existe
         que pour les feuilles executables.
         """
+        self._current_nodeid = nodeid
         self._load_source(target, nodeid)
         self._load_log(nodeid)
+
+    def refresh_log(self):
+        """Recharge le log du test selectionne apres la fin d'un run.
+
+        Le test peut avoir ete selectionne avant que son fichier existe. Sans
+        ce rafraichissement, l'onglet gardait alors son ancien etat vide alors
+        que le conftest venait d'ecrire le ``.log`` au bon endroit.
+        """
+        self._load_log(self._current_nodeid)
 
     def _load_source(self, target: str | None, nodeid: str | None):
         # Changer de fichier ne doit jamais perdre une frappe en attente.
@@ -856,6 +923,9 @@ class DetailPanel(QWidget):
         if index >= len(self.log_views):
             return
 
+        self._log_paths[index] = None
+        self._update_open_log_button()
+
         vue = self.log_views[index]
         entete = self.log_headers[index]
         # Le nom du lecteur suffit a nommer sa colonne : cote a cote, elle est
@@ -882,6 +952,8 @@ class DetailPanel(QWidget):
             vue.clear()
             return
 
+        self._log_paths[index] = Path(path)
+        self._update_open_log_button()
         content, warning = read_text_file(Path(path))
         self._afficher_log(index, content)
         # Le nom du lecteur, ou a defaut le seul nom du fichier : un chemin de

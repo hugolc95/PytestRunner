@@ -6,8 +6,8 @@ Deux choses :
 1. `apdu_log` : expose le module de log APDU du SmartcardFramework (`utils.log`)
    quand il est disponible sur le PYTHONPATH, sinon un logger minimal de repli.
 
-2. Un fichier `.log` par test execute, ecrit dans un dossier horodate par run
-   (l'historique des runs est conserve). Le dossier racine des logs vient de la cle
+2. Un fichier `.log` par test execute, range par date, numero de build, lecteur
+   et chemin relatif dans le workspace. Le dossier racine des logs vient de la cle
    `log_directory` de config.yml (defaut `<workspace>/logs`). Un manifeste JSON stable
    (`<log_root>/last_run_index.json`) mappe chaque nodeid vers le chemin de son .log du
    dernier run : c'est ce que le GUI lit pour le clic droit "Ouvrir le log de ce test".
@@ -19,11 +19,13 @@ sans SmartcardFramework), sans provoquer d'erreur de collecte pytest.
 
 import json
 import logging
-import re
+import os
 import time
 from pathlib import Path
 
 import pytest
+
+from log import next_available_build_number, safe_path_name, setup_logging
 
 
 APDU_LOGGER_NAME = "APDU Logger"
@@ -70,74 +72,159 @@ def apdu_log():
         return _FallbackApduLog()
 
 
-def _sanitize_nodeid(nodeid: str) -> str:
-    return re.sub(r"[^0-9A-Za-z._-]+", "_", nodeid).strip("_")
+def _logging_settings(workspace: Path) -> tuple[Path, bool, str]:
+    """Retourne racine, mode incremental et lecteur declares par le workspace.
 
-
-def _resolve_log_root(workspace: Path) -> Path:
-    """Dossier racine des logs, lu depuis config.yml (cle `log_directory`), sinon
-    `<workspace>/logs`. Logique volontairement identique a
+    Logique volontairement identique a
     gui_qt.config.config_loader.resolve_log_root (le GUI et le conftest DOIVENT
     regarder au meme endroit). On la duplique ici pour garder le conftest autonome,
     sans dependance a gui_qt (testSuite1 peut tourner hors du projet)."""
     log_dir = "logs"
-    for name in ("config.yaml", "config.yml"):
-        cfg = workspace / name
+    incremental_log = False
+    reader = os.environ.get("PYTESTRUNNER_READER", "").strip()
+
+    preferred = (
+        os.environ.get("PYTESTRUNNER_READER_CONFIG_PATH", "")
+        or os.environ.get("PYTESTRUNNER_READER_CONFIG", "")
+    ).strip()
+    candidates = [Path(preferred)] if preferred else []
+    candidates.extend(workspace / name for name in ("config.yaml", "config.yml"))
+    try:
+        candidates.extend(sorted(workspace.glob("*.yml")))
+        candidates.extend(sorted(workspace.glob("*.yaml")))
+    except OSError:
+        pass
+
+    def find_value(data, accepted):
+        if not isinstance(data, dict):
+            return None
+        for key, value in data.items():
+            normalized_key = str(key).strip().lower().replace("-", "_")
+            if normalized_key in accepted and value not in (None, ""):
+                return value
+        for value in data.values():
+            nested = find_value(value, accepted)
+            if nested is not None:
+                return nested
+        return None
+
+    seen: set[Path] = set()
+    path_selected = False
+    increment_selected = False
+    for cfg in candidates:
+        try:
+            cfg = cfg.resolve()
+        except OSError:
+            continue
+        if cfg in seen:
+            continue
+        seen.add(cfg)
         if cfg.exists():
             try:
                 import yaml
                 data = yaml.safe_load(cfg.read_text(encoding="utf-8")) or {}
-                if data.get("log_directory"):
-                    log_dir = str(data["log_directory"])
+                if isinstance(data, dict):
+                    configured_path = find_value(
+                        data, {"log_directory", "log_path", "log_dir", "logpath"})
+                    if configured_path and not path_selected:
+                        log_dir = str(configured_path)
+                        path_selected = True
+
+                    raw_increment = find_value(
+                        data, {"incremental_log", "incrementallog"})
+                    if raw_increment is not None and not increment_selected:
+                        incremental_log = (
+                            raw_increment if isinstance(raw_increment, bool)
+                            else str(raw_increment).strip().lower() in {"1", "true", "yes", "on"}
+                        )
+                        increment_selected = True
+
+                    if not reader:
+                        reader = str(find_value(data, {"reader"}) or "").strip()
             except Exception:
                 pass
-            break
+
     root = Path(log_dir)
-    return root if root.is_absolute() else workspace / root
+    root = root if root.is_absolute() else workspace / root
+    return root, incremental_log, reader
 
 
 @pytest.fixture(scope="session")
 def _log_session(request):
-    """Prepare une fois par run : dossier de session horodate + manifeste.
+    """Prepare une fois par run : date, build, lecteur et manifestes.
 
     Ancre sur le repertoire d'invocation de pytest (= cwd = le workspace lance par
     le GUI), pas sur rootdir (qui peut differer a cause des multiples pytest.ini)."""
-    workspace = Path(request.config.invocation_params.dir)
-    log_root = _resolve_log_root(workspace)
-    session_dir = log_root / time.strftime("%Y%m%d_%H%M%S")
-    session_dir.mkdir(parents=True, exist_ok=True)
+    workspace = Path(request.config.invocation_params.dir).resolve()
+    log_root, incremental_log, reader = _logging_settings(workspace)
+    datestamp = time.strftime("%Y%m%d")
+
+    raw_build = os.environ.get("PYTEST_RUNNER_BUILD_NUMBER", "").strip()
+    try:
+        build_number = int(raw_build)
+    except (TypeError, ValueError):
+        build_number = next_available_build_number(log_root, datestamp)
+
+    log_root.mkdir(parents=True, exist_ok=True)
 
     manifest_path = log_root / "last_run_index.json"
+    reader_suffix = f"_{safe_path_name(reader)}" if reader else ""
+    build_manifest_path = (
+        log_root / datestamp / f"build_{build_number:04d}{reader_suffix}.json"
+    )
+    build_manifest_path.parent.mkdir(parents=True, exist_ok=True)
+
     manifest: dict[str, str] = {}
     # Repart d'un manifeste vide pour ce run (ne reference que les tests de ce run).
-    try:
-        manifest_path.write_text("{}", encoding="utf-8")
-    except OSError:
-        pass
+    for path in (manifest_path, build_manifest_path):
+        try:
+            path.write_text("{}", encoding="utf-8")
+        except OSError:
+            pass
 
-    return session_dir, manifest_path, manifest
+    return {
+        "workspace": workspace,
+        "log_root": log_root,
+        "datestamp": datestamp,
+        "build_number": build_number,
+        "reader": reader,
+        "incremental_log": incremental_log,
+        "manifest_path": manifest_path,
+        "build_manifest_path": build_manifest_path,
+        "manifest": manifest,
+    }
 
 
 @pytest.fixture(autouse=True)
 def _per_test_log(request, _log_session):
     """Cree un .log par test, l'attache au logger APDU, et met a jour le manifeste."""
-    session_dir, manifest_path, manifest = _log_session
     nodeid = request.node.nodeid
-
-    log_path = session_dir / f"{_sanitize_nodeid(nodeid)}.log"
-    handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
-    handler.setFormatter(logging.Formatter("%(asctime)s - %(levelname)s - %(message)s"))
-
     logger = _apdu_logger()
-    logger.setLevel(logging.INFO)
-    logger.addHandler(handler)
+
+    node_path = getattr(request.node, "path", None)
+    if node_path is None:
+        node_path = request.node.fspath
+
+    log_path, handler = setup_logging(
+        test_file=Path(str(node_path)),
+        test_name=request.node.name,
+        log_directory=_log_session["log_root"],
+        session_datestamp=_log_session["datestamp"],
+        workspace_root=_log_session["workspace"],
+        reader=_log_session["reader"],
+        build_number=_log_session["build_number"],
+        incremental_log=_log_session["incremental_log"],
+        logger=logger,
+    )
     logger.info("=== %s @ %s ===", nodeid, time.strftime("%Y-%m-%d %H:%M:%S"))
 
+    manifest = _log_session["manifest"]
     manifest[nodeid] = str(log_path)
-    try:
-        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    except OSError:
-        pass
+    for path in (_log_session["manifest_path"], _log_session["build_manifest_path"]):
+        try:
+            path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        except OSError:
+            pass
 
     try:
         yield

@@ -450,3 +450,50 @@ def find_test_log(workspace: str, nodeid: str, config_path: str | None = None,
             return depuis_manifeste
 
     return find_test_log_by_search(workspace, nodeid, config_path, reader)
+
+
+def find_logs_for_build(workspace: str, build_number: int,
+                        config_path: str | None = None,
+                        reader: str = "") -> list[Path]:
+    """Tous les logs associes a un build du Run History.
+
+    Le manifeste du build est prioritaire. La recherche de repli reconnait les
+    deux organisations supportees : ``Run_0042`` en mode normal et
+    ``*_B0042_001.log`` en mode incremental.
+    """
+    root = resolve_log_root(workspace, config_path)
+    if not root.is_dir():
+        return []
+
+    build_label = f"{int(build_number):04d}"
+    reader_key = _match_key(reader) if reader else ""
+    found: list[Path] = []
+
+    for manifest_path in root.glob(f"*/build_{build_label}*.json"):
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        values = manifest.values() if isinstance(manifest, dict) else []
+        for value in values:
+            path = Path(value)
+            if (path.is_file()
+                    and (not reader_key or _path_has_component(path, reader_key))):
+                found.append(path)
+
+    # Complete toujours le manifeste par une recherche : avec pytest-xdist,
+    # plusieurs workers peuvent mettre le manifeste a jour en meme temps alors
+    # que les fichiers eux-memes sont tous presents et reserves sans ecrasement.
+    normal_component = f"Run_{build_label}"
+    incremental_marker = f"_B{build_label}_"
+    for path in root.rglob("*.log"):
+        if normal_component not in path.parts and incremental_marker not in path.name:
+            continue
+        if reader_key and not _path_has_component(path, reader_key):
+            continue
+        found.append(path)
+        if len(found) >= MAX_LOG_FILES_SCANNED:
+            break
+
+    # Un meme chemin peut etre present dans plusieurs manifestes legacy.
+    return sorted(set(found), key=lambda path: str(path).lower())

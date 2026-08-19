@@ -34,6 +34,7 @@ from runner.domain.reader_isolation import ENV_CONFIG, ENV_READER, reader_plugin
 # Au-dela, la ligne de commande depasse la limite de Windows (32 768
 # caracteres) et le lancement echoue avec une erreur incomprehensible.
 MAX_NODEIDS_EN_LIGNE = 40
+ENV_BUILD_NUMBER = "PYTEST_RUNNER_BUILD_NUMBER"
 
 
 def creation_flags() -> int:
@@ -186,6 +187,8 @@ class ReaderRun:
         # pas un remplacement de l'environnement du poste.
         env = dict(os.environ)
         env.update(self._env)
+        if self.request.build_number is not None:
+            env[ENV_BUILD_NUMBER] = str(self.request.build_number)
         if self.reader.name:
             env[ENV_READER] = self.reader.name
             if self.request.config_path:

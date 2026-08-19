@@ -15,7 +15,7 @@ import pytest
 from PyQt5.QtCore import QEventLoop, QTimer
 from PyQt5.QtWidgets import QApplication
 
-from runner.domain.execution import ReaderRun
+from runner.domain.execution import ENV_BUILD_NUMBER, ReaderRun
 from runner.domain.models import Reader, RunRequest, Status
 from runner.domain.workspace import Workspace
 from runner.services.run_service import CollectWorker, RunService
@@ -100,12 +100,14 @@ def test_a_partial_environment_keeps_the_windows_process_baseline(
     requete = RunRequest(
         workspace=str(tmp_path), interpreter=sys.executable,
         nodeids=("test_x.py::test_f",), readers=(),
+        build_number=42,
     )
 
     env = ReaderRun(requete, Reader("", 0), {"CUSTOM_RUN_VALUE": "yes"})._environnement("")
 
     assert env["PYTESTRUNNER_BASELINE_TEST"] == "kept"
     assert env["CUSTOM_RUN_VALUE"] == "yes"
+    assert env[ENV_BUILD_NUMBER] == "42"
 
 @pytest.fixture
 def lance(qapp, suite):

@@ -122,6 +122,7 @@ class MainWindow(QMainWindow):
         # Identifiant du run en cours : partage par tous ses lecteurs,
         # ce qui permet de les retrouver ensemble dans l'historique.
         self._run_id: str | None = None
+        self._build_number: int | None = None
         self._collector: CollectWorker | None = None
         self._matches: list[str] = []
         self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
@@ -985,6 +986,7 @@ class MainWindow(QMainWindow):
         campagnes, ordinaires = campaign_mod.build_runs(
             self._campaigns, nodeids)
         self._run_id = history.nouvel_identifiant()
+        self._build_number = self.history.next_build_number()
         requete = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,
@@ -997,6 +999,7 @@ class MainWindow(QMainWindow):
             regular_nodeids=ordinaires,
             campaigns=campagnes,
             log_root=str(self.workspace.log_root),
+            build_number=self._build_number,
         )
         self.service.start(requete, self.workspace.env)
 
@@ -1118,6 +1121,7 @@ class MainWindow(QMainWindow):
         # La duree est deja dans le resume : la laisser aussi a cote
         # l'afficherait deux fois.
         self.elapsed_label.clear()
+        self.results.refresh_logs()
         self._update_actions()
 
     def _archiver(self, rapports: list) -> None:
@@ -1142,6 +1146,8 @@ class MainWindow(QMainWindow):
                 id=self._run_id,
                 timestamp=time.time(),
                 workspace=self.workspace.path,
+                build_number=self._build_number,
+                log_root=str(self.workspace.log_root),
                 reader=rapport.reader.name,
                 duration=rapport.duration,
                 exit_code=rapport.exit_code,
@@ -1153,6 +1159,7 @@ class MainWindow(QMainWindow):
             )
             self.history.add(entree, rapport.output)
         self._run_id = None
+        self._build_number = None
 
     def _tick(self) -> None:
         self._seconds += 1

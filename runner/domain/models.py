@@ -153,6 +153,10 @@ class RunRequest:
     regular_nodeids: tuple[str, ...] = ()
     campaigns: tuple[CampaignRun, ...] = ()
     log_root: str = ""
+    # Numero lisible du Run History. Contrairement a run_id (technique et
+    # horodate), il est stable dans les chemins de logs et partage par tous les
+    # lecteurs du lancement.
+    build_number: int | None = None
 
     @property
     def total_tests(self) -> int:

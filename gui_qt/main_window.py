@@ -38,7 +38,7 @@ from core.pytest_executor import (PytestOutputParser, compact_output_line,
                                   pytest_nodeid_args)
 from core.reader_plugin import CONFIG_PATH_ENV, reader_plugin
 from core.reader_switch import ActiveReader, restore_interrupted_reader
-from core.run_history import RunHistoryManager, history_dir, new_run_id
+from core.run_history import BUILD_NUMBER_ENV, RunHistoryManager, history_dir, new_run_id
 from core.workspace_config import (READER_KEYS, config_file_declaring, console_path_levels,
                                    discover_config_files, import_mode_args, load_config,
                                    reader_env, reader_mode_for, readers_for,
@@ -159,7 +159,7 @@ class PytestWorker(QThread):
 
     def __init__(self, nodeids, workspace, junit_xml_path=None, parallel=False,
                  interpreter=None, targets=None, reader="", config_path="",
-                 write_reader_to_config=False):
+                 write_reader_to_config=False, build_number=None):
         super().__init__()
         # Lecteur de ce run, et comment le transmettre aux tests. En mode
         # sequentiel il est ecrit dans la cle `Reader` de la configuration le
@@ -169,6 +169,7 @@ class PytestWorker(QThread):
         self.reader = reader
         self.config_path = config_path
         self.write_reader_to_config = write_reader_to_config
+        self.build_number = build_number
         self._plugin_args: list[str] = []
         self._plugin_dir = ""
         self.nodeids = nodeids
@@ -316,6 +317,8 @@ class PytestWorker(QThread):
     def _env(self) -> dict:
         """Environnement du processus : lecteur, et plugin s'il y en a un."""
         env = reader_env(self.workspace, self.reader, self.config_path or None)
+        if self.build_number is not None:
+            env[BUILD_NUMBER_ENV] = str(self.build_number)
         if self._plugin_args:
             env[CONFIG_PATH_ENV] = self.config_path
         if self._plugin_dir:
@@ -470,6 +473,7 @@ class MainWindow(QMainWindow):
         self.history_window = None
         self.history_manager = RunHistoryManager()
         self._current_run_id = None
+        self._current_build_number = None
         self._current_junit_path = None
         self._run_started_at = None
         self._current_run_nodeids: list[str] = []
@@ -1382,8 +1386,10 @@ class MainWindow(QMainWindow):
                 junit_xml_path=junit,
                 reader=lecteur,
                 config=reglages,
+                build_number=self._current_build_number,
             )
         self._refresh_history_window()
+        self.details.refresh_log()
 
     def _refresh_history_window(self):
         if self.history_window is not None:
@@ -1716,6 +1722,7 @@ class MainWindow(QMainWindow):
         self.total_tests = len(nodeids) * len(lecteurs)
 
         self._current_run_id = new_run_id()
+        self._current_build_number = self.history_manager.next_build_number()
         self._current_junit_path = os.path.join(history_dir(), f"{self._current_run_id}.xml")
         self._run_started_at = time.time()
         self._current_run_nodeids = list(nodeids)
@@ -1771,6 +1778,7 @@ class MainWindow(QMainWindow):
                 reader=lecteur,
                 config_path=self.reader_config_path(),
                 write_reader_to_config=sequentiel,
+                build_number=self._current_build_number,
             )
             worker.stdout_signal.connect(
                 lambda texte, i=index: self._on_stdout(texte, i))

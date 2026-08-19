@@ -12,6 +12,40 @@ import pytest
 from gui_qt.detail_panel import DetailPanel, function_name_from_nodeid, read_text_file
 
 
+def test_notepad_plus_plus_is_found_in_program_files(tmp_path, monkeypatch):
+    from gui_qt.dialogs import find_notepad_plus_plus
+
+    executable = tmp_path / "Notepad++" / "notepad++.exe"
+    executable.parent.mkdir()
+    executable.write_bytes(b"")
+    monkeypatch.setattr("gui_qt.dialogs.shutil.which", lambda command: None)
+    monkeypatch.setenv("PROGRAMFILES", str(tmp_path))
+    monkeypatch.delenv("PROGRAMW6432", raising=False)
+    monkeypatch.delenv("PROGRAMFILES(X86)", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+
+    assert find_notepad_plus_plus() == executable
+
+
+def test_notepad_plus_plus_receives_the_complete_log_path(tmp_path, monkeypatch):
+    from gui_qt.dialogs import open_in_notepad_plus_plus
+
+    executable = tmp_path / "notepad++.exe"
+    executable.write_bytes(b"")
+    log = tmp_path / "complete.log"
+    log.write_text("complete", encoding="utf-8")
+    launched = []
+    monkeypatch.setattr(
+        "gui_qt.dialogs.find_notepad_plus_plus", lambda: executable
+    )
+    monkeypatch.setattr(
+        "gui_qt.dialogs.subprocess.Popen", lambda command: launched.append(command)
+    )
+
+    assert open_in_notepad_plus_plus(None, log)
+    assert launched == [[str(executable), str(log)]]
+
+
 @pytest.fixture
 def panel(qtbot):
     widget = DetailPanel()
@@ -155,6 +189,20 @@ def test_clicking_a_test_shows_its_log(panel, tmp_path):
 
     assert "APDU" in panel.log_view.toPlainText()
     assert "test_cible.log" in panel.log_header.text()
+
+
+def test_log_is_refreshed_when_it_is_created_after_selection(panel, tmp_path):
+    build_workspace(tmp_path)
+    nodeid = "module/test_exemple.py::test_cible"
+    panel.set_workspace(str(tmp_path))
+    panel.show_for(nodeid, nodeid)
+
+    assert panel.log_view.toPlainText() == ""
+
+    write_log(tmp_path, nodeid, "cree pendant le build\n")
+    panel.refresh_log()
+
+    assert panel.log_view.toPlainText() == "cree pendant le build\n"
 
 
 def test_a_test_without_log_says_where_it_looked(panel, tmp_path):

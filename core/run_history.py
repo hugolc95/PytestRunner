@@ -17,6 +17,9 @@ import os
 import time
 
 
+BUILD_NUMBER_ENV = "PYTEST_RUNNER_BUILD_NUMBER"
+
+
 def history_dir() -> str:
     """Dossier de stockage de l'historique (cree si absent)."""
     base = os.path.join(os.path.expanduser("~"), ".pytest_runner_gui", "history")
@@ -31,6 +34,10 @@ def new_run_id() -> str:
 
 def _history_file() -> str:
     return os.path.join(history_dir(), "run_history.json")
+
+
+def _build_counter_file() -> str:
+    return os.path.join(history_dir(), "build_counter.txt")
 
 
 class RunHistoryManager:
@@ -60,6 +67,35 @@ class RunHistoryManager:
             # L'historique ne doit jamais faire planter l'appli.
             pass
 
+    def next_build_number(self) -> int:
+        """Reserve le prochain numero de build, independamment du run_id technique.
+
+        Le compteur est conserve dans un fichier separe afin qu'un nettoyage du
+        Run History ne reutilise pas les numeros d'anciens dossiers de logs.
+        """
+        entry_max = max(
+            (int(entry.get("build_number") or 0) for entry in self._entries),
+            default=0,
+        )
+        stored = 0
+        try:
+            with open(_build_counter_file(), "r", encoding="utf-8") as f:
+                stored = int(f.read().strip() or 0)
+        except (OSError, ValueError):
+            pass
+
+        number = max(entry_max, stored) + 1
+        try:
+            counter_path = _build_counter_file()
+            os.makedirs(os.path.dirname(counter_path), exist_ok=True)
+            with open(counter_path, "w", encoding="utf-8") as f:
+                f.write(str(number))
+        except OSError:
+            # L'historique continuera a fonctionner ; les entrees deja en memoire
+            # evitent au moins une reutilisation pendant cette session.
+            pass
+        return number
+
     def add_run(
         self,
         run_id: str,
@@ -74,6 +110,7 @@ class RunHistoryManager:
         source: str = "workspace",
         reader: str = "",
         config: dict | None = None,
+        build_number: int | None = None,
     ) -> dict:
         """Enregistre un run termine et retourne l'entree creee.
 
@@ -95,6 +132,7 @@ class RunHistoryManager:
 
         entry = {
             "id": run_id,
+            "build_number": int(build_number) if build_number is not None else None,
             "timestamp": time.time(),
             "source": source,
             "workspace": workspace,

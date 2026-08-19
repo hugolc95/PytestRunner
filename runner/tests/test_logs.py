@@ -16,6 +16,7 @@ import time
 import pytest
 
 from runner.domain.logs import (
+    find_logs_for_build,
     find_test_log,
     nodeid_tokens,
     places_searched,
@@ -69,6 +70,16 @@ def test_the_log_is_found_with_no_manifest_at_all(tmp_path):
     attendu = ecrire(tmp_path / "20260810_112653" / "NIST" / "TestSuiteCDS",
                      "test_pso[nom-RSA-mod2048-tg1-tc11]")
     assert find_test_log(tmp_path, NODEID) == attendu
+
+
+def test_build_log_with_module_and_test_in_filename_is_found(tmp_path):
+    attendu = ecrire(
+        tmp_path / "20260819" / "Run_0042" / "HID OMNIKEY"
+        / "NIST" / "TestSuiteCDS",
+        "test_PSO_CDS_RSA__test_pso[nom-RSA-mod2048-tg1-tc11]",
+    )
+
+    assert find_test_log(tmp_path, NODEID, "HID OMNIKEY") == attendu
 
 
 def test_the_test_identity_may_be_carried_by_the_folders(tmp_path):
@@ -340,6 +351,33 @@ def test_the_most_recent_run_is_named_first(tmp_path):
     assert places_searched(tmp_path)[0] == recent
 
 
+# --------------------------------------------------------------- par build
+
+def test_all_normal_logs_of_a_build_are_found(tmp_path):
+    a = ecrire(tmp_path / "20260819" / "Run_0042" / "Reader A" / "suite",
+               "test_a")
+    b = ecrire(tmp_path / "20260819" / "Run_0042" / "Reader A" / "suite",
+               "test_b")
+    ecrire(tmp_path / "20260819" / "Run_0041" / "Reader A", "old")
+
+    assert find_logs_for_build(tmp_path, 42, "Reader A") == [a, b]
+
+
+def test_all_incremental_logs_of_a_build_are_found(tmp_path):
+    dossier = tmp_path / "20260819" / "Reader A" / "suite"
+    a = ecrire(dossier, "test_a_B0042_001")
+    b = ecrire(dossier, "test_a_B0042_002")
+    ecrire(dossier, "test_a_B0041_001")
+
+    assert find_logs_for_build(tmp_path, 42, "Reader A") == [a, b]
+
+
+def test_build_lookup_never_borrows_another_readers_logs(tmp_path):
+    ecrire(tmp_path / "20260819" / "Run_0042" / "Reader A", "test_a")
+
+    assert find_logs_for_build(tmp_path, 42, "Reader B") == []
+
+
 def test_a_missing_log_folder_is_reported_as_such(tmp_path):
     """Pas de dossier a citer : le message doit alors parler du dossier absent
     plutot que d'aligner une liste vide."""
@@ -375,6 +413,105 @@ def test_the_panel_loads_one_log_per_reader(panneau, tmp_path):
 
     assert "vu par A" in panneau.logs.views[0].text()
     assert "vu par B" in panneau.logs.views[1].text()
+
+
+def test_each_log_view_has_its_own_open_button(panneau, tmp_path, monkeypatch):
+    """Un bouton par console, comme le bouton de copie.
+
+    Le bouton unique de la barre du haut portait sur « l'onglet courant ».
+    Cette notion n'existe plus des qu'on compare : les deux logs sont a
+    l'ecran cote a cote, et rien ne disait lequel des deux allait s'ouvrir.
+    """
+    ecrits = _logs_par_lecteur(
+        tmp_path, {"LecteurA": "vu par A", "LecteurB": "vu par B"}
+    )
+    panneau.set_log_root(tmp_path)
+    panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
+    panneau.logs.compare.setChecked(True)
+
+    opened = []
+    monkeypatch.setattr(
+        "runner.ui.results_panel.open_in_notepad_plus_plus",
+        lambda parent, path: opened.append(path) or True,
+    )
+
+    # Les deux consoles sont visibles en meme temps : chacune doit ouvrir SON
+    # fichier, sans dependre de l'onglet selectionne.
+    panneau.logs.open_buttons[1].click()
+    panneau.logs.open_buttons[0].click()
+
+    assert opened == [ecrits["LecteurB"], ecrits["LecteurA"]]
+
+
+def test_an_open_button_lives_in_the_toolbar_of_its_own_console(panneau, tmp_path):
+    _logs_par_lecteur(tmp_path, {"LecteurA": "A", "LecteurB": "B"})
+    panneau.set_log_root(tmp_path)
+    panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
+
+    for vue, bouton in zip(panneau.logs.views, panneau.logs.open_buttons):
+        # Dans la meme barre que la copie, et pas ailleurs dans la fenetre.
+        assert bouton.parentWidget() is vue.copy_button.parentWidget()
+        assert bouton.text() == ""
+        assert bouton.toolTip() == "Open this log"
+
+
+def test_an_open_button_is_off_while_its_reader_has_no_log(panneau, tmp_path):
+    """Deux lecteurs, un seul log ecrit : les deux boutons doivent dire deux
+    choses differentes. Un bouton actif qui n'ouvre rien laisserait croire que
+    Notepad++ a echoue."""
+    _logs_par_lecteur(tmp_path, {"LecteurA": "vu par A"})
+    panneau.set_log_root(tmp_path)
+    panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
+
+    assert panneau.logs.path_at(0) is not None
+    assert panneau.logs.path_at(1) is None
+    assert panneau.logs.open_buttons[0].isEnabled()
+    assert not panneau.logs.open_buttons[1].isEnabled()
+
+
+def test_the_pytest_output_has_no_open_button(panneau):
+    """Ces boutons ouvrent un fichier de log. La sortie pytest n'en est pas
+    un : elle n'existe que dans le tampon de la console."""
+    assert panneau.output.open_buttons == []
+
+
+def test_each_new_log_view_has_the_notepad_plus_plus_context_menu(
+    panneau, tmp_path
+):
+    from PyQt5.QtCore import Qt
+
+    _logs_par_lecteur(tmp_path, {"LecteurA": "A", "LecteurB": "B"})
+    panneau.set_log_root(tmp_path)
+    panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
+
+    assert all(
+        view.view.contextMenuPolicy() == Qt.CustomContextMenu
+        for view in panneau.logs.views[:2]
+    )
+    requested = []
+    # ResultsPanel connecte normalement ce signal a l'ouverture de Notepad++.
+    # Ce test ne doit pas lancer une application externe ni afficher une boite
+    # de dialogue : il verifie uniquement que la bonne vue emet le bon index.
+    panneau.logs.open_file_requested.disconnect()
+    panneau.logs.open_file_requested.connect(requested.append)
+    panneau.logs._request_external_open(1)
+    assert requested == [1]
+
+
+def test_the_panel_refreshes_a_log_created_after_selection(panneau, tmp_path):
+    from runner.domain.models import Reader
+
+    lecteur = Reader("LecteurA", 0)
+    panneau.set_readers((lecteur,))
+    panneau.set_log_root(tmp_path)
+    panneau.show_test(NODEID_SIMPLE, {}, str(tmp_path))
+
+    assert "No log found" in panneau.logs.views[0].text()
+
+    _logs_par_lecteur(tmp_path, {"LecteurA": "cree pendant le build"})
+    panneau.refresh_logs()
+
+    assert "cree pendant le build" in panneau.logs.views[0].text()
 
 
 def test_the_panel_says_where_it_looked(panneau, tmp_path):

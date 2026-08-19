@@ -44,6 +44,7 @@ from runner.ui import tokens as t
 from runner.ui.console_view import ConsoleView
 from runner.ui.detail_panel import DetailPanel
 from runner.ui.source_panel import SourcePanel
+from runner.ui.external_log import open_in_notepad_plus_plus
 
 ONGLET_DETAIL = 0
 ONGLET_SOURCE = 1
@@ -60,14 +61,17 @@ class ReaderViews(QWidget):
     """
 
     reader_selected = pyqtSignal(int)
+    open_file_requested = pyqtSignal(int)
 
     def __init__(self, orientation=Qt.Vertical, sync_scroll: bool = False,
                  show_lens: bool = True, highlight_differences: bool = False,
+                 external_open: bool = False,
                  parent=None):
         super().__init__(parent)
         self._sync = sync_scroll
         self._show_lens = show_lens
         self._highlight_differences = highlight_differences
+        self._external_open = external_open
         self._defile = False
         self._readers: tuple[Reader, ...] = ()
         self._difference_groups: list[tuple[frozenset[int], ...]] = []
@@ -76,6 +80,7 @@ class ReaderViews(QWidget):
         self.views: list[ConsoleView] = []
         self.headers: list[QLabel] = []
         self._tab_labels: list[QLabel] = []
+        self._paths: list[Path | None] = []
 
         self.tabs = QTabBar()
         self.tabs.setObjectName("ReaderTabs")
@@ -96,6 +101,13 @@ class ReaderViews(QWidget):
             "Compare every reader  (Ctrl+Shift+D)")
         self.compare.setVisible(False)
         self.compare.toggled.connect(self._on_compare_toggled)
+
+        # Pas de bouton d'ouverture ici : il en faut UN PAR CONSOLE, pose dans
+        # la barre de chaque vue a cote de son bouton de copie (voir
+        # `_add_view`). Un bouton unique en tete portait sur l'onglet courant,
+        # notion qui n'existe plus des qu'on compare : les deux logs sont a
+        # l'ecran, et rien ne disait lequel des deux allait s'ouvrir.
+        self.open_buttons: list[QPushButton] = []
 
         # La navigation n'a de sens que lorsque la comparaison semantique est
         # active. Elle reste donc entierement absente de la barre le reste du
@@ -174,13 +186,39 @@ class ReaderViews(QWidget):
 
         self.views.append(vue)
         self.headers.append(entete)
+        self._paths.append(None)
         self.split.addWidget(boite)
+
+        if self._external_open:
+            index = len(self.views) - 1
+            vue.add_tool(self._make_open_button(index))
+            vue.view.setContextMenuPolicy(Qt.CustomContextMenu)
+            vue.view.customContextMenuRequested.connect(
+                lambda position, i=index, v=vue.view:
+                self._show_external_context_menu(i, v, position)
+            )
 
         if self._sync:
             for sens in ("verticalScrollBar", "horizontalScrollBar"):
                 getattr(vue, sens)().valueChanged.connect(
                     lambda valeur, s=sens, v=vue: self._propager(s, v, valeur))
         return vue
+
+    def _make_open_button(self, index: int) -> QPushButton:
+        """Le bouton « Open log » de la console numero `index`.
+
+        Desactive tant que ce lecteur n'a pas de fichier a ouvrir : grise, il
+        dit que ce log n'existe pas encore, la ou un bouton actif qui ne fait
+        rien laisserait croire que Notepad++ a echoue.
+        """
+        bouton = QPushButton()
+        bouton.setObjectName("IconSm")
+        bouton.setIcon(icons.icon("mdi.open-in-new", t.TEXT_MUTED))
+        bouton.setToolTip("Open this log")
+        bouton.setEnabled(False)
+        bouton.clicked.connect(lambda: self._request_external_open(index))
+        self.open_buttons.append(bouton)
+        return bouton
 
     def _propager(self, sens: str, source, valeur: int) -> None:
         """Fait suivre les autres vues : cote a cote, chacune ne montre qu'une
@@ -204,6 +242,10 @@ class ReaderViews(QWidget):
 
         while len(self.views) < max(1, len(self._readers)):
             self._add_view()
+
+        if self._external_open:
+            self._paths = [None] * len(self.views)
+            self._update_external_buttons()
 
         self.tabs.blockSignals(True)
         for libelle in self._tab_labels:
@@ -275,6 +317,33 @@ class ReaderViews(QWidget):
             self._apply_layout()
             self._restyle_reader_names()
 
+    def path_at(self, index: int) -> Path | None:
+        if not 0 <= index < len(self._paths):
+            return None
+        path = self._paths[index]
+        return path if path is not None and path.is_file() else None
+
+    def _update_external_buttons(self) -> None:
+        """Chaque bouton suit SON log, pas l'onglet courant.
+
+        Cote a cote, un lecteur peut avoir son fichier quand l'autre ne l'a pas
+        encore : les deux boutons doivent alors dire deux choses differentes.
+        """
+        for index, bouton in enumerate(self.open_buttons):
+            bouton.setEnabled(self.path_at(index) is not None)
+
+    def _request_external_open(self, index: int) -> None:
+        if self.path_at(index) is not None:
+            self.open_file_requested.emit(index)
+
+    def _show_external_context_menu(self, index: int, view, position) -> None:
+        menu = view.createStandardContextMenu()
+        menu.addSeparator()
+        action = menu.addAction("Open log")
+        action.setEnabled(self.path_at(index) is not None)
+        action.triggered.connect(lambda: self._request_external_open(index))
+        menu.exec_(view.mapToGlobal(position))
+
     def toggle_compare(self) -> None:
         if self.compare.isVisible():
             self.compare.setChecked(not self.compare.isChecked())
@@ -300,11 +369,13 @@ class ReaderViews(QWidget):
         if 0 <= index < len(self.views):
             self.views[index].set_text(texte)
             self.headers[index].setText(entete)
+            self._paths[index] = Path(chemin) if chemin else None
             # Le chemin en infobulle plutot qu'en clair : deux logs se
             # ressemblent beaucoup et savoir DUQUEL on parle est la premiere
             # chose qu'on verifie, mais l'afficher en entier mangerait la
             # largeur de la console.
             self.headers[index].setToolTip(chemin)
+            self._update_external_buttons()
             self._update_difference_highlights()
 
     def _update_difference_highlights(self, reveal: bool = False) -> None:
@@ -417,6 +488,8 @@ class ReaderViews(QWidget):
         for vue in self.views:
             vue.restyle()
         self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
+        for bouton in self.open_buttons:
+            bouton.setIcon(icons.icon("mdi.open-in-new", t.TEXT_MUTED))
         self.previous_difference.setIcon(
             icons.icon("mdi.chevron-up", t.TEXT_MUTED))
         self.next_difference.setIcon(
@@ -427,6 +500,9 @@ class ReaderViews(QWidget):
     def clear(self) -> None:
         for vue in self.views:
             vue.clear()
+        if self._external_open:
+            self._paths = [None] * len(self.views)
+            self._update_external_buttons()
         # Le contenu disparait, pas l'identite des colonnes. En comparaison,
         # un en-tete vide au debut d'un run rendrait les consoles impossibles
         # a attribuer jusqu'au premier rapport complet.
@@ -467,7 +543,8 @@ class ResultsPanel(QWidget):
         self.output = ReaderViews(Qt.Vertical)
         self.logs = ReaderViews(
             Qt.Horizontal, sync_scroll=True, show_lens=False,
-            highlight_differences=True)
+            highlight_differences=True, external_open=True)
+        self.logs.open_file_requested.connect(self._open_log_in_notepad_plus_plus)
 
         # Les trois panneaux suivent le meme lecteur : lire le log de l'un en
         # regardant la sortie de l'autre n'a pas de sens.
@@ -753,6 +830,16 @@ class ResultsPanel(QWidget):
             # DUQUEL on parle est la premiere chose qu'on veut verifier.
             self.logs.set_text(lecteur.index, contenu,
                                lecteur.name or chemin.name, str(chemin))
+
+    def refresh_logs(self) -> None:
+        """Recharge les logs du test encore selectionne apres un run."""
+        if self._nodeid:
+            self.show_logs_for(self._nodeid, self._readers)
+
+    def _open_log_in_notepad_plus_plus(self, reader_index: int) -> None:
+        path = self.logs.path_at(reader_index)
+        if path is not None:
+            open_in_notepad_plus_plus(self, path)
 
     def _rien_trouve(self, lecteur: Reader) -> str:
         """Dire ou l'on a cherche, et pas seulement qu'on n'a rien trouve.

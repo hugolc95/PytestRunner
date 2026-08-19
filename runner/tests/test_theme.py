@@ -401,6 +401,32 @@ def test_the_marker_popup_keeps_exactly_one_magnifier(qapp):
     assert len(champ.actions()) == depart
 
 
+def test_the_open_log_buttons_are_repainted_with_the_palette(qapp):
+    """Ces boutons sont poses dans la barre de CHAQUE console.
+
+    `ConsoleView.restyle()` ne connait que ses propres boutons ; celui-ci lui
+    est ajoute de l'exterieur, et c'est donc a `ReaderViews` de le repeindre.
+    Le balayage de la fenetre de reference ne l'attrape pas : verifie sur ce
+    sabotage, il reste vert alors que l'icone garde l'ancienne teinte.
+    """
+    from runner.ui import icons
+    from runner.ui.results_panel import ReaderViews
+
+    if not icons.available():
+        pytest.skip("qtawesome absent")
+
+    t.set_theme("dark")
+    vues = ReaderViews(external_open=True)
+    assert vues.open_buttons, "aucun bouton a verifier : le test ne prouve rien"
+    avant = vues.open_buttons[0].icon().pixmap(16, 16).toImage()
+
+    t.set_theme("light")
+    vues.restyle()
+    apres = vues.open_buttons[0].icon().pixmap(16, 16).toImage()
+
+    assert avant != apres, "le bouton a garde l'icone du theme precedent"
+
+
 def test_the_console_forgets_the_ansi_colours_of_the_previous_theme(qapp):
     """Les formats ANSI sont mis en cache par style, couleurs deja resolues.
 
