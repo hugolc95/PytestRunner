@@ -63,6 +63,8 @@ class RunEntry:
     id: str
     timestamp: float
     workspace: str
+    build_number: int | None = None
+    log_root: str = ""
     reader: str = ""
     duration: float = 0.0
     exit_code: int = 0
@@ -107,7 +109,8 @@ class RunEntry:
     def to_json(self) -> dict:
         return {
             "id": self.id, "timestamp": self.timestamp,
-            "workspace": self.workspace, "reader": self.reader,
+            "workspace": self.workspace, "build_number": self.build_number,
+            "log_root": self.log_root, "reader": self.reader,
             "duration": self.duration, "exit_code": self.exit_code,
             "counts": dict(self.counts),
             "nodeids": list(self.nodeids),
@@ -127,6 +130,10 @@ class RunEntry:
                 id=str(donnees["id"]),
                 timestamp=float(donnees.get("timestamp", 0.0)),
                 workspace=str(donnees.get("workspace", "")),
+                build_number=(
+                    int(donnees["build_number"])
+                    if donnees.get("build_number") is not None else None),
+                log_root=str(donnees.get("log_root", "")),
                 reader=str(donnees.get("reader", "")),
                 duration=float(donnees.get("duration", 0.0)),
                 exit_code=int(donnees.get("exit_code", 0)),
@@ -206,6 +213,29 @@ class History:
     @property
     def fichier(self) -> Path:
         return self.racine / "run_history.json"
+
+    @property
+    def fichier_compteur_build(self) -> Path:
+        return self.racine / "build_counter.txt"
+
+    def next_build_number(self) -> int:
+        """Reserve un numero lisible qui n'est pas reutilise apres un Clear."""
+        known = max(
+            (entry.build_number or 0 for entry in self._entrees),
+            default=0,
+        )
+        stored = 0
+        try:
+            stored = int(self.fichier_compteur_build.read_text(encoding="utf-8").strip() or 0)
+        except (OSError, ValueError):
+            pass
+
+        number = max(known, stored) + 1
+        try:
+            self.fichier_compteur_build.write_text(str(number), encoding="utf-8")
+        except OSError:
+            pass
+        return number
 
     # ------------------------------------------------------------- lecture
 

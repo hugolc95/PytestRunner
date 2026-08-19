@@ -53,6 +53,10 @@ CLES_FICHIER = CLES_PYTHON + ("config_file",)
 EXPLICATIONS = {
     "log_path": "Folder where the conftest writes one .log per test.",
     "log_directory": "Folder where the conftest writes one .log per test.",
+    "incremental_log": "Keep repeated executions in the same test folder and "
+                       "number each log file instead of creating a Run folder.",
+    "incrementallog": "Keep repeated executions in the same test folder and "
+                      "number each log file instead of creating a Run folder.",
     "python_executable": "Python used to collect and run the tests. It needs "
                          "pytest. Empty means the application's own setting.",
     "reader": "The reader the tests read today.",

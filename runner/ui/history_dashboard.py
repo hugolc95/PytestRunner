@@ -7,12 +7,13 @@ que l'ecran initial ne montre que le verdict et les problemes utiles.
 
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PyQt5.QtCore import QSize, Qt, pyqtSignal
-from PyQt5.QtGui import QColor
+from PyQt5.QtCore import QSize, Qt, QUrl, pyqtSignal
+from PyQt5.QtGui import QColor, QDesktopServices
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QActionGroup,
@@ -40,7 +41,7 @@ from PyQt5.QtWidgets import (
     QWidget,
 )
 
-from runner.domain import report
+from runner.domain import logs, report
 from runner.domain.history import History, RunEntry, compare
 from runner.domain.models import Reader, Status
 from runner.ui import tokens as t
@@ -75,6 +76,14 @@ class RunGroup:
     @property
     def workspace(self) -> str:
         return self.entries[0].workspace if self.entries else ""
+
+    @property
+    def build_number(self) -> int | None:
+        return self.entries[0].build_number if self.entries else None
+
+    @property
+    def log_root(self) -> str:
+        return next((entry.log_root for entry in self.entries if entry.log_root), "")
 
     @property
     def reader_names(self) -> tuple[str, ...]:
@@ -164,6 +173,9 @@ class RunCard(QFrame):
             "background:transparent;")
         top.addWidget(self.dot)
         top.addWidget(self._label(_when(group.timestamp, False), 13, 700))
+        if group.build_number is not None:
+            top.addWidget(self._label(f"#{group.build_number:04d}", t.TEXT_XS, 700,
+                                      t.ACCENT))
         top.addWidget(self._label(Path(group.workspace).name or group.workspace,
                                   t.TEXT_SM, 600))
         top.addStretch(1)
@@ -477,6 +489,10 @@ class HistoryWindow(QDialog):
         self.rerun_button.setObjectName("Run")
         self.rerun_button.setFixedWidth(88)
         self.rerun_button.clicked.connect(self.rerun)
+        self.logs_button = QPushButton("Logs")
+        self.logs_button.setObjectName("Ghost")
+        self.logs_button.setFixedWidth(76)
+        self.logs_button.clicked.connect(self.open_logs)
         self.export_button = QToolButton()
         self.export_button.setText("Export")
         self.export_button.setObjectName("HistoryAction")
@@ -488,6 +504,7 @@ class HistoryWindow(QDialog):
         top = QHBoxLayout()
         top.addLayout(names)
         top.addStretch(1)
+        top.addWidget(self.logs_button)
         top.addWidget(self.rerun_button)
         top.addWidget(self.export_button)
 
@@ -772,7 +789,9 @@ class HistoryWindow(QDialog):
             f"{len(group.nodeids)} tests    {group.total} results    "
             f"{group.duration:.1f}s    "
             f"{len(group.entries)} reader{'s' if len(group.entries) != 1 else ''}    "
-            f"Run ID {group.id}")
+            + (f"Build #{group.build_number:04d}    "
+               if group.build_number is not None else "")
+            + f"Run ID {group.id}")
         self.tabs.setTabText(1, f"Issues ({len(group.failed_nodeids)})")
         self._fill_issues(self.issue_preview, group)
         self._fill_issues(self.issues_table, group)
@@ -781,6 +800,8 @@ class HistoryWindow(QDialog):
         self._fill_details(group)
         self._fill_export_menu(group)
         self.rerun_button.setEnabled(bool(group.nodeids))
+        self.logs_button.setEnabled(
+            group.build_number is not None and bool(group.log_root))
         self.delete_button.setEnabled(True)
 
     @staticmethod
@@ -874,6 +895,23 @@ class HistoryWindow(QDialog):
     def view_output(self) -> None:
         if self._current_group() is not None:
             self.tabs.setCurrentIndex(2)
+
+    def open_logs(self) -> None:
+        group = self._current_group()
+        if group is None or group.build_number is None or not group.log_root:
+            return
+        fichiers = logs.find_logs_for_build(
+            Path(group.log_root), group.build_number,
+            self._filter_reader,
+        )
+        if not fichiers:
+            self._say(f"No logs found for build #{group.build_number:04d}.", True)
+            return
+        try:
+            dossier = os.path.commonpath([str(path.parent) for path in fichiers])
+        except ValueError:
+            dossier = str(fichiers[0].parent)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(dossier))
 
     def rerun(self) -> None:
         group = self._current_group()

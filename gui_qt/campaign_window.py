@@ -33,7 +33,7 @@ from core.campaign import Campaign, CampaignScenario, CampaignTest, load_campaig
 from core.failure_report import extract_failure_traceback
 from core.pytest_executor import (PytestOutputParser, compact_output_line,
                                   pytest_nodeid_args)
-from core.run_history import RunHistoryManager, new_run_id, history_dir
+from core.run_history import BUILD_NUMBER_ENV, RunHistoryManager, new_run_id, history_dir
 from core.workspace_config import (console_path_levels, import_mode_args, pythonpath_for,
                                    show_test_classes)
 from core.python_interpreter import (
@@ -580,12 +580,14 @@ class CampaignWorker(QThread):
         junit_xml_path: str | None = None,
         parallel: bool = False,
         interpreter: str | None = None,
+        build_number: int | None = None,
     ):
         super().__init__()
         self.campaign = campaign
         self.selections = selections
         self.junit_xml_path = junit_xml_path
         self.parallel = parallel
+        self.build_number = build_number
         # Priorite : cle `python:` de campaign.yml, puis interpreteur fourni par
         # le GUI (config.yml du workspace ou reglage global), puis Python courant.
         self.interpreter = (
@@ -671,6 +673,8 @@ class CampaignWorker(QThread):
 
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
+        if self.build_number is not None:
+            env[BUILD_NUMBER_ENV] = str(self.build_number)
         entries = [str(path) for path in self.campaign.pythonpath if str(path).strip()]
         # Le workspace peut declarer ses propres chemins : un framework externe
         # doit etre importable que l'on passe par une campagne ou non.
@@ -897,6 +901,7 @@ class CampaignPanel(QWidget):
         self.test_counts = {"PASSED": 0, "FAILED": 0, "SKIPPED": 0, "ERROR": 0}
         self.failed_nodeids: set[str] = set()
         self._current_run_id: str | None = None
+        self._current_build_number: int | None = None
         self._current_junit_path: str | None = None
         self._run_started_at: float | None = None
         self._current_run_nodeids: list[str] = []
@@ -1247,6 +1252,7 @@ class CampaignPanel(QWidget):
         self.failed_nodeids = set()
 
         self._current_run_id = new_run_id()
+        self._current_build_number = self.history_manager.next_build_number()
         self._current_junit_path = os.path.join(history_dir(), f"{self._current_run_id}.xml")
         self._run_started_at = time.time()
         self._current_run_nodeids = self._nodeids_for_selections(selections)
@@ -1256,6 +1262,7 @@ class CampaignPanel(QWidget):
             selections,
             junit_xml_path=self._current_junit_path,
             interpreter=interpreter,
+            build_number=self._current_build_number,
         )
         self.worker.stdout_signal.connect(self._on_stdout)
         self.worker.error_signal.connect(self._on_stdout)
@@ -1327,5 +1334,7 @@ class CampaignPanel(QWidget):
             output_text=output_text,
             junit_xml_path=self._current_junit_path or "",
             source="campaign",
+            build_number=self._current_build_number,
         )
+        self.details.refresh_log()
         self.history_updated.emit()

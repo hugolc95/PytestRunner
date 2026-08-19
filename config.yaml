@@ -5,6 +5,12 @@
 # ou absolu. Defaut si absent : <workspace>/logs
 log_directory: logs
 
+# incremental_log:
+#   false -> un dossier par lancement : date/Run_0042/reader/chemin/test.log
+#   true  -> meme dossier pour un test repete, sans ecrasement :
+#            date/reader/chemin/test_B0042_001.log
+incremental_log: false
+
 # python_executable : interpreteur Python utilise pour COLLECTER et EXECUTER les
 # tests de ce workspace. Il est independant du Python qui fait tourner
 # l'interface : celle-ci lance pytest en sous-processus, elle n'importe jamais le

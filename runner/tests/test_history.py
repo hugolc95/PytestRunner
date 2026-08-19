@@ -56,11 +56,21 @@ def test_the_newest_run_comes_first(historique):
 
 
 def test_the_history_survives_a_restart(historique, tmp_path):
-    historique.add(entree("a"), output="trace")
+    historique.add(entree("a", build_number=42, log_root="/logs"), output="trace")
 
     relu = History(tmp_path)
     assert [e.id for e in relu.entries()] == ["a"]
     assert relu.entries()[0].output() == "trace"
+    assert relu.entries()[0].build_number == 42
+    assert relu.entries()[0].log_root == "/logs"
+
+
+def test_build_numbers_are_monotonic_even_after_clear(historique, tmp_path):
+    assert historique.next_build_number() == 1
+    assert historique.next_build_number() == 2
+    historique.clear()
+
+    assert History(tmp_path).next_build_number() == 3
 
 
 def test_each_reader_gets_its_own_entry(historique):

@@ -314,6 +314,50 @@ def find_test_log(log_root: Path, nodeid: str, reader: str = "") -> Path | None:
     return by_search(Path(log_root), nodeid, reader)
 
 
+def find_logs_for_build(log_root: Path, build_number: int,
+                        reader: str = "") -> list[Path]:
+    """Retrouve tous les logs d'un build, dans les deux modes d'ecriture.
+
+    Normal : ``date/Run_0042/.../*.log``.
+    Incremental : ``date/.../*_B0042_001.log``.
+    """
+    racine = Path(log_root)
+    if not racine.is_dir():
+        return []
+
+    build = f"{int(build_number):04d}"
+    composant_normal = f"Run_{build}"
+    marque_incrementale = f"_B{build}_"
+    lecteur = cle(reader) if reader else ""
+    trouves: list[Path] = []
+
+    # Les manifestes donnent la reponse sans parcourir les mois precedents.
+    for manifeste in racine.glob(f"*/build_{build}*.json"):
+        try:
+            table = json.loads(manifeste.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        for valeur in table.values() if isinstance(table, dict) else ():
+            chemin = Path(valeur)
+            if (chemin.is_file()
+                    and (not lecteur or _porte_le_composant(chemin, lecteur))):
+                trouves.append(chemin)
+
+    # Complete toujours par les fichiers. Sous xdist, plusieurs workers peuvent
+    # ecrire le manifeste simultanement, mais leurs logs restent tous presents.
+    for chemin in racine.rglob("*.log"):
+        if (composant_normal not in chemin.parts
+                and marque_incrementale not in chemin.name):
+            continue
+        if lecteur and not _porte_le_composant(chemin, lecteur):
+            continue
+        trouves.append(chemin)
+        if len(trouves) >= MAX_FICHIERS:
+            break
+
+    return sorted(set(trouves), key=lambda path: str(path).lower())
+
+
 def places_searched(log_root: Path) -> list[Path]:
     """Les endroits que `find_test_log` a regardes, dans l'ordre.
 

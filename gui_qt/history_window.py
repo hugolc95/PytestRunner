@@ -20,14 +20,17 @@ from PyQt5.QtWidgets import (
     QListWidgetItem,
 )
 from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QUrl
+from PyQt5.QtGui import QDesktopServices
 
 from core.run_history import RunHistoryManager
 from core.report_export import export_html_report
+from gui_qt.config.config_loader import find_logs_for_build
 from gui_qt.styles.styles import primary_button, neutral_button, danger_button, console_style
 from gui_qt.status_icons import status_icon, STATUS_COLORS
 
 
-COLUMNS = ["Date", "Mode", "Workspace", "Reader", "Total", "Passed", "Failed", "Skipped", "Error", "Duration (s)"]
+COLUMNS = ["Date", "Build", "Mode", "Workspace", "Reader", "Total", "Passed", "Failed", "Skipped", "Error", "Duration (s)"]
 
 
 class HistoryWindow(QDialog):
@@ -49,7 +52,8 @@ class HistoryWindow(QDialog):
             self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.Interactive)
         # La colonne "Workspace" absorbe l'espace restant ; les autres restent
         # redimensionnables a la souris (glisser-deposer sur la bordure d'en-tete).
-        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(
+            COLUMNS.index("Workspace"), QHeaderView.Stretch)
         self.table.doubleClicked.connect(self.view_output)
 
         layout.addWidget(QLabel("Double-click a row to see the run's console output."))
@@ -58,6 +62,7 @@ class HistoryWindow(QDialog):
         button_bar = QHBoxLayout()
 
         self.btn_view = QPushButton("View output")
+        self.btn_logs = QPushButton("Open logs folder")
         self.btn_export_html = QPushButton("Export as HTML")
         self.btn_export_junit = QPushButton("Export JUnit XML")
         self.btn_compare = QPushButton("Compare 2 runs")
@@ -65,6 +70,7 @@ class HistoryWindow(QDialog):
         self.btn_clear = QPushButton("Clear history")
 
         self.btn_view.setStyleSheet(neutral_button())
+        self.btn_logs.setStyleSheet(neutral_button())
         self.btn_export_html.setStyleSheet(primary_button())
         self.btn_export_junit.setStyleSheet(primary_button())
         self.btn_compare.setStyleSheet(neutral_button())
@@ -72,6 +78,7 @@ class HistoryWindow(QDialog):
         self.btn_clear.setStyleSheet(danger_button())
 
         self.btn_view.clicked.connect(self.view_output)
+        self.btn_logs.clicked.connect(self.open_logs)
         self.btn_export_html.clicked.connect(self.export_html)
         self.btn_export_junit.clicked.connect(self.export_junit)
         self.btn_compare.clicked.connect(self.compare_runs)
@@ -79,6 +86,7 @@ class HistoryWindow(QDialog):
         self.btn_clear.clicked.connect(self.clear_history)
 
         button_bar.addWidget(self.btn_view)
+        button_bar.addWidget(self.btn_logs)
         button_bar.addWidget(self.btn_export_html)
         button_bar.addWidget(self.btn_export_junit)
         button_bar.addWidget(self.btn_compare)
@@ -99,6 +107,7 @@ class HistoryWindow(QDialog):
             mode = "Campaign" if entry.get("source") == "campaign" else "Workspace"
             values = [
                 ts,
+                f"#{int(entry['build_number']):04d}" if entry.get("build_number") is not None else "—",
                 mode,
                 entry.get("workspace", ""),
                 entry.get("reader", "") or "—",
@@ -155,6 +164,41 @@ class HistoryWindow(QDialog):
 
         v.addWidget(text_edit)
         dialog.exec_()
+
+    def open_logs(self):
+        """Ouvre le dossier commun aux logs du build selectionne."""
+        entry = self._selected_entry()
+        if not entry:
+            QMessageBox.information(self, "Info", "Select a run in the list first.")
+            return
+
+        build_number = entry.get("build_number")
+        if build_number is None:
+            QMessageBox.information(
+                self,
+                "Not available",
+                "This old history entry has no build number.",
+            )
+            return
+
+        logs = find_logs_for_build(
+            entry.get("workspace", ""),
+            int(build_number),
+            reader=entry.get("reader", ""),
+        )
+        if not logs:
+            QMessageBox.warning(
+                self,
+                "Logs not found",
+                f"No test log was found for build #{int(build_number):04d}.",
+            )
+            return
+
+        try:
+            common_directory = os.path.commonpath([str(path.parent) for path in logs])
+        except ValueError:
+            common_directory = str(logs[0].parent)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(common_directory))
 
     def export_html(self):
         entry = self._selected_entry()
