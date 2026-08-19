@@ -415,6 +415,45 @@ def test_the_panel_loads_one_log_per_reader(panneau, tmp_path):
     assert "vu par B" in panneau.logs.views[1].text()
 
 
+def test_the_new_log_tab_opens_the_active_reader_in_notepad_plus_plus(
+    panneau, tmp_path, monkeypatch
+):
+    ecrits = _logs_par_lecteur(
+        tmp_path, {"LecteurA": "vu par A", "LecteurB": "vu par B"}
+    )
+    panneau.set_log_root(tmp_path)
+    panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
+    panneau.logs.tabs.setCurrentIndex(1)
+
+    opened = []
+    monkeypatch.setattr(
+        "runner.ui.results_panel.open_in_notepad_plus_plus",
+        lambda parent, path: opened.append(path) or True,
+    )
+    panneau.logs.open_external.click()
+
+    assert opened == [ecrits["LecteurB"]]
+
+
+def test_each_new_log_view_has_the_notepad_plus_plus_context_menu(
+    panneau, tmp_path
+):
+    from PyQt5.QtCore import Qt
+
+    _logs_par_lecteur(tmp_path, {"LecteurA": "A", "LecteurB": "B"})
+    panneau.set_log_root(tmp_path)
+    panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
+
+    assert all(
+        view.view.contextMenuPolicy() == Qt.CustomContextMenu
+        for view in panneau.logs.views[:2]
+    )
+    requested = []
+    panneau.logs.open_file_requested.connect(requested.append)
+    panneau.logs._request_external_open(1)
+    assert requested == [1]
+
+
 def test_the_panel_refreshes_a_log_created_after_selection(panneau, tmp_path):
     from runner.domain.models import Reader
 
