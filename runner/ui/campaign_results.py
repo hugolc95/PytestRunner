@@ -1,40 +1,35 @@
-"""Resultats d'une campagne : par configuration, ou en matrice.
+"""Resultats d'une campagne : une carte par configuration, setup puis tests.
+
+Prototype visuel, pas encore la version definitive : le statut du setup
+ci-dessous est DEVINE (tous ses tests en ERROR => setup en cause), en
+attendant que `PhaseReport.setup_ok` soit transmis jusqu'ici. Le vrai cablage
+suit une fois la direction confirmee -- voir `_etat_setup`.
 
 Un meme test peut tourner dans plusieurs configurations avec des verdicts
 differents. Le fusionner en un seul statut -- comme le fait l'arbre, au pire
-des cas -- cache justement ce qu'on cherche a voir ici. Aucune des deux vues
-qui suivent ne fusionne deux executions du meme test entre elles :
+des cas -- cache justement ce qu'on cherche a voir ici : chaque carte reste le
+groupe d'UNE SEULE configuration, jamais fusionnee avec une autre.
 
-- Par configuration : chaque scenario reste son propre groupe, avec le detail
-  par lecteur -- la lecture la plus complete.
-- Matrice : un tableau compact, un test par ligne, une configuration par
-  colonne -- la comparaison la plus rapide. Le detail par lecteur y est
-  seulement en infobulle : la cellule montre le pire des lecteurs, comme
-  partout ailleurs dans l'outil des qu'un statut doit tenir en un seul mot.
+Setup et tests sont dessines comme deux etapes reliees plutot que deux listes
+separees : c'est dans cet ordre qu'ils se sont vraiment executes, et un setup
+en echec explique a lui seul pourquoi ses tests n'ont jamais tourne.
 """
 
 from __future__ import annotations
 
 from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
+    QFrame,
     QHBoxLayout,
-    QHeaderView,
-    QPushButton,
-    QStackedWidget,
-    QTableWidget,
-    QTableWidgetItem,
-    QTreeWidget,
-    QTreeWidgetItem,
+    QLabel,
     QVBoxLayout,
     QWidget,
 )
 
-from runner.domain.campaign import CampaignDefinition
+from runner.domain.campaign import CampaignDefinition, CampaignScenario
 from runner.domain.models import Reader, Status, worst
+from runner.ui import icons, theme
 from runner.ui import tokens as t
-
-VUE_LISTE, VUE_MATRICE = 0, 1
 
 
 def _libelle_test(nodeid: str) -> str:
@@ -42,8 +37,258 @@ def _libelle_test(nodeid: str) -> str:
     return nodeid.split("::", 1)[-1].replace("::", " › ") if "::" in nodeid else nodeid
 
 
+def _pastille(texte: str, couleur: str) -> QLabel:
+    etiquette = QLabel(texte)
+    etiquette.setStyleSheet(theme.pill_style(couleur))
+    return etiquette
+
+
+def _etat_test(status: Status | None) -> tuple[str, str, str]:
+    """(couleur, glyphe, texte) d'un test -- None si jamais lance."""
+    if status is None:
+        return t.TEXT_FAINT, "", "NOT RUN"
+    if status is Status.PASSED:
+        return t.status_color(status), "mdi.check", status.label
+    if status in (Status.FAILED,):
+        return t.status_color(status), "mdi.close", status.label
+    if status is Status.ERROR:
+        # Le setup de sa configuration a echoue : ce n'est pas le test qui a
+        # casse, il n'a simplement jamais tourne. Une couleur a part -- ni le
+        # rouge d'un vrai echec, ni le gris d'un « pas encore » -- pour ne pas
+        # laisser croire a l'un ou l'autre.
+        return t.status_color(status), "", "SKIPPED"
+    return t.status_color(status), "", status.label
+
+
+def _etat_setup(scenario: CampaignScenario,
+                resultats_scenario: dict) -> tuple[str, str, str]:
+    """Estimation du statut du setup -- PLACEHOLDER visuel.
+
+    En attendant que `PhaseReport.setup_ok` soit transmis jusqu'ici, la seule
+    chose que cette maquette sait deviner : si tous les tests de la
+    configuration sont en ERROR, c'est que rien n'a pu tourner derriere le
+    setup. Une configuration deja passee au moins une fois pour un test
+    n'a donc pas pu echouer a ce point.
+    """
+    tous = [statut for statuts in resultats_scenario.values()
+            for statut in statuts.values()]
+    if not tous:
+        return t.TEXT_FAINT, "", "NOT RUN"
+    if all(statut is Status.ERROR for statut in tous):
+        return t.status_color(Status.FAILED), "mdi.close", "FAILED"
+    return t.status_color(Status.PASSED), "mdi.check", "PASSED"
+
+
+def _a_un_probleme(scenario: CampaignScenario, resultats_scenario: dict) -> bool:
+    _, _, texte_setup = _etat_setup(scenario, resultats_scenario)
+    if texte_setup == "FAILED":
+        return True
+    return any(statut is Status.FAILED
+              for statuts in resultats_scenario.values()
+              for statut in statuts.values())
+
+
+class _StepDot(QLabel):
+    """Le petit rond d'une etape, avec ou sans glyphe."""
+
+    def __init__(self, couleur: str, glyphe: str = "", parent=None):
+        super().__init__(parent)
+        self.setFixedSize(18, 18)
+        self.setAlignment(Qt.AlignCenter)
+        self.setStyleSheet(
+            f"border-radius: 9px; border: 2px solid {couleur}; background: transparent;")
+        if glyphe:
+            self.setPixmap(icons.icon(glyphe, couleur).pixmap(9, 9))
+
+
+def _construire_etape(contenu: QWidget, couleur: str, glyphe: str,
+                      dernier: bool) -> QWidget:
+    """Une etape : sa pastille et son trait de liaison, a cote de son contenu."""
+    hote = QWidget()
+    ligne = QHBoxLayout(hote)
+    ligne.setContentsMargins(0, 0, 0, 0)
+    ligne.setSpacing(t.SPACE_3)
+
+    rail = QWidget()
+    rail.setFixedWidth(18)
+    rail_colonne = QVBoxLayout(rail)
+    rail_colonne.setContentsMargins(0, 2, 0, 0)
+    rail_colonne.setSpacing(0)
+    rail_colonne.addWidget(_StepDot(couleur, glyphe))
+    if dernier:
+        rail_colonne.addStretch(1)
+    else:
+        trait = QFrame()
+        trait.setFixedWidth(2)
+        trait.setStyleSheet(f"background-color: {t.BORDER_STRONG};")
+        rail_colonne.addWidget(trait, 1)
+
+    ligne.addWidget(rail)
+    ligne.addWidget(contenu, 1)
+    return hote
+
+
+def _titre_etape(texte: str) -> QLabel:
+    etiquette = QLabel(texte)
+    etiquette.setStyleSheet(
+        f"font-size: {t.TEXT_XS}px; font-weight: 700; letter-spacing: 0.05em;"
+        f" color: {t.TEXT_FAINT}; background: transparent;")
+    return etiquette
+
+
+class _ConfigCard(QFrame):
+    """Une configuration : repliable, setup puis tests dans l'ordre ou ils
+    tournent vraiment."""
+
+    def __init__(self, scenario: CampaignScenario, resultats_scenario: dict,
+                ouvert: bool, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Surface")
+        colonne = QVBoxLayout(self)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(0)
+
+        colonne.addWidget(
+            self._construire_entete(scenario, resultats_scenario))
+
+        self._corps = self._construire_corps(scenario, resultats_scenario)
+        colonne.addWidget(self._corps)
+
+        self.set_expanded(ouvert)
+
+    def _construire_entete(self, scenario: CampaignScenario,
+                           resultats_scenario: dict) -> QWidget:
+        entete = QWidget()
+        entete.setCursor(Qt.PointingHandCursor)
+        ligne = QHBoxLayout(entete)
+        ligne.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
+        ligne.setSpacing(t.SPACE_2)
+
+        self._chevron = QLabel()
+        self._chevron.setFixedWidth(14)
+        titre = QLabel(scenario.name)
+        titre.setStyleSheet(
+            f"font-weight: 600; font-size: {t.TEXT_SM}px; background: transparent;")
+
+        ligne.addWidget(self._chevron)
+        ligne.addWidget(titre)
+        ligne.addStretch(1)
+
+        couleur_setup, _, texte_setup = _etat_setup(scenario, resultats_scenario)
+        ligne.addWidget(_pastille(f"SETUP {texte_setup}", couleur_setup))
+
+        resume = self._resume_tests(scenario, resultats_scenario)
+        if resume is not None:
+            ligne.addWidget(_pastille(*resume))
+
+        entete.mousePressEvent = lambda _evt: self.set_expanded(
+            not self._corps.isVisible())
+        return entete
+
+    def _resume_tests(self, scenario: CampaignScenario,
+                      resultats_scenario: dict) -> tuple[str, str] | None:
+        nodeids = list(dict.fromkeys(test.nodeid for test in scenario.tests))
+        statuts = [worst(resultats_scenario[n].values())
+                  for n in nodeids if resultats_scenario.get(n)]
+        if not statuts:
+            return None
+        # Un ERROR n'est pas un echec de TEST : c'est le setup qui a coupe le
+        # batch avant qu'aucun ne tourne. Le dire avec le meme mot que
+        # "FAILED" ferait chercher une trace d'echec qui n'existe pas.
+        if all(s is Status.ERROR for s in statuts):
+            return (f"{len(statuts)} SKIPPED", t.status_color(Status.ERROR))
+        echecs = sum(1 for s in statuts if s is Status.FAILED)
+        if echecs:
+            return (f"{echecs} FAILED", t.status_color(Status.FAILED))
+        return (f"{len(statuts)} PASSED", t.status_color(Status.PASSED))
+
+    def _construire_corps(self, scenario: CampaignScenario,
+                          resultats_scenario: dict) -> QWidget:
+        corps = QWidget()
+        colonne = QVBoxLayout(corps)
+        colonne.setContentsMargins(t.SPACE_3, 0, t.SPACE_3, t.SPACE_3)
+        colonne.setSpacing(t.SPACE_2)
+
+        couleur_setup, glyphe_setup, texte_setup = _etat_setup(
+            scenario, resultats_scenario)
+        colonne.addWidget(_construire_etape(
+            self._contenu_setup(scenario, couleur_setup, texte_setup),
+            couleur_setup, glyphe_setup, dernier=False))
+
+        nb = len(dict.fromkeys(test.nodeid for test in scenario.tests))
+        couleur_tests = (t.status_color(Status.ERROR) if texte_setup == "FAILED"
+                        else t.ACCENT)
+        colonne.addWidget(_construire_etape(
+            self._contenu_tests(scenario, resultats_scenario, texte_setup),
+            couleur_tests, "", dernier=True))
+        return corps
+
+    def _contenu_setup(self, scenario: CampaignScenario, couleur: str,
+                       texte: str) -> QWidget:
+        bloc = QWidget()
+        colonne = QVBoxLayout(bloc)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(t.SPACE_1)
+        colonne.addWidget(_titre_etape("SETUP"))
+
+        ligne = QHBoxLayout()
+        ligne.setContentsMargins(0, 0, 0, 0)
+        ligne.setSpacing(t.SPACE_2)
+        commande = scenario.setup if isinstance(scenario.setup, str) else \
+            (" ".join(scenario.setup) if scenario.setup else "")
+        chemin = QLabel(commande or "No setup for this configuration")
+        chemin.setStyleSheet(
+            f"font-family: {t.FONT_MONO}; font-size: {t.TEXT_SM}px;"
+            f" color: {t.TEXT_MUTED}; background: transparent;")
+        ligne.addWidget(chemin, 1)
+        ligne.addWidget(_pastille(texte, couleur))
+        colonne.addLayout(ligne)
+        return bloc
+
+    def _contenu_tests(self, scenario: CampaignScenario,
+                       resultats_scenario: dict, texte_setup: str) -> QWidget:
+        bloc = QWidget()
+        colonne = QVBoxLayout(bloc)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(t.SPACE_1)
+
+        nodeids = list(dict.fromkeys(test.nodeid for test in scenario.tests))
+        sous_titre = f"TESTS · {len(nodeids)}"
+        if texte_setup == "FAILED":
+            sous_titre += " · SKIPPED, SETUP FAILED"
+        colonne.addWidget(_titre_etape(sous_titre))
+
+        for nodeid in nodeids:
+            statuts = resultats_scenario.get(nodeid, {})
+            statut = worst(statuts.values()) if statuts else None
+            couleur, glyphe, texte = _etat_test(statut)
+
+            ligne = QHBoxLayout()
+            ligne.setContentsMargins(0, t.SPACE_1, 0, t.SPACE_1)
+            ligne.setSpacing(t.SPACE_2)
+            icone = QLabel()
+            icone.setFixedSize(14, 14)
+            if glyphe:
+                icone.setPixmap(icons.icon(glyphe, couleur).pixmap(13, 13))
+            nom = QLabel(_libelle_test(nodeid))
+            nom.setStyleSheet(
+                f"font-size: {t.TEXT_SM}px;"
+                f" color: {t.TEXT if statut else t.TEXT_FAINT}; background: transparent;")
+            ligne.addWidget(icone)
+            ligne.addWidget(nom, 1)
+            ligne.addWidget(_pastille(texte, couleur))
+            colonne.addLayout(ligne)
+        return bloc
+
+    def set_expanded(self, ouvert: bool) -> None:
+        self._corps.setVisible(ouvert)
+        self._chevron.setPixmap(
+            icons.icon("mdi.chevron-down" if ouvert else "mdi.chevron-right",
+                      t.TEXT_FAINT).pixmap(13, 13))
+
+
 class CampaignResultsView(QWidget):
-    """Les tests d'une campagne, groupes par configuration ou en matrice.
+    """Une carte par configuration de la campagne, setup puis tests.
 
     Vide tant qu'aucune campagne n'est posee : `set_data(None, ...)` la laisse
     prete, mais sans rien a montrer -- l'appelant decide s'il faut l'afficher.
@@ -52,59 +297,10 @@ class CampaignResultsView(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._campaign: CampaignDefinition | None = None
-        self._results: dict[str, dict[str, dict[int, Status]]] = {}
-        self._readers: tuple[Reader, ...] = ()
 
-        colonne = QVBoxLayout(self)
-        colonne.setContentsMargins(0, 0, 0, 0)
-        colonne.setSpacing(t.SPACE_2)
-
-        barre = QHBoxLayout()
-        barre.setContentsMargins(0, 0, 0, 0)
-        barre.addStretch(1)
-
-        # Segmente, comme les lentilles de la console : deux vues d'UNE meme
-        # chose, pas deux actions differentes.
-        self.list_button = QPushButton("By configuration")
-        self.list_button.setObjectName("Segment")
-        self.list_button.setProperty("segment", "first")
-        self.list_button.setCheckable(True)
-        self.list_button.setChecked(True)
-        self.list_button.clicked.connect(lambda: self._basculer(VUE_LISTE))
-
-        self.matrix_button = QPushButton("Matrix")
-        self.matrix_button.setObjectName("Segment")
-        self.matrix_button.setProperty("segment", "last")
-        self.matrix_button.setCheckable(True)
-        self.matrix_button.clicked.connect(lambda: self._basculer(VUE_MATRICE))
-
-        barre.addWidget(self.list_button)
-        barre.addWidget(self.matrix_button)
-        colonne.addLayout(barre)
-
-        self.tree = QTreeWidget()
-        self.tree.setObjectName("CampaignTree")
-        self.tree.setUniformRowHeights(True)
-        self.tree.setAlternatingRowColors(False)
-
-        self.table = QTableWidget()
-        self.table.setObjectName("CampaignMatrix")
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setSelectionMode(QTableWidget.NoSelection)
-        # Le nom du test EST l'en-tete de ligne : le masquer laisserait un
-        # tableau de statuts sans dire de quel test chacun parle.
-
-        self.stack = QStackedWidget()
-        self.stack.addWidget(self.tree)
-        self.stack.addWidget(self.table)
-        colonne.addWidget(self.stack, 1)
-
-    def _basculer(self, vue: int) -> None:
-        self.list_button.setChecked(vue == VUE_LISTE)
-        self.matrix_button.setChecked(vue == VUE_MATRICE)
-        self.stack.setCurrentIndex(vue)
-
-    # ---------------------------------------------------------------- donnees
+        self._cartes = QVBoxLayout(self)
+        self._cartes.setContentsMargins(0, 0, 0, 0)
+        self._cartes.setSpacing(t.SPACE_2)
 
     def set_data(self, campaign: CampaignDefinition | None,
                 results: dict[str, dict[str, dict[int, Status]]],
@@ -115,96 +311,34 @@ class CampaignResultsView(QWidget):
         tourne dans cette configuration -- distinct d'un statut PENDING, qui
         impliquerait un run en cours.
         """
+        while self._cartes.count():
+            element = self._cartes.takeAt(0)
+            widget = element.widget()
+            if widget is not None:
+                # `takeAt` retire le widget du LAYOUT, pas de l'ecran : sans
+                # `hide()`, il reste peint a sa derniere position jusqu'a ce
+                # que `deleteLater()` s'execute -- au prochain tour de
+                # boucle, pas maintenant. Deux `set_data()` rapproches (un
+                # clic qui redeclenche la selection courante, par exemple)
+                # laissaient alors un fragment de l'ancienne carte flotter
+                # sous les nouvelles.
+                widget.hide()
+                widget.deleteLater()
+
         self._campaign = campaign
-        self._results = results
-        self._readers = readers or (Reader("", 0),)
-        self._remplir_liste()
-        self._remplir_matrice()
-
-    def _nom_lecteur(self, index: int) -> str:
-        for lecteur in self._readers:
-            if lecteur.index == index:
-                return lecteur.short_name or f"Reader {index}"
-        return f"Reader {index}"
-
-    # -------------------------------------------------------- vue par config
-
-    def _remplir_liste(self) -> None:
-        self.tree.clear()
-        cibles = self._readers
-        entetes = ["Test"] + [lecteur.short_name or "Result" for lecteur in cibles]
-        self.tree.setColumnCount(len(entetes))
-        self.tree.setHeaderLabels(entetes)
-        if self._campaign is None:
+        if campaign is None:
             return
 
-        for scenario in self._campaign.scenarios:
-            par_test = self._results.get(scenario.name, {})
-            racine = QTreeWidgetItem([scenario.name] + [""] * len(cibles))
-            police = racine.font(0)
-            police.setBold(True)
-            racine.setFont(0, police)
-            self.tree.addTopLevelItem(racine)
+        # Une seule carte ouverte par defaut -- celle qui a un probleme,
+        # sinon la premiere. Avec beaucoup de configurations, toutes les
+        # ouvrir noierait justement celle qui merite l'attention.
+        premiere_a_ouvrir = next(
+            (i for i, s in enumerate(campaign.scenarios)
+             if _a_un_probleme(s, results.get(s.name, {}))), 0)
 
-            # `dict.fromkeys` plutot qu'un `set` : garde l'ordre du YAML, que
-            # l'utilisateur reconnait.
-            for nodeid in dict.fromkeys(test.nodeid for test in scenario.tests):
-                statuts = par_test.get(nodeid, {})
-                ligne = QTreeWidgetItem([_libelle_test(nodeid)])
-                for position, lecteur in enumerate(cibles, start=1):
-                    statut = statuts.get(lecteur.index)
-                    ligne.setText(position, statut.label if statut else "not run")
-                    couleur = t.status_color(statut) if statut else t.TEXT_FAINT
-                    ligne.setForeground(position, QColor(couleur))
-                racine.addChild(ligne)
-            racine.setExpanded(True)
+        for index, scenario in enumerate(campaign.scenarios):
+            self._cartes.addWidget(_ConfigCard(
+                scenario, results.get(scenario.name, {}),
+                ouvert=(index == premiere_a_ouvrir)))
 
-        for colonne in range(self.tree.columnCount()):
-            self.tree.resizeColumnToContents(colonne)
-
-    # ------------------------------------------------------------ la matrice
-
-    def _remplir_matrice(self) -> None:
-        self.table.clear()
-        if self._campaign is None:
-            self.table.setRowCount(0)
-            self.table.setColumnCount(0)
-            return
-
-        scenarios = self._campaign.scenarios
-        # Un test unique, dans l'ordre de sa PREMIERE apparition dans le YAML.
-        tests: list[str] = []
-        for scenario in scenarios:
-            for test in scenario.tests:
-                if test.nodeid not in tests:
-                    tests.append(test.nodeid)
-
-        self.table.setRowCount(len(tests))
-        self.table.setColumnCount(len(scenarios))
-        self.table.setHorizontalHeaderLabels([s.name for s in scenarios])
-        self.table.setVerticalHeaderLabels([_libelle_test(n) for n in tests])
-
-        for ligne, nodeid in enumerate(tests):
-            for colonne, scenario in enumerate(scenarios):
-                couvre = any(test.nodeid == nodeid for test in scenario.tests)
-                item = QTableWidgetItem()
-                item.setTextAlignment(Qt.AlignCenter)
-                if couvre:
-                    statuts = self._results.get(scenario.name, {}).get(nodeid, {})
-                    if statuts:
-                        pire = worst(statuts.values())
-                        item.setText(pire.label)
-                        item.setForeground(QColor(t.status_color(pire)))
-                        # Une infobulle seulement quand les lecteurs se
-                        # contredisent : sinon elle ne ferait que repeter la
-                        # cellule.
-                        if len(set(statuts.values())) > 1:
-                            item.setToolTip(", ".join(
-                                f"{self._nom_lecteur(i)}: {s.label}"
-                                for i, s in statuts.items()))
-                    else:
-                        item.setText("not run")
-                        item.setForeground(QColor(t.TEXT_FAINT))
-                self.table.setItem(ligne, colonne, item)
-
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self._cartes.addStretch(1)

@@ -33,7 +33,7 @@ from PyQt5.QtWidgets import (
 )
 
 from runner.domain.ansi import strip_ansi
-from runner.domain.campaign import CampaignDefinition, CampaignScenario
+from runner.domain.campaign import CampaignDefinition
 from runner.domain.failures import Failure, classify_line
 from runner.domain.models import Reader, Status
 from runner.ui import theme
@@ -173,19 +173,6 @@ class DetailPanel(QWidget):
         colonne.addWidget(self.group_name)
         colonne.addWidget(self.group_total)
 
-        # La structure de la campagne (ses configurations), separee du bilan
-        # de run qui suit : l'une dit ce qui va se passer, l'autre ce qui
-        # s'est passe. Repliee des qu'aucune campagne ne couvre la ligne.
-        self.campaign_title = QLabel()
-        self.campaign_title.setObjectName("Muted")
-        colonne.addWidget(self.campaign_title)
-
-        self.campaign_host = QWidget()
-        self._campaign_cards = QVBoxLayout(self.campaign_host)
-        self._campaign_cards.setContentsMargins(0, 0, 0, t.SPACE_2)
-        self._campaign_cards.setSpacing(t.SPACE_2)
-        colonne.addWidget(self.campaign_host)
-
         # Le resultat de CHAQUE test, par configuration -- pas le bilan agrege
         # que les rubans donnent aux regroupements ordinaires. Un meme test
         # peut tourner plusieurs fois avec des verdicts differents ; les
@@ -251,14 +238,6 @@ class DetailPanel(QWidget):
 
     def _remplir_campagne(self, campaign: CampaignDefinition | None,
                           resultats: dict, readers: tuple[Reader, ...]) -> None:
-        while self._campaign_cards.count():
-            element = self._campaign_cards.takeAt(0)
-            widget = element.widget()
-            if widget is not None:
-                widget.deleteLater()
-
-        self.campaign_title.setVisible(campaign is not None)
-        self.campaign_host.setVisible(campaign is not None)
         self.campaign_results_view.setVisible(campaign is not None)
         # Les deux vues repondent a la meme question -- « qu'est-ce qui s'est
         # passe ? » -- et se contrediraient affichees ensemble : les rubans
@@ -267,53 +246,7 @@ class DetailPanel(QWidget):
         self.ribbons_host.setVisible(campaign is None)
         self.failures_title.setVisible(campaign is None)
         self.failures.setVisible(campaign is None)
-        if campaign is None:
-            self.campaign_results_view.set_data(None, {})
-            return
-
-        combien = len(campaign.scenarios)
-        self.campaign_title.setText(
-            f"Campaign · {combien} configuration{'s' if combien != 1 else ''}")
-        for scenario in campaign.scenarios:
-            self._campaign_cards.addWidget(self._build_campaign_card(scenario))
         self.campaign_results_view.set_data(campaign, resultats, readers)
-
-    def _build_campaign_card(self, scenario: CampaignScenario) -> QWidget:
-        """Une configuration : son setup, et combien de tests elle couvre.
-
-        Une carte plutot qu'une ligne de plus dans le texte : les scenarios
-        d'une campagne sont des etapes distinctes, executees l'une apres
-        l'autre, pas une simple liste a plat.
-        """
-        carte = QFrame()
-        carte.setObjectName("Surface")
-        colonne = QVBoxLayout(carte)
-        colonne.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
-        colonne.setSpacing(t.SPACE_1)
-
-        entete = QHBoxLayout()
-        entete.setContentsMargins(0, 0, 0, 0)
-        titre = QLabel(scenario.name)
-        titre.setStyleSheet(
-            f"font-weight:600; font-size:{t.TEXT_SM}px; background:transparent;")
-        nombre = len(scenario.tests)
-        compte = QLabel(f"{nombre} test{'s' if nombre != 1 else ''}")
-        compte.setObjectName("Muted")
-        entete.addWidget(titre, 1)
-        entete.addWidget(compte)
-        colonne.addLayout(entete)
-
-        if scenario.setup:
-            commande = (scenario.setup if isinstance(scenario.setup, str)
-                       else " ".join(scenario.setup))
-            setup_label = QLabel(commande)
-            setup_label.setWordWrap(True)
-            setup_label.setStyleSheet(
-                f"font-family:{t.FONT_MONO}; font-size:{t.TEXT_XS}px;"
-                f" color:{t.TEXT_MUTED}; background:transparent;")
-            colonne.addWidget(setup_label)
-
-        return carte
 
     def _remplir_rubans(self, readers, counts: dict) -> None:
         while self._ribbons.count():
