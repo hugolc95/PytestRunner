@@ -592,6 +592,25 @@ def test_the_campaign_cards_refresh_live_during_a_run(
               for label in config_a.findChildren(QLabel))
 
 
+def test_the_card_with_a_problem_opens_first(avec_campagne_le_meme_test_partout):
+    """Avec plusieurs configurations, celle qui a un probleme doit s'ouvrir
+    seule par defaut -- sinon elle se noie parmi les autres des qu'il y a
+    beaucoup de configurations."""
+    fenetre = avec_campagne_le_meme_test_partout
+    campagne = fenetre._campagne
+    _jouer_campagne(fenetre, campagne, {
+        "Configuration A": {NODEIDS[0]: Status.PASSED},
+        "Configuration B": {NODEIDS[0]: Status.FAILED},
+    })
+
+    fenetre.tree.setCurrentIndex(
+        _index(fenetre, "suite", "apdu", "test_select.py"))
+    config_a, config_b = _cartes(_fiche(fenetre).campaign_results_view)
+
+    assert config_a._corps.isHidden()
+    assert not config_b._corps.isHidden()
+
+
 # --------------------------------------------------- le vrai statut du setup
 
 def test_a_real_setup_failure_is_not_just_a_guess(avec_campagne):
