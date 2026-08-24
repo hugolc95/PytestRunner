@@ -26,6 +26,7 @@ from PyQt5.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QScrollArea,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -179,9 +180,18 @@ class DetailPanel(QWidget):
         # rubans les auraient fondus en un seul (le pire), ce qui est
         # justement ce qu'on cherche a eviter ici. Les deux widgets ne
         # coexistent donc jamais : voir `_remplir_campagne`.
+        #
+        # Dans un defilement : une vraie campagne compte facilement 5 a 10
+        # configurations, chacune pouvant couvrir plus de cent tests des que
+        # `tests:` designe un dossier entier. Sans lui, tout depasserait la
+        # fenetre sans aucun moyen d'atteindre le reste.
         self.campaign_results_view = CampaignResultsView()
-        self.campaign_results_view.setMinimumHeight(160)
-        colonne.addWidget(self.campaign_results_view, 1)
+        self._campaign_scroll = QScrollArea()
+        self._campaign_scroll.setObjectName("Plain")
+        self._campaign_scroll.setWidgetResizable(True)
+        self._campaign_scroll.setFrameShape(QFrame.NoFrame)
+        self._campaign_scroll.setWidget(self.campaign_results_view)
+        colonne.addWidget(self._campaign_scroll, 1)
 
         # Une barre par lecteur, empilees : c'est en les superposant qu'on voit
         # que l'un est plus rouge que l'autre.
@@ -205,7 +215,8 @@ class DetailPanel(QWidget):
     def show_group(self, path: str, name: str, readers: tuple[Reader, ...],
                    counts: dict, failures: list,
                    campaign: CampaignDefinition | None = None,
-                   campaign_results: dict | None = None) -> None:
+                   campaign_results: dict | None = None,
+                   campaign_setup: dict | None = None) -> None:
         """Fiche d'un dossier, d'un fichier ou d'un test parametre.
 
         `counts` donne, par index de lecteur, le nombre de tests par statut.
@@ -214,10 +225,12 @@ class DetailPanel(QWidget):
         represente la campagne entiere, pas l'un de ses descendants.
         `campaign_results` : nom du scenario -> nodeid -> index de lecteur ->
         statut, pour montrer le resultat de CHAQUE execution plutot que
-        l'agregat que les rubans donneraient.
+        l'agregat que les rubans donneraient. `campaign_setup` : nom du
+        scenario -> son `PhaseReport.setup_ok`, ou None tant qu'aucun lecteur
+        n'a fini cette configuration.
         """
         self._dernier_groupe = (path, name, readers, counts, failures,
-                                campaign, campaign_results)
+                                campaign, campaign_results, campaign_setup)
         self._nodeid = ""
         self.stack.setCurrentIndex(self.PAGE_GROUPE)
 
@@ -232,13 +245,15 @@ class DetailPanel(QWidget):
         self.group_total.setText(f"{tests} test{'s' if tests > 1 else ''}"
                                  + (f" × {len(readers)} readers" if len(readers) > 1
                                     else ""))
-        self._remplir_campagne(campaign, campaign_results or {}, readers)
+        self._remplir_campagne(campaign, campaign_results or {},
+                               campaign_setup or {}, readers)
         self._remplir_rubans(readers, counts)
         self._remplir_echecs(readers, failures)
 
     def _remplir_campagne(self, campaign: CampaignDefinition | None,
-                          resultats: dict, readers: tuple[Reader, ...]) -> None:
-        self.campaign_results_view.setVisible(campaign is not None)
+                          resultats: dict, setup_ok: dict,
+                          readers: tuple[Reader, ...]) -> None:
+        self._campaign_scroll.setVisible(campaign is not None)
         # Les deux vues repondent a la meme question -- « qu'est-ce qui s'est
         # passe ? » -- et se contrediraient affichees ensemble : les rubans
         # fondent plusieurs executions du meme test en un seul statut, ce que
@@ -246,7 +261,25 @@ class DetailPanel(QWidget):
         self.ribbons_host.setVisible(campaign is None)
         self.failures_title.setVisible(campaign is None)
         self.failures.setVisible(campaign is None)
-        self.campaign_results_view.set_data(campaign, resultats, readers)
+        self.campaign_results_view.set_data(campaign, resultats, readers, setup_ok)
+
+    def refresh_campaign_results(self, resultats: dict, setup_ok: dict) -> None:
+        """Rejoue les cartes de campagne avec des resultats plus recents.
+
+        Appele en direct pendant un run : ne touche qu'aux cartes, pas au
+        chemin, au nom ni aux rubans -- ils n'ont pas change et les refaire a
+        chaque resultat recu serait du travail perdu. Sans effet si Detail
+        montre autre chose que la campagne : naviguer ailleurs pendant le run
+        ne doit pas faire revenir la fiche en arriere.
+        """
+        if self.stack.currentIndex() != self.PAGE_GROUPE or self._dernier_groupe is None:
+            return
+        path, name, readers, counts, failures, campaign, _, _ = self._dernier_groupe
+        if campaign is None:
+            return
+        self._dernier_groupe = (path, name, readers, counts, failures,
+                                campaign, resultats, setup_ok)
+        self.campaign_results_view.set_data(campaign, resultats, readers, setup_ok)
 
     def _remplir_rubans(self, readers, counts: dict) -> None:
         while self._ribbons.count():

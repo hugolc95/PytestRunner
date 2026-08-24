@@ -1,9 +1,9 @@
 """Resultats d'une campagne : une carte par configuration, setup puis tests.
 
-Prototype visuel, pas encore la version definitive : le statut du setup
-ci-dessous est DEVINE (tous ses tests en ERROR => setup en cause), en
-attendant que `PhaseReport.setup_ok` soit transmis jusqu'ici. Le vrai cablage
-suit une fois la direction confirmee -- voir `_etat_setup`.
+Le statut du setup vient de `PhaseReport.setup_ok`, connu une fois qu'un
+lecteur a fini cette phase. Avant ca (run en cours, aucun lecteur termine),
+`setup_ok` vaut `None` et `_etat_setup` retombe sur une estimation a partir
+des ERROR deja vus en direct -- voir `_etat_setup`.
 
 Un meme test peut tourner dans plusieurs configurations avec des verdicts
 differents. Le fusionner en un seul statut -- comme le fait l'arbre, au pire
@@ -60,16 +60,21 @@ def _etat_test(status: Status | None) -> tuple[str, str, str]:
     return t.status_color(status), "", status.label
 
 
-def _etat_setup(scenario: CampaignScenario,
-                resultats_scenario: dict) -> tuple[str, str, str]:
-    """Estimation du statut du setup -- PLACEHOLDER visuel.
+def _etat_setup(scenario: CampaignScenario, resultats_scenario: dict,
+                setup_ok: bool | None = None) -> tuple[str, str, str]:
+    """Statut du setup -- le vrai s'il est connu, sinon une estimation.
 
-    En attendant que `PhaseReport.setup_ok` soit transmis jusqu'ici, la seule
-    chose que cette maquette sait deviner : si tous les tests de la
-    configuration sont en ERROR, c'est que rien n'a pu tourner derriere le
-    setup. Une configuration deja passee au moins une fois pour un test
-    n'a donc pas pu echouer a ce point.
+    `setup_ok` vient de `PhaseReport.setup_ok`, connu une fois qu'un lecteur a
+    fini cette phase : `True`/`False` tranche directement. Tant qu'aucun
+    lecteur n'a fini (run en cours ou pas encore lance), `setup_ok` vaut
+    `None` et la seule chose qu'on peut deviner reste : si tous les tests deja
+    vus pour cette configuration sont en ERROR, c'est que rien n'a pu tourner
+    derriere le setup.
     """
+    if setup_ok is True:
+        return t.status_color(Status.PASSED), "mdi.check", "PASSED"
+    if setup_ok is False:
+        return t.status_color(Status.FAILED), "mdi.close", "FAILED"
     tous = [statut for statuts in resultats_scenario.values()
             for statut in statuts.values()]
     if not tous:
@@ -79,8 +84,9 @@ def _etat_setup(scenario: CampaignScenario,
     return t.status_color(Status.PASSED), "mdi.check", "PASSED"
 
 
-def _a_un_probleme(scenario: CampaignScenario, resultats_scenario: dict) -> bool:
-    _, _, texte_setup = _etat_setup(scenario, resultats_scenario)
+def _a_un_probleme(scenario: CampaignScenario, resultats_scenario: dict,
+                   setup_ok: bool | None = None) -> bool:
+    _, _, texte_setup = _etat_setup(scenario, resultats_scenario, setup_ok)
     if texte_setup == "FAILED":
         return True
     return any(statut is Status.FAILED
@@ -141,7 +147,7 @@ class _ConfigCard(QFrame):
     tournent vraiment."""
 
     def __init__(self, scenario: CampaignScenario, resultats_scenario: dict,
-                ouvert: bool, parent=None):
+                ouvert: bool, setup_ok: bool | None = None, parent=None):
         super().__init__(parent)
         self.setObjectName("Surface")
         colonne = QVBoxLayout(self)
@@ -149,15 +155,16 @@ class _ConfigCard(QFrame):
         colonne.setSpacing(0)
 
         colonne.addWidget(
-            self._construire_entete(scenario, resultats_scenario))
+            self._construire_entete(scenario, resultats_scenario, setup_ok))
 
-        self._corps = self._construire_corps(scenario, resultats_scenario)
+        self._corps = self._construire_corps(scenario, resultats_scenario, setup_ok)
         colonne.addWidget(self._corps)
 
         self.set_expanded(ouvert)
 
     def _construire_entete(self, scenario: CampaignScenario,
-                           resultats_scenario: dict) -> QWidget:
+                           resultats_scenario: dict,
+                           setup_ok: bool | None) -> QWidget:
         entete = QWidget()
         entete.setCursor(Qt.PointingHandCursor)
         ligne = QHBoxLayout(entete)
@@ -174,7 +181,8 @@ class _ConfigCard(QFrame):
         ligne.addWidget(titre)
         ligne.addStretch(1)
 
-        couleur_setup, _, texte_setup = _etat_setup(scenario, resultats_scenario)
+        couleur_setup, _, texte_setup = _etat_setup(
+            scenario, resultats_scenario, setup_ok)
         ligne.addWidget(_pastille(f"SETUP {texte_setup}", couleur_setup))
 
         resume = self._resume_tests(scenario, resultats_scenario)
@@ -203,14 +211,15 @@ class _ConfigCard(QFrame):
         return (f"{len(statuts)} PASSED", t.status_color(Status.PASSED))
 
     def _construire_corps(self, scenario: CampaignScenario,
-                          resultats_scenario: dict) -> QWidget:
+                          resultats_scenario: dict,
+                          setup_ok: bool | None) -> QWidget:
         corps = QWidget()
         colonne = QVBoxLayout(corps)
         colonne.setContentsMargins(t.SPACE_3, 0, t.SPACE_3, t.SPACE_3)
         colonne.setSpacing(t.SPACE_2)
 
         couleur_setup, glyphe_setup, texte_setup = _etat_setup(
-            scenario, resultats_scenario)
+            scenario, resultats_scenario, setup_ok)
         colonne.addWidget(_construire_etape(
             self._contenu_setup(scenario, couleur_setup, texte_setup),
             couleur_setup, glyphe_setup, dernier=False))
@@ -304,13 +313,18 @@ class CampaignResultsView(QWidget):
 
     def set_data(self, campaign: CampaignDefinition | None,
                 results: dict[str, dict[str, dict[int, Status]]],
-                readers: tuple[Reader, ...] = ()) -> None:
+                readers: tuple[Reader, ...] = (),
+                setup_ok: dict[str, bool | None] | None = None) -> None:
         """`results` : nom du scenario -> nodeid -> index de lecteur -> statut.
 
         Un test absent de `results[scenario]` n'a simplement pas encore
         tourne dans cette configuration -- distinct d'un statut PENDING, qui
         impliquerait un run en cours.
+
+        `setup_ok` : nom du scenario -> `PhaseReport.setup_ok`, ou `None` si
+        aucun lecteur n'a encore fini cette phase (voir `_etat_setup`).
         """
+        setup_ok = setup_ok or {}
         while self._cartes.count():
             element = self._cartes.takeAt(0)
             widget = element.widget()
@@ -334,11 +348,12 @@ class CampaignResultsView(QWidget):
         # ouvrir noierait justement celle qui merite l'attention.
         premiere_a_ouvrir = next(
             (i for i, s in enumerate(campaign.scenarios)
-             if _a_un_probleme(s, results.get(s.name, {}))), 0)
+             if _a_un_probleme(s, results.get(s.name, {}), setup_ok.get(s.name))), 0)
 
         for index, scenario in enumerate(campaign.scenarios):
             self._cartes.addWidget(_ConfigCard(
                 scenario, results.get(scenario.name, {}),
-                ouvert=(index == premiere_a_ouvrir)))
+                ouvert=(index == premiere_a_ouvrir),
+                setup_ok=setup_ok.get(scenario.name)))
 
         self._cartes.addStretch(1)

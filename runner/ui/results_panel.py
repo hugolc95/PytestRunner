@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
     QHBoxLayout,
@@ -538,6 +538,17 @@ class ResultsPanel(QWidget):
         self._phase_id = ""
         self._nodeid = ""
         self._statuses: dict[int, Status] = {}
+        # La campagne actuellement affichee dans Detail, ou None si on regarde
+        # autre chose (un test, un dossier ordinaire, rien). Sert a rejouer
+        # ses resultats en direct pendant un run, sans rebatir toute la fiche.
+        self._group_campaign = None
+        self._campaign_refresh = QTimer(self)
+        self._campaign_refresh.setSingleShot(True)
+        # Coalesce les resultats rapproches : un test par test sur une
+        # campagne de 171 tests reconstruirait les cartes 171 fois pour un
+        # affichage qui n'a besoin de suivre qu'a l'oeil.
+        self._campaign_refresh.setInterval(250)
+        self._campaign_refresh.timeout.connect(self._refresh_campaign_group)
 
         self.detail = DetailPanel()
         self.detail.open_output.connect(self.show_output)
@@ -638,6 +649,8 @@ class ResultsPanel(QWidget):
         self._live_phase_statuses.clear()
         self._live_phase_names.clear()
         self._phase_id = ""
+        self._group_campaign = None
+        self._campaign_refresh.stop()
         self.phase_bar.setVisible(False)
         self.detail.clear()
         self.source.save()
@@ -675,6 +688,10 @@ class ResultsPanel(QWidget):
         self.phase_tabs.blockSignals(False)
         self.phase_bar.setVisible(self.phase_tabs.count() > 1)
         self._refresh_detail()
+        # L'etat de campagne vient d'etre efface au-dessus : sans ce rejeu
+        # immediat, la fiche garderait les verdicts du run PRECEDENT affiches
+        # jusqu'au tout premier resultat du nouveau.
+        self._refresh_campaign_group()
 
     def set_report(self, rapport: ReaderReport) -> None:
         """Range la sortie complete d'un lecteur qui vient de finir.
@@ -690,6 +707,9 @@ class ResultsPanel(QWidget):
             self._index_echecs.pop(cle, None)
         self._apply_phase_content()
         self._refresh_detail()
+        # Immediat et non coalesce : ceci n'arrive qu'une fois par lecteur, pas
+        # une fois par test -- rien a gagner a attendre.
+        self._refresh_campaign_group()
 
     def append_output(self, index: int, texte: str) -> None:
         self.output.append(index, texte)
@@ -701,6 +721,7 @@ class ResultsPanel(QWidget):
         """Selectionne un test : sa fiche, sa source, et ses logs."""
         self._nodeid = nodeid
         self._statuses = dict(statuses)
+        self._group_campaign = None
         self._refresh_detail()
         self.source.show_file(source_path(workspace, nodeid), nodeid)
         self.show_logs_for(nodeid, self._readers)
@@ -727,16 +748,18 @@ class ResultsPanel(QWidget):
         """
         self._nodeid = ""
         self._statuses = {}
-        resultats = self.campaign_results(campaign) if campaign is not None else None
+        self._group_campaign = campaign
+        resultats, setup_ok = self.campaign_results(campaign) \
+            if campaign is not None else (None, None)
         self.detail.show_group(path, name, tuple(readers), counts, failures,
-                               campaign, resultats)
+                               campaign, resultats, setup_ok)
         if campaign is not None:
             self.source.show_file(Path(campaign.path))
         else:
             self.source.show_file(source, jump_nodeid)
         self.logs.clear()
 
-    def campaign_results(self, campaign) -> dict[str, dict[str, dict[int, Status]]]:
+    def campaign_results(self, campaign) -> tuple[dict, dict]:
         """Statut de chaque test de cette campagne, par configuration puis lecteur.
 
         Cherche par NOM de campagne et de configuration, pas par
@@ -745,16 +768,25 @@ class ResultsPanel(QWidget):
         connait que des noms. Une phase deja terminee vit dans
         `_phase_reports` ; une phase encore en cours n'existe que dans
         `_live_phase_statuses`, repere via `_live_phase_names`.
+
+        Rend `(resultats, setup_ok)`. `setup_ok[nom]` vaut le VRAI
+        `PhaseReport.setup_ok` (le pire de tous les lecteurs qui ont fini
+        cette configuration) une fois qu'au moins un a fini, sinon `None` --
+        rien ne permet encore de savoir. L'appelant retombe alors sur les
+        seuls statuts de test pour deviner en attendant.
         """
         resultat: dict[str, dict[str, dict[int, Status]]] = {}
+        setup_ok: dict[str, bool | None] = {}
         for scenario in campaign.scenarios:
             par_test: dict[str, dict[int, Status]] = {}
+            connu: bool | None = None
 
             for lecteur_index, phases in self._phase_reports.items():
                 for phase in phases.values():
                     if phase.campaign == campaign.name and phase.name == scenario.name:
                         for nodeid, statut in phase.statuses.items():
                             par_test.setdefault(nodeid, {})[lecteur_index] = statut
+                        connu = phase.setup_ok if connu is None else (connu and phase.setup_ok)
 
             for phase_id, (nom_campagne, nom_scenario) in self._live_phase_names.items():
                 if nom_campagne != campaign.name or nom_scenario != scenario.name:
@@ -767,7 +799,8 @@ class ResultsPanel(QWidget):
                         par_test.setdefault(nodeid, {}).setdefault(lecteur_index, statut)
 
             resultat[scenario.name] = par_test
-        return resultat
+            setup_ok[scenario.name] = connu
+        return resultat, setup_ok
 
     def update_statuses(self, nodeid: str, statuses: dict[int, Status],
                         outcome: Outcome | None = None) -> None:
@@ -784,10 +817,29 @@ class ResultsPanel(QWidget):
         if nodeid and nodeid == self._nodeid:
             self._statuses = dict(statuses)
             self._refresh_detail()
+        elif self._group_campaign is not None:
+            self._campaign_refresh.start()
+
+    def _refresh_campaign_group(self) -> None:
+        """Rejoue les resultats de la campagne actuellement affichee.
+
+        Ne touche qu'aux cartes de resultats -- pas au chemin, aux rubans
+        (masques pour une campagne) ni a Source : les rouvrir a chaque
+        resultat recu rechargerait le YAML depuis le disque en boucle pendant
+        un run, et interromprait qui serait en train de l'editer.
+        """
+        if self._group_campaign is None:
+            return
+        resultats, setup_ok = self.campaign_results(self._group_campaign)
+        self.detail.refresh_campaign_results(resultats, setup_ok)
 
     def _refresh_detail(self) -> None:
         if not self._nodeid:
-            self.detail.clear()
+            # Rien a faire : soit aucune fiche n'est ouverte, soit un
+            # regroupement l'est, et lui n'a pas besoin de la fiche de TEST.
+            # Un `clear()` ici effacerait un regroupement pourtant toujours
+            # selectionne dans l'arbre -- exactement quand un lecteur finit
+            # ou qu'un nouveau run demarre pendant qu'on le regarde.
             return
         statuses = self._statuses_for_phase(self._nodeid)
         cibles = self._readers or (Reader("", 0),)

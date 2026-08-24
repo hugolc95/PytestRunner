@@ -82,6 +82,13 @@ def _fiche(fenetre):
     return fenetre.results.detail
 
 
+def _cartes(vue):
+    """Les cartes de configuration reellement posees dans la vue (pas le
+    `addStretch` final, qui n'est pas un widget)."""
+    return [vue._cartes.itemAt(i).widget() for i in range(vue._cartes.count())
+            if vue._cartes.itemAt(i).widget() is not None]
+
+
 # ----------------------------------------------------------- quelle fiche
 
 def test_clicking_a_folder_stops_showing_the_previous_test(joue):
@@ -305,10 +312,9 @@ def test_clicking_the_campaign_row_shows_its_configurations_in_detail(avec_campa
     fiche = _fiche(avec_campagne)
     # `isVisible()` reflete la fenetre entiere, jamais montree dans ce test :
     # c'est l'intention -- posee par `setVisible()` dans `_remplir_campagne`
-    # -- qu'on verifie, via ce que la ligne contient reellement.
-    assert not fiche.campaign_host.isHidden()
-    assert fiche.campaign_title.text() == "Campaign · 2 configurations"
-    assert fiche._campaign_cards.count() == 2
+    # -- qu'on verifie, via ce que la vue contient reellement.
+    assert not fiche._campaign_scroll.isHidden()
+    assert len(_cartes(fiche.campaign_results_view)) == 2
 
 
 def test_the_campaign_card_names_its_setup_and_test_count(avec_campagne):
@@ -316,11 +322,11 @@ def test_the_campaign_card_names_its_setup_and_test_count(avec_campagne):
         _index(avec_campagne, "suite", "apdu", "test_select.py"))
 
     fiche = _fiche(avec_campagne)
-    premiere = fiche._campaign_cards.itemAt(0).widget()
-    assert "Configuration A" in premiere.findChild(QLabel).text()
+    premiere = _cartes(fiche.campaign_results_view)[0]
     textes = " ".join(label.text() for label in premiere.findChildren(QLabel))
+    assert "Configuration A" in textes
     assert "setup_a.py" in textes
-    assert "1 test" in textes
+    assert "TESTS · 1" in textes
 
 
 def test_clicking_the_campaign_row_shows_its_yaml_in_source(avec_campagne):
@@ -342,8 +348,8 @@ def test_a_row_that_does_not_carry_the_campaign_shows_neither(avec_campagne):
         _index(avec_campagne, "suite", "apdu", "test_select.py", "test_aid"))
 
     fiche = _fiche(avec_campagne)
-    assert fiche.campaign_host.isHidden()
-    assert fiche._campaign_cards.count() == 0
+    assert fiche._campaign_scroll.isHidden()
+    assert len(_cartes(fiche.campaign_results_view)) == 0
     assert avec_campagne.results.source.path().name == "test_select.py"
 
 
@@ -356,12 +362,12 @@ def test_the_campaign_row_hides_the_generic_summary(avec_campagne):
     fiche = _fiche(avec_campagne)
     assert fiche.ribbons_host.isHidden()
     assert fiche.failures.isHidden()
-    assert not fiche.campaign_results_view.isHidden()
+    assert not fiche._campaign_scroll.isHidden()
 
     avec_campagne.tree.setCurrentIndex(_index(avec_campagne, "suite", "apdu"))
     assert not fiche.ribbons_host.isHidden()
     assert not fiche.failures.isHidden()
-    assert fiche.campaign_results_view.isHidden()
+    assert fiche._campaign_scroll.isHidden()
 
 
 # ------------------------------------------- le resultat de chaque execution
@@ -417,7 +423,7 @@ def test_the_same_test_can_disagree_across_configurations(
     avec_campagne_le_meme_test_partout,
 ):
     """Le coeur de la demande : `test_atr` passe en A, echoue en B -- les deux
-    doivent rester lisibles separement, dans la liste comme dans la matrice."""
+    doivent rester lisibles separement, chacun dans SA propre carte."""
     fenetre = avec_campagne_le_meme_test_partout
     campagne = fenetre._campagne
     _jouer_campagne(fenetre, campagne, {
@@ -425,28 +431,24 @@ def test_the_same_test_can_disagree_across_configurations(
         "Configuration B": {NODEIDS[0]: Status.FAILED},
     })
 
-    resultats = fenetre.results.campaign_results(campagne)
+    resultats, _ = fenetre.results.campaign_results(campagne)
     assert resultats["Configuration A"][NODEIDS[0]] == {0: Status.PASSED}
     assert resultats["Configuration B"][NODEIDS[0]] == {0: Status.FAILED}
 
     fenetre.tree.setCurrentIndex(
         _index(fenetre, "suite", "apdu", "test_select.py"))
-    vue = _fiche(fenetre).campaign_results_view
+    config_a, config_b = _cartes(_fiche(fenetre).campaign_results_view)
 
-    config_a = vue.tree.topLevelItem(0)
-    config_b = vue.tree.topLevelItem(1)
-    assert config_a.child(0).text(1) == "PASSED"
-    assert config_b.child(0).text(1) == "FAILED"
-
-    vue.matrix_button.click()
-    assert vue.table.item(0, 0).text() == "PASSED"
-    assert vue.table.item(0, 1).text() == "FAILED"
+    assert any("PASSED" == label.text()
+              for label in config_a.findChildren(QLabel))
+    assert any("FAILED" == label.text()
+              for label in config_b.findChildren(QLabel))
 
 
-def test_the_matrix_rows_are_not_shuffled(avec_campagne):
-    """Chaque ligne doit rester CELLE du test qu'elle nomme : melangees, la
-    case d'un test dans sa PROPRE configuration se retrouverait vide plutot
-    que d'afficher son resultat."""
+def test_each_card_shows_only_its_own_tests_result(avec_campagne):
+    """Chaque carte ne doit montrer QUE ses propres tests, avec SON verdict :
+    melanges, le resultat d'un test se retrouverait dans la mauvaise
+    configuration."""
     from runner.domain.models import PhaseReport, ReaderReport
     from runner.ui.campaign_results import _libelle_test
 
@@ -462,19 +464,15 @@ def test_the_matrix_rows_are_not_shuffled(avec_campagne):
 
     fenetre.tree.setCurrentIndex(
         _index(fenetre, "suite", "apdu", "test_select.py"))
-    vue = _fiche(fenetre).campaign_results_view
-    vue.matrix_button.click()
+    config_a, config_b = _cartes(_fiche(fenetre).campaign_results_view)
 
-    def _ligne(etiquette):
-        for r in range(vue.table.rowCount()):
-            if vue.table.verticalHeaderItem(r).text() == etiquette:
-                return r
-        raise AssertionError(f"{etiquette} introuvable")
+    noms_a = [l.text() for l in config_a.findChildren(QLabel)]
+    noms_b = [l.text() for l in config_b.findChildren(QLabel)]
 
-    # Chaque test n'est couvert que par SA propre configuration : la case
-    # correspondante doit porter son resultat, jamais vide.
-    assert vue.table.item(_ligne(_libelle_test(NODEIDS[0])), 0).text() == "PASSED"
-    assert vue.table.item(_ligne(_libelle_test(NODEIDS[1])), 1).text() == "FAILED"
+    assert _libelle_test(NODEIDS[0]) in noms_a
+    assert _libelle_test(NODEIDS[0]) not in noms_b
+    assert _libelle_test(NODEIDS[1]) in noms_b
+    assert _libelle_test(NODEIDS[1]) not in noms_a
 
 
 def test_a_test_not_yet_run_says_so_instead_of_a_status(
@@ -486,11 +484,10 @@ def test_a_test_not_yet_run_says_so_instead_of_a_status(
 
     fenetre.tree.setCurrentIndex(
         _index(fenetre, "suite", "apdu", "test_select.py"))
-    vue = _fiche(fenetre).campaign_results_view
+    _, config_b = _cartes(_fiche(fenetre).campaign_results_view)
 
-    assert vue.tree.topLevelItem(1).child(0).text(1) == "not run"
-    vue.matrix_button.click()
-    assert vue.table.item(0, 1).text() == "not run"
+    assert any("NOT RUN" == label.text()
+              for label in config_b.findChildren(QLabel))
 
 
 def test_a_running_phase_shows_its_results_before_the_reader_finishes(
@@ -508,7 +505,7 @@ def test_a_running_phase_shows_its_results_before_the_reader_finishes(
     fenetre.results.update_statuses(NODEIDS[0], {}, outcome=Outcome(
         NODEIDS[0], Status.PASSED, 0, campagne.name, "0:0", "Configuration A"))
 
-    resultats = fenetre.results.campaign_results(campagne)
+    resultats, _ = fenetre.results.campaign_results(campagne)
     assert resultats["Configuration A"][NODEIDS[0]] == {0: Status.PASSED}
     assert resultats["Configuration B"] == {}
 
@@ -529,8 +526,123 @@ def test_a_finished_report_is_not_overwritten_by_a_live_leftover(
     fenetre.results.update_statuses(NODEIDS[0], {}, outcome=Outcome(
         NODEIDS[0], Status.FAILED, 0, campagne.name, "0:0", "Configuration A"))
 
-    resultats = fenetre.results.campaign_results(campagne)
+    resultats, _ = fenetre.results.campaign_results(campagne)
     assert resultats["Configuration A"][NODEIDS[0]] == {0: Status.PASSED}
+
+
+# ------------------------------------------- le regroupement pendant un run
+
+def test_a_group_survives_a_run_starting_while_it_is_shown(joue):
+    """Le bug d'origine : lancer un run alors qu'un dossier etait affiche
+    effacait sa fiche, meme si la selection de l'arbre restait celle du
+    dossier -- exactement ce qui rendait la disparition « sans raison »."""
+    from runner.domain.models import RunRequest
+
+    fiche = _fiche(joue)
+    joue.tree.setCurrentIndex(_index(joue, "suite", "apdu"))
+    assert fiche.stack.currentIndex() == fiche.PAGE_GROUPE
+
+    joue.results.begin_run(RunRequest(
+        workspace="/tmp", interpreter="python", nodeids=(), readers=LECTEURS))
+
+    assert fiche.stack.currentIndex() == fiche.PAGE_GROUPE
+    assert fiche.group_name.text() == "apdu"
+
+
+def test_a_group_survives_a_reader_finishing_while_it_is_shown(joue):
+    """Meme defaut, cote arrivee : un lecteur qui finit alors qu'un dossier
+    est affiche ne doit pas non plus effacer sa fiche."""
+    from runner.domain.models import ReaderReport
+
+    fiche = _fiche(joue)
+    joue.tree.setCurrentIndex(_index(joue, "suite", "apdu"))
+    assert fiche.stack.currentIndex() == fiche.PAGE_GROUPE
+
+    joue.results.set_report(ReaderReport(reader=LECTEURS[0], phases=[]))
+
+    assert fiche.stack.currentIndex() == fiche.PAGE_GROUPE
+    assert fiche.group_name.text() == "apdu"
+
+
+def test_the_campaign_cards_refresh_live_during_a_run(
+    avec_campagne_le_meme_test_partout,
+):
+    """La demande : voir la campagne se remplir en direct sans re-cliquer le
+    dossier. Coalesce sur 250 ms pour ne pas reconstruire les cartes a chaque
+    resultat -- d'ou le `QTest.qWait` plutot qu'une assertion immediate."""
+    from PyQt5.QtTest import QTest
+
+    from runner.domain.models import Outcome
+
+    fenetre = avec_campagne_le_meme_test_partout
+    campagne = fenetre._campagne
+    fenetre.tree.setCurrentIndex(
+        _index(fenetre, "suite", "apdu", "test_select.py"))
+
+    config_a, _ = _cartes(_fiche(fenetre).campaign_results_view)
+    assert not any("PASSED" == label.text()
+                  for label in config_a.findChildren(QLabel))
+
+    fenetre.results.update_statuses(NODEIDS[0], {}, outcome=Outcome(
+        NODEIDS[0], Status.PASSED, 0, campagne.name, "0:0", "Configuration A"))
+    QTest.qWait(300)
+
+    config_a, _ = _cartes(_fiche(fenetre).campaign_results_view)
+    assert any("PASSED" == label.text()
+              for label in config_a.findChildren(QLabel))
+
+
+# --------------------------------------------------- le vrai statut du setup
+
+def test_a_real_setup_failure_is_not_just_a_guess(avec_campagne):
+    """Un setup peut echouer alors que certains de ses tests ont deja passe
+    par le passe (campagne rejouee) -- la devinette ERROR-only ne le verrait
+    pas. Seul le vrai `PhaseReport.setup_ok` le sait."""
+    from runner.domain.models import PhaseReport, ReaderReport
+
+    fenetre = avec_campagne
+    campagne = fenetre._campaigns[0]
+    fenetre.results.set_readers((Reader("", 0),))
+    fenetre.results.set_report(ReaderReport(reader=Reader("", 0), phases=[
+        PhaseReport("0:0", "Configuration A", campagne.name, setup_ok=False,
+                    statuses={NODEIDS[0]: Status.PASSED}),
+    ]))
+
+    fenetre.tree.setCurrentIndex(
+        _index(fenetre, "suite", "apdu", "test_select.py"))
+    config_a, _ = _cartes(_fiche(fenetre).campaign_results_view)
+
+    assert any("SETUP FAILED" == label.text()
+              for label in config_a.findChildren(QLabel))
+
+
+def test_an_unfinished_setup_falls_back_to_the_error_guess(avec_campagne):
+    """Tant qu'aucun lecteur n'a fini la phase, `setup_ok` vaut `None` : la
+    seule chose qu'on peut dire vient des ERROR deja vus en direct."""
+    from runner.domain.models import Outcome
+
+    fenetre = avec_campagne
+    campagne = fenetre._campaigns[0]
+    fenetre.results.set_readers((Reader("", 0),))
+    fenetre.results.update_statuses(NODEIDS[0], {}, outcome=Outcome(
+        NODEIDS[0], Status.ERROR, 0, campagne.name, "0:0", "Configuration A"))
+
+    fenetre.tree.setCurrentIndex(
+        _index(fenetre, "suite", "apdu", "test_select.py"))
+    config_a, _ = _cartes(_fiche(fenetre).campaign_results_view)
+
+    assert any("SETUP FAILED" == label.text()
+              for label in config_a.findChildren(QLabel))
+
+
+# ------------------------------------------------- le defilement des cartes
+
+def test_many_configurations_scroll_instead_of_overflowing(joue):
+    """Trop de configurations pour la fenetre : une QScrollArea doit les
+    rendre toutes atteignables plutot que de les couper."""
+    fiche = _fiche(joue)
+    assert fiche._campaign_scroll.widget() is fiche.campaign_results_view
+    assert fiche._campaign_scroll.widgetResizable()
 
 
 # ---------------------------------------------------------------- la barre
