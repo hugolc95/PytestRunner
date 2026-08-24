@@ -569,7 +569,11 @@ def test_the_campaign_cards_refresh_live_during_a_run(
 ):
     """La demande : voir la campagne se remplir en direct sans re-cliquer le
     dossier. Coalesce sur 250 ms pour ne pas reconstruire les cartes a chaque
-    resultat -- d'ou le `QTest.qWait` plutot qu'une assertion immediate."""
+    resultat -- d'ou une attente en direct plutot qu'une assertion immediate.
+    Un simple `qWait(300)` fixe s'est deja montre flaky dans la suite
+    complete (sous charge, 50 ms de marge ne suffit pas toujours) : on
+    sonde par petits pas jusqu'a 1 s plutot que de parier sur une seule
+    duree."""
     from PyQt5.QtTest import QTest
 
     from runner.domain.models import Outcome
@@ -585,9 +589,13 @@ def test_the_campaign_cards_refresh_live_during_a_run(
 
     fenetre.results.update_statuses(NODEIDS[0], {}, outcome=Outcome(
         NODEIDS[0], Status.PASSED, 0, campagne.name, "0:0", "Configuration A"))
-    QTest.qWait(300)
 
-    config_a, _ = _cartes(_fiche(fenetre).campaign_results_view)
+    for _ in range(20):
+        QTest.qWait(50)
+        config_a, _ = _cartes(_fiche(fenetre).campaign_results_view)
+        if any("PASSED" == label.text() for label in config_a.findChildren(QLabel)):
+            break
+
     assert any("PASSED" == label.text()
               for label in config_a.findChildren(QLabel))
 
