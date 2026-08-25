@@ -174,29 +174,17 @@ class ReaderRun:
         """Ou pytest doit ecrire les resultats allure-pytest, ou "" si on
         n'en veut pas.
 
-        Un seul lecteur (le cas courant) ecrit directement dans le dossier
-        de base. PLUSIEURS lecteurs sur le meme run auraient sinon tous
-        ecrit au meme endroit : les fichiers allure-pytest sont nommes par
-        UUID, donc ils ne s'ecrasent pas entre eux, mais Allure regroupe par
-        defaut deux executions du MEME test sous un seul, l'une masquant
-        l'autre derriere un simple "retry" -- alors que ce sont deux
-        executions distinctes, sur du materiel different. Un sous-dossier
-        par lecteur (comme le JUnit XML) donne un rapport par lecteur,
-        jamais fondus.
+        Un seul dossier pour tous les lecteurs d'un run, et un seul rapport
+        genere ensuite : les fichiers allure-pytest sont nommes par UUID, deux
+        lecteurs n'ecrivent donc jamais le meme fichier. Ce qui distingue un
+        lecteur de l'autre DANS ce rapport commun n'est pas le dossier -- voir
+        le parametre "Reader" pose sur chaque test par le plugin de
+        `reader_plugin` (reader_isolation.py).
         """
         if not self.request.allure_dir:
             return ""
         dossier = Path(self.request.allure_dir)
-        if len(self.request.readers) > 1:
-            dossier = dossier / f"reader_{self.reader.index}"
-            dossier.mkdir(parents=True, exist_ok=True)
-            # Visible sur la page Overview du rapport genere : sans ca, rien
-            # ne dit dans Allure lui-meme quel lecteur a produit CE rapport.
-            (dossier / "environment.properties").write_text(
-                f"Reader={self.reader.name or self.reader.index}\n",
-                encoding="utf-8")
-        else:
-            dossier.mkdir(parents=True, exist_ok=True)
+        dossier.mkdir(parents=True, exist_ok=True)
         return str(dossier)
 
     def _environnement(self, dossier_plugin: str) -> dict:

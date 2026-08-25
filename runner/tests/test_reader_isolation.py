@@ -166,3 +166,55 @@ def test_every_way_of_reading_the_file_is_covered(tmp_path, lecture):
             assert yaml.safe_load(texte)["Reader"] == "Reader A"
     ''')
     assert _run_pytest(tmp_path, config, "Reader A", corps).returncode == 0
+
+
+# ---------------------------------------------- le parametre Allure "Reader"
+
+def test_the_reader_is_tagged_as_an_allure_parameter_when_allure_is_present(tmp_path):
+    """Un seul rapport Allure pour tous les lecteurs d'un run : sans ce
+    parametre, deux lecteurs qui jouent le meme test s'y verraient fondus
+    sous un seul historique, l'un cachant l'autre derriere un simple
+    "retry". allure-pytest n'est pas installe dans cet environnement de
+    test -- un faux module suffit a verifier que le plugin l'appelle bien."""
+    config = tmp_path / "config.yml"
+    config.write_text("Reader: valeur d'origine\n", encoding="utf-8")
+    (tmp_path / "test_reader.py").write_text(
+        "def test_ok():\n    assert True\n", encoding="utf-8")
+    marqueur = tmp_path / "parametres_vus.txt"
+
+    with reader_plugin(str(config)) as (args, dossier):
+        ligne_ouverture = f"        with open({str(marqueur)!r}, 'a', encoding='utf-8') as f:\n"
+        (Path(dossier) / "allure.py").write_text(
+            "class _Dynamic:\n"
+            "    def parameter(self, nom, valeur):\n"
+            + ligne_ouverture +
+            "            f.write(f'{nom}={valeur}\\n')\n"
+            "dynamic = _Dynamic()\n",
+            encoding="utf-8")
+
+        env = {
+            "PATH": "/usr/bin:/bin",
+            "PYTHONPATH": dossier,
+            ENV_READER: "Cosmo11Secured Reader",
+            ENV_CONFIG: str(config),
+        }
+        resultat = subprocess.run(
+            [sys.executable, "-m", "pytest", "-q", *args, "test_reader.py"],
+            cwd=tmp_path, capture_output=True, text=True, env=env, timeout=90,
+        )
+
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr
+    assert marqueur.read_text() == "Reader=Cosmo11Secured Reader\n"
+
+
+def test_the_reader_pinning_still_works_without_allure_installed(tmp_path):
+    """Le cas ordinaire : allure-pytest n'est pas installe, le plugin ne
+    doit rien en laisser paraitre -- ni erreur, ni changement de
+    comportement pour le reste du mecanisme."""
+    config = tmp_path / "config.yml"
+    config.write_text("Reader: valeur d'origine\n", encoding="utf-8")
+
+    resultat = _run_pytest(tmp_path, config, "Cosmo11Secured Reader",
+                           "def test_ok():\n    assert True\n")
+
+    assert resultat.returncode == 0, resultat.stdout + resultat.stderr

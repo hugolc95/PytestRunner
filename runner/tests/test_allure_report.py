@@ -4,6 +4,14 @@ Genere et ouvre un rapport a partir des resultats du DERNIER run demarre --
 jamais rien s'il l'interpreteur n'a pas le plugin, jamais rien si l'outil
 `allure` n'est pas sur le PATH. Les deux cas doivent le dire clairement
 plutot que de planter ou de rester muets.
+
+Un seul rapport pour tous les lecteurs d'un run : ce qui les distingue a
+l'interieur est le parametre "Reader" que `reader_isolation.py` pose sur
+chaque test (teste dans test_reader_isolation.py), pas un dossier separe.
+La generation tourne sur un `QThread` (`AllureReportWorker`), aussi bien au
+clic qu'automatiquement en fin de run -- les tests qui la declenchent
+doivent donc laisser la boucle d'evenements Qt tourner le temps qu'elle
+finisse.
 """
 
 from __future__ import annotations
@@ -12,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import urllib.request
 from pathlib import Path
 
@@ -49,6 +58,22 @@ def fenetre(qapp, tmp_path):
     qapp.processEvents()
 
 
+def _attendre_generation(fenetre, qapp, timeout_ms: int = 5000) -> None:
+    """Laisse le worker Allure finir, et la boucle Qt livrer son signal.
+
+    `AllureReportWorker` tourne dans son propre QThread : le signal `done`
+    n'atteint `_sur_allure_genere` (sur le fil de la fenetre) qu'au prochain
+    passage de la boucle d'evenements Qt."""
+    worker = fenetre._allure_worker
+    if worker is None:
+        return
+    worker.wait(timeout_ms)
+    for _ in range(50):
+        qapp.processEvents()
+        if fenetre._allure_worker is None:
+            return
+
+
 # --------------------------------------------------------------- la barre
 
 def test_the_allure_button_sits_next_to_history(fenetre):
@@ -82,7 +107,6 @@ def test_an_allure_dir_is_created_when_the_plugin_is_present(fenetre, monkeypatc
 
     assert dossier
     assert "run123" in dossier
-    from pathlib import Path
     assert Path(dossier).is_dir()
 
 
@@ -189,10 +213,11 @@ def test_no_alluredir_flag_when_allure_is_not_configured(monkeypatch, tmp_path):
     assert not any(morceau.startswith("--alluredir=") for morceau in commande)
 
 
-def test_two_readers_get_two_separate_alluredirs(monkeypatch, tmp_path):
-    """Le coeur de la demande : deux lecteurs sur le meme run sont deux
-    executions distinctes -- Allure les fondrait en un seul test avec un
-    "retry" cachant l'un des deux s'ils ecrivaient au meme endroit."""
+def test_two_readers_share_the_same_alluredir(monkeypatch, tmp_path):
+    """Un seul rapport pour tout le run : deux lecteurs ecrivent au meme
+    endroit. Les fichiers allure-pytest sont nommes par UUID, ils ne
+    s'ecrasent donc jamais -- ce qui les distingue DANS le rapport commun
+    est le parametre "Reader" pose par reader_isolation.py, pas le dossier."""
     base = tmp_path / "allure-results"
     lecteur_a = Reader("Cosmo11Secured Reader", 0)
     lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
@@ -204,30 +229,13 @@ def test_two_readers_get_two_separate_alluredirs(monkeypatch, tmp_path):
         monkeypatch, tmp_path, str(base), readers=(lecteur_a, lecteur_b),
         lecteur=lecteur_b)
 
-    assert f"--alluredir={base / 'reader_0'}" in commande_a
-    assert f"--alluredir={base / 'reader_1'}" in commande_b
-
-
-def test_two_readers_each_get_their_own_environment_properties(monkeypatch, tmp_path):
-    """Visible sur la page Overview du rapport : sans ca, rien dans Allure
-    lui-meme ne dit quel lecteur a produit CE rapport-la."""
-    base = tmp_path / "allure-results"
-    lecteur_a = Reader("Cosmo11Secured Reader", 0)
-    lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
-
-    _lancer_avec_popen_capture(monkeypatch, tmp_path, str(base),
-                               readers=(lecteur_a, lecteur_b), lecteur=lecteur_a)
-    _lancer_avec_popen_capture(monkeypatch, tmp_path, str(base),
-                               readers=(lecteur_a, lecteur_b), lecteur=lecteur_b)
-
-    assert "Cosmo11Secured Reader" in (base / "reader_0" / "environment.properties").read_text()
-    assert "TestBiosWrapperTU Reader" in (base / "reader_1" / "environment.properties").read_text()
+    assert f"--alluredir={base}" in commande_a
+    assert f"--alluredir={base}" in commande_b
 
 
 def test_a_lone_named_reader_still_writes_directly_to_the_base_dir(monkeypatch, tmp_path):
-    """Le cas courant, et le seul qui existait avant ce correctif : un seul
-    lecteur, meme nomme, ne doit pas se retrouver dans un sous-dossier --
-    aucune raison de changer une URL qui marchait deja."""
+    """Le cas courant : un seul lecteur, meme nomme, ecrit directement dans
+    le dossier de base -- pas de sous-dossier a chercher pour lui non plus."""
     base = tmp_path / "allure-results"
     lecteur = Reader("Cosmo11Secured Reader", 0)
 
@@ -235,7 +243,6 @@ def test_a_lone_named_reader_still_writes_directly_to_the_base_dir(monkeypatch, 
         monkeypatch, tmp_path, str(base), readers=(lecteur,), lecteur=lecteur)
 
     assert f"--alluredir={base}" in commande
-    assert not (base / "reader_0").exists()
 
 
 # ------------------------------------------------------------- le clic
@@ -303,7 +310,7 @@ def _generation_simulee(commande, **kwargs):
     return subprocess.CompletedProcess(commande, 0, stdout="", stderr="")
 
 
-def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path):
+def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path, qapp):
     """L'ouverture directe de index.html en file:// bloque tous ses appels
     AJAX (CORS) et reste sur "Loading…" -- le rapport doit passer par le
     petit serveur HTTP local, jamais par une URL de fichier."""
@@ -317,7 +324,7 @@ def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path
 
     appels = []
     monkeypatch.setattr(
-        "runner.ui.main_window.subprocess.run",
+        "runner.services.allure_service.subprocess.run",
         lambda commande, **kwargs: appels.append((commande, kwargs)) or
         _generation_simulee(commande, **kwargs))
 
@@ -327,6 +334,7 @@ def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path
         lambda url: ouverts.append(url.toString()))
 
     fenetre.open_allure_report()
+    _attendre_generation(fenetre, qapp)
 
     assert appels
     commande, kwargs = appels[0]
@@ -352,7 +360,7 @@ def test_the_handler_never_touches_stderr(monkeypatch):
     _GestionnaireAllure.log_message(object(), "%s", "peu importe")
 
 
-def test_the_server_survives_a_console_less_build(fenetre, monkeypatch, tmp_path):
+def test_the_server_survives_a_console_less_build(fenetre, monkeypatch, tmp_path, qapp):
     """Cas reel rapporte : le rapport s'ouvrait mais restait vide, chaque
     autre onglet en 404 -- le navigateur affichait ERR_EMPTY_RESPONSE.
 
@@ -370,7 +378,7 @@ def test_the_server_survives_a_console_less_build(fenetre, monkeypatch, tmp_path
 
     monkeypatch.setattr("runner.ui.main_window.shutil.which",
                         lambda name: "/usr/bin/allure")
-    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    monkeypatch.setattr("runner.services.allure_service.subprocess.run", _generation_simulee)
     ouverts = []
     monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
                         lambda url: ouverts.append(url.toString()))
@@ -379,6 +387,7 @@ def test_the_server_survives_a_console_less_build(fenetre, monkeypatch, tmp_path
     sys.stderr = None
     try:
         fenetre.open_allure_report()
+        _attendre_generation(fenetre, qapp)
         contenu = urllib.request.urlopen(ouverts[0], timeout=3).read()
     finally:
         sys.stderr = ancien_stderr
@@ -386,7 +395,7 @@ def test_the_server_survives_a_console_less_build(fenetre, monkeypatch, tmp_path
     assert b"rapport" in contenu
 
 
-def test_reopening_the_report_reuses_the_same_server(fenetre, monkeypatch, tmp_path):
+def test_reopening_the_report_reuses_the_same_server(fenetre, monkeypatch, tmp_path, qapp):
     """Un serveur par session suffit : le rapport change de contenu sous le
     meme dossier a chaque clic, pas besoin d'en relancer un a chaque fois --
     et en relancer un occuperait un nouveau port a chaque clic, pour rien."""
@@ -397,20 +406,22 @@ def test_reopening_the_report_reuses_the_same_server(fenetre, monkeypatch, tmp_p
 
     monkeypatch.setattr("runner.ui.main_window.shutil.which",
                         lambda name: "/usr/bin/allure")
-    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    monkeypatch.setattr("runner.services.allure_service.subprocess.run", _generation_simulee)
     monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
                         lambda url: None)
 
     fenetre.open_allure_report()
+    _attendre_generation(fenetre, qapp)
     premier_serveur = fenetre._allure_server
     assert premier_serveur is not None
 
     fenetre.open_allure_report()
+    _attendre_generation(fenetre, qapp)
 
     assert fenetre._allure_server is premier_serveur
 
 
-def test_closing_the_window_shuts_the_server_down(fenetre, monkeypatch, tmp_path):
+def test_closing_the_window_shuts_the_server_down(fenetre, monkeypatch, tmp_path, qapp):
     """Un serveur HTTP oublie en arriere-plan survivrait a la fermeture de la
     fenetre -- le port resterait occupe tant que le processus tourne."""
     from PyQt5.QtGui import QCloseEvent
@@ -422,11 +433,12 @@ def test_closing_the_window_shuts_the_server_down(fenetre, monkeypatch, tmp_path
 
     monkeypatch.setattr("runner.ui.main_window.shutil.which",
                         lambda name: "/usr/bin/allure")
-    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    monkeypatch.setattr("runner.services.allure_service.subprocess.run", _generation_simulee)
     monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
                         lambda url: None)
 
     fenetre.open_allure_report()
+    _attendre_generation(fenetre, qapp)
     serveur = fenetre._allure_server
     assert serveur is not None
 
@@ -435,7 +447,7 @@ def test_closing_the_window_shuts_the_server_down(fenetre, monkeypatch, tmp_path
     assert serveur.socket.fileno() == -1, "le socket du serveur n'a pas ete ferme"
 
 
-def test_a_failed_generation_shows_allures_own_error(fenetre, monkeypatch, tmp_path):
+def test_a_failed_generation_shows_allures_own_error(fenetre, monkeypatch, tmp_path, qapp):
     resultats = tmp_path / "allure-results"
     resultats.mkdir()
     (resultats / "result.json").write_text("{}", encoding="utf-8")
@@ -444,7 +456,7 @@ def test_a_failed_generation_shows_allures_own_error(fenetre, monkeypatch, tmp_p
     monkeypatch.setattr("runner.ui.main_window.shutil.which",
                         lambda name: "/usr/bin/allure")
     monkeypatch.setattr(
-        "runner.ui.main_window.subprocess.run",
+        "runner.services.allure_service.subprocess.run",
         lambda commande, **kwargs: subprocess.CompletedProcess(
             commande, 1, stdout="", stderr="boom"))
 
@@ -458,112 +470,103 @@ def test_a_failed_generation_shows_allures_own_error(fenetre, monkeypatch, tmp_p
         lambda url: ouverts.append(url))
 
     fenetre.open_allure_report()
+    _attendre_generation(fenetre, qapp)
 
     assert len(messages) == 1
     assert "boom" in messages[0][3]
     assert ouverts == []
 
 
-# ------------------------------------------------- deux lecteurs, deux rapports
+# --------------------------------------------- generation automatique et file d'attente
 
-def test_allure_result_dirs_finds_the_single_target(fenetre, tmp_path):
+def test_a_finished_run_regenerates_the_report_on_its_own(fenetre, monkeypatch, tmp_path, qapp):
+    """Le coeur de la demande : l'utilisateur ne doit jamais avoir a cliquer
+    sur le bouton Allure juste pour rafraichir le HTML apres un run."""
     resultats = tmp_path / "allure-results"
     resultats.mkdir()
     (resultats / "result.json").write_text("{}", encoding="utf-8")
     fenetre._last_allure_dir = str(resultats)
 
-    assert fenetre._allure_result_dirs() == [("", resultats)]
+    monkeypatch.setattr("runner.ui.main_window.shutil.which",
+                        lambda name: "/usr/bin/allure")
+    appels = []
+    monkeypatch.setattr(
+        "runner.services.allure_service.subprocess.run",
+        lambda commande, **kwargs: appels.append(commande) or
+        _generation_simulee(commande, **kwargs))
+    ouverts = []
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
+                        lambda url: ouverts.append(url))
+
+    fenetre._on_run_finished([])
+    _attendre_generation(fenetre, qapp)
+
+    assert appels, "la generation doit partir toute seule a la fin du run"
+    assert ouverts == [], "mais rien ne doit s'ouvrir sans que l'utilisateur ait clique"
 
 
-def test_allure_result_dirs_skips_a_reader_with_nothing_written(fenetre, tmp_path):
-    """Un lecteur decoche pour ce run n'a rien ecrit -- son sous-dossier
-    n'existe meme pas, il ne doit pas se retrouver dans la liste."""
-    lecteur_a = Reader("Cosmo11Secured Reader", 0)
-    lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
-    fenetre._last_allure_readers = (lecteur_a, lecteur_b)
+def test_a_run_finishing_without_allure_results_does_not_try_to_generate(fenetre, monkeypatch, tmp_path):
+    """Interpreteur sans allure-pytest : `_last_allure_dir` reste vide, la
+    fin du run ne doit rien tenter de generer."""
+    fenetre._last_allure_dir = ""
+    appels = []
+    monkeypatch.setattr("runner.services.allure_service.subprocess.run",
+                        lambda commande, **kwargs: appels.append(commande))
 
-    base = tmp_path / "allure-results"
-    (base / "reader_0").mkdir(parents=True)
-    (base / "reader_0" / "result.json").write_text("{}", encoding="utf-8")
-    fenetre._last_allure_dir = str(base)
+    fenetre._on_run_finished([])
 
-    assert fenetre._allure_result_dirs() == [("Cosmo11Secured Reader", base / "reader_0")]
+    assert appels == []
+    assert fenetre._allure_worker is None
 
 
-def test_two_readers_open_two_separate_reports(fenetre, monkeypatch, tmp_path):
-    """Le coeur de la demande : deux lecteurs sur le meme run, deux rapports
-    ouverts -- ni fondus en un seul, ni l'un des deux perdu."""
-    lecteur_a = Reader("Cosmo11Secured Reader", 0)
-    lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
-    fenetre._last_allure_readers = (lecteur_a, lecteur_b)
-
-    base = tmp_path / "allure-results"
-    for sous in ("reader_0", "reader_1"):
-        dossier = base / sous
-        dossier.mkdir(parents=True)
-        (dossier / "result.json").write_text("{}", encoding="utf-8")
-    fenetre._last_allure_dir = str(base)
+def test_clicking_while_a_generation_is_already_running_does_not_start_a_second_one(
+        fenetre, monkeypatch, tmp_path, qapp):
+    """Cas reel : l'auto-regeneration vient de partir en fin de run, et
+    l'utilisateur clique tout de suite sur Allure. Il ne doit pas y avoir
+    deux `allure generate` concurrents sur le meme dossier -- juste une
+    ouverture des que celui deja en cours finit."""
+    resultats = tmp_path / "allure-results"
+    resultats.mkdir()
+    (resultats / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(resultats)
 
     monkeypatch.setattr("runner.ui.main_window.shutil.which",
                         lambda name: "/usr/bin/allure")
-    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
-    ouverts = []
-    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
-                        lambda url: ouverts.append(url.toString()))
 
-    fenetre.open_allure_report()
+    demarre = threading.Event()
+    poursuivre = threading.Event()
 
-    assert len(ouverts) == 2
-    assert any("Cosmo11Secured" in u for u in ouverts)
-    assert any("TestBiosWrapperTU" in u for u in ouverts)
-    # Chaque rapport sert vraiment son propre contenu.
-    for url in ouverts:
-        assert b"rapport" in urllib.request.urlopen(url, timeout=3).read()
-
-
-def test_one_failing_reader_does_not_hide_the_other(fenetre, monkeypatch, tmp_path):
-    """Un des deux lecteurs echoue a generer -- l'autre doit quand meme
-    s'ouvrir, avec une erreur qui nomme celui qui a echoue."""
-    lecteur_a = Reader("Cosmo11Secured Reader", 0)
-    lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
-    fenetre._last_allure_readers = (lecteur_a, lecteur_b)
-
-    base = tmp_path / "allure-results"
-    for sous in ("reader_0", "reader_1"):
-        dossier = base / sous
-        dossier.mkdir(parents=True)
-        (dossier / "result.json").write_text("{}", encoding="utf-8")
-    fenetre._last_allure_dir = str(base)
-
-    def _generation_partielle(commande, **kwargs):
-        if "reader_1" in commande[-1]:
-            return subprocess.CompletedProcess(commande, 1, stdout="", stderr="boom")
+    def _generation_lente(commande, **kwargs):
+        demarre.set()
+        poursuivre.wait(5)
         return _generation_simulee(commande, **kwargs)
 
-    monkeypatch.setattr("runner.ui.main_window.shutil.which",
-                        lambda name: "/usr/bin/allure")
-    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_partielle)
+    monkeypatch.setattr("runner.services.allure_service.subprocess.run", _generation_lente)
     ouverts = []
     monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
                         lambda url: ouverts.append(url.toString()))
-    messages = []
-    monkeypatch.setattr(
-        "runner.ui.main_window.ErrorDialog.show_error",
-        lambda *args, **kwargs: messages.append(args))
 
-    fenetre.open_allure_report()
+    fenetre._lancer_generation_allure(ouvrir_apres=False)  # l'auto-regeneration
+    assert demarre.wait(2), "la generation n'a jamais demarre"
+    premier_worker = fenetre._allure_worker
+    assert premier_worker is not None and premier_worker.isRunning()
+
+    fenetre.open_allure_report()  # le clic pendant qu'elle tourne encore
+
+    assert fenetre._allure_worker is premier_worker, "un second worker a ete lance"
+    assert fenetre._allure_open_en_attente is True
+
+    poursuivre.set()
+    _attendre_generation(fenetre, qapp)
 
     assert len(ouverts) == 1
-    assert "Cosmo11Secured" in ouverts[0]
-    assert len(messages) == 1
-    assert "TestBiosWrapperTU" in messages[0][2]
 
 
 # ------------------------------------------------------- l'historique Allure
 
-def test_history_is_stashed_after_a_successful_generation(fenetre, monkeypatch, tmp_path):
-    """Le coeur de l'autre demande : sans ca, chaque clic reparlait d'une
-    tendance vide -- jamais d'historique visible entre deux builds."""
+def test_history_is_stashed_after_a_successful_generation(fenetre, monkeypatch, tmp_path, qapp):
+    """Le coeur de l'autre demande : sans ca, chaque generation reparlait
+    d'une tendance vide -- jamais d'historique visible entre deux builds."""
     resultats = tmp_path / "allure-results"
     resultats.mkdir()
     (resultats / "result.json").write_text("{}", encoding="utf-8")
@@ -571,41 +574,26 @@ def test_history_is_stashed_after_a_successful_generation(fenetre, monkeypatch, 
 
     monkeypatch.setattr("runner.ui.main_window.shutil.which",
                         lambda name: "/usr/bin/allure")
-    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    monkeypatch.setattr("runner.services.allure_service.subprocess.run", _generation_simulee)
     monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
                         lambda url: None)
 
     fenetre.open_allure_report()
+    _attendre_generation(fenetre, qapp)
 
-    stash = fenetre._allure_history_stash("")
+    stash = fenetre._allure_history_stash()
     assert (stash / "history-trend.json").is_file()
 
 
-def test_the_stashed_history_is_restored_into_the_next_run(fenetre, monkeypatch, tmp_path):
-    stash = fenetre._allure_history_stash("")
+def test_the_stashed_history_is_restored_into_the_next_run(fenetre, tmp_path):
+    stash = fenetre._allure_history_stash()
     stash.mkdir(parents=True)
     (stash / "history-trend.json").write_text('["build precedent"]', encoding="utf-8")
 
     resultats = tmp_path / "allure-results"
     resultats.mkdir()
-    (resultats / "result.json").write_text("{}", encoding="utf-8")
-    fenetre._last_allure_dir = str(resultats)
 
-    monkeypatch.setattr("runner.ui.main_window.shutil.which",
-                        lambda name: "/usr/bin/allure")
-    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
-    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
-                        lambda url: None)
-
-    fenetre._restaurer_historique_allure("", resultats)
+    fenetre._restaurer_historique_allure(resultats)
 
     assert (resultats / "history" / "history-trend.json").read_text() \
         == '["build precedent"]'
-
-
-def test_each_reader_keeps_its_own_history_stash(fenetre):
-    """L'historique de la Configuration A n'a rien a voir avec celui de la
-    Configuration B -- les melanger donnerait une tendance qui saute d'un
-    lecteur a l'autre, illisible."""
-    assert (fenetre._allure_history_stash("Cosmo11Secured Reader")
-           != fenetre._allure_history_stash("TestBiosWrapperTU Reader"))
