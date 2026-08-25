@@ -1234,11 +1234,7 @@ class MainWindow(QMainWindow):
         retenus = [nodeid for nodeid, noms in self._markers_by_nodeid.items()
                    if predicat(frozenset(noms))]
 
-        self.model.set_all_checked(False)
-        for nodeid in retenus:
-            index = self.model.index_for_nodeid(nodeid)
-            if index.isValid():
-                self.model.setData(index, Qt.Checked, Qt.CheckStateRole)
+        self.model.set_checked_nodeids(retenus)
 
         if retenus:
             self._reveal(retenus[0])
@@ -1345,11 +1341,7 @@ class MainWindow(QMainWindow):
         if not divergents:
             self.status_label.setText("Every reader agrees so far")
             return
-        self.model.set_all_checked(False)
-        for nodeid in divergents:
-            index = self.model.index_for_nodeid(nodeid)
-            if index.isValid():
-                self.model.setData(index, Qt.Checked, Qt.CheckStateRole)
+        self.model.set_checked_nodeids(divergents)
         self.status_label.setText(f"{len(divergents)} tests where readers disagree")
 
     def _toggle_compare(self) -> None:

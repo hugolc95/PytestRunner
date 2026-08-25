@@ -277,6 +277,23 @@ class TestTreeModel(QAbstractItemModel):
             self._set_checked(racine, coche)
         self._emit_selection()
 
+    def set_checked_nodeids(self, nodeids) -> None:
+        """Coche exactement ces nodeids -- et eux seuls -- en un seul passage.
+
+        Cocher un par un via `setData()` rappelle `_emit_selection()` a
+        chaque nodeid, qui recompte TOUTE la selection sur TOUT l'arbre
+        (`checked_nodeids()`). Sur une suite de plusieurs milliers de tests,
+        retenir ne serait-ce que quelques centaines de nodeids ainsi gele
+        l'interface plusieurs secondes -- un cout quadratique invisible tant
+        que la suite reste petite. Un seul recomptage a la fin suffit.
+        """
+        self.set_all_checked(False)
+        for nodeid in nodeids:
+            ligne = self._by_nodeid.get(nodeid)
+            if ligne is not None:
+                self._set_checked(ligne, True)
+        self._emit_selection()
+
     def checked_nodeids(self) -> list[str]:
         """Nodeids coches, dans l'ordre de l'arbre."""
         retenus = []

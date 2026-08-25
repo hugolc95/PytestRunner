@@ -104,6 +104,39 @@ def test_selection_changes_are_announced(model, qapp):
     assert recu[-1] == (0, 3)
 
 
+def test_checking_a_list_of_nodeids_keeps_exactly_those(model):
+    """Le marker filter et « selectionner les divergents » posent tous les
+    deux une liste de nodeids precise : rien d'autre ne doit rester coche."""
+    model.set_all_checked(True)
+
+    model.set_checked_nodeids([NODEIDS[0]])
+
+    assert model.checked_nodeids() == [NODEIDS[0]]
+
+
+def test_checking_a_list_of_nodeids_announces_the_selection_only_once(model):
+    """Le bug d'origine : cocher un par un via `setData()` recompte TOUT
+    l'arbre a chaque nodeid -- gele l'interface des que la suite et la
+    selection grossissent. Un seul recomptage, quel que soit le nombre de
+    nodeids retenus, est ce qui doit rester vrai."""
+    recu = []
+    model.selection_changed.connect(lambda c, t: recu.append((c, t)))
+
+    model.set_checked_nodeids([NODEIDS[0], NODEIDS[2]])
+
+    # `set_all_checked(False)` a l'interieur emet aussi le sien : deux
+    # signaux au total, jamais un par nodeid retenu.
+    assert len(recu) == 2
+    assert recu[-1] == (2, 3)
+
+
+def test_checking_an_unknown_nodeid_is_ignored_not_raised(model):
+    """Un marker peut nommer un nodeid que la collecte n'a pas retenu
+    (renomme, supprime) -- ignorer plutot que planter le filtre entier."""
+    model.set_checked_nodeids([NODEIDS[0], "jamais/vu.py::test_x"])
+    assert model.checked_nodeids() == [NODEIDS[0]]
+
+
 # -------------------------------------------------------------------- statuts
 
 def test_a_result_lands_on_its_leaf(model):
