@@ -286,13 +286,42 @@ class TestTreeModel(QAbstractItemModel):
         retenir ne serait-ce que quelques centaines de nodeids ainsi gele
         l'interface plusieurs secondes -- un cout quadratique invisible tant
         que la suite reste petite. Un seul recomptage a la fin suffit.
+
+        `_set_checked()` a aussi un second cout, pire que celui-ci : chaque
+        appel remonte jusqu'a la racine (visible) et emet `dataChanged` sur
+        elle, ce qui force la vue a requalifier son tri-state -- une
+        reconstruction COMPLETE et NON mise en cache de tout son sous-arbre
+        (`_check_state`, recursif). Sur 5000 feuilles cochees dans une suite
+        de 20000 tests, mesure : plus de 100 secondes, 110 millions d'appels
+        a `_check_state`. Poser `checked` directement sur chaque feuille (un
+        attribut, sans aucun signal) puis rafraichir une seule fois a la fin
+        evite cette explosion : la vue ne requalifie chaque noeud visible
+        qu'UNE fois, pas une fois par feuille cochee.
         """
         self.set_all_checked(False)
-        for nodeid in nodeids:
+        retenus = set(nodeids)
+        trouve = False
+        for nodeid in retenus:
             ligne = self._by_nodeid.get(nodeid)
             if ligne is not None:
-                self._set_checked(ligne, True)
+                ligne.checked = True
+                trouve = True
+        if trouve:
+            self._refresh_checkbox_display()
         self._emit_selection()
+
+    def _refresh_checkbox_display(self) -> None:
+        """Invalide l'affichage des cases a cocher de tout l'arbre, une fois.
+
+        Reutilise `_rafraichir_branche`, deja correct pour un noeud -- mais
+        elle ne redessine que la DESCENDANCE de ce qu'on lui donne, jamais le
+        noeud lui-meme. Chaque racine a donc besoin de son propre `dataChanged`
+        en plus, sinon SA case ne se met jamais a jour.
+        """
+        for racine in self._roots:
+            index = self.createIndex(racine.row, 0, racine)
+            self.dataChanged.emit(index, index, [Qt.CheckStateRole])
+            self._rafraichir_branche(racine)
 
     def checked_nodeids(self) -> list[str]:
         """Nodeids coches, dans l'ordre de l'arbre."""

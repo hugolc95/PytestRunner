@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+
 import pytest
 from PyQt5.QtCore import QModelIndex, Qt
 from PyQt5.QtGui import QColor
@@ -128,6 +130,50 @@ def test_checking_a_list_of_nodeids_announces_the_selection_only_once(model):
     # signaux au total, jamais un par nodeid retenu.
     assert len(recu) == 2
     assert recu[-1] == (2, 3)
+
+
+def test_checking_a_large_selection_stays_fast_with_a_visible_view(qapp):
+    """Le vrai bug, invisible sans une QTreeView REELLEMENT affichee.
+
+    `_set_checked()` remonte jusqu'a la racine et emet `dataChanged` sur
+    elle a CHAQUE feuille cochee. Une vue visible repond a ce signal en
+    requalifiant le tri-state de la racine -- une reconstruction complete de
+    tout son sous-arbre, non mise en cache (`_check_state`, recursif). Sans
+    vue attachee, ce signal ne coute presque rien et le probleme reste muet ;
+    c'est pourquoi un premier correctif teste seulement en isolation (sans
+    QTreeView) a laisse passer un gel mesure a plus de 100s sur une suite
+    reelle de 20000 tests. Ce test attache une vraie vue, et regarde
+    l'horloge -- pas seulement le resultat.
+    """
+    from PyQt5.QtWidgets import QTreeView
+
+    # A cette echelle (mesuree reelle, cote utilisateur) le gel se compte en
+    # dizaines de secondes -- une marge confortable au-dessus du temps reel
+    # de ce correctif (~0.3s) evite qu'une machine lente rende ce test flaky,
+    # sans jamais laisser passer une regression reelle.
+    gros = [f"suite/mod_{d:02d}/test_file_{f:02d}.py::test_case_{t:02d}"
+           for d in range(50) for f in range(40) for t in range(10)]
+    modele = TestTreeModel()
+    modele.set_tree(build_tree(gros))
+
+    vue = QTreeView()
+    vue.setModel(modele)
+    vue.show()
+    qapp.processEvents()
+
+    marques = [n for i, n in enumerate(gros) if i % 4 == 0]
+
+    debut = time.monotonic()
+    modele.set_checked_nodeids(marques)
+    qapp.processEvents()
+    duree = time.monotonic() - debut
+
+    vue.hide()
+    assert set(modele.checked_nodeids()) == set(marques)
+    # Mesure : ~0.3s pour ce correctif, contre plus de 100s (110 millions
+    # d'appels a `_check_state`) pour un `setData()` par nodeid sur cette
+    # meme suite.
+    assert duree < 5.0, f"{duree:.2f}s pour {len(marques)} nodeids : gel de retour ?"
 
 
 def test_checking_an_unknown_nodeid_is_ignored_not_raised(model):
