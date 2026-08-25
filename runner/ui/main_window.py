@@ -7,10 +7,14 @@ QThread, la fenetre ne fait qu'ecouter leurs signaux.
 
 from __future__ import annotations
 
+import http.server
 import os
 import shutil
+import socketserver
 import subprocess
+import threading
 import time
+from functools import partial
 from pathlib import Path
 
 from PyQt5.QtCore import QModelIndex, QSettings, Qt, QTimer, QUrl, pyqtSlot
@@ -127,6 +131,14 @@ class MainWindow(QMainWindow):
         # si son interpreteur ne connait pas le plugin. Le bouton Allure lit
         # cette valeur, il ne la calcule jamais lui-meme.
         self._last_allure_dir = ""
+        # Petit serveur HTTP local qui sert le rapport genere : ouvrir son
+        # index.html directement en file:// bloque tous ses appels AJAX
+        # (CORS du navigateur), et il ne reste alors qu'un ecran "Loading…"
+        # partout. Demarre une fois, reutilise a chaque clic suivant --
+        # regenerer le rapport dans le meme dossier suffit, pas besoin de le
+        # relancer.
+        self._allure_server: socketserver.TCPServer | None = None
+        self._allure_server_thread: threading.Thread | None = None
         self._matches: list[str] = []
         self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
         self._match_index = -1
@@ -667,7 +679,32 @@ class MainWindow(QMainWindow):
                 (resultat.stderr or resultat.stdout or "").strip())
             return
 
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(rapport / "index.html")))
+        port = self._ensure_allure_server(rapport)
+        QDesktopServices.openUrl(QUrl(f"http://127.0.0.1:{port}/index.html"))
+
+    def _ensure_allure_server(self, dossier: Path) -> int:
+        """Sert `dossier` en HTTP local, et rend le port choisi.
+
+        Le rapport Allure est une page qui charge ses donnees par requetes
+        AJAX -- ouvrir `index.html` directement en `file://` fait bloquer ces
+        requetes par le navigateur (CORS), et le rapport reste bloque sur
+        "Loading…" partout, chaque autre onglet en 404. `allure serve` existe
+        pour ca, mais bloque le terminal jusqu'a Ctrl+C : impossible a piloter
+        depuis une appli sans console. Un petit serveur HTTP maison, garde en
+        vie pour la session, evite les deux problemes.
+        """
+        if self._allure_server is not None:
+            return self._allure_server.server_address[1]
+
+        gestionnaire = partial(http.server.SimpleHTTPRequestHandler,
+                               directory=str(dossier))
+        serveur = socketserver.ThreadingTCPServer(("127.0.0.1", 0), gestionnaire)
+        fil = threading.Thread(target=serveur.serve_forever, daemon=True)
+        fil.start()
+
+        self._allure_server = serveur
+        self._allure_server_thread = fil
+        return serveur.server_address[1]
 
     @pyqtSlot(object)
     def _rerun_history(self, group) -> None:
@@ -1564,4 +1601,7 @@ class MainWindow(QMainWindow):
         if self.service.busy:
             self.service.cancel()
             self.service.wait(3000)
+        if self._allure_server is not None:
+            self._allure_server.shutdown()
+            self._allure_server.server_close()
         super().closeEvent(event)

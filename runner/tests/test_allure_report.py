@@ -9,8 +9,11 @@ plutot que de planter ou de rester muets.
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
+import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -227,7 +230,20 @@ def test_clicking_without_the_allure_cli_explains_why(fenetre, monkeypatch, tmp_
     assert "not found" in messages[0][1].lower()
 
 
+def _generation_simulee(commande, **kwargs):
+    """Remplace `allure generate` : ecrit un vrai index.html la ou `-o` le
+    demande, pour verifier que le serveur local le sert vraiment ensuite --
+    pas seulement que la bonne commande a ete construite."""
+    rapport = Path(commande[commande.index("-o") + 1])
+    rapport.mkdir(parents=True, exist_ok=True)
+    (rapport / "index.html").write_text("<html>rapport</html>", encoding="utf-8")
+    return subprocess.CompletedProcess(commande, 0, stdout="", stderr="")
+
+
 def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path):
+    """L'ouverture directe de index.html en file:// bloque tous ses appels
+    AJAX (CORS) et reste sur "Loading…" -- le rapport doit passer par le
+    petit serveur HTTP local, jamais par une URL de fichier."""
     resultats = tmp_path / "allure-results"
     resultats.mkdir()
     (resultats / "result.json").write_text("{}", encoding="utf-8")
@@ -240,12 +256,12 @@ def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path
     monkeypatch.setattr(
         "runner.ui.main_window.subprocess.run",
         lambda commande, **kwargs: appels.append((commande, kwargs)) or
-        subprocess.CompletedProcess(commande, 0, stdout="", stderr=""))
+        _generation_simulee(commande, **kwargs))
 
     ouverts = []
     monkeypatch.setattr(
         "runner.ui.main_window.QDesktopServices.openUrl",
-        lambda url: ouverts.append(url.toLocalFile()))
+        lambda url: ouverts.append(url.toString()))
 
     fenetre.open_allure_report()
 
@@ -256,8 +272,62 @@ def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path
     # Le vrai appel passe bien par la correction de JAVA_HOME (`env=`), pas
     # seulement la fonction testee en isolation ci-dessus.
     assert "env" in kwargs
+
     assert len(ouverts) == 1
-    assert ouverts[0].endswith("index.html")
+    assert re.fullmatch(r"http://127\.0\.0\.1:\d+/index\.html", ouverts[0]), ouverts[0]
+
+    # Le serveur sert vraiment le fichier -- pas juste une URL qui y ressemble.
+    contenu = urllib.request.urlopen(ouverts[0], timeout=3).read()
+    assert b"rapport" in contenu
+
+
+def test_reopening_the_report_reuses_the_same_server(fenetre, monkeypatch, tmp_path):
+    """Un serveur par session suffit : le rapport change de contenu sous le
+    meme dossier a chaque clic, pas besoin d'en relancer un a chaque fois --
+    et en relancer un occuperait un nouveau port a chaque clic, pour rien."""
+    resultats = tmp_path / "allure-results"
+    resultats.mkdir()
+    (resultats / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(resultats)
+
+    monkeypatch.setattr("runner.ui.main_window.shutil.which",
+                        lambda name: "/usr/bin/allure")
+    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
+                        lambda url: None)
+
+    fenetre.open_allure_report()
+    premier_serveur = fenetre._allure_server
+    assert premier_serveur is not None
+
+    fenetre.open_allure_report()
+
+    assert fenetre._allure_server is premier_serveur
+
+
+def test_closing_the_window_shuts_the_server_down(fenetre, monkeypatch, tmp_path):
+    """Un serveur HTTP oublie en arriere-plan survivrait a la fermeture de la
+    fenetre -- le port resterait occupe tant que le processus tourne."""
+    from PyQt5.QtGui import QCloseEvent
+
+    resultats = tmp_path / "allure-results"
+    resultats.mkdir()
+    (resultats / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(resultats)
+
+    monkeypatch.setattr("runner.ui.main_window.shutil.which",
+                        lambda name: "/usr/bin/allure")
+    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
+                        lambda url: None)
+
+    fenetre.open_allure_report()
+    serveur = fenetre._allure_server
+    assert serveur is not None
+
+    fenetre.closeEvent(QCloseEvent())
+
+    assert serveur.socket.fileno() == -1, "le socket du serveur n'a pas ete ferme"
 
 
 def test_a_failed_generation_shows_allures_own_error(fenetre, monkeypatch, tmp_path):
