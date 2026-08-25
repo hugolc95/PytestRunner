@@ -62,6 +62,7 @@ class InterpreterInfo:
     bits: int = 0
     pytest_version: str = ""
     has_xdist: bool = False
+    has_allure: bool = False
     error: str = ""
 
     @property
@@ -77,6 +78,8 @@ class InterpreterInfo:
                         else "pytest MISSING")
         morceaux.append("pytest-xdist present" if self.has_xdist
                         else "pytest-xdist missing")
+        morceaux.append("allure-pytest present" if self.has_allure
+                        else "allure-pytest missing")
         return " · ".join(morceaux)
 
 
@@ -91,6 +94,11 @@ _PROBE_CODE = (
     "    print('')\n"
     "try:\n"
     "    import xdist\n"
+    "    print('yes')\n"
+    "except Exception:\n"
+    "    print('')\n"
+    "try:\n"
+    "    import allure\n"
     "    print('yes')\n"
     "except Exception:\n"
     "    print('')\n"
@@ -176,6 +184,8 @@ def _run_probe(path: str, timeout: float) -> InterpreterInfo:
         bits = 0
     pytest_version = lignes[2].strip() if len(lignes) > 2 else ""
     has_xdist = len(lignes) > 3 and lignes[3].strip() == "yes"
+    has_allure = len(lignes) > 4 and lignes[4].strip() == "yes"
 
     return InterpreterInfo(path=path, version=version, bits=bits,
-                           pytest_version=pytest_version, has_xdist=has_xdist)
+                           pytest_version=pytest_version, has_xdist=has_xdist,
+                           has_allure=has_allure)

@@ -129,6 +129,10 @@ class RunRequest:
     # horodate), il est stable dans les chemins de logs et partage par tous les
     # lecteurs du lancement.
     build_number: int | None = None
+    # Ou pytest doit ecrire les resultats bruts allure-pytest (--alluredir).
+    # Vide quand l'interpreteur ne l'a pas (ou n'a jamais ete sonde) : ajouter
+    # le drapeau sans le plugin ferait echouer pytest avant meme de collecter.
+    allure_dir: str = ""
 
     @property
     def total_tests(self) -> int:

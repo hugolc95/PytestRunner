@@ -7,13 +7,16 @@ QThread, la fenetre ne fait qu'ecouter leurs signaux.
 
 from __future__ import annotations
 
+import shutil
+import subprocess
 import time
 from pathlib import Path
 
-from PyQt5.QtCore import QModelIndex, QSettings, Qt, QTimer, pyqtSlot
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtCore import QModelIndex, QSettings, Qt, QTimer, QUrl, pyqtSlot
+from PyQt5.QtGui import QDesktopServices, QKeySequence
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -39,6 +42,7 @@ from runner.domain.workspace import (
     Workspace,
     fichiers_config,
 )
+from runner.services.interpreter_service import ProbeWorker
 from runner.services.run_service import CollectWorker, RunService
 from runner.ui import icons, theme
 from runner.ui import tokens as t
@@ -97,6 +101,11 @@ class MainWindow(QMainWindow):
         self._run_id: str | None = None
         self._build_number: int | None = None
         self._collector: CollectWorker | None = None
+        self._allure_prober: ProbeWorker | None = None
+        # Dossier des resultats allure-pytest du dernier run demarre, ou ""
+        # si son interpreteur ne connait pas le plugin. Le bouton Allure lit
+        # cette valeur, il ne la calcule jamais lui-meme.
+        self._last_allure_dir = ""
         self._matches: list[str] = []
         self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
         self._match_index = -1
@@ -198,6 +207,15 @@ class MainWindow(QMainWindow):
         self.history_button.setToolTip("Runs already recorded  (Ctrl+H)")
         self.history_button.clicked.connect(self.open_history)
 
+        # A cote de History plutot que dans un menu : c'est le meme geste,
+        # juste sur un rapport different -- regarder ce qu'a donne un run deja
+        # termine.
+        self.allure_button = QPushButton("Allure")
+        self.allure_button.setObjectName("Ghost")
+        self.allure_button.setIcon(icons.icon("mdi.file-chart-outline", t.TEXT_MUTED))
+        self.allure_button.setToolTip("Open the Allure report of the last run")
+        self.allure_button.clicked.connect(self.open_allure_report)
+
         # Cette barre ne parle que du WORKSPACE : ou il est, et ce qui le
         # decrit. Les actions de run ont leur propre rangee, juste en dessous.
         ligne.addWidget(self.workspace_combo)
@@ -205,6 +223,7 @@ class MainWindow(QMainWindow):
         ligne.addWidget(self.load_button)
         ligne.addWidget(self.config_button)
         ligne.addWidget(self.history_button)
+        ligne.addWidget(self.allure_button)
         ligne.addStretch(1)
         return barre
 
@@ -572,6 +591,62 @@ class MainWindow(QMainWindow):
         dialogue.rerun_requested.connect(self._rerun_history)
         dialogue.exec_()
 
+    @pyqtSlot()
+    def open_allure_report(self) -> None:
+        """Genere puis ouvre le rapport Allure du dernier run demarre.
+
+        `--alluredir` n'ecrit que des fichiers JSON bruts -- illisibles tels
+        quels. `allure generate` les transforme en site statique, ce que ce
+        bouton fait a la demande plutot qu'a chaque run : ca prend une
+        poignee de secondes, inutile de les payer pour un run qu'on ne va
+        jamais consulter.
+        """
+        dossier_resultats = Path(self._last_allure_dir) if self._last_allure_dir else None
+        if (dossier_resultats is None or not dossier_resultats.is_dir()
+                or not any(dossier_resultats.iterdir())):
+            ErrorDialog.show_error(
+                self, "No Allure results",
+                "No Allure results are available for the last run.",
+                "Make sure allure-pytest is installed in the test "
+                'interpreter ("pip install allure-pytest"), then run the '
+                "tests again.")
+            return
+
+        allure_bin = shutil.which("allure")
+        if not allure_bin:
+            ErrorDialog.show_error(
+                self, "Allure command-line tool not found",
+                "The \"allure\" command was not found on the PATH.",
+                "Install the Allure commandline (requires a JRE) from "
+                "https://allurereport.org/docs/install/ and make sure "
+                '"allure" is on the PATH.')
+            return
+
+        rapport = self.history.racine / "allure-report" / "latest"
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            resultat = subprocess.run(
+                [allure_bin, "generate", "--clean", "-o", str(rapport),
+                 self._last_allure_dir],
+                capture_output=True, text=True, timeout=120,
+                creationflags=interpreter_mod.subprocess_flags(),
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            QApplication.restoreOverrideCursor()
+            ErrorDialog.show_error(
+                self, "Could not generate the Allure report", str(exc), "")
+            return
+        QApplication.restoreOverrideCursor()
+
+        if resultat.returncode != 0:
+            ErrorDialog.show_error(
+                self, "Could not generate the Allure report",
+                "The \"allure generate\" command failed.",
+                (resultat.stderr or resultat.stdout or "").strip())
+            return
+
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(rapport / "index.html")))
+
     @pyqtSlot(object)
     def _rerun_history(self, group) -> None:
         """Recharge au besoin le workspace, puis rejoue le lancement choisi."""
@@ -776,6 +851,15 @@ class MainWindow(QMainWindow):
         if not python:
             return
 
+        # Sonde en fond si le resultat n'est pas deja connu : lancer un
+        # sous-processus a chaque `_start()` gelerait l'interface (voir
+        # `interpreter.py`). La collecte qui suit prend de toute facon plus
+        # longtemps que ce sondage, le cache est pret bien avant le premier
+        # "Run tests".
+        if interpreter_mod.cached_probe(python) is None:
+            self._allure_prober = ProbeWorker(python, self)
+            self._allure_prober.start()
+
         self.status_label.setText("Collecting tests…")
         self.load_button.setEnabled(False)
         self.progress.setVisible(True)
@@ -948,6 +1032,7 @@ class MainWindow(QMainWindow):
         lecteurs = self._readers_to_run()
         self._run_id = history.nouvel_identifiant()
         self._build_number = self.history.next_build_number()
+        self._last_allure_dir = self._allure_dir_for(python, self._run_id)
         requete = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,
@@ -958,8 +1043,25 @@ class MainWindow(QMainWindow):
             run_id=self._run_id,
             junit_dir=str(self.history.racine),
             build_number=self._build_number,
+            allure_dir=self._last_allure_dir,
         )
         self.service.start(requete, self.workspace.env)
+
+    def _allure_dir_for(self, python: str, run_id: str) -> str:
+        """Ou ecrire les resultats allure-pytest de ce run, ou "" si son
+        interpreteur ne connait pas le plugin.
+
+        `cached_probe` ne lance rien : le vrai sondage (couteux, un sous-
+        processus) a deja eu lieu en fond pendant `load_workspace`. Un run
+        demarre avant que ce sondage finisse se passe simplement d'Allure --
+        pas d'attente ici, jamais.
+        """
+        info = interpreter_mod.cached_probe(python)
+        if info is None or not info.has_allure:
+            return ""
+        dossier = self.history.racine / "allure-results" / run_id
+        dossier.mkdir(parents=True, exist_ok=True)
+        return str(dossier)
 
     def _readers_to_run(self) -> tuple:
         """Les lecteurs coches, dans l'ordre des colonnes.

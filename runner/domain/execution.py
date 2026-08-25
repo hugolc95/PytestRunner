@@ -214,6 +214,12 @@ class ReaderRun:
                 # reconstruit a partir des compteurs. Aucune dependance, et un
                 # fichier que les serveurs d'integration savent deja lire.
                 commande.append(f"--junitxml={junit}")
+            if self.request.allure_dir:
+                # Meme dossier pour tous les lecteurs d'un run : les fichiers
+                # allure-pytest sont nommes par UUID, deux lecteurs n'ecrivent
+                # donc jamais le meme fichier -- et le rapport genere ensuite
+                # couvre le run entier, pas un lecteur isole.
+                commande.append(f"--alluredir={self.request.allure_dir}")
 
             try:
                 self._process = subprocess.Popen(

@@ -166,6 +166,29 @@ def test_a_summary_says_when_pytest_is_missing():
     assert "MISSING" in info.summary()
 
 
+def test_probe_detects_allure_pytest_when_installed(tmp_path):
+    """Le vrai `_run_probe` lance un sous-processus : un faux interpreteur qui
+    imite sa sortie verifie le parsing sans avoir besoin d'allure-pytest
+    reellement installe dans l'environnement de la suite."""
+    faux = tmp_path / "faux_python"
+    faux.write_text("#!/bin/sh\nprintf '3.11.0\\n64\\n7.0.0\\nyes\\nyes\\n'\n",
+                    encoding="utf-8")
+    faux.chmod(0o755)
+
+    info = probe(str(faux), use_cache=False)
+    assert info.has_allure
+
+
+def test_probe_says_allure_is_missing_when_the_import_fails(tmp_path):
+    faux = tmp_path / "faux_python"
+    faux.write_text("#!/bin/sh\nprintf '3.11.0\\n64\\n7.0.0\\nyes\\n\\n'\n",
+                    encoding="utf-8")
+    faux.chmod(0o755)
+
+    info = probe(str(faux), use_cache=False)
+    assert not info.has_allure
+
+
 def test_forgetting_one_path_does_not_clear_the_others(monkeypatch, tmp_path):
     a, b = tmp_path / "a", tmp_path / "b"
     a.write_bytes(b""), b.write_bytes(b"")
