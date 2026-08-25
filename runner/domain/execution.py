@@ -170,6 +170,35 @@ class ReaderRun:
         return str(Path(self.request.junit_dir)
                    / f"{self.request.run_id}{suffixe}.xml")
 
+    def _allure_dir_path(self) -> str:
+        """Ou pytest doit ecrire les resultats allure-pytest, ou "" si on
+        n'en veut pas.
+
+        Un seul lecteur (le cas courant) ecrit directement dans le dossier
+        de base. PLUSIEURS lecteurs sur le meme run auraient sinon tous
+        ecrit au meme endroit : les fichiers allure-pytest sont nommes par
+        UUID, donc ils ne s'ecrasent pas entre eux, mais Allure regroupe par
+        defaut deux executions du MEME test sous un seul, l'une masquant
+        l'autre derriere un simple "retry" -- alors que ce sont deux
+        executions distinctes, sur du materiel different. Un sous-dossier
+        par lecteur (comme le JUnit XML) donne un rapport par lecteur,
+        jamais fondus.
+        """
+        if not self.request.allure_dir:
+            return ""
+        dossier = Path(self.request.allure_dir)
+        if len(self.request.readers) > 1:
+            dossier = dossier / f"reader_{self.reader.index}"
+            dossier.mkdir(parents=True, exist_ok=True)
+            # Visible sur la page Overview du rapport genere : sans ca, rien
+            # ne dit dans Allure lui-meme quel lecteur a produit CE rapport.
+            (dossier / "environment.properties").write_text(
+                f"Reader={self.reader.name or self.reader.index}\n",
+                encoding="utf-8")
+        else:
+            dossier.mkdir(parents=True, exist_ok=True)
+        return str(dossier)
+
     def _environnement(self, dossier_plugin: str) -> dict:
         # Sous Windows, creer un processus avec un environnement partiel peut
         # retirer SYSTEMROOT et les variables dont Python a besoin pour
@@ -214,12 +243,9 @@ class ReaderRun:
                 # reconstruit a partir des compteurs. Aucune dependance, et un
                 # fichier que les serveurs d'integration savent deja lire.
                 commande.append(f"--junitxml={junit}")
-            if self.request.allure_dir:
-                # Meme dossier pour tous les lecteurs d'un run : les fichiers
-                # allure-pytest sont nommes par UUID, deux lecteurs n'ecrivent
-                # donc jamais le meme fichier -- et le rapport genere ensuite
-                # couvre le run entier, pas un lecteur isole.
-                commande.append(f"--alluredir={self.request.allure_dir}")
+            allure_dir = self._allure_dir_path()
+            if allure_dir:
+                commande.append(f"--alluredir={allure_dir}")
 
             try:
                 self._process = subprocess.Popen(

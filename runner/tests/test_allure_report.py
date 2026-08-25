@@ -28,12 +28,20 @@ from runner.ui.main_window import _environnement_pour_allure, _GestionnaireAllur
 def fenetre(qapp, tmp_path):
     from PyQt5.QtCore import QSettings
 
+    from runner.domain import history as history_mod
     from runner.domain.workspace import Workspace
     from runner.ui.main_window import APP, ORG, MainWindow
 
     QSettings(ORG, APP).clear()
     f = MainWindow()
     f.workspace = Workspace(path=str(tmp_path), config_path="", settings={})
+    # Sans ca, `f.history.racine` pointe sur le VRAI `~/.pytest_runner` de la
+    # machine qui fait tourner la suite -- les rapports et l'historique
+    # Allure generes par un test resteraient sur disque pour de vrai, et
+    # pollueraient le test suivant (deux clics different sur le meme dossier
+    # "latest", un historique deja present avant le premier test qui en a
+    # besoin).
+    f.history = history_mod.History(racine=tmp_path / "pytest_runner_history")
     yield f
     f.settings.clear()
     f.close()
@@ -141,7 +149,9 @@ class _FauxProcessus:
         pass
 
 
-def _lancer_avec_popen_capture(monkeypatch, tmp_path, allure_dir: str) -> list:
+def _lancer_avec_popen_capture(monkeypatch, tmp_path, allure_dir: str,
+                               readers: tuple = (Reader("", 0),),
+                               lecteur: Reader | None = None) -> list:
     """Rejoue un `ReaderRun.run()` complet, Popen remplace, et rend la
     commande reellement construite."""
     captures: list = []
@@ -156,10 +166,11 @@ def _lancer_avec_popen_capture(monkeypatch, tmp_path, allure_dir: str) -> list:
 
     requete = RunRequest(
         workspace=str(tmp_path), interpreter=sys.executable,
-        nodeids=("t.py::test_a",), readers=(Reader("", 0),),
+        nodeids=("t.py::test_a",), readers=readers,
         allure_dir=allure_dir,
     )
-    execution.ReaderRun(requete, Reader("", 0), {}).run(lambda l: None, lambda o: None)
+    execution.ReaderRun(requete, lecteur or readers[0], {}).run(
+        lambda l: None, lambda o: None)
     return captures[0]
 
 
@@ -176,6 +187,55 @@ def test_no_alluredir_flag_when_allure_is_not_configured(monkeypatch, tmp_path):
     commande = _lancer_avec_popen_capture(monkeypatch, tmp_path, "")
 
     assert not any(morceau.startswith("--alluredir=") for morceau in commande)
+
+
+def test_two_readers_get_two_separate_alluredirs(monkeypatch, tmp_path):
+    """Le coeur de la demande : deux lecteurs sur le meme run sont deux
+    executions distinctes -- Allure les fondrait en un seul test avec un
+    "retry" cachant l'un des deux s'ils ecrivaient au meme endroit."""
+    base = tmp_path / "allure-results"
+    lecteur_a = Reader("Cosmo11Secured Reader", 0)
+    lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
+
+    commande_a = _lancer_avec_popen_capture(
+        monkeypatch, tmp_path, str(base), readers=(lecteur_a, lecteur_b),
+        lecteur=lecteur_a)
+    commande_b = _lancer_avec_popen_capture(
+        monkeypatch, tmp_path, str(base), readers=(lecteur_a, lecteur_b),
+        lecteur=lecteur_b)
+
+    assert f"--alluredir={base / 'reader_0'}" in commande_a
+    assert f"--alluredir={base / 'reader_1'}" in commande_b
+
+
+def test_two_readers_each_get_their_own_environment_properties(monkeypatch, tmp_path):
+    """Visible sur la page Overview du rapport : sans ca, rien dans Allure
+    lui-meme ne dit quel lecteur a produit CE rapport-la."""
+    base = tmp_path / "allure-results"
+    lecteur_a = Reader("Cosmo11Secured Reader", 0)
+    lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
+
+    _lancer_avec_popen_capture(monkeypatch, tmp_path, str(base),
+                               readers=(lecteur_a, lecteur_b), lecteur=lecteur_a)
+    _lancer_avec_popen_capture(monkeypatch, tmp_path, str(base),
+                               readers=(lecteur_a, lecteur_b), lecteur=lecteur_b)
+
+    assert "Cosmo11Secured Reader" in (base / "reader_0" / "environment.properties").read_text()
+    assert "TestBiosWrapperTU Reader" in (base / "reader_1" / "environment.properties").read_text()
+
+
+def test_a_lone_named_reader_still_writes_directly_to_the_base_dir(monkeypatch, tmp_path):
+    """Le cas courant, et le seul qui existait avant ce correctif : un seul
+    lecteur, meme nomme, ne doit pas se retrouver dans un sous-dossier --
+    aucune raison de changer une URL qui marchait deja."""
+    base = tmp_path / "allure-results"
+    lecteur = Reader("Cosmo11Secured Reader", 0)
+
+    commande = _lancer_avec_popen_capture(
+        monkeypatch, tmp_path, str(base), readers=(lecteur,), lecteur=lecteur)
+
+    assert f"--alluredir={base}" in commande
+    assert not (base / "reader_0").exists()
 
 
 # ------------------------------------------------------------- le clic
@@ -231,12 +291,15 @@ def test_clicking_without_the_allure_cli_explains_why(fenetre, monkeypatch, tmp_
 
 
 def _generation_simulee(commande, **kwargs):
-    """Remplace `allure generate` : ecrit un vrai index.html la ou `-o` le
-    demande, pour verifier que le serveur local le sert vraiment ensuite --
-    pas seulement que la bonne commande a ete construite."""
+    """Remplace `allure generate` : ecrit un vrai index.html et un dossier
+    history/ la ou `-o` le demande, pour verifier que le serveur local sert
+    vraiment le premier et que le second est bien recupere ensuite -- pas
+    seulement que la bonne commande a ete construite."""
     rapport = Path(commande[commande.index("-o") + 1])
     rapport.mkdir(parents=True, exist_ok=True)
     (rapport / "index.html").write_text("<html>rapport</html>", encoding="utf-8")
+    (rapport / "history").mkdir(exist_ok=True)
+    (rapport / "history" / "history-trend.json").write_text("[]", encoding="utf-8")
     return subprocess.CompletedProcess(commande, 0, stdout="", stderr="")
 
 
@@ -399,3 +462,150 @@ def test_a_failed_generation_shows_allures_own_error(fenetre, monkeypatch, tmp_p
     assert len(messages) == 1
     assert "boom" in messages[0][3]
     assert ouverts == []
+
+
+# ------------------------------------------------- deux lecteurs, deux rapports
+
+def test_allure_result_dirs_finds_the_single_target(fenetre, tmp_path):
+    resultats = tmp_path / "allure-results"
+    resultats.mkdir()
+    (resultats / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(resultats)
+
+    assert fenetre._allure_result_dirs() == [("", resultats)]
+
+
+def test_allure_result_dirs_skips_a_reader_with_nothing_written(fenetre, tmp_path):
+    """Un lecteur decoche pour ce run n'a rien ecrit -- son sous-dossier
+    n'existe meme pas, il ne doit pas se retrouver dans la liste."""
+    lecteur_a = Reader("Cosmo11Secured Reader", 0)
+    lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
+    fenetre._last_allure_readers = (lecteur_a, lecteur_b)
+
+    base = tmp_path / "allure-results"
+    (base / "reader_0").mkdir(parents=True)
+    (base / "reader_0" / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(base)
+
+    assert fenetre._allure_result_dirs() == [("Cosmo11Secured Reader", base / "reader_0")]
+
+
+def test_two_readers_open_two_separate_reports(fenetre, monkeypatch, tmp_path):
+    """Le coeur de la demande : deux lecteurs sur le meme run, deux rapports
+    ouverts -- ni fondus en un seul, ni l'un des deux perdu."""
+    lecteur_a = Reader("Cosmo11Secured Reader", 0)
+    lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
+    fenetre._last_allure_readers = (lecteur_a, lecteur_b)
+
+    base = tmp_path / "allure-results"
+    for sous in ("reader_0", "reader_1"):
+        dossier = base / sous
+        dossier.mkdir(parents=True)
+        (dossier / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(base)
+
+    monkeypatch.setattr("runner.ui.main_window.shutil.which",
+                        lambda name: "/usr/bin/allure")
+    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    ouverts = []
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
+                        lambda url: ouverts.append(url.toString()))
+
+    fenetre.open_allure_report()
+
+    assert len(ouverts) == 2
+    assert any("Cosmo11Secured" in u for u in ouverts)
+    assert any("TestBiosWrapperTU" in u for u in ouverts)
+    # Chaque rapport sert vraiment son propre contenu.
+    for url in ouverts:
+        assert b"rapport" in urllib.request.urlopen(url, timeout=3).read()
+
+
+def test_one_failing_reader_does_not_hide_the_other(fenetre, monkeypatch, tmp_path):
+    """Un des deux lecteurs echoue a generer -- l'autre doit quand meme
+    s'ouvrir, avec une erreur qui nomme celui qui a echoue."""
+    lecteur_a = Reader("Cosmo11Secured Reader", 0)
+    lecteur_b = Reader("TestBiosWrapperTU Reader", 1)
+    fenetre._last_allure_readers = (lecteur_a, lecteur_b)
+
+    base = tmp_path / "allure-results"
+    for sous in ("reader_0", "reader_1"):
+        dossier = base / sous
+        dossier.mkdir(parents=True)
+        (dossier / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(base)
+
+    def _generation_partielle(commande, **kwargs):
+        if "reader_1" in commande[-1]:
+            return subprocess.CompletedProcess(commande, 1, stdout="", stderr="boom")
+        return _generation_simulee(commande, **kwargs)
+
+    monkeypatch.setattr("runner.ui.main_window.shutil.which",
+                        lambda name: "/usr/bin/allure")
+    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_partielle)
+    ouverts = []
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
+                        lambda url: ouverts.append(url.toString()))
+    messages = []
+    monkeypatch.setattr(
+        "runner.ui.main_window.ErrorDialog.show_error",
+        lambda *args, **kwargs: messages.append(args))
+
+    fenetre.open_allure_report()
+
+    assert len(ouverts) == 1
+    assert "Cosmo11Secured" in ouverts[0]
+    assert len(messages) == 1
+    assert "TestBiosWrapperTU" in messages[0][2]
+
+
+# ------------------------------------------------------- l'historique Allure
+
+def test_history_is_stashed_after_a_successful_generation(fenetre, monkeypatch, tmp_path):
+    """Le coeur de l'autre demande : sans ca, chaque clic reparlait d'une
+    tendance vide -- jamais d'historique visible entre deux builds."""
+    resultats = tmp_path / "allure-results"
+    resultats.mkdir()
+    (resultats / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(resultats)
+
+    monkeypatch.setattr("runner.ui.main_window.shutil.which",
+                        lambda name: "/usr/bin/allure")
+    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
+                        lambda url: None)
+
+    fenetre.open_allure_report()
+
+    stash = fenetre._allure_history_stash("")
+    assert (stash / "history-trend.json").is_file()
+
+
+def test_the_stashed_history_is_restored_into_the_next_run(fenetre, monkeypatch, tmp_path):
+    stash = fenetre._allure_history_stash("")
+    stash.mkdir(parents=True)
+    (stash / "history-trend.json").write_text('["build precedent"]', encoding="utf-8")
+
+    resultats = tmp_path / "allure-results"
+    resultats.mkdir()
+    (resultats / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(resultats)
+
+    monkeypatch.setattr("runner.ui.main_window.shutil.which",
+                        lambda name: "/usr/bin/allure")
+    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
+                        lambda url: None)
+
+    fenetre._restaurer_historique_allure("", resultats)
+
+    assert (resultats / "history" / "history-trend.json").read_text() \
+        == '["build precedent"]'
+
+
+def test_each_reader_keeps_its_own_history_stash(fenetre):
+    """L'historique de la Configuration A n'a rien a voir avec celui de la
+    Configuration B -- les melanger donnerait une tendance qui saute d'un
+    lecteur a l'autre, illisible."""
+    assert (fenetre._allure_history_stash("Cosmo11Secured Reader")
+           != fenetre._allure_history_stash("TestBiosWrapperTU Reader"))

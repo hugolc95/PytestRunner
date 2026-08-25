@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import http.server
 import os
+import re
 import shutil
 import socketserver
 import subprocess
@@ -89,6 +90,12 @@ K_THEME = "window/theme"
 K_CONFIG = "workspace/config"
 
 
+def _nom_de_fichier_sur(texte: str) -> str:
+    """Un nom de lecteur devenu un nom de dossier sans danger."""
+    nettoye = re.sub(r"[^\w.-]+", "_", texte.strip())
+    return nettoye or "default"
+
+
 def _environnement_pour_allure() -> dict:
     """L'environnement du processus, avec `JAVA_HOME` corrige si besoin.
 
@@ -147,6 +154,11 @@ class MainWindow(QMainWindow):
         # si son interpreteur ne connait pas le plugin. Le bouton Allure lit
         # cette valeur, il ne la calcule jamais lui-meme.
         self._last_allure_dir = ""
+        # Lecteurs de ce meme run : decide si les resultats vivent
+        # directement sous `_last_allure_dir` (un seul lecteur) ou par
+        # sous-dossier `reader_<index>` (plusieurs) -- voir `_allure_dir_path`
+        # cote execution.py, qui applique exactement la meme regle.
+        self._last_allure_readers: tuple[Reader, ...] = ()
         # Petit serveur HTTP local qui sert le rapport genere : ouvrir son
         # index.html directement en file:// bloque tous ses appels AJAX
         # (CORS du navigateur), et il ne reste alors qu'un ecran "Loading…"
@@ -642,17 +654,19 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def open_allure_report(self) -> None:
-        """Genere puis ouvre le rapport Allure du dernier run demarre.
+        """Genere puis ouvre le(s) rapport(s) Allure du dernier run demarre.
 
+        Un rapport par lecteur, exactement comme le JUnit XML : deux
+        lecteurs sur le meme run sont deux executions distinctes, jamais
+        fondues en une seule (voir `_allure_dir_path` cote execution.py).
         `--alluredir` n'ecrit que des fichiers JSON bruts -- illisibles tels
         quels. `allure generate` les transforme en site statique, ce que ce
         bouton fait a la demande plutot qu'a chaque run : ca prend une
         poignee de secondes, inutile de les payer pour un run qu'on ne va
         jamais consulter.
         """
-        dossier_resultats = Path(self._last_allure_dir) if self._last_allure_dir else None
-        if (dossier_resultats is None or not dossier_resultats.is_dir()
-                or not any(dossier_resultats.iterdir())):
+        cibles = self._allure_result_dirs()
+        if not cibles:
             ErrorDialog.show_error(
                 self, "No Allure results",
                 "No Allure results are available for the last run.",
@@ -671,32 +685,103 @@ class MainWindow(QMainWindow):
                 '"allure" is on the PATH.')
             return
 
-        rapport = self.history.racine / "allure-report" / "latest"
+        seul = len(cibles) == 1
+        rapport_base = self.history.racine / "allure-report" / "latest"
+        ouverts: list[Path] = []
+        echecs: list[tuple[str, str]] = []
+
         QApplication.setOverrideCursor(Qt.WaitCursor)
         try:
-            resultat = subprocess.run(
-                [allure_bin, "generate", "--clean", "-o", str(rapport),
-                 self._last_allure_dir],
-                capture_output=True, text=True, timeout=120,
-                creationflags=interpreter_mod.subprocess_flags(),
-                env=_environnement_pour_allure(),
-            )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+            for etiquette, dossier_resultats in cibles:
+                rapport = (rapport_base if seul
+                          else rapport_base / _nom_de_fichier_sur(etiquette))
+                self._restaurer_historique_allure(etiquette, dossier_resultats)
+                try:
+                    resultat = subprocess.run(
+                        [allure_bin, "generate", "--clean", "-o", str(rapport),
+                         str(dossier_resultats)],
+                        capture_output=True, text=True, timeout=120,
+                        creationflags=interpreter_mod.subprocess_flags(),
+                        env=_environnement_pour_allure(),
+                    )
+                except (OSError, subprocess.TimeoutExpired) as exc:
+                    echecs.append((etiquette, str(exc)))
+                    continue
+                if resultat.returncode != 0:
+                    echecs.append(
+                        (etiquette, (resultat.stderr or resultat.stdout or "").strip()))
+                    continue
+                self._sauver_historique_allure(etiquette, rapport)
+                ouverts.append(rapport)
+        finally:
             QApplication.restoreOverrideCursor()
-            ErrorDialog.show_error(
-                self, "Could not generate the Allure report", str(exc), "")
-            return
-        QApplication.restoreOverrideCursor()
 
-        if resultat.returncode != 0:
+        if ouverts:
+            port = self._ensure_allure_server(rapport_base)
+            for rapport in ouverts:
+                sous_chemin = "" if rapport == rapport_base else f"{rapport.name}/"
+                QDesktopServices.openUrl(
+                    QUrl(f"http://127.0.0.1:{port}/{sous_chemin}index.html"))
+
+        if echecs and not ouverts:
             ErrorDialog.show_error(
                 self, "Could not generate the Allure report",
-                "The \"allure generate\" command failed.",
-                (resultat.stderr or resultat.stdout or "").strip())
-            return
+                "The \"allure generate\" command failed.", echecs[0][1])
+        elif echecs:
+            noms = ", ".join(etiquette or "default" for etiquette, _ in echecs)
+            ErrorDialog.show_error(
+                self, "Some Allure reports could not be generated",
+                f"Failed for: {noms}.", echecs[0][1])
 
-        port = self._ensure_allure_server(rapport)
-        QDesktopServices.openUrl(QUrl(f"http://127.0.0.1:{port}/index.html"))
+    def _allure_result_dirs(self) -> list[tuple[str, Path]]:
+        """(etiquette, dossier) pour chaque lecteur ayant vraiment ecrit des
+        resultats allure-pytest lors du dernier run.
+
+        Meme regle que `_allure_dir_path` cote execution.py : un seul
+        lecteur ecrit directement dans le dossier de base, plusieurs
+        ecrivent chacun dans son propre sous-dossier `reader_<index>`.
+        """
+        if not self._last_allure_dir:
+            return []
+        base = Path(self._last_allure_dir)
+        if len(self._last_allure_readers) > 1:
+            candidats = [(lecteur.name, base / f"reader_{lecteur.index}")
+                        for lecteur in self._last_allure_readers]
+        else:
+            candidats = [("", base)]
+        return [(etiquette, dossier) for etiquette, dossier in candidats
+               if dossier.is_dir() and any(dossier.iterdir())]
+
+    def _allure_history_stash(self, etiquette: str) -> Path:
+        return self.history.racine / "allure-history" / _nom_de_fichier_sur(etiquette)
+
+    def _restaurer_historique_allure(self, etiquette: str, dossier_resultats: Path) -> None:
+        """Recopie l'historique du dernier rapport genere pour CE lecteur
+        dans ses resultats bruts, pour qu'Allure y ajoute un point de plus
+        au lieu de repartir d'une tendance vide a chaque clic.
+
+        Un dossier par lecteur (`_allure_history_stash`) : celui de la
+        Configuration A n'a rien a voir avec celui de la Configuration B.
+        """
+        stash = self._allure_history_stash(etiquette)
+        if not stash.is_dir():
+            return
+        cible = dossier_resultats / "history"
+        if cible.exists():
+            shutil.rmtree(cible)
+        shutil.copytree(stash, cible)
+
+    def _sauver_historique_allure(self, etiquette: str, rapport: Path) -> None:
+        """Range l'historique du rapport qui vient d'etre genere, pour le
+        prochain clic sur ce meme lecteur."""
+        genere = rapport / "history"
+        if not genere.is_dir():
+            return
+        stash = self._allure_history_stash(etiquette)
+        if stash.exists():
+            shutil.rmtree(stash)
+        stash.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(genere, stash)
 
     def _ensure_allure_server(self, dossier: Path) -> int:
         """Sert `dossier` en HTTP local, et rend le port choisi.
@@ -1107,6 +1192,7 @@ class MainWindow(QMainWindow):
         self._run_id = history.nouvel_identifiant()
         self._build_number = self.history.next_build_number()
         self._last_allure_dir = self._allure_dir_for(python, self._run_id)
+        self._last_allure_readers = lecteurs
         requete = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,
