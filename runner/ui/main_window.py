@@ -109,6 +109,22 @@ def _environnement_pour_allure() -> dict:
     return env
 
 
+class _GestionnaireAllure(http.server.SimpleHTTPRequestHandler):
+    """Sert le rapport Allure, sans jamais journaliser sur `sys.stderr`.
+
+    Cette appli est empaquetee `console=False` (PytestRunner.spec) : sous
+    Windows, `sys.stderr` y vaut `None`. Le `log_message()` par defaut de
+    `BaseHTTPRequestHandler` y ecrit -- et il est appele DEPUIS
+    `send_response()`, donc AVANT que les en-tetes ou le corps ne partent.
+    L'exception qui en resulte coupe la reponse a ce moment precis : le
+    navigateur voit une connexion ouverte puis fermee sans un seul octet
+    (ERR_EMPTY_RESPONSE), pas une erreur pytest ni allure.
+    """
+
+    def log_message(self, format, *args):
+        pass
+
+
 class MainWindow(QMainWindow):
     """Fenetre unique de l'application."""
 
@@ -696,8 +712,7 @@ class MainWindow(QMainWindow):
         if self._allure_server is not None:
             return self._allure_server.server_address[1]
 
-        gestionnaire = partial(http.server.SimpleHTTPRequestHandler,
-                               directory=str(dossier))
+        gestionnaire = partial(_GestionnaireAllure, directory=str(dossier))
         serveur = socketserver.ThreadingTCPServer(("127.0.0.1", 0), gestionnaire)
         fil = threading.Thread(target=serveur.serve_forever, daemon=True)
         fil.start()

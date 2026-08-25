@@ -21,7 +21,7 @@ from runner.domain import execution
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.interpreter import InterpreterInfo
 from runner.domain.models import Reader, RunRequest
-from runner.ui.main_window import _environnement_pour_allure
+from runner.ui.main_window import _environnement_pour_allure, _GestionnaireAllure
 
 
 @pytest.fixture
@@ -278,6 +278,48 @@ def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path
 
     # Le serveur sert vraiment le fichier -- pas juste une URL qui y ressemble.
     contenu = urllib.request.urlopen(ouverts[0], timeout=3).read()
+    assert b"rapport" in contenu
+
+
+def test_the_handler_never_touches_stderr(monkeypatch):
+    """Le point precis du bug, isole de tout le reste : `log_message()` ne
+    doit jamais chercher a ecrire quoi que ce soit."""
+    monkeypatch.setattr(sys, "stderr", None)
+    # Ne doit lever aucune exception, meme avec sys.stderr a None.
+    _GestionnaireAllure.log_message(object(), "%s", "peu importe")
+
+
+def test_the_server_survives_a_console_less_build(fenetre, monkeypatch, tmp_path):
+    """Cas reel rapporte : le rapport s'ouvrait mais restait vide, chaque
+    autre onglet en 404 -- le navigateur affichait ERR_EMPTY_RESPONSE.
+
+    PytestRunner.spec construit l'appli avec `console=False` : sous Windows,
+    `sys.stderr` y vaut `None`. Le gestionnaire HTTP par defaut journalise
+    CHAQUE requete sur `sys.stderr`, DEPUIS `send_response()` -- donc avant
+    d'ecrire le moindre octet. L'exception qui en resulte coupe la reponse
+    a cet instant precis : le navigateur voit une connexion fermee sans
+    aucune donnee, symptome identique a ce qui a ete rapporte.
+    """
+    resultats = tmp_path / "allure-results"
+    resultats.mkdir()
+    (resultats / "result.json").write_text("{}", encoding="utf-8")
+    fenetre._last_allure_dir = str(resultats)
+
+    monkeypatch.setattr("runner.ui.main_window.shutil.which",
+                        lambda name: "/usr/bin/allure")
+    monkeypatch.setattr("runner.ui.main_window.subprocess.run", _generation_simulee)
+    ouverts = []
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
+                        lambda url: ouverts.append(url.toString()))
+
+    ancien_stderr = sys.stderr
+    sys.stderr = None
+    try:
+        fenetre.open_allure_report()
+        contenu = urllib.request.urlopen(ouverts[0], timeout=3).read()
+    finally:
+        sys.stderr = ancien_stderr
+
     assert b"rapport" in contenu
 
 
