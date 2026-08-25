@@ -7,6 +7,7 @@ QThread, la fenetre ne fait qu'ecouter leurs signaux.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import time
@@ -82,6 +83,26 @@ K_THEME = "window/theme"
 # Fichier de configuration retenu, par workspace. Un projet peut en
 # compter plusieurs, et le premier trouve n'est pas forcement le bon.
 K_CONFIG = "workspace/config"
+
+
+def _environnement_pour_allure() -> dict:
+    """L'environnement du processus, avec `JAVA_HOME` corrige si besoin.
+
+    Poste Windows frequent : plusieurs JDK installes au fil du temps ont
+    chacun ajoute leur chemin a `JAVA_HOME` au lieu de le remplacer, la
+    laissant contenir une liste `chemin1;chemin2` comme le ferait `PATH`.
+    `allure` veut UN SEUL dossier et refuse de demarrer sinon -- inutile de
+    faire corriger la variable systeme a la main quand un des chemins listes
+    est deja un JDK valide.
+    """
+    env = dict(os.environ)
+    valeur = env.get("JAVA_HOME", "")
+    chemins = [c for c in valeur.split(os.pathsep) if c.strip()]
+    if len(chemins) > 1:
+        valide = next((c for c in chemins if Path(c).is_dir()), None)
+        if valide:
+            env["JAVA_HOME"] = valide
+    return env
 
 
 class MainWindow(QMainWindow):
@@ -630,6 +651,7 @@ class MainWindow(QMainWindow):
                  self._last_allure_dir],
                 capture_output=True, text=True, timeout=120,
                 creationflags=interpreter_mod.subprocess_flags(),
+                env=_environnement_pour_allure(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             QApplication.restoreOverrideCursor()

@@ -8,6 +8,7 @@ plutot que de planter ou de rester muets.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -17,6 +18,7 @@ from runner.domain import execution
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.interpreter import InterpreterInfo
 from runner.domain.models import Reader, RunRequest
+from runner.ui.main_window import _environnement_pour_allure
 
 
 @pytest.fixture
@@ -71,6 +73,54 @@ def test_an_allure_dir_is_created_when_the_plugin_is_present(fenetre, monkeypatc
     assert "run123" in dossier
     from pathlib import Path
     assert Path(dossier).is_dir()
+
+
+# ------------------------------------------------- JAVA_HOME mal renseignee
+
+def test_java_home_with_a_single_valid_path_is_untouched(monkeypatch, tmp_path):
+    jdk = tmp_path / "jdk11"
+    jdk.mkdir()
+    monkeypatch.setenv("JAVA_HOME", str(jdk))
+
+    assert _environnement_pour_allure()["JAVA_HOME"] == str(jdk)
+
+
+def test_java_home_with_several_paths_keeps_the_first_valid_one(monkeypatch, tmp_path):
+    """Le cas reel rapporte : plusieurs JDK installes au fil du temps ont
+    chacun ajoute leur chemin a JAVA_HOME au lieu de le remplacer."""
+    jdk11 = tmp_path / "jdk11"
+    jdk11.mkdir()
+    jdk8 = tmp_path / "jdk8"
+    jdk8.mkdir()
+    monkeypatch.setenv("JAVA_HOME", f"{jdk11}{os.pathsep}{jdk8}")
+
+    assert _environnement_pour_allure()["JAVA_HOME"] == str(jdk11)
+
+
+def test_java_home_skips_a_listed_path_that_does_not_exist(monkeypatch, tmp_path):
+    jdk8 = tmp_path / "jdk8"
+    jdk8.mkdir()
+    disparu = tmp_path / "jamais_installe"
+    monkeypatch.setenv("JAVA_HOME", f"{disparu}{os.pathsep}{jdk8}")
+
+    assert _environnement_pour_allure()["JAVA_HOME"] == str(jdk8)
+
+
+def test_java_home_is_left_alone_when_nothing_listed_exists(monkeypatch, tmp_path):
+    """Aucun des chemins listes n'existe : on laisse la vraie erreur d'allure
+    remonter plutot que de la masquer avec une valeur tout aussi fausse."""
+    valeur = f"{tmp_path / 'a'}{os.pathsep}{tmp_path / 'b'}"
+    monkeypatch.setenv("JAVA_HOME", valeur)
+
+    assert _environnement_pour_allure()["JAVA_HOME"] == valeur
+
+
+def test_no_java_home_at_all_does_not_crash(monkeypatch):
+    monkeypatch.delenv("JAVA_HOME", raising=False)
+
+    env = _environnement_pour_allure()
+
+    assert env.get("JAVA_HOME", "") == ""
 
 
 # -------------------------------------------- la commande pytest reelle
@@ -189,7 +239,7 @@ def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path
     appels = []
     monkeypatch.setattr(
         "runner.ui.main_window.subprocess.run",
-        lambda commande, **kwargs: appels.append(commande) or
+        lambda commande, **kwargs: appels.append((commande, kwargs)) or
         subprocess.CompletedProcess(commande, 0, stdout="", stderr=""))
 
     ouverts = []
@@ -199,8 +249,13 @@ def test_a_successful_generation_opens_the_report(fenetre, monkeypatch, tmp_path
 
     fenetre.open_allure_report()
 
-    assert appels and appels[0][0] == "/usr/bin/allure"
-    assert appels[0][1] == "generate"
+    assert appels
+    commande, kwargs = appels[0]
+    assert commande[0] == "/usr/bin/allure"
+    assert commande[1] == "generate"
+    # Le vrai appel passe bien par la correction de JAVA_HOME (`env=`), pas
+    # seulement la fonction testee en isolation ci-dessus.
+    assert "env" in kwargs
     assert len(ouverts) == 1
     assert ouverts[0].endswith("index.html")
 
