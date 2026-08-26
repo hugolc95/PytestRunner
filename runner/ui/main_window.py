@@ -14,16 +14,20 @@ from PyQt5.QtCore import QModelIndex, QSettings, Qt, QTimer, pyqtSlot
 from PyQt5.QtGui import QKeySequence
 from PyQt5.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QMainWindow,
+    QMenu,
     QProgressBar,
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QSystemTrayIcon,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -33,6 +37,7 @@ from runner.domain import history
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Kind, Reader, RunRequest, Status
 from runner.domain.source import path_of as source_path
+from runner.domain.stress import MODE_N_TIMES, MODE_UNTIL_FAIL, StressAttempt, StressSummary
 from runner.domain.tree import build_tree, collapse_single_class
 from runner.domain.workspace import (
     MODE_SEQUENTIEL,
@@ -40,6 +45,7 @@ from runner.domain.workspace import (
     fichiers_config,
 )
 from runner.services.run_service import CollectWorker, RunService
+from runner.services.stress_service import StressRunWorker
 from runner.ui import icons, theme
 from runner.ui import tokens as t
 from runner.ui.interpreter_dialog import InterpreterDialog
@@ -51,6 +57,7 @@ from runner.ui.results_panel import (
     ONGLET_SOURCE,
     ResultsPanel,
 )
+from runner.ui.run_n_times_dialog import RunNTimesDialog
 from runner.ui.tree_model import NODE_ROLE, NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import (
     EmptyState,
@@ -60,6 +67,7 @@ from runner.ui.widgets import (
     RemainingPill,
     SearchBar,
     StatusPill,
+    StressBanner,
 )
 
 ORG, APP = "PytestRunner", "Runner"
@@ -113,6 +121,28 @@ class MainWindow(QMainWindow):
         self._elapsed.timeout.connect(self._tick)
         self._seconds = 0
 
+        # Un run long tourne souvent pendant qu'on fait autre chose : la
+        # notification systeme le signale sans qu'il faille revenir surveiller
+        # la fenetre. `isSystemTrayAvailable()` est faux sous un environnement
+        # sans bureau (CI, tests offscreen) -- l'icone reste alors invisible,
+        # `showMessage()` ne fait rien, et le reste de l'appli continue
+        # normalement.
+        self._tray = QSystemTrayIcon(icons.icon("mdi.flask-outline"), self)
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray.show()
+
+        # "Run until it fails" / "Run N times" : un seul test rejoue plusieurs
+        # fois, hors du `RunService` normal -- sinon chaque tentative serait
+        # archivee dans l'historique et redeclencherait la notification de fin
+        # de run, comme si c'etait un vrai run complet.
+        self._stress_worker: StressRunWorker | None = None
+        self._stress_nodeid = ""
+        self._stress_mode = MODE_UNTIL_FAIL
+        self._stress_cap = 0
+        self._stress_ran = 0
+        self._stress_passed = 0
+        self._stress_failed: list[StressAttempt] = []
+
         self.model = TestTreeModel(self)
         self.model.selection_changed.connect(self._on_selection_changed)
 
@@ -140,6 +170,10 @@ class MainWindow(QMainWindow):
         self.readers_bar = ReaderBar()
         self.readers_bar.changed.connect(self._on_readers_changed)
         colonne.addWidget(self._build_run_bar())
+
+        self.stress_banner = StressBanner()
+        self.stress_banner.stop_clicked.connect(self._arreter_stress)
+        colonne.addWidget(self.stress_banner)
 
         self.split = QSplitter(Qt.Horizontal)
         self.split.setChildrenCollapsible(False)
@@ -326,6 +360,8 @@ class MainWindow(QMainWindow):
         # Au clavier aussi : parcourir l'arbre aux fleches doit mettre a jour
         # la fiche, sinon la souris devient obligatoire pour lire un echec.
         self.tree.selectionModel().currentRowChanged.connect(self._on_tree_current)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._menu_contextuel_arbre)
 
         entete = self.tree.header()
         entete.setStretchLastSection(False)
@@ -682,8 +718,6 @@ class MainWindow(QMainWindow):
         coloration, pastilles dont la teinte depend d'une donnee -- que les
         `restyle()` ci-dessous rejouent.
         """
-        from PyQt5.QtWidgets import QApplication
-
         t.set_theme(nom)
         self.settings.setValue(K_THEME, t.current_theme())
 
@@ -1067,6 +1101,31 @@ class MainWindow(QMainWindow):
         self.elapsed_label.clear()
         self.results.refresh_logs()
         self._update_actions()
+        if not annule:
+            self._notifier_fin_de_run(resume)
+
+    def _notifier_fin_de_run(self, resume: str) -> None:
+        """Notification systeme : le run a souvent fini pendant qu'on faisait
+        autre chose, et rien d'autre ne le signale une fois la fenetre hors
+        de vue.
+
+        Les quatre compteurs sont TOUJOURS les quatre, meme a zero : contrairement
+        aux pastilles de la barre d'etat, une notification qui disparait ne se
+        relit pas -- mieux vaut le zero explicite qu'un compte qu'on devine absent.
+        """
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        rendus = self.model.status_counts()
+        detail = (
+            f"{rendus.get(Status.PASSED, 0)} passed · "
+            f"{rendus.get(Status.FAILED, 0)} failed · "
+            f"{rendus.get(Status.SKIPPED, 0)} skipped · "
+            f"{rendus.get(Status.ERROR, 0)} error"
+        )
+        icone = (QSystemTrayIcon.Critical
+                if rendus.get(Status.FAILED, 0) or rendus.get(Status.ERROR, 0)
+                else QSystemTrayIcon.Information)
+        self._tray.showMessage(resume, detail, icone)
 
     def _archiver(self, rapports: list) -> None:
         """Depose un run par lecteur dans l'historique.
@@ -1186,6 +1245,203 @@ class MainWindow(QMainWindow):
             return
         self.tree.setCurrentIndex(index)
         self.tree.scrollTo(index)
+
+    # =====================================================================
+    # Menu contextuel de l'arbre
+    # =====================================================================
+
+    # Filet de securite de "Run until it fails" : sans lui, un test qui ne
+    # casse jamais tournerait indefiniment, sans que rien ne le dise.
+    STRESS_CAP_UNTIL_FAIL = 50
+
+    def _menu_contextuel_arbre(self, point) -> None:
+        index = self.tree.indexAt(point)
+        if not index.isValid():
+            return
+        # Meme geste qu'un clic : la fiche affichee suit le noeud sur lequel
+        # on vient de faire un clic droit, pas celui d'avant.
+        self.tree.setCurrentIndex(index)
+        premiere = index.siblingAtColumn(0)
+        nodeid = self.model.data(premiere, NODEID_ROLE)
+
+        menu = QMenu(self)
+        if nodeid:
+            self._construire_menu_test(menu, nodeid)
+        else:
+            self._construire_menu_groupe(menu, premiere)
+        if menu.actions():
+            menu.exec_(self.tree.viewport().mapToGlobal(point))
+
+    def _construire_menu_test(self, menu: QMenu, nodeid: str) -> None:
+        occupe = self.service.busy or self._stress_worker is not None
+        action_run = menu.addAction(
+            icons.icon("mdi.play"), "Run only this test",
+            lambda: self._start([nodeid]))
+        action_run.setEnabled(not occupe)
+
+        action_until = menu.addAction(
+            icons.icon("mdi.repeat"), "Run until it fails…",
+            lambda: self._lancer_stress(nodeid, MODE_UNTIL_FAIL,
+                                        self.STRESS_CAP_UNTIL_FAIL))
+        action_until.setEnabled(not occupe)
+
+        action_n_fois = menu.addAction(
+            icons.icon("mdi.layers-triple-outline"), "Run N times…",
+            lambda: self._demander_run_n_fois(nodeid))
+        action_n_fois.setEnabled(not occupe)
+
+        menu.addSeparator()
+        menu.addAction(icons.icon("mdi.content-copy"), "Copy nodeid",
+                       lambda: QApplication.clipboard().setText(nodeid))
+
+        echec = self._echec_connu_pour(nodeid)
+        action_trace = menu.addAction(
+            icons.icon("mdi.content-copy"), "Copy failure trace",
+            lambda: QApplication.clipboard().setText(f"{echec.title}\n\n{echec.body}"))
+        action_trace.setEnabled(echec is not None)
+
+        menu.addSeparator()
+        menu.addAction(icons.icon("mdi.file-outline"), "Open file",
+                       lambda: self.results.show_tab(ONGLET_SOURCE))
+
+    def _construire_menu_groupe(self, menu: QMenu, index: QModelIndex) -> None:
+        occupe = self.service.busy or self._stress_worker is not None
+        nodeids = self.model.leaf_nodeids_under(index)
+        action_run = menu.addAction(
+            icons.icon("mdi.play"), "Run only this",
+            lambda: self._start(nodeids))
+        action_run.setEnabled(not occupe and bool(nodeids))
+
+        noeud = self.model.data(index, NODE_ROLE)
+        if noeud is not None and noeud.kind is not Kind.FOLDER:
+            menu.addSeparator()
+            menu.addAction(icons.icon("mdi.file-outline"), "Open file",
+                           lambda: self.results.show_tab(ONGLET_SOURCE))
+
+    def _echec_connu_pour(self, nodeid: str):
+        """Le dernier echec connu de ce test, tous lecteurs confondus.
+
+        Assez pour activer "Copy failure trace" : le menu ne pretend pas
+        choisir LE bon lecteur quand plusieurs ont echoue differemment, il
+        prend juste le premier qui a quelque chose a montrer.
+        """
+        for lecteur in (self.model.readers or (Reader("", 0),)):
+            echec = self.results.failure_for(nodeid, lecteur.index)
+            if echec is not None:
+                return echec
+        return None
+
+    # =====================================================================
+    # "Run until it fails" / "Run N times"
+    # =====================================================================
+
+    def _demander_run_n_fois(self, nodeid: str) -> None:
+        dialogue = RunNTimesDialog(20, self)
+        if dialogue.exec_() == QDialog.Accepted:
+            self._lancer_stress(nodeid, MODE_N_TIMES, dialogue.count())
+
+    def _lancer_stress(self, nodeid: str, mode: str, cap: int) -> None:
+        if (self.workspace is None or self.service.busy
+                or self._stress_worker is not None):
+            return
+
+        # Meme garde qu'un run normal : une correction encore dans l'editeur
+        # ferait rejouer la version d'avant, cap fois, sans que rien ne le dise.
+        if not self.results.source.save():
+            ErrorDialog.show_error(
+                self, "Could not save the source",
+                "The file you edited could not be written, so the run would "
+                "use the previous version.",
+                str(self.results.source.path() or ""))
+            return
+
+        python = self._require_interpreter()
+        if not python:
+            return
+
+        lecteurs = self._readers_to_run()
+        lecteur = lecteurs[0] if lecteurs else Reader("", 0)
+        requete = RunRequest(
+            workspace=self.workspace.path, interpreter=python,
+            nodeids=(nodeid,), readers=(lecteur,),
+            config_path=self.workspace.config_path, sequential=True,
+        )
+
+        self._stress_nodeid = nodeid
+        self._stress_mode = mode
+        self._stress_cap = cap
+        self._stress_ran = 0
+        self._stress_passed = 0
+        self._stress_failed = []
+
+        self._stress_worker = StressRunWorker(
+            requete, lecteur, self.workspace.env, mode, cap, self)
+        self._stress_worker.attempt_done.connect(self._sur_tentative_stress)
+        self._stress_worker.finished_stress.connect(self._sur_fin_stress)
+
+        self.stress_banner.show_running(
+            self._titre_bandeau_stress(mode, nodeid), self._sous_titre_stress(mode, 0, cap))
+        self.results.detail.show_stress_running(nodeid, mode, cap, 0, 0, 0)
+        self._update_actions()
+        self._stress_worker.start()
+
+    def _sous_titre_stress(self, mode: str, ran: int, cap: int) -> str:
+        mot = "attempt" if mode == MODE_UNTIL_FAIL else "run"
+        return f"{mot} {ran + 1} of {cap}"
+
+    def _titre_bandeau_stress(self, mode: str, nodeid: str) -> str:
+        court = nodeid.split("::", 1)[-1].replace("::", " › ")
+        verbe = "Stress-testing" if mode == MODE_UNTIL_FAIL else "Running"
+        return f"{verbe} {court}"
+
+    def _sur_tentative_stress(self, tentative: StressAttempt) -> None:
+        self._stress_ran = tentative.number
+        if tentative.ok:
+            self._stress_passed += 1
+        else:
+            self._stress_failed.append(tentative)
+
+        # Le point sur l'arbre suit la derniere tentative : c'est exactement
+        # ce qu'on verrait si on relancait ce test normalement.
+        lecteurs = self._readers_to_run() or (Reader("", 0),)
+        for lecteur in lecteurs:
+            self.model.apply_outcome(self._stress_nodeid, tentative.status, lecteur.index)
+
+        self.stress_banner.show_running(
+            self._titre_bandeau_stress(self._stress_mode, self._stress_nodeid),
+            self._sous_titre_stress(self._stress_mode, self._stress_ran, self._stress_cap))
+        self.results.detail.show_stress_running(
+            self._stress_nodeid, self._stress_mode, self._stress_cap,
+            self._stress_ran, self._stress_passed, len(self._stress_failed))
+
+    def _sur_fin_stress(self, resume: StressSummary) -> None:
+        self._stress_worker = None
+        nodeid = self._stress_nodeid
+        court = nodeid.split("::", 1)[-1].replace("::", " › ")
+
+        if resume.cancelled:
+            self.stress_banner.show_done(
+                f"Stopped — {court}", f"{resume.ran} of {resume.cap} runs done")
+        elif resume.mode == MODE_UNTIL_FAIL and resume.failed_attempts:
+            derniere = resume.failed_attempts[-1]
+            self.stress_banner.show_failed(
+                f"Stopped — {court} failed", f"attempt {derniere.number} of {resume.cap}")
+        elif resume.mode == MODE_UNTIL_FAIL:
+            self.stress_banner.show_done(
+                f"Never failed — {court}", f"{resume.ran} of {resume.cap} attempts")
+        else:
+            taux = round(100 * resume.passed / resume.ran) if resume.ran else 0
+            echecs = len(resume.failed_attempts)
+            self.stress_banner.show_done(
+                f"{resume.ran} of {resume.cap} runs complete — {court}",
+                f"{resume.passed} passed · {echecs} failed · {taux}% pass rate")
+
+        self.results.detail.show_stress_done(nodeid, resume)
+        self._update_actions()
+
+    def _arreter_stress(self) -> None:
+        if self._stress_worker is not None:
+            self._stress_worker.cancel()
 
     @pyqtSlot(int, int)
     def _on_selection_changed(self, coches: int, total: int) -> None:
@@ -1383,7 +1639,12 @@ class MainWindow(QMainWindow):
 
     def _update_actions(self) -> None:
         charge = self.workspace is not None
-        occupe = self.service.busy
+        # Un stress-test occupe l'interpreteur tout autant qu'un run normal :
+        # Run / Re-run doivent s'eteindre pendant qu'il tourne, sous peine de
+        # deux processus pytest qui se marchent dessus. Le vrai Stop, lui,
+        # reste lie au SEUL `service` -- l'arret d'un stress-test passe par le
+        # bouton du bandeau, pas par celui-la.
+        occupe = self.service.busy or self._stress_worker is not None
         coches, _ = self.model.counts()
 
         # Tout decocher dans la barre des lecteurs ne laisse rien a parcourir.
@@ -1392,9 +1653,9 @@ class MainWindow(QMainWindow):
         cible = not charge or bool(self._readers_to_run()) or not self.workspace.readers
 
         self.run_button.setEnabled(charge and coches > 0 and not occupe and cible)
-        self.stop_button.setEnabled(occupe)
+        self.stop_button.setEnabled(self.service.busy)
         self.act_run.setEnabled(self.run_button.isEnabled())
-        self.act_stop.setEnabled(occupe)
+        self.act_stop.setEnabled(self.service.busy)
         rejouable = (charge and not occupe and cible
                      and bool(self.model.failed_nodeids()))
         self.act_rerun.setEnabled(rejouable)
@@ -1440,4 +1701,7 @@ class MainWindow(QMainWindow):
         if self.service.busy:
             self.service.cancel()
             self.service.wait(3000)
+        if self._stress_worker is not None:
+            self._stress_worker.cancel()
+            self._stress_worker.wait(3000)
         super().closeEvent(event)

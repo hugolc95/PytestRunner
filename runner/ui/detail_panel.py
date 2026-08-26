@@ -32,8 +32,9 @@ from PyQt5.QtWidgets import (
 )
 
 from runner.domain.ansi import strip_ansi
-from runner.domain.failures import Failure, classify_line
+from runner.domain.failures import Failure, classify_line, failure_for, index_failures
 from runner.domain.models import Reader, Status
+from runner.domain.stress import MODE_UNTIL_FAIL, StressAttempt, StressSummary
 from runner.ui import theme
 from runner.ui import tokens as t
 from runner.ui.widgets import (
@@ -70,7 +71,7 @@ class DetailPanel(QWidget):
     open_output = pyqtSignal()
     test_chosen = pyqtSignal(str)   # un echec clique dans la fiche de groupe
 
-    PAGE_VIDE, PAGE_TEST, PAGE_GROUPE = 0, 1, 2
+    PAGE_VIDE, PAGE_TEST, PAGE_GROUPE, PAGE_STRESS = 0, 1, 2, 3
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -81,6 +82,8 @@ class DetailPanel(QWidget):
         # ne suit donc pas un changement de theme.
         self._dernier: tuple | None = None
         self._dernier_groupe: tuple | None = None
+        self._dernier_stress: tuple | None = None
+        self._tentatives_ratees: list[StressAttempt] = []
 
         self.empty = EmptyState(
             "mdi.cursor-default-click-outline",
@@ -93,6 +96,7 @@ class DetailPanel(QWidget):
         self.stack.addWidget(self.empty)
         self.stack.addWidget(self._build_content())
         self.stack.addWidget(self._build_group())
+        self.stack.addWidget(self._build_stress())
 
         colonne = QVBoxLayout(self)
         colonne.setContentsMargins(0, 0, 0, 0)
@@ -188,6 +192,165 @@ class DetailPanel(QWidget):
         self.failures.itemClicked.connect(self._sur_echec)
         colonne.addWidget(self.failures, 1)
         return contenu
+
+    # ------------------------------------------------------------ fiche stress
+
+    def _build_stress(self) -> QWidget:
+        """Fiche de "Run until it fails" / "Run N times" : une serie de
+        tentatives sur UN SEUL test, pas un lot -- d'ou un ruban unique et
+        une trace choisie parmi les tentatives en echec, pas par lecteur."""
+        contenu = QWidget()
+        colonne = QVBoxLayout(contenu)
+        colonne.setContentsMargins(0, t.SPACE_2, 0, 0)
+        colonne.setSpacing(t.SPACE_2)
+
+        self.stress_path = QLabel()
+        self.stress_path.setObjectName("Faint")
+        self.stress_name = QLabel()
+        self.stress_name.setObjectName("Title")
+        self.stress_name.setWordWrap(True)
+        self.stress_sub = QLabel()
+        self.stress_sub.setObjectName("Muted")
+
+        colonne.addWidget(self.stress_path)
+        colonne.addWidget(self.stress_name)
+        colonne.addWidget(self.stress_sub)
+
+        self.stress_ribbon = StatusRibbon()
+        colonne.addWidget(self.stress_ribbon)
+
+        self.stress_counters = QLabel()
+        self.stress_counters.setTextFormat(Qt.RichText)
+        self.stress_counters.setStyleSheet(
+            f"font-size: {t.TEXT_SM}px; background: transparent;")
+        colonne.addWidget(self.stress_counters)
+
+        self.stress_note = QLabel()
+        self.stress_note.setObjectName("Muted")
+        self.stress_note.setWordWrap(True)
+        colonne.addWidget(self.stress_note)
+
+        self.stress_failures_title = QLabel()
+        self.stress_failures_title.setObjectName("Muted")
+        self.stress_failures_title.setVisible(False)
+        colonne.addWidget(self.stress_failures_title)
+
+        self.stress_failures = QListWidget()
+        self.stress_failures.setObjectName("Failures")
+        self.stress_failures.setVisible(False)
+        self.stress_failures.itemClicked.connect(self._sur_tentative_ratee)
+        colonne.addWidget(self.stress_failures)
+
+        self.stress_body = QTextEdit()
+        self.stress_body.setReadOnly(True)
+        self.stress_body.setLineWrapMode(QTextEdit.NoWrap)
+        colonne.addWidget(self.stress_body, 1)
+        return contenu
+
+    def show_stress_running(self, nodeid: str, mode: str, cap: int,
+                            ran: int, passed: int, failed_attempts: int) -> None:
+        """Etat en cours : pas encore de trace a montrer, juste l'avancement."""
+        self._dernier_stress = None
+        self._tentatives_ratees = []
+        self._nodeid = ""
+        self.stack.setCurrentIndex(self.PAGE_STRESS)
+        self._remplir_entete_stress(nodeid)
+
+        if mode == MODE_UNTIL_FAIL:
+            self.stress_sub.setText(f"Stress run in progress — attempt {ran + 1} of {cap}")
+        else:
+            self.stress_sub.setText(f"Run N times — run {ran + 1} of {cap} under way")
+
+        self.stress_ribbon.set_counts({
+            Status.PASSED: passed, Status.FAILED: failed_attempts,
+            Status.PENDING: max(0, cap - ran),
+        })
+        morceaux = [f"<b>{ran}</b> of {cap}",
+                   f'<span style="color:{t.status_color(Status.PASSED)}">'
+                   f"<b>{passed}</b> passed</span>"]
+        if failed_attempts:
+            morceaux.append(f'<span style="color:{t.status_color(Status.FAILED)}">'
+                            f"<b>{failed_attempts}</b> failed</span>")
+        self.stress_counters.setText("&nbsp;&nbsp;&nbsp;".join(morceaux))
+        self.stress_note.setText(
+            "Stops automatically on the first failure." if mode == MODE_UNTIL_FAIL
+            else "Runs all the way through — it doesn't stop on a failure.")
+        self.stress_failures_title.setVisible(False)
+        self.stress_failures.setVisible(False)
+        self.stress_body.clear()
+
+    def show_stress_done(self, nodeid: str, resume: StressSummary) -> None:
+        """Bilan final : le ruban se fige, et chaque tentative en echec peut
+        etre choisie pour voir SA trace precise."""
+        self._dernier_stress = (nodeid, resume)
+        self._tentatives_ratees = list(resume.failed_attempts)
+        self._nodeid = ""
+        self.stack.setCurrentIndex(self.PAGE_STRESS)
+        self._remplir_entete_stress(nodeid)
+
+        echecs = len(resume.failed_attempts)
+        if resume.cancelled:
+            self.stress_sub.setText(f"Stopped by you — {resume.ran} of {resume.cap} runs done")
+        elif resume.mode == MODE_UNTIL_FAIL and echecs:
+            derniere = resume.failed_attempts[-1]
+            self.stress_sub.setText(
+                f"Attempt {derniere.number} of {derniere.number} — the one that broke it")
+        elif resume.mode == MODE_UNTIL_FAIL:
+            self.stress_sub.setText(f"Never failed in {resume.ran} attempts")
+        else:
+            taux = round(100 * resume.passed / resume.ran) if resume.ran else 0
+            self.stress_sub.setText(f"{resume.ran} of {resume.cap} runs complete — {taux}% pass rate")
+
+        self.stress_ribbon.set_counts({
+            Status.PASSED: resume.passed, Status.FAILED: echecs,
+            Status.PENDING: max(0, resume.cap - resume.ran),
+        })
+        morceaux = [f"<b>{resume.ran}</b> runs",
+                   f'<span style="color:{t.status_color(Status.PASSED)}">'
+                   f"<b>{resume.passed}</b> passed</span>"]
+        if echecs:
+            morceaux.append(f'<span style="color:{t.status_color(Status.FAILED)}">'
+                            f"<b>{echecs}</b> failed</span>")
+        self.stress_counters.setText("&nbsp;&nbsp;&nbsp;".join(morceaux))
+        self.stress_note.setText("")
+
+        if echecs:
+            self.stress_failures_title.setText(
+                f"Failed attempt{'s' if echecs > 1 else ''}")
+            self.stress_failures_title.setVisible(True)
+            self.stress_failures.setVisible(True)
+            self._remplir_tentatives_ratees(nodeid)
+            # La plus recente est celle qu'on regarde une fois sur deux.
+            self.stress_failures.setCurrentRow(self.stress_failures.count() - 1)
+            self._afficher_trace_tentative(nodeid, self._tentatives_ratees[-1])
+        else:
+            self.stress_failures_title.setVisible(False)
+            self.stress_failures.setVisible(False)
+            self.stress_body.clear()
+
+    def _remplir_entete_stress(self, nodeid: str) -> None:
+        chemin, _, reste = nodeid.partition("::")
+        self.stress_path.setText(chemin)
+        self.stress_name.setText(reste.replace("::", " › ") or chemin)
+
+    def _remplir_tentatives_ratees(self, nodeid: str) -> None:
+        self.stress_failures.clear()
+        for tentative in self._tentatives_ratees:
+            item = QListWidgetItem(f"Attempt {tentative.number}")
+            item.setData(Qt.UserRole, tentative.number)
+            item.setForeground(QColor(t.status_color(Status.FAILED)))
+            self.stress_failures.addItem(item)
+
+    def _sur_tentative_ratee(self, item) -> None:
+        numero = item.data(Qt.UserRole)
+        tentative = next((tv for tv in self._tentatives_ratees if tv.number == numero), None)
+        if tentative is not None and self._dernier_stress is not None:
+            self._afficher_trace_tentative(self._dernier_stress[0], tentative)
+
+    def _afficher_trace_tentative(self, nodeid: str, tentative: StressAttempt) -> None:
+        echec = failure_for(index_failures(tentative.output), nodeid)
+        bloc = self._html_bloc(Reader("", 0), tentative.status, echec)
+        self.stress_body.setHtml(f'<body style="background:transparent;">{bloc}</body>')
 
     def show_group(self, path: str, name: str, readers: tuple[Reader, ...],
                    counts: dict, failures: list) -> None:
@@ -313,6 +476,8 @@ class DetailPanel(QWidget):
         self._texte_brut = ""
         self._dernier = None
         self._dernier_groupe = None
+        self._dernier_stress = None
+        self._tentatives_ratees = []
         self.stack.setCurrentWidget(self.empty)
 
     def restyle(self) -> None:
@@ -327,6 +492,9 @@ class DetailPanel(QWidget):
         if self.stack.currentIndex() == self.PAGE_GROUPE:
             if self._dernier_groupe is not None:
                 self.show_group(*self._dernier_groupe)
+        elif self.stack.currentIndex() == self.PAGE_STRESS:
+            if self._dernier_stress is not None:
+                self.show_stress_done(*self._dernier_stress)
         elif self._dernier is not None:
             self.show_test(*self._dernier)
 

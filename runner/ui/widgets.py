@@ -675,3 +675,81 @@ def separator() -> QFrame:
     trait.setFrameShape(QFrame.HLine)
     trait.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     return trait
+
+
+class StressBanner(QWidget):
+    """Bandeau au-dessus de l'arbre pendant et apres "Run until it fails" /
+    "Run N times".
+
+    Une teinte par etat (bleu en cours, rouge sur un echec, neutre une fois
+    fini) : c'est ce qu'on regarde du coin de l'oeil en continuant a
+    travailler ailleurs, la couleur doit donc suffire sans lire le texte.
+    """
+
+    stop_clicked = pyqtSignal()
+    dismissed = pyqtSignal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setVisible(False)
+
+        ligne = QHBoxLayout(self)
+        ligne.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
+        ligne.setSpacing(t.SPACE_2)
+
+        self._icone = QLabel()
+        self._titre = QLabel()
+        self._sous_titre = QLabel()
+        self._sous_titre.setObjectName("Muted")
+
+        self.stop_button = QPushButton("Stop")
+        self.stop_button.setObjectName("Ghost")
+        self.stop_button.clicked.connect(self.stop_clicked)
+
+        self.dismiss_button = QPushButton()
+        self.dismiss_button.setObjectName("IconSm")
+        self.dismiss_button.setIcon(icons.icon("mdi.close"))
+        self.dismiss_button.setToolTip("Dismiss")
+        self.dismiss_button.clicked.connect(self._fermer)
+        self.dismiss_button.setVisible(False)
+
+        ligne.addWidget(self._icone)
+        ligne.addWidget(self._titre)
+        ligne.addWidget(self._sous_titre)
+        ligne.addStretch(1)
+        ligne.addWidget(self.stop_button)
+        ligne.addWidget(self.dismiss_button)
+
+    def _fermer(self) -> None:
+        self.setVisible(False)
+        self.dismissed.emit()
+
+    def _peindre(self, glyphe: str, couleur: str, fond: str) -> None:
+        self._icone.setPixmap(icons.icon(glyphe, couleur).pixmap(18, 18))
+        self.setStyleSheet(f"background-color: {fond};" if fond else "")
+
+    def show_running(self, titre: str, sous_titre: str) -> None:
+        self._titre.setText(titre)
+        self._sous_titre.setText(sous_titre)
+        self._peindre("mdi.repeat", t.status_color(Status.RUNNING),
+                      t.rgba(t.status_color(Status.RUNNING), 0.12))
+        self.stop_button.setVisible(True)
+        self.dismiss_button.setVisible(False)
+        self.setVisible(True)
+
+    def show_failed(self, titre: str, sous_titre: str) -> None:
+        self._titre.setText(titre)
+        self._sous_titre.setText(sous_titre)
+        self._peindre("mdi.alert", t.status_color(Status.FAILED),
+                      t.rgba(t.status_color(Status.FAILED), 0.12))
+        self.stop_button.setVisible(False)
+        self.dismiss_button.setVisible(True)
+        self.setVisible(True)
+
+    def show_done(self, titre: str, sous_titre: str) -> None:
+        self._titre.setText(titre)
+        self._sous_titre.setText(sous_titre)
+        self._peindre("mdi.check-circle-outline", t.TEXT_MUTED, "")
+        self.stop_button.setVisible(False)
+        self.dismiss_button.setVisible(True)
+        self.setVisible(True)

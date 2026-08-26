@@ -486,6 +486,18 @@ class TestTreeModel(QAbstractItemModel):
             return feuille.node.nodeid
         return ""
 
+    def leaf_nodeids_under(self, index: QModelIndex) -> list[str]:
+        """Tous les nodeids sous ce noeud, coches ou non.
+
+        Pour "Run only this" depuis le menu contextuel d'un dossier ou d'un
+        fichier : le geste porte sur ce qui est sous le clic, pas sur ce qui
+        est coche ailleurs dans l'arbre.
+        """
+        ligne = index.internalPointer() if index.isValid() else None
+        if ligne is None:
+            return []
+        return [feuille.node.nodeid for feuille in ligne.leaves()]
+
     def nodeids(self) -> list[str]:
         """Tous les nodeids de l'arbre, dans l'ordre ou il les montre."""
         retenus = []

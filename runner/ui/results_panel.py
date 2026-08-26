@@ -700,6 +700,14 @@ class ResultsPanel(QWidget):
             self._index_echecs[reader_index] = index
         return index
 
+    def failure_for(self, nodeid: str, reader_index: int):
+        """Le bloc d'echec de ce nodeid pour ce lecteur, ou None.
+
+        Expose pour le menu contextuel de l'arbre : "Copy failure trace" ne
+        doit s'activer que si ce test a vraiment un echec a copier.
+        """
+        return failures_mod.failure_for(self._echecs_de(reader_index), nodeid)
+
     # ------------------------------------------------------------------ logs
 
     def set_log_root(self, racine: Path | None) -> None:
