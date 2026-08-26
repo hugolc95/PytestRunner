@@ -71,7 +71,6 @@ from runner.ui.widgets import (
     RemainingPill,
     SearchBar,
     StatusPill,
-    StressBanner,
 )
 
 ORG, APP = "PytestRunner", "Runner"
@@ -232,6 +231,16 @@ class MainWindow(QMainWindow):
         self.history_button.setToolTip("Runs already recorded  (Ctrl+H)")
         self.history_button.clicked.connect(self.open_history)
 
+        # Les verdicts, plus grands qu'en bas de fenetre -- l'espace vide a
+        # droite de cette rangee etait juste assez large pour les accueillir
+        # sans repeter le compte plus petit ailleurs.
+        self.pills = {
+            statut: StatusPill(statut, large=True)
+            for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
+        }
+        for pastille in self.pills.values():
+            pastille.clicked.connect(self.filter_by_status)
+
         # Cette barre ne parle que du WORKSPACE : ou il est, et ce qui le
         # decrit. Les actions de run ont leur propre rangee, juste en dessous.
         ligne.addWidget(self.workspace_combo)
@@ -240,6 +249,8 @@ class MainWindow(QMainWindow):
         ligne.addWidget(self.config_button)
         ligne.addWidget(self.history_button)
         ligne.addStretch(1)
+        for pastille in self.pills.values():
+            ligne.addWidget(pastille)
         return barre
 
     def _build_run_bar(self) -> QWidget:
@@ -295,13 +306,6 @@ class MainWindow(QMainWindow):
         ligne.addSpacing(t.SPACE_6)
         ligne.addWidget(self.readers_bar)
         ligne.addStretch(1)
-
-        # Dans l'espace autrement vide a droite de la rangee : une pastille
-        # compacte plutot qu'une rangee pleine largeur qui pousserait
-        # l'arbre vers le bas des qu'un stress-test tourne.
-        self.stress_banner = StressBanner()
-        self.stress_banner.stop_clicked.connect(self._arreter_stress)
-        ligne.addWidget(self.stress_banner)
         return barre
 
     def _build_left(self) -> QWidget:
@@ -462,13 +466,6 @@ class MainWindow(QMainWindow):
         self.elapsed_label = QLabel("")
         self.elapsed_label.setObjectName("Faint")
 
-        self.pills = {
-            statut: StatusPill(statut)
-            for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
-        }
-        for pastille in self.pills.values():
-            pastille.clicked.connect(self.filter_by_status)
-
         # A gauche des verdicts : ce qui reste n'est pas un resultat.
         self.remaining_pill = RemainingPill()
 
@@ -477,8 +474,6 @@ class MainWindow(QMainWindow):
         barre.addWidget(self.elapsed_label)
         barre.addPermanentWidget(QLabel(""))
         barre.addPermanentWidget(self.remaining_pill)
-        for pastille in self.pills.values():
-            barre.addPermanentWidget(pastille)
 
     def _build_menus(self) -> None:
         """Menus et raccourcis. Chaque action frequente en a un, visible ici."""
@@ -1029,13 +1024,38 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def stop_run(self) -> None:
+        """Arrete ce qui tourne -- un run normal, ou une serie de stress-test.
+
+        Un seul bouton pour les deux : avant, arreter un stress-test passait
+        par le bouton d'un bandeau a part, qu'il fallait d'abord retrouver.
+        """
         if self.service.busy:
             self.service.cancel()
             self.status_label.setText("Stopping…")
+        elif self._stress_worker is not None:
+            self._arreter_stress()
+            self.status_label.setText("Stopping…")
+
+    def _set_status_live(self, texte: str) -> None:
+        """Style "en cours" du label de statut : couleur pleine et gras au
+        lieu du gris attenue du repos.
+
+        Le meme traitement sert un run normal ET une serie de stress-test --
+        un seul endroit a regarder, plutot qu'un widget dedie a part qui
+        finit par se cacher dans un coin qu'on ne regarde plus.
+        """
+        self.status_label.setStyleSheet(
+            f"color: {t.status_color(Status.RUNNING)}; font-weight: 600;")
+        self.status_label.setText(texte)
+
+    def _set_status_idle(self, texte: str) -> None:
+        self.status_label.setStyleSheet("")
+        self.status_label.setText(texte)
 
     @pyqtSlot(object)
     def _on_run_started(self, request: RunRequest) -> None:
         self.model.clear_statuses()
+        self.model.clear_stress_annotation()
         self.results.begin_run()
 
         self.progress.setVisible(True)
@@ -1054,7 +1074,7 @@ class MainWindow(QMainWindow):
         self._seconds = 0
         self.elapsed_label.setText("0s")
         self._elapsed.start()
-        self.status_label.setText(f"Running {len(request.nodeids)} tests…")
+        self._set_status_live(f"Running {len(request.nodeids)} tests…")
         self._update_actions()
 
     @pyqtSlot(object)
@@ -1095,7 +1115,7 @@ class MainWindow(QMainWindow):
         # Les nombres viennent de l'arbre, pas du compte de signaux porte par
         # le service : c'est la meme raison que pour les pastilles.
         self._rafraichir_compteurs()
-        self.status_label.setText(f"Running… {self.remaining_pill.value()} left")
+        self._set_status_live(f"Running… {self.remaining_pill.value()} left")
 
     @pyqtSlot(list)
     def _on_run_finished(self, rapports: list) -> None:
@@ -1113,7 +1133,7 @@ class MainWindow(QMainWindow):
             resume = f"{echecs} failed"
         else:
             resume = "All tests passed"
-        self.status_label.setText(f"{resume} · {self._seconds}s")
+        self._set_status_idle(f"{resume} · {self._seconds}s")
         # La duree est deja dans le resume : la laisser aussi a cote
         # l'afficherait deux fois.
         self.elapsed_label.clear()
@@ -1378,11 +1398,10 @@ class MainWindow(QMainWindow):
         if not python:
             return
 
-        lecteurs = self._readers_to_run()
-        lecteur = lecteurs[0] if lecteurs else Reader("", 0)
+        lecteurs = self._readers_to_run() or (Reader("", 0),)
         requete = RunRequest(
             workspace=self.workspace.path, interpreter=python,
-            nodeids=(nodeid,), readers=(lecteur,),
+            nodeids=(nodeid,), readers=lecteurs,
             config_path=self.workspace.config_path, sequential=True,
         )
 
@@ -1394,24 +1413,24 @@ class MainWindow(QMainWindow):
         self._stress_failed = []
 
         self._stress_worker = StressRunWorker(
-            requete, lecteur, self.workspace.env, mode, cap, self)
+            requete, lecteurs, self.workspace.env, mode, cap, self)
         self._stress_worker.attempt_done.connect(self._sur_tentative_stress)
         self._stress_worker.finished_stress.connect(self._sur_fin_stress)
 
-        self.stress_banner.show_running(
-            self._bandeau_compact(mode, 0, cap), self._bandeau_detail(mode, nodeid, 0, cap))
+        self._set_status_live(self._stress_detail(mode, nodeid, 0, cap))
+        self.model.set_stress_annotation(nodeid, self._stress_compact(mode, 0, cap))
         self.results.detail.show_stress_running(nodeid, mode, cap, 0, 0, 0)
         self._update_actions()
         self._stress_worker.start()
 
-    def _bandeau_compact(self, mode: str, ran: int, cap: int) -> str:
-        """Le texte de la pastille : court expres, elle vit dans un espace
-        etroit a droite de la barre Run. Le detail complet (quel test, quel
-        mode) est dans son infobulle -- voir `_bandeau_detail`."""
+    def _stress_compact(self, mode: str, ran: int, cap: int) -> str:
+        """Le texte colle sur la ligne du test dans l'arbre : court expres,
+        il partage la ligne avec le nom du test. Le detail complet est dans
+        la barre de statut -- voir `_stress_detail`."""
         prefixe = "Stress" if mode == MODE_UNTIL_FAIL else "Run"
         return f"{prefixe} {ran + 1}/{cap}"
 
-    def _bandeau_detail(self, mode: str, nodeid: str, ran: int, cap: int) -> str:
+    def _stress_detail(self, mode: str, nodeid: str, ran: int, cap: int) -> str:
         court = nodeid.split("::", 1)[-1].replace("::", " › ")
         verbe = "Stress-testing" if mode == MODE_UNTIL_FAIL else "Running"
         mot = "attempt" if mode == MODE_UNTIL_FAIL else "run"
@@ -1424,19 +1443,53 @@ class MainWindow(QMainWindow):
         else:
             self._stress_failed.append(tentative)
 
-        # Le point sur l'arbre suit la derniere tentative : c'est exactement
-        # ce qu'on verrait si on relancait ce test normalement.
-        lecteurs = self._readers_to_run() or (Reader("", 0),)
-        for lecteur in lecteurs:
-            self.model.apply_outcome(self._stress_nodeid, tentative.status, lecteur.index)
+        # Le point sur l'arbre suit le verdict propre a CHAQUE lecteur : un
+        # flaky qui ne rate que sur l'un d'eux ne doit pas se voir imputer aux
+        # autres, qui ont reellement passe cette tentative.
+        for resultat in tentative.reports:
+            self.model.apply_outcome(
+                self._stress_nodeid, resultat.status, resultat.reader.index)
 
-        self.stress_banner.show_running(
-            self._bandeau_compact(self._stress_mode, self._stress_ran, self._stress_cap),
-            self._bandeau_detail(self._stress_mode, self._stress_nodeid,
-                                 self._stress_ran, self._stress_cap))
+        self._archiver_stress(tentative)
+
+        self._set_status_live(self._stress_detail(
+            self._stress_mode, self._stress_nodeid, self._stress_ran, self._stress_cap))
+        self.model.set_stress_annotation(
+            self._stress_nodeid,
+            self._stress_compact(self._stress_mode, self._stress_ran, self._stress_cap))
         self.results.detail.show_stress_running(
             self._stress_nodeid, self._stress_mode, self._stress_cap,
             self._stress_ran, self._stress_passed, len(self._stress_failed))
+
+    def _archiver_stress(self, tentative: StressAttempt) -> None:
+        """Depose une tentative dans l'historique, un lecteur = une entree --
+        exactement comme un run normal (`_archiver`).
+
+        Sans ca, "Run until it fails" et "Run N times" ne laissaient RIEN
+        dans l'onglet History : chaque tentative doit s'y retrouver, avec sa
+        propre sortie et son propre JUnit, pour pouvoir la rejouer ou lire ses
+        logs plus tard comme n'importe quel autre run.
+        """
+        if self.workspace is None:
+            return
+        identifiant = history.nouvel_identifiant()
+        for resultat in tentative.reports:
+            rapport = resultat.report
+            entree = history.RunEntry(
+                id=identifiant,
+                timestamp=time.time(),
+                workspace=self.workspace.path,
+                build_number=None,
+                log_root=str(self.workspace.log_root),
+                reader=resultat.reader.name,
+                duration=rapport.duration,
+                exit_code=rapport.exit_code,
+                counts={s.name: n for s, n in rapport.counts.items()},
+                nodeids=(self._stress_nodeid,),
+                failed_nodeids=(() if resultat.ok else (self._stress_nodeid,)),
+                junit_path=rapport.junit_path,
+            )
+            self.history.add(entree, rapport.output)
 
     def _sur_fin_stress(self, resume: StressSummary) -> None:
         self._stress_worker = None
@@ -1444,26 +1497,25 @@ class MainWindow(QMainWindow):
         court = nodeid.split("::", 1)[-1].replace("::", " › ")
 
         if resume.cancelled:
-            self.stress_banner.show_done(
-                f"Stopped {resume.ran}/{resume.cap}",
-                f"Stopped — {court} — {resume.ran} of {resume.cap} runs done")
+            compact = f"Stopped {resume.ran}/{resume.cap}"
+            detail = f"Stopped — {court} — {resume.ran} of {resume.cap} runs done"
         elif resume.mode == MODE_UNTIL_FAIL and resume.failed_attempts:
             derniere = resume.failed_attempts[-1]
-            self.stress_banner.show_failed(
-                f"Failed {derniere.number}/{resume.cap}",
-                f"Stopped — {court} failed — attempt {derniere.number} of {resume.cap}")
+            compact = f"Failed {derniere.number}/{resume.cap}"
+            detail = (f"Stopped — {court} failed — "
+                     f"attempt {derniere.number} of {resume.cap}")
         elif resume.mode == MODE_UNTIL_FAIL:
-            self.stress_banner.show_done(
-                f"Never failed ({resume.ran})",
-                f"Never failed — {court} — {resume.ran} of {resume.cap} attempts")
+            compact = f"Never failed ({resume.ran})"
+            detail = f"Never failed — {court} — {resume.ran} of {resume.cap} attempts"
         else:
             taux = round(100 * resume.passed / resume.ran) if resume.ran else 0
             echecs = len(resume.failed_attempts)
-            self.stress_banner.show_done(
-                f"{resume.ran}/{resume.cap} · {taux}%",
-                f"{resume.ran} of {resume.cap} runs complete — {court} — "
-                f"{resume.passed} passed · {echecs} failed · {taux}% pass rate")
+            compact = f"{resume.ran}/{resume.cap} · {taux}%"
+            detail = (f"{resume.ran} of {resume.cap} runs complete — {court} — "
+                     f"{resume.passed} passed · {echecs} failed · {taux}% pass rate")
 
+        self._set_status_idle(detail)
+        self.model.set_stress_annotation(nodeid, compact)
         self.results.detail.show_stress_done(nodeid, resume)
         self._update_actions()
 
@@ -1748,9 +1800,8 @@ class MainWindow(QMainWindow):
         charge = self.workspace is not None
         # Un stress-test occupe l'interpreteur tout autant qu'un run normal :
         # Run / Re-run doivent s'eteindre pendant qu'il tourne, sous peine de
-        # deux processus pytest qui se marchent dessus. Le vrai Stop, lui,
-        # reste lie au SEUL `service` -- l'arret d'un stress-test passe par le
-        # bouton du bandeau, pas par celui-la.
+        # deux processus pytest qui se marchent dessus. Stop les couvre tous
+        # les deux desormais -- `stop_run()` sait lequel des deux arreter.
         occupe = self.service.busy or self._stress_worker is not None
         coches, _ = self.model.counts()
 
@@ -1760,9 +1811,9 @@ class MainWindow(QMainWindow):
         cible = not charge or bool(self._readers_to_run()) or not self.workspace.readers
 
         self.run_button.setEnabled(charge and coches > 0 and not occupe and cible)
-        self.stop_button.setEnabled(self.service.busy)
+        self.stop_button.setEnabled(occupe)
         self.act_run.setEnabled(self.run_button.isEnabled())
-        self.act_stop.setEnabled(self.service.busy)
+        self.act_stop.setEnabled(occupe)
         rejouable = (charge and not occupe and cible
                      and bool(self.model.failed_nodeids()))
         self.act_rerun.setEnabled(rejouable)

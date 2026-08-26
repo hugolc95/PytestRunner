@@ -1,5 +1,6 @@
 """"Run until it fails" / "Run N times" declenches depuis la fenetre :
-demarrage, bandeau, panneau Detail, et retour a la normale une fois fini.
+demarrage, badge sur l'arbre, barre de statut, panneau Detail, et retour a la
+normale une fois fini.
 
 `subprocess.Popen` est remplace, comme dans test_allure_report.py et
 test_stress_service.py : aucun vrai pytest ne tourne, seule l'orchestration
@@ -11,10 +12,11 @@ from __future__ import annotations
 import sys
 
 import pytest
-from PyQt5.QtCore import QSettings
+from PyQt5.QtCore import Qt, QSettings
 from PyQt5.QtWidgets import QApplication, QDialog
 
 from runner.domain import execution
+from runner.domain.history import History
 from runner.domain.models import Reader
 from runner.domain.stress import MODE_N_TIMES, MODE_UNTIL_FAIL
 from runner.domain.tree import build_tree
@@ -38,6 +40,10 @@ def fenetre(qapp, tmp_path):
     f.model.set_tree(build_tree([NODEID]))
     f.model.set_readers((Reader("", 0),))
     f.results.set_readers((Reader("", 0),))
+    # Historique isole : les tentatives de stress-test s'y archivent
+    # maintenant reellement, il ne doit pas ecrire dans le vrai dossier
+    # utilisateur.
+    f.history = History(tmp_path / "history")
     yield f
     f.settings.clear()
     f.close()
@@ -88,20 +94,21 @@ def _attendre(fenetre, qapp, timeout_ms=3000):
             return
 
 
-def test_until_fail_disables_run_and_shows_the_running_banner(fenetre, monkeypatch, qapp):
+def test_until_fail_disables_run_and_shows_the_running_status(fenetre, monkeypatch, qapp):
     _popen_scripte(monkeypatch, ["PASSED"] * 3 + ["FAILED"])
 
     fenetre._lancer_stress(NODEID, MODE_UNTIL_FAIL, cap=50)
 
     assert fenetre._stress_worker is not None
     assert not fenetre.run_button.isEnabled()
-    assert "stress-testing" in fenetre.stress_banner.toolTip().lower()
-    assert fenetre.stress_banner.stop_button.isEnabled()
+    assert "stress-testing" in fenetre.status_label.text().lower()
+    # Stop est desormais le MEME bouton que pour un run normal.
+    assert fenetre.stop_button.isEnabled()
 
     _attendre(fenetre, qapp)
 
 
-def test_until_fail_stops_and_shows_the_failed_banner(fenetre, monkeypatch, qapp):
+def test_until_fail_stops_and_shows_the_failed_status(fenetre, monkeypatch, qapp):
     _popen_scripte(monkeypatch, ["PASSED", "PASSED", "FAILED"])
 
     fenetre._lancer_stress(NODEID, MODE_UNTIL_FAIL, cap=50)
@@ -109,17 +116,55 @@ def test_until_fail_stops_and_shows_the_failed_banner(fenetre, monkeypatch, qapp
 
     assert fenetre._stress_worker is None
     assert fenetre.run_button.isEnabled()
-    assert "failed" in fenetre.stress_banner.toolTip().lower()
+    assert "failed" in fenetre.status_label.text().lower()
     assert fenetre.results.detail._dernier_stress is not None
 
 
-def test_until_fail_reaching_the_cap_shows_a_neutral_done_banner(fenetre, monkeypatch, qapp):
+def test_until_fail_reaching_the_cap_shows_a_neutral_done_status(fenetre, monkeypatch, qapp):
     _popen_scripte(monkeypatch, ["PASSED"] * 5)
 
     fenetre._lancer_stress(NODEID, MODE_UNTIL_FAIL, cap=5)
     _attendre(fenetre, qapp)
 
-    assert "never failed" in fenetre.stress_banner.toolTip().lower()
+    assert "never failed" in fenetre.status_label.text().lower()
+
+
+def test_the_tree_row_carries_a_compact_badge_while_it_runs(fenetre, monkeypatch, qapp):
+    """Le badge vit sur la ligne du test dans l'arbre -- pas dans un widget a
+    part qu'il faut associer mentalement au bon test."""
+    _popen_scripte(monkeypatch, ["PASSED"] * 3 + ["FAILED"])
+
+    fenetre._lancer_stress(NODEID, MODE_UNTIL_FAIL, cap=50)
+
+    index = fenetre.model.index_for_nodeid(NODEID)
+    assert "1/50" in fenetre.model.data(index, Qt.DisplayRole)
+
+    _attendre(fenetre, qapp)
+
+
+def test_the_tree_badge_keeps_the_final_tally_once_done(fenetre, monkeypatch, qapp):
+    _popen_scripte(monkeypatch, ["PASSED", "FAILED", "PASSED", "FAILED", "PASSED"])
+
+    fenetre._lancer_stress(NODEID, MODE_N_TIMES, cap=5)
+    _attendre(fenetre, qapp)
+
+    index = fenetre.model.index_for_nodeid(NODEID)
+    assert "5/5" in fenetre.model.data(index, Qt.DisplayRole)
+
+
+def test_starting_a_normal_run_clears_a_leftover_stress_badge(fenetre, monkeypatch, qapp):
+    _popen_scripte(monkeypatch, ["PASSED"] * 5)
+    fenetre._lancer_stress(NODEID, MODE_UNTIL_FAIL, cap=5)
+    _attendre(fenetre, qapp)
+
+    from runner.domain.models import RunRequest
+
+    fenetre._on_run_started(RunRequest(
+        workspace=str(fenetre.workspace.path), interpreter=sys.executable,
+        nodeids=(NODEID,), readers=(Reader("", 0),)))
+
+    index = fenetre.model.index_for_nodeid(NODEID)
+    assert fenetre.model.data(index, Qt.DisplayRole) == "test_atr"
 
 
 def test_n_times_runs_to_completion_and_reports_the_tally(fenetre, monkeypatch, qapp):
@@ -133,6 +178,41 @@ def test_n_times_runs_to_completion_and_reports_the_tally(fenetre, monkeypatch, 
     assert resume.ran == 5
     assert resume.passed == 3
     assert len(resume.failed_attempts) == 2
+
+
+def test_each_attempt_lands_in_history(fenetre, monkeypatch, qapp):
+    """Le coeur du reproche : "Run N times" ne laissait RIEN dans l'onglet
+    History. Chaque tentative doit y devenir sa propre entree, retrouvable et
+    rejouable comme n'importe quel autre run."""
+    _popen_scripte(monkeypatch, ["PASSED", "FAILED", "PASSED", "FAILED", "PASSED"])
+
+    fenetre._lancer_stress(NODEID, MODE_N_TIMES, cap=5)
+    _attendre(fenetre, qapp)
+
+    entrees = fenetre.history.entries()
+    assert len(entrees) == 5
+    assert all(e.nodeids == (NODEID,) for e in entrees)
+    assert [e.ok for e in entrees] == [True, False, True, False, True]
+
+
+def test_a_multi_reader_stress_run_archives_one_entry_per_reader(
+        fenetre, monkeypatch, qapp, tmp_path):
+    """Coche sur deux lecteurs, chaque tentative doit tourner -- et
+    s'archiver -- sur CHACUN d'eux, pas seulement le premier."""
+    from runner.domain.execution import Collection
+
+    (tmp_path / "config.yml").write_text("Reader: A\nReaders:\n  - B\n", encoding="utf-8")
+    fenetre.workspace = Workspace.load(str(tmp_path))
+    fenetre._on_collected(Collection(nodeids=(NODEID,)))
+
+    _popen_scripte(monkeypatch, ["PASSED"] * 6)  # 3 tentatives x 2 lecteurs
+
+    fenetre._lancer_stress(NODEID, MODE_N_TIMES, cap=3)
+    _attendre(fenetre, qapp)
+
+    entrees = fenetre.history.entries()
+    assert len(entrees) == 6
+    assert sorted({e.reader for e in entrees}) == ["A", "B"]
 
 
 def test_the_n_times_dialog_feeds_the_chosen_count(fenetre, monkeypatch, qapp):
@@ -158,7 +238,9 @@ def test_cancelling_the_n_times_dialog_launches_nothing(fenetre, monkeypatch, qa
     assert appels == []
 
 
-def test_stop_button_on_the_banner_cancels_the_series(fenetre, monkeypatch, qapp):
+def test_the_stop_button_cancels_a_running_stress_series(fenetre, monkeypatch, qapp):
+    """Le meme bouton Stop que pour un run normal -- plus de bouton dedie
+    dans un widget a part qu'il faut d'abord retrouver."""
     demarre = __import__("threading").Event()
     poursuivre = __import__("threading").Event()
 
@@ -174,10 +256,11 @@ def test_stop_button_on_the_banner_cancels_the_series(fenetre, monkeypatch, qapp
     fenetre._lancer_stress(NODEID, MODE_N_TIMES, cap=50)
     assert demarre.wait(2)
 
-    fenetre.stress_banner.stop_button.click()
+    assert fenetre.stop_button.isEnabled()
+    fenetre.stop_run()
     poursuivre.set()
     _attendre(fenetre, qapp)
 
     _, resume = fenetre.results.detail._dernier_stress
     assert resume.cancelled
-    assert "stopped" in fenetre.stress_banner.toolTip().lower()
+    assert "stopped" in fenetre.status_label.text().lower()

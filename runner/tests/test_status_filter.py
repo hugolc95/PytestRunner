@@ -79,6 +79,23 @@ def joue(fenetre):
 
 
 # =========================================================================
+# Emplacement des compteurs
+# =========================================================================
+
+
+def test_the_pills_live_in_the_workspace_bar_not_the_status_bar(fenetre):
+    """Les verdicts vivent desormais, plus grands, dans l'espace vide de la
+    barre du workspace -- plus question de les repeter en plus petit tout en
+    bas, ce qui affichait deux fois le meme chiffre."""
+    barre_workspace = fenetre.workspace_combo.parentWidget().layout()
+    for pastille in fenetre.pills.values():
+        assert barre_workspace.indexOf(pastille) >= 0
+
+    for pastille in fenetre.pills.values():
+        assert pastille.parentWidget() is not fenetre.statusBar()
+
+
+# =========================================================================
 # Le filtre
 # =========================================================================
 

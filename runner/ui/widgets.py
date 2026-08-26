@@ -146,14 +146,16 @@ class StatusPill(QWidget):
 
     clicked = pyqtSignal(object)  # le Status de cette pastille
 
-    def __init__(self, status: Status, parent=None):
+    def __init__(self, status: Status, parent=None, large: bool = False):
         super().__init__(parent)
         self._status = status
         self._value = 0
         self._active = False
+        self._large = large
 
         ligne = QHBoxLayout(self)
-        ligne.setContentsMargins(t.SPACE_2, 0, t.SPACE_2, 0)
+        marge = t.SPACE_3 if large else t.SPACE_2
+        ligne.setContentsMargins(marge, 0, marge, 0)
         ligne.setSpacing(t.SPACE_1)
 
         self._dot = QLabel("●")
@@ -201,9 +203,10 @@ class StatusPill(QWidget):
 
         self._dot.setStyleSheet(
             f"color: {couleur if allume else t.BORDER_STRONG};"
-            f"font-size: 9px; background: transparent;")
+            f"font-size: {13 if self._large else 9}px; background: transparent;")
         self._text.setText(f"{self._value} {libelle}")
-        self._text.setStyleSheet(theme.counter_style(couleur, allume))
+        self._text.setStyleSheet(theme.counter_style(
+            couleur, allume, taille=17 if self._large else t.TEXT_SM))
 
         # Le fond ne s'allume que sur le filtre actif : c'est le seul etat qui
         # doit se distinguer d'un simple compteur.
@@ -729,96 +732,3 @@ def separator() -> QFrame:
     trait.setFrameShape(QFrame.HLine)
     trait.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     return trait
-
-
-class StressBanner(QWidget):
-    """Pastille compacte, dans l'espace vide a droite de la barre Run, pendant
-    et apres "Run until it fails" / "Run N times".
-
-    Une teinte par etat (bleu en cours, rouge sur un echec, neutre une fois
-    fini) : c'est ce qu'on regarde du coin de l'oeil en continuant a
-    travailler ailleurs. Le texte reste court expres -- le detail complet
-    (quel test, quel mode) est dans l'infobulle, pas dans la pastille.
-
-    Un `QWidget` nu n'applique PAS `background-color` depuis sa feuille de
-    style sur tous les styles Qt (silencieusement ignore sous le style natif
-    Windows, alors que ca passait par chance ailleurs) : `WA_StyledBackground`
-    est ce qui le force a se peindre depuis le CSS plutot que depuis son
-    style natif.
-    """
-
-    stop_clicked = pyqtSignal()
-    dismissed = pyqtSignal()
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setVisible(False)
-        self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setFixedHeight(t.CONTROL_SM)
-
-        ligne = QHBoxLayout(self)
-        ligne.setContentsMargins(t.SPACE_3, 0, t.SPACE_1, 0)
-        ligne.setSpacing(t.SPACE_1)
-
-        self._icone = QLabel()
-        self._icone.setStyleSheet("background: transparent;")
-        self._texte = QLabel()
-        self._texte.setStyleSheet(
-            f"background: transparent; font-size: {t.TEXT_XS}px; font-weight: 600;")
-
-        self.stop_button = QPushButton()
-        self.stop_button.setObjectName("IconSm")
-        self.stop_button.setIcon(icons.icon("mdi.stop"))
-        self.stop_button.setToolTip("Stop this series")
-        self.stop_button.clicked.connect(self.stop_clicked)
-
-        self.dismiss_button = QPushButton()
-        self.dismiss_button.setObjectName("IconSm")
-        self.dismiss_button.setIcon(icons.icon("mdi.close"))
-        self.dismiss_button.setToolTip("Dismiss")
-        self.dismiss_button.clicked.connect(self._fermer)
-        self.dismiss_button.setVisible(False)
-
-        ligne.addWidget(self._icone)
-        ligne.addWidget(self._texte)
-        ligne.addWidget(self.stop_button)
-        ligne.addWidget(self.dismiss_button)
-
-    def _fermer(self) -> None:
-        self.setVisible(False)
-        self.dismissed.emit()
-
-    def _peindre(self, glyphe: str, couleur: str, fond: str) -> None:
-        self._icone.setPixmap(icons.icon(glyphe, couleur).pixmap(14, 14))
-        if fond:
-            self.setStyleSheet(
-                f"background-color: {fond}; border-radius: {t.RADIUS_PILL}px;")
-        else:
-            self.setStyleSheet(
-                f"background-color: {t.BG_RAISED}; border: 1px solid "
-                f"{t.BORDER_STRONG}; border-radius: {t.RADIUS_PILL}px;")
-
-    def _afficher(self, texte: str, detail: str) -> None:
-        self._texte.setText(texte)
-        self.setToolTip(detail or texte)
-        self.setVisible(True)
-
-    def show_running(self, texte: str, detail: str = "") -> None:
-        self._afficher(texte, detail)
-        self._peindre("mdi.repeat", t.status_color(Status.RUNNING),
-                      t.rgba(t.status_color(Status.RUNNING), 0.16))
-        self.stop_button.setVisible(True)
-        self.dismiss_button.setVisible(False)
-
-    def show_failed(self, texte: str, detail: str = "") -> None:
-        self._afficher(texte, detail)
-        self._peindre("mdi.alert", t.status_color(Status.FAILED),
-                      t.rgba(t.status_color(Status.FAILED), 0.16))
-        self.stop_button.setVisible(False)
-        self.dismiss_button.setVisible(True)
-
-    def show_done(self, texte: str, detail: str = "") -> None:
-        self._afficher(texte, detail)
-        self._peindre("mdi.check-circle-outline", t.TEXT_MUTED, "")
-        self.stop_button.setVisible(False)
-        self.dismiss_button.setVisible(True)

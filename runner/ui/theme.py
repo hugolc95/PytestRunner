@@ -595,7 +595,7 @@ def pill_style(couleur: str, actif: bool = True) -> str:
     )
 
 
-def counter_style(couleur: str, actif: bool) -> str:
+def counter_style(couleur: str, actif: bool, taille: int = t.TEXT_SM) -> str:
     """Compteur de statut : sans boite.
 
     Quatre pastilles encadrees se disputaient l'attention, dont trois a zero.
@@ -604,7 +604,7 @@ def counter_style(couleur: str, actif: bool) -> str:
     return (
         "background: transparent; border: none;"
         f"color: {couleur if actif else t.TEXT_FAINT};"
-        f"font-size: {t.TEXT_SM}px;"
+        f"font-size: {taille}px;"
         f"font-weight: {'600' if actif else '400'};"
         f"padding: 0 {t.SPACE_2}px;"
     )
