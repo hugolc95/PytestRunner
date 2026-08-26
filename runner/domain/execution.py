@@ -170,6 +170,23 @@ class ReaderRun:
         return str(Path(self.request.junit_dir)
                    / f"{self.request.run_id}{suffixe}.xml")
 
+    def _allure_dir_path(self) -> str:
+        """Ou pytest doit ecrire les resultats allure-pytest, ou "" si on
+        n'en veut pas.
+
+        Un seul dossier pour tous les lecteurs d'un run, et un seul rapport
+        genere ensuite : les fichiers allure-pytest sont nommes par UUID, deux
+        lecteurs n'ecrivent donc jamais le meme fichier. Ce qui distingue un
+        lecteur de l'autre DANS ce rapport commun n'est pas le dossier -- voir
+        le parametre "Reader" pose sur chaque test par le plugin de
+        `reader_plugin` (reader_isolation.py).
+        """
+        if not self.request.allure_dir:
+            return ""
+        dossier = Path(self.request.allure_dir)
+        dossier.mkdir(parents=True, exist_ok=True)
+        return str(dossier)
+
     def _environnement(self, dossier_plugin: str) -> dict:
         # Sous Windows, creer un processus avec un environnement partiel peut
         # retirer SYSTEMROOT et les variables dont Python a besoin pour
@@ -214,6 +231,9 @@ class ReaderRun:
                 # reconstruit a partir des compteurs. Aucune dependance, et un
                 # fichier que les serveurs d'integration savent deja lire.
                 commande.append(f"--junitxml={junit}")
+            allure_dir = self._allure_dir_path()
+            if allure_dir:
+                commande.append(f"--alluredir={allure_dir}")
 
             try:
                 self._process = subprocess.Popen(

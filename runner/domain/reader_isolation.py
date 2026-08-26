@@ -169,6 +169,17 @@ def pytest_runtest_setup(item):
             "Continuing would have run every reader against the same value "
             "with nothing to signal it." % (_READER, _erreur)
         )
+    if _READER:
+        # Un seul rapport Allure pour tous les lecteurs d'un run : sans ce
+        # parametre, deux lecteurs qui jouent le meme test s'y verraient
+        # fondus en un seul historique, l'un cachant l'autre derriere un
+        # simple "retry". allure-pytest n'est pas toujours installe -- le
+        # cas ordinaire, silencieux, ne doit rien y perdre.
+        try:
+            import allure
+            allure.dynamic.parameter("Reader", _READER)
+        except Exception:
+            pass
 
 
 def _record_outcome(nodeid, status):
