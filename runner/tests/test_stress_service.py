@@ -63,7 +63,7 @@ def _requete(tmp_path) -> RunRequest:
 def test_until_fail_stops_at_the_first_failure(tmp_path, monkeypatch):
     _popen_scripte(monkeypatch, ["PASSED", "PASSED", "FAILED", "PASSED"])
     tentatives = []
-    worker = StressRunWorker(_requete(tmp_path), Reader("", 0), {},
+    worker = StressRunWorker(_requete(tmp_path), (Reader("", 0),), {},
                              MODE_UNTIL_FAIL, cap=50)
     worker.attempt_done.connect(tentatives.append)
     resumes = []
@@ -83,7 +83,7 @@ def test_until_fail_stops_at_the_first_failure(tmp_path, monkeypatch):
 def test_until_fail_stops_at_the_cap_when_nothing_ever_fails(tmp_path, monkeypatch):
     _popen_scripte(monkeypatch, ["PASSED"] * 5)
     resumes = []
-    worker = StressRunWorker(_requete(tmp_path), Reader("", 0), {},
+    worker = StressRunWorker(_requete(tmp_path), (Reader("", 0),), {},
                              MODE_UNTIL_FAIL, cap=5)
     worker.finished_stress.connect(resumes.append)
 
@@ -101,7 +101,7 @@ def test_n_times_runs_to_completion_even_with_failures_in_between(tmp_path, monk
     _popen_scripte(monkeypatch, ["PASSED", "FAILED", "PASSED", "FAILED", "PASSED"])
     tentatives = []
     resumes = []
-    worker = StressRunWorker(_requete(tmp_path), Reader("", 0), {},
+    worker = StressRunWorker(_requete(tmp_path), (Reader("", 0),), {},
                              MODE_N_TIMES, cap=5)
     worker.attempt_done.connect(tentatives.append)
     worker.finished_stress.connect(resumes.append)
@@ -115,10 +115,46 @@ def test_n_times_runs_to_completion_even_with_failures_in_between(tmp_path, monk
     assert [t.number for t in resume.failed_attempts] == [2, 4]
 
 
+def test_each_attempt_runs_on_every_selected_reader(tmp_path, monkeypatch):
+    """Un lecteur coche, une execution reelle -- pas juste un statut recopie
+    sur chacun, ce qui masquerait un flaky propre a un seul d'entre eux."""
+    _popen_scripte(monkeypatch, ["PASSED"] * 6)
+    lecteurs = (Reader("lecteur-a", 0), Reader("lecteur-b", 1))
+    tentatives = []
+    worker = StressRunWorker(_requete(tmp_path), lecteurs, {}, MODE_N_TIMES, cap=3)
+    worker.attempt_done.connect(tentatives.append)
+
+    worker.run()
+
+    assert len(tentatives) == 3
+    for tentative in tentatives:
+        assert [r.reader.name for r in tentative.reports] == ["lecteur-a", "lecteur-b"]
+        assert tentative.ok
+
+
+def test_an_attempt_fails_as_soon_as_one_reader_fails(tmp_path, monkeypatch):
+    """Le flaky ne se montre que sur "lecteur-b" : l'ensemble de la tentative
+    doit compter comme un echec, meme si "lecteur-a" a bel et bien passe."""
+    _popen_scripte(monkeypatch, ["PASSED", "FAILED"])
+    lecteurs = (Reader("lecteur-a", 0), Reader("lecteur-b", 1))
+    resumes = []
+    worker = StressRunWorker(_requete(tmp_path), lecteurs, {}, MODE_UNTIL_FAIL, cap=50)
+    worker.finished_stress.connect(resumes.append)
+
+    worker.run()
+
+    resume = resumes[0]
+    assert resume.ran == 1
+    assert len(resume.failed_attempts) == 1
+    tentative = resume.failed_attempts[0]
+    assert not tentative.ok
+    assert [r.ok for r in tentative.reports] == [True, False]
+
+
 def test_cancelling_stops_before_the_next_attempt(tmp_path, monkeypatch):
     _popen_scripte(monkeypatch, ["PASSED"] * 10)
     resumes = []
-    worker = StressRunWorker(_requete(tmp_path), Reader("", 0), {},
+    worker = StressRunWorker(_requete(tmp_path), (Reader("", 0),), {},
                              MODE_N_TIMES, cap=10)
     worker.finished_stress.connect(resumes.append)
 

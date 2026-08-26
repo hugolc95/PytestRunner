@@ -8,8 +8,14 @@ from __future__ import annotations
 
 import pytest
 
-from runner.domain.models import Status
-from runner.domain.stress import MODE_N_TIMES, MODE_UNTIL_FAIL, StressAttempt, StressSummary
+from runner.domain.models import Reader, ReaderReport, Status
+from runner.domain.stress import (
+    MODE_N_TIMES,
+    MODE_UNTIL_FAIL,
+    StressAttempt,
+    StressReaderResult,
+    StressSummary,
+)
 from runner.ui.detail_panel import DetailPanel
 
 NODEID = "tests/test_authentication.py::test_login_timeout_retries"
@@ -44,6 +50,12 @@ def _sortie_en_echec(message: str = "AssertionError") -> str:
     )
 
 
+def _tentative_en_echec(number: int, message: str = "AssertionError") -> StressAttempt:
+    rapport = ReaderReport(reader=Reader("", 0), output=_sortie_en_echec(message))
+    resultat = StressReaderResult(Reader("", 0), rapport, Status.FAILED)
+    return StressAttempt(number, Status.FAILED, (resultat,))
+
+
 def test_running_shows_the_attempt_and_live_counts(panneau):
     panneau.show_stress_running(NODEID, MODE_UNTIL_FAIL, cap=50,
                                 ran=6, passed=6, failed_attempts=0)
@@ -64,7 +76,7 @@ def test_n_times_running_shows_both_passed_and_failed_live(panneau):
 
 
 def test_until_fail_done_with_a_failure_points_at_the_breaking_attempt(panneau):
-    tentative = StressAttempt(8, Status.FAILED, _sortie_en_echec("TimeoutError"))
+    tentative = _tentative_en_echec(8, "TimeoutError")
     resume = StressSummary(mode=MODE_UNTIL_FAIL, cap=50, ran=8, passed=7,
                            failed_attempts=[tentative])
 
@@ -86,8 +98,8 @@ def test_until_fail_done_without_ever_failing_hides_the_failed_list(panneau):
 
 
 def test_n_times_done_shows_the_pass_rate_and_lets_you_pick_a_failure(panneau):
-    premiere = StressAttempt(4, Status.FAILED, _sortie_en_echec("AssertionError: boom"))
-    seconde = StressAttempt(9, Status.FAILED, _sortie_en_echec("TimeoutError: slow"))
+    premiere = _tentative_en_echec(4, "AssertionError: boom")
+    seconde = _tentative_en_echec(9, "TimeoutError: slow")
     resume = StressSummary(mode=MODE_N_TIMES, cap=20, ran=20, passed=18,
                            failed_attempts=[premiere, seconde])
 
