@@ -21,6 +21,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QProgressBar,
@@ -60,6 +62,8 @@ from runner.ui.results_panel import (
 from runner.ui.run_n_times_dialog import RunNTimesDialog
 from runner.ui.tree_model import NODE_ROLE, NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import (
+    SCOPE_FAILURES,
+    SCOPE_TESTS,
     EmptyState,
     ErrorDialog,
     ReaderBar,
@@ -310,6 +314,7 @@ class MainWindow(QMainWindow):
         self.search.query_changed.connect(self._on_search)
         self.search.next_match.connect(lambda: self._goto_match(1))
         self.search.previous_match.connect(lambda: self._goto_match(-1))
+        self.search.scope_changed.connect(self._on_search_scope_changed)
 
         self.select_all_button = self._quiet("mdi.checkbox-multiple-marked-outline",
                                              "Select all  (Ctrl+A)",
@@ -347,6 +352,16 @@ class MainWindow(QMainWindow):
         self.tree_toolbar.setLayout(outils)
         self.tree_toolbar.setVisible(False)
         colonne.addWidget(self.tree_toolbar)
+
+        # Resultats de la recherche "In failures" : un extrait par test
+        # touche, plutot que de forcer a naviguer un par un avec Entree pour
+        # savoir ce qu'on va trouver avant d'y sauter.
+        self.failure_results = QListWidget()
+        self.failure_results.setObjectName("Failures")
+        self.failure_results.setVisible(False)
+        self.failure_results.setMaximumHeight(180)
+        self.failure_results.itemClicked.connect(self._sur_resultat_echec_clique)
+        colonne.addWidget(self.failure_results)
 
         self.tree = QTreeView()
         self.tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.tree))
@@ -1610,10 +1625,89 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_search(self, texte: str) -> None:
-        self._matches = self.model.matching_nodeids(texte)
+        if self.search.scope == SCOPE_FAILURES:
+            trouvailles = self._matching_failures(texte)
+            self._matches = [nodeid for nodeid, _ in trouvailles]
+            self._remplir_resultats_echecs(trouvailles, texte)
+        else:
+            self._matches = self.model.matching_nodeids(texte)
+            self.failure_results.setVisible(False)
+
         self._match_index = 0 if self._matches else -1
         if self._matches:
             self._reveal(self._matches[0])
+        self.search.set_matches(self._match_index + 1, len(self._matches))
+
+    def _on_search_scope_changed(self, scope: str) -> None:
+        # `field.clear()` ne redeclenche pas `_on_search` si le champ etait
+        # deja vide (aucun texte a supprimer) : sans cette remise a plat, un
+        # changement de portee a vide laisserait les resultats de l'autre.
+        self._matches = []
+        self._match_index = -1
+        self.search.set_matches(0, 0)
+        self.failure_results.clear()
+        self.failure_results.setVisible(False)
+
+    def _matching_failures(self, texte: str) -> list[tuple[str, object]]:
+        """Nodeids dont la trace d'echec CONNUE contient `texte`.
+
+        Cherche dans les traces deja extraites pour l'affichage (voir
+        `ResultsPanel.failure_for`), pas en relisant la sortie brute a
+        chaque frappe.
+        """
+        aiguille = texte.strip().lower()
+        if not aiguille:
+            return []
+        lecteurs = self.model.readers or (Reader("", 0),)
+        trouvailles: list[tuple[str, object]] = []
+        for nodeid in self.model.nodeids():
+            for lecteur in lecteurs:
+                echec = self.results.failure_for(nodeid, lecteur.index)
+                if echec is not None and aiguille in echec.body.lower():
+                    trouvailles.append((nodeid, echec))
+                    break
+        return trouvailles
+
+    def _remplir_resultats_echecs(self, trouvailles: list, texte: str) -> None:
+        self.failure_results.clear()
+        if not texte.strip():
+            self.failure_results.setVisible(False)
+            return
+        if not trouvailles:
+            self.failure_results.setVisible(True)
+            vide = QListWidgetItem("No failure output matches this search.")
+            vide.setFlags(Qt.NoItemFlags)
+            self.failure_results.addItem(vide)
+            return
+
+        self.failure_results.setVisible(True)
+        for nodeid, echec in trouvailles:
+            court = nodeid.split("::", 1)[-1].replace("::", " › ")
+            extrait = self._extrait_correspondant(echec.body, texte)
+            item = QListWidgetItem(f"{court}\n{extrait}" if extrait else court)
+            item.setData(Qt.UserRole, nodeid)
+            item.setToolTip(nodeid)
+            self.failure_results.addItem(item)
+
+    def _extrait_correspondant(self, corps: str, texte: str) -> str:
+        """La premiere ligne de la trace qui contient `texte`, tronquee.
+
+        C'est ce qui permet de juger un resultat SANS y sauter d'abord : la
+        ligne qui a matche, pas tout le pave de trace.
+        """
+        aiguille = texte.strip().lower()
+        for ligne in corps.splitlines():
+            if aiguille in ligne.lower():
+                propre = ligne.strip()
+                return propre if len(propre) <= 120 else propre[:117] + "…"
+        return ""
+
+    def _sur_resultat_echec_clique(self, item: QListWidgetItem) -> None:
+        nodeid = item.data(Qt.UserRole)
+        if not nodeid:
+            return
+        self._match_index = self._matches.index(nodeid) if nodeid in self._matches else -1
+        self._reveal(nodeid)
         self.search.set_matches(self._match_index + 1, len(self._matches))
 
     def _goto_match(self, pas: int) -> None:

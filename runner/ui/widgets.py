@@ -309,30 +309,40 @@ class ReaderResult(QWidget):
         ligne.addWidget(texte)
 
 
+SCOPE_TESTS = "tests"
+SCOPE_FAILURES = "failures"
+
+
 class SearchBar(QWidget):
     """Champ de recherche avec compteur et navigation entre correspondances.
 
     Une recherche, pas un filtre : masquer ce qui ne correspond pas fait perdre
     le contexte du test trouve (son fichier, sa classe, ses voisins).
+
+    Deux portees : par NOM (les tests eux-memes) ou dans les TRACES d'echec du
+    dernier run. Le meme champ, le meme compteur, la meme navigation -- seul
+    ce qui est compare change, d'un cote a l'autre du selecteur.
     """
 
     query_changed = pyqtSignal(str)
     next_match = pyqtSignal()
     previous_match = pyqtSignal()
+    scope_changed = pyqtSignal(str)  # SCOPE_TESTS ou SCOPE_FAILURES
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from PyQt5.QtWidgets import QLineEdit
+        from PyQt5.QtWidgets import QButtonGroup, QLineEdit
 
         self._last_emitted = ""
+        self._scope = SCOPE_TESTS
         self._typing_timer = QTimer(self)
         self._typing_timer.setSingleShot(True)
         self._typing_timer.setInterval(120)
         self._typing_timer.timeout.connect(self._emit_query)
 
-        ligne = QHBoxLayout(self)
-        ligne.setContentsMargins(0, 0, 0, 0)
-        ligne.setSpacing(t.SPACE_1)
+        rangee_champ = QHBoxLayout()
+        rangee_champ.setContentsMargins(0, 0, 0, 0)
+        rangee_champ.setSpacing(t.SPACE_1)
 
         self.field = QLineEdit()
         self.field.setPlaceholderText("Find a test…")
@@ -354,10 +364,65 @@ class SearchBar(QWidget):
         self.next_button = self._nav("mdi.chevron-down", "Next match (Enter)",
                                      self.next_match)
 
-        ligne.addWidget(self.field, 1)
-        ligne.addWidget(self.counter)
-        ligne.addWidget(self.prev_button)
-        ligne.addWidget(self.next_button)
+        rangee_champ.addWidget(self.field, 1)
+        rangee_champ.addWidget(self.counter)
+        rangee_champ.addWidget(self.prev_button)
+        rangee_champ.addWidget(self.next_button)
+
+        # Segmente : deux vues d'UNE meme recherche, jamais les deux a la
+        # fois. Colles sans espace entre eux, ils se lisent comme un seul
+        # selecteur plutot que deux boutons independants.
+        rangee_portee = QHBoxLayout()
+        rangee_portee.setContentsMargins(0, 0, 0, 0)
+        rangee_portee.setSpacing(0)
+
+        self._scope_group = QButtonGroup(self)
+        self._scope_group.setExclusive(True)
+        self.tests_button = QPushButton("Tests")
+        self.tests_button.setObjectName("Segment")
+        self.tests_button.setProperty("segment", "first")
+        self.tests_button.setCheckable(True)
+        self.tests_button.setChecked(True)
+        self.tests_button.setCursor(Qt.PointingHandCursor)
+        self.tests_button.clicked.connect(lambda: self._set_scope(SCOPE_TESTS))
+
+        self.failures_button = QPushButton("In failures")
+        self.failures_button.setObjectName("Segment")
+        self.failures_button.setProperty("segment", "last")
+        self.failures_button.setCheckable(True)
+        self.failures_button.setCursor(Qt.PointingHandCursor)
+        self.failures_button.setToolTip(
+            "Search inside the failure output of the last run")
+        self.failures_button.clicked.connect(lambda: self._set_scope(SCOPE_FAILURES))
+
+        self._scope_group.addButton(self.tests_button)
+        self._scope_group.addButton(self.failures_button)
+        rangee_portee.addWidget(self.tests_button)
+        rangee_portee.addWidget(self.failures_button)
+        rangee_portee.addStretch(1)
+
+        colonne = QVBoxLayout(self)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setSpacing(t.SPACE_1)
+        colonne.addLayout(rangee_champ)
+        colonne.addLayout(rangee_portee)
+
+    @property
+    def scope(self) -> str:
+        return self._scope
+
+    def _set_scope(self, scope: str) -> None:
+        if scope == self._scope:
+            return
+        self._scope = scope
+        self.field.setPlaceholderText(
+            "Find a test…" if scope == SCOPE_TESTS
+            else "Search in failure output…")
+        # Une recherche par nom n'a aucun sens rejouee dans les traces, et
+        # inversement : mieux vaut repartir d'un champ vide que d'un resultat
+        # qui pretend repondre a la meme question.
+        self.field.clear()
+        self.scope_changed.emit(scope)
 
     def _nav(self, glyph: str, infobulle: str, signal) -> QPushButton:
         bouton = QPushButton()
