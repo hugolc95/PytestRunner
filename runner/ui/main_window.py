@@ -1166,7 +1166,7 @@ class MainWindow(QMainWindow):
         lecteurs = self._readers_to_run()
         self._run_id = history.nouvel_identifiant()
         self._build_number = self.history.next_build_number()
-        self._last_allure_dir = self._allure_dir_for(python, self._run_id)
+        self._last_allure_dir = self._allure_dir_for(python)
         requete = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,
@@ -1181,9 +1181,16 @@ class MainWindow(QMainWindow):
         )
         self.service.start(requete, self.workspace.env)
 
-    def _allure_dir_for(self, python: str, run_id: str) -> str:
-        """Ou ecrire les resultats allure-pytest de ce run, ou "" si son
-        interpreteur ne connait pas le plugin.
+    def _allure_dir_for(self, python: str) -> str:
+        """Ou ecrire les resultats allure-pytest, ou "" si l'interpreteur ne
+        connait pas le plugin.
+
+        TOUJOURS le meme dossier, jamais un par run : pytest n'efface rien
+        dans `--alluredir`, il y ajoute juste des fichiers nommes par UUID.
+        Les resultats de tous les runs passes s'y accumulent donc, et
+        `allure generate` sur ce dossier produit un rapport ou l'onglet
+        Retries de chaque test remonte TOUTE son historique -- pas seulement
+        la tendance globale que garde `_allure_history_stash`.
 
         `cached_probe` ne lance rien : le vrai sondage (couteux, un sous-
         processus) a deja eu lieu en fond pendant `load_workspace`. Un run
@@ -1193,7 +1200,7 @@ class MainWindow(QMainWindow):
         info = interpreter_mod.cached_probe(python)
         if info is None or not info.has_allure:
             return ""
-        dossier = self.history.racine / "allure-results" / run_id
+        dossier = self.history.racine / "allure-results"
         dossier.mkdir(parents=True, exist_ok=True)
         return str(dossier)
 

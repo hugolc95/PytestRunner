@@ -89,25 +89,63 @@ def test_the_allure_button_sits_next_to_history(fenetre):
 def test_no_allure_dir_when_the_interpreter_lacks_the_plugin(fenetre, monkeypatch):
     monkeypatch.setattr(interpreter_mod, "cached_probe",
                         lambda path: InterpreterInfo(path=path, has_allure=False))
-    assert fenetre._allure_dir_for("python", "run123") == ""
+    assert fenetre._allure_dir_for("python") == ""
 
 
 def test_no_allure_dir_when_the_interpreter_was_never_probed(fenetre, monkeypatch):
     """Le probe tourne en fond : un run qui demarre avant qu'il finisse ne
     doit pas attendre, juste se passer d'Allure cette fois-ci."""
     monkeypatch.setattr(interpreter_mod, "cached_probe", lambda path: None)
-    assert fenetre._allure_dir_for("python", "run123") == ""
+    assert fenetre._allure_dir_for("python") == ""
 
 
 def test_an_allure_dir_is_created_when_the_plugin_is_present(fenetre, monkeypatch):
     monkeypatch.setattr(interpreter_mod, "cached_probe",
                         lambda path: InterpreterInfo(path=path, has_allure=True))
 
-    dossier = fenetre._allure_dir_for("python", "run123")
+    dossier = fenetre._allure_dir_for("python")
 
     assert dossier
-    assert "run123" in dossier
     assert Path(dossier).is_dir()
+
+
+def test_the_allure_dir_is_always_the_same_one_across_runs(fenetre, monkeypatch):
+    """Le coeur du changement : pytest n'efface rien dans `--alluredir`, donc
+    reutiliser TOUJOURS le meme dossier accumule les resultats de tous les
+    runs passes -- c'est ce qui permet a Allure de montrer l'historique
+    complet de chaque test dans son onglet Retries, pas seulement une
+    tendance globale."""
+    monkeypatch.setattr(interpreter_mod, "cached_probe",
+                        lambda path: InterpreterInfo(path=path, has_allure=True))
+
+    premier = fenetre._allure_dir_for("python")
+    second = fenetre._allure_dir_for("python")
+
+    assert premier == second
+
+
+def test_two_real_runs_send_pytest_to_the_same_alluredir(fenetre, monkeypatch):
+    """Meme verification, mais par le vrai chemin qu'un utilisateur emprunte
+    (`run_selected` -> `_start`), pas par un appel direct a `_allure_dir_for`."""
+    from runner.domain.execution import Collection
+
+    fenetre._on_collected(Collection(nodeids=("t.py::test_a",)))
+    fenetre.model.set_all_checked(True)
+    monkeypatch.setattr(fenetre, "_require_interpreter", lambda: "python")
+    monkeypatch.setattr(interpreter_mod, "cached_probe",
+                        lambda path: InterpreterInfo(path=path, has_allure=True))
+    demandes = []
+    monkeypatch.setattr(fenetre.service, "start",
+                        lambda requete, env: demandes.append(requete) or True)
+
+    fenetre.run_selected()
+    fenetre.run_selected()
+
+    assert len(demandes) == 2
+    assert demandes[0].allure_dir == demandes[1].allure_dir
+    assert demandes[0].run_id != demandes[1].run_id, (
+        "chaque run garde son propre identifiant d'historique, "
+        "seul le dossier Allure est partage")
 
 
 # ------------------------------------------------- JAVA_HOME mal renseignee
