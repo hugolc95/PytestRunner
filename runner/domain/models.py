@@ -156,6 +156,10 @@ class ReaderReport:
     cancelled: bool = False
     # Le JUnit XML que pytest a ecrit pour ce lecteur, s'il en a ecrit un.
     junit_path: str = ""
+    # Duree de CHAQUE test (nodeid -> secondes), telle que pytest lui-meme
+    # l'a chronometree (`--durations=0`). Absent d'un nodeid si pytest l'a
+    # juge trop rapide pour figurer dans son releve.
+    durations: dict[str, float] = field(default_factory=dict)
 
     @property
     def failed(self) -> int:

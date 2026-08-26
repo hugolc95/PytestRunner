@@ -1200,8 +1200,9 @@ class MainWindow(QMainWindow):
         compteurs, echecs = self.model.subtree_summary(premiere)
         chemin, nom = self._situer(premiere)
         source, saut = self._source_du_groupe(premiere)
+        nodeids = self.model.leaf_nodeids_under(premiere)
         self.results.show_group(chemin, nom, self.model.readers,
-                                compteurs, echecs, source, saut)
+                                compteurs, echecs, source, saut, nodeids)
 
     def _source_du_groupe(self, index: QModelIndex) -> tuple:
         """Fichier a montrer pour ce regroupement, et ou s'y placer.

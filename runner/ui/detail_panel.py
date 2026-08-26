@@ -353,13 +353,15 @@ class DetailPanel(QWidget):
         self.stress_body.setHtml(f'<body style="background:transparent;">{bloc}</body>')
 
     def show_group(self, path: str, name: str, readers: tuple[Reader, ...],
-                   counts: dict, failures: list) -> None:
+                   counts: dict, failures: list,
+                   durations: dict[int, float | None] | None = None) -> None:
         """Fiche d'un dossier, d'un fichier ou d'un test parametre.
 
         `counts` donne, par index de lecteur, le nombre de tests par statut.
-        `failures` liste des couples (nodeid, index du lecteur).
+        `failures` liste des couples (nodeid, index du lecteur). `durations`
+        est la somme des tentatives connues sous ce noeud, par lecteur.
         """
-        self._dernier_groupe = (path, name, readers, counts, failures)
+        self._dernier_groupe = (path, name, readers, counts, failures, durations)
         self._nodeid = ""
         self.stack.setCurrentIndex(self.PAGE_GROUPE)
 
@@ -371,9 +373,12 @@ class DetailPanel(QWidget):
 
         total = sum(sum(c.values()) for c in counts.values()) or 0
         tests = total // max(1, len(readers) or 1)
-        self.group_total.setText(f"{tests} test{'s' if tests > 1 else ''}"
-                                 + (f" × {len(readers)} readers" if len(readers) > 1
-                                    else ""))
+        texte = (f"{tests} test{'s' if tests > 1 else ''}"
+                + (f" × {len(readers)} readers" if len(readers) > 1 else ""))
+        duree = self._texte_duree(readers or (Reader("", 0),), durations or {})
+        if duree:
+            texte += f"   ·   {duree}"
+        self.group_total.setText(texte)
         self._remplir_rubans(readers, counts)
         self._remplir_echecs(readers, failures)
 
@@ -503,24 +508,43 @@ class DetailPanel(QWidget):
 
     def show_test(self, nodeid: str, readers: tuple[Reader, ...],
                   statuses: dict[int, Status],
-                  failures: dict[int, Failure | None]) -> None:
+                  failures: dict[int, Failure | None],
+                  durations: dict[int, float | None] | None = None) -> None:
         """Affiche un test. `statuses` et `failures` sont indexes par lecteur."""
         if not nodeid:
             self.clear()
             return
 
         self._nodeid = nodeid
-        self._dernier = (nodeid, readers, statuses, failures)
+        self._dernier = (nodeid, readers, statuses, failures, durations)
         self.stack.setCurrentWidget(self.stack.widget(1))
 
         chemin, _, reste = nodeid.partition("::")
         self.path_label.setText(chemin)
         self.name_label.setText(reste.replace("::", " › ") or chemin)
 
-        self._remplir_resultats(readers, statuses)
+        self._remplir_resultats(readers, statuses, durations or {})
         self._remplir_corps(readers, statuses, failures)
 
-    def _remplir_resultats(self, readers, statuses: dict[int, Status]) -> None:
+    def _texte_duree(self, cibles, durations: dict[int, float | None]) -> str:
+        """Duree connue de chaque lecteur, telle que pytest l'a chronometree.
+
+        Silencieux la ou elle manque : un test trop rapide pour figurer dans
+        le releve de pytest (`--durations-min`) n'a simplement rien a montrer,
+        plutot qu'un faux "0.00s".
+        """
+        morceaux = []
+        plusieurs = len(cibles) > 1
+        for lecteur in cibles:
+            valeur = durations.get(lecteur.index)
+            if valeur is None:
+                continue
+            prefixe = f"{lecteur.short_name}: " if lecteur.name and plusieurs else ""
+            morceaux.append(f"{prefixe}{valeur:.2f}s")
+        return "   ".join(morceaux)
+
+    def _remplir_resultats(self, readers, statuses: dict[int, Status],
+                           durations: dict[int, float | None]) -> None:
         while self._results_layout.count():
             element = self._results_layout.takeAt(0)
             widget = element.widget()
@@ -533,6 +557,12 @@ class DetailPanel(QWidget):
             self._results_layout.addWidget(
                 ReaderResult(lecteur.short_name, lecteur.index, statut))
         self._results_layout.addStretch(1)
+
+        texte = self._texte_duree(cibles, durations)
+        if texte:
+            duree_label = QLabel(texte)
+            duree_label.setObjectName("Faint")
+            self._results_layout.addWidget(duree_label)
 
     def _remplir_corps(self, readers, statuses: dict[int, Status],
                        failures: dict[int, Failure | None]) -> None:

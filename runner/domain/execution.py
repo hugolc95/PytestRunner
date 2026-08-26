@@ -208,6 +208,10 @@ class ReaderRun:
             commande = [
                 self.request.interpreter, "-u", "-m", "pytest",
                 *args_nodeids, *args_plugin, "-v", "--tb=short",
+                # Pytest chronometre deja chaque test pour son propre resume ;
+                # `=0` (illimite) le fait imprimer pour TOUS, pas seulement les
+                # plus lents -- inutile de re-mesurer nous-memes.
+                "--durations=0",
             ]
             if junit:
                 # Option native de pytest : le XML est ecrit par lui, pas
@@ -275,6 +279,7 @@ class ReaderRun:
         rapport.exit_code = -1 if self._cancelled else (self._process.returncode or 0)
         rapport.cancelled = self._cancelled
         rapport.output = "".join(lignes)
+        rapport.durations = parsing.parse_durations(rapport.output)
         # Le chemin n'est retenu que si pytest a VRAIMENT ecrit le fichier :
         # un run annule avant la fin n'en laisse pas, et l'historique
         # proposerait alors un export qui echouerait au moment du clic.

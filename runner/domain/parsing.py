@@ -164,3 +164,31 @@ def parse_collect_only(sortie: str) -> list[str]:
             nodeids.append(candidat)
 
     return nodeids
+
+
+# `0.05s call     tests/test_x.py::test_f`. `--durations=0` (pose sur chaque
+# run) demande a pytest LUI-MEME de chronometrer chaque test -- rien ici ne
+# mesure quoi que ce soit, on relit juste son calcul.
+_DUREE = re.compile(
+    r"^(?P<duree>\d+\.\d+)s\s+(?:setup|call|teardown)\s+(?P<nodeid>.+?)\s*$"
+)
+
+
+def parse_durations(sortie: str) -> dict[str, float]:
+    """Duree totale de chaque test, sommee sur ses phases setup/call/teardown.
+
+    Sommer les trois plutot que ne garder que `call` : un test dont la
+    fixture met une seconde a se preparer est tout aussi lent a l'usage, meme
+    si son corps est instantane.
+
+    `--durations-min` (0.005s par defaut) cache les tests les plus rapides de
+    ce releve : ils n'apparaissent simplement pas ici, plutot que d'y figurer
+    a zero.
+    """
+    durees: dict[str, float] = {}
+    for ligne in (sortie or "").splitlines():
+        m = _DUREE.match(strip_ansi(ligne).strip())
+        if m is not None:
+            durees[m.group("nodeid")] = durees.get(m.group("nodeid"), 0.0) + float(
+                m.group("duree"))
+    return durees
