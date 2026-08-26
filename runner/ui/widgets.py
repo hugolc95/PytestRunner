@@ -340,9 +340,9 @@ class SearchBar(QWidget):
         self._typing_timer.setInterval(120)
         self._typing_timer.timeout.connect(self._emit_query)
 
-        rangee_champ = QHBoxLayout()
-        rangee_champ.setContentsMargins(0, 0, 0, 0)
-        rangee_champ.setSpacing(t.SPACE_1)
+        ligne = QHBoxLayout(self)
+        ligne.setContentsMargins(0, 0, 0, 0)
+        ligne.setSpacing(t.SPACE_1)
 
         self.field = QLineEdit()
         self.field.setPlaceholderText("Find a test…")
@@ -364,48 +364,35 @@ class SearchBar(QWidget):
         self.next_button = self._nav("mdi.chevron-down", "Next match (Enter)",
                                      self.next_match)
 
-        rangee_champ.addWidget(self.field, 1)
-        rangee_champ.addWidget(self.counter)
-        rangee_champ.addWidget(self.prev_button)
-        rangee_champ.addWidget(self.next_button)
-
-        # Segmente : deux vues d'UNE meme recherche, jamais les deux a la
-        # fois. Colles sans espace entre eux, ils se lisent comme un seul
-        # selecteur plutot que deux boutons independants.
-        rangee_portee = QHBoxLayout()
-        rangee_portee.setContentsMargins(0, 0, 0, 0)
-        rangee_portee.setSpacing(0)
-
+        # Deux icones a bascule, PAS une rangee segmentee sous le champ : une
+        # deuxieme rangee poussait tout le reste (l'arbre) vers le bas des
+        # qu'on ouvrait la fenetre. Le fond allume dit lequel est actif,
+        # comme le bouton de comparaison des consoles juste a cote ailleurs
+        # dans l'appli -- pas besoin d'un libelle en toutes lettres.
         self._scope_group = QButtonGroup(self)
         self._scope_group.setExclusive(True)
-        self.tests_button = QPushButton("Tests")
-        self.tests_button.setObjectName("Segment")
-        self.tests_button.setProperty("segment", "first")
+        self.tests_button = self._nav("mdi.magnify", "Search by test name",
+                                      lambda: self._set_scope(SCOPE_TESTS))
         self.tests_button.setCheckable(True)
         self.tests_button.setChecked(True)
-        self.tests_button.setCursor(Qt.PointingHandCursor)
-        self.tests_button.clicked.connect(lambda: self._set_scope(SCOPE_TESTS))
+        self.tests_button.setEnabled(True)
 
-        self.failures_button = QPushButton("In failures")
-        self.failures_button.setObjectName("Segment")
-        self.failures_button.setProperty("segment", "last")
+        self.failures_button = self._nav(
+            "mdi.alert-circle-outline",
+            "Search inside the failure output of the last run",
+            lambda: self._set_scope(SCOPE_FAILURES))
         self.failures_button.setCheckable(True)
-        self.failures_button.setCursor(Qt.PointingHandCursor)
-        self.failures_button.setToolTip(
-            "Search inside the failure output of the last run")
-        self.failures_button.clicked.connect(lambda: self._set_scope(SCOPE_FAILURES))
+        self.failures_button.setEnabled(True)
 
         self._scope_group.addButton(self.tests_button)
         self._scope_group.addButton(self.failures_button)
-        rangee_portee.addWidget(self.tests_button)
-        rangee_portee.addWidget(self.failures_button)
-        rangee_portee.addStretch(1)
 
-        colonne = QVBoxLayout(self)
-        colonne.setContentsMargins(0, 0, 0, 0)
-        colonne.setSpacing(t.SPACE_1)
-        colonne.addLayout(rangee_champ)
-        colonne.addLayout(rangee_portee)
+        ligne.addWidget(self.field, 1)
+        ligne.addWidget(self.counter)
+        ligne.addWidget(self.prev_button)
+        ligne.addWidget(self.next_button)
+        ligne.addWidget(self.tests_button)
+        ligne.addWidget(self.failures_button)
 
     @property
     def scope(self) -> str:
@@ -437,6 +424,8 @@ class SearchBar(QWidget):
         self._magnify.setIcon(icons.icon("mdi.magnify", t.TEXT_FAINT))
         self.prev_button.setIcon(icons.icon("mdi.chevron-up", t.TEXT_MUTED))
         self.next_button.setIcon(icons.icon("mdi.chevron-down", t.TEXT_MUTED))
+        self.tests_button.setIcon(icons.icon("mdi.magnify", t.TEXT_MUTED))
+        self.failures_button.setIcon(icons.icon("mdi.alert-circle-outline", t.TEXT_MUTED))
 
     def _queue_query(self, texte: str) -> None:
         """Regroupe une rafale de frappes en une seule recherche.
@@ -743,12 +732,19 @@ def separator() -> QFrame:
 
 
 class StressBanner(QWidget):
-    """Bandeau au-dessus de l'arbre pendant et apres "Run until it fails" /
-    "Run N times".
+    """Pastille compacte, dans l'espace vide a droite de la barre Run, pendant
+    et apres "Run until it fails" / "Run N times".
 
     Une teinte par etat (bleu en cours, rouge sur un echec, neutre une fois
     fini) : c'est ce qu'on regarde du coin de l'oeil en continuant a
-    travailler ailleurs, la couleur doit donc suffire sans lire le texte.
+    travailler ailleurs. Le texte reste court expres -- le detail complet
+    (quel test, quel mode) est dans l'infobulle, pas dans la pastille.
+
+    Un `QWidget` nu n'applique PAS `background-color` depuis sa feuille de
+    style sur tous les styles Qt (silencieusement ignore sous le style natif
+    Windows, alors que ca passait par chance ailleurs) : `WA_StyledBackground`
+    est ce qui le force a se peindre depuis le CSS plutot que depuis son
+    style natif.
     """
 
     stop_clicked = pyqtSignal()
@@ -757,18 +753,23 @@ class StressBanner(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setVisible(False)
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setFixedHeight(t.CONTROL_SM)
 
         ligne = QHBoxLayout(self)
-        ligne.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
-        ligne.setSpacing(t.SPACE_2)
+        ligne.setContentsMargins(t.SPACE_3, 0, t.SPACE_1, 0)
+        ligne.setSpacing(t.SPACE_1)
 
         self._icone = QLabel()
-        self._titre = QLabel()
-        self._sous_titre = QLabel()
-        self._sous_titre.setObjectName("Muted")
+        self._icone.setStyleSheet("background: transparent;")
+        self._texte = QLabel()
+        self._texte.setStyleSheet(
+            f"background: transparent; font-size: {t.TEXT_XS}px; font-weight: 600;")
 
-        self.stop_button = QPushButton("Stop")
-        self.stop_button.setObjectName("Ghost")
+        self.stop_button = QPushButton()
+        self.stop_button.setObjectName("IconSm")
+        self.stop_button.setIcon(icons.icon("mdi.stop"))
+        self.stop_button.setToolTip("Stop this series")
         self.stop_button.clicked.connect(self.stop_clicked)
 
         self.dismiss_button = QPushButton()
@@ -779,9 +780,7 @@ class StressBanner(QWidget):
         self.dismiss_button.setVisible(False)
 
         ligne.addWidget(self._icone)
-        ligne.addWidget(self._titre)
-        ligne.addWidget(self._sous_titre)
-        ligne.addStretch(1)
+        ligne.addWidget(self._texte)
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.dismiss_button)
 
@@ -790,31 +789,36 @@ class StressBanner(QWidget):
         self.dismissed.emit()
 
     def _peindre(self, glyphe: str, couleur: str, fond: str) -> None:
-        self._icone.setPixmap(icons.icon(glyphe, couleur).pixmap(18, 18))
-        self.setStyleSheet(f"background-color: {fond};" if fond else "")
+        self._icone.setPixmap(icons.icon(glyphe, couleur).pixmap(14, 14))
+        if fond:
+            self.setStyleSheet(
+                f"background-color: {fond}; border-radius: {t.RADIUS_PILL}px;")
+        else:
+            self.setStyleSheet(
+                f"background-color: {t.BG_RAISED}; border: 1px solid "
+                f"{t.BORDER_STRONG}; border-radius: {t.RADIUS_PILL}px;")
 
-    def show_running(self, titre: str, sous_titre: str) -> None:
-        self._titre.setText(titre)
-        self._sous_titre.setText(sous_titre)
+    def _afficher(self, texte: str, detail: str) -> None:
+        self._texte.setText(texte)
+        self.setToolTip(detail or texte)
+        self.setVisible(True)
+
+    def show_running(self, texte: str, detail: str = "") -> None:
+        self._afficher(texte, detail)
         self._peindre("mdi.repeat", t.status_color(Status.RUNNING),
-                      t.rgba(t.status_color(Status.RUNNING), 0.12))
+                      t.rgba(t.status_color(Status.RUNNING), 0.16))
         self.stop_button.setVisible(True)
         self.dismiss_button.setVisible(False)
-        self.setVisible(True)
 
-    def show_failed(self, titre: str, sous_titre: str) -> None:
-        self._titre.setText(titre)
-        self._sous_titre.setText(sous_titre)
+    def show_failed(self, texte: str, detail: str = "") -> None:
+        self._afficher(texte, detail)
         self._peindre("mdi.alert", t.status_color(Status.FAILED),
-                      t.rgba(t.status_color(Status.FAILED), 0.12))
+                      t.rgba(t.status_color(Status.FAILED), 0.16))
         self.stop_button.setVisible(False)
         self.dismiss_button.setVisible(True)
-        self.setVisible(True)
 
-    def show_done(self, titre: str, sous_titre: str) -> None:
-        self._titre.setText(titre)
-        self._sous_titre.setText(sous_titre)
+    def show_done(self, texte: str, detail: str = "") -> None:
+        self._afficher(texte, detail)
         self._peindre("mdi.check-circle-outline", t.TEXT_MUTED, "")
         self.stop_button.setVisible(False)
         self.dismiss_button.setVisible(True)
-        self.setVisible(True)

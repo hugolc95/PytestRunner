@@ -5,6 +5,7 @@ traces d'echec. Un seul champ, un seul compteur -- seule la portee change.
 from __future__ import annotations
 
 import pytest
+from PyQt5.QtWidgets import QHBoxLayout
 
 from runner.ui.widgets import SCOPE_FAILURES, SCOPE_TESTS, SearchBar
 
@@ -69,3 +70,13 @@ def test_clicking_the_already_active_scope_does_nothing(qapp):
 
     assert barre.field.text() == "keep me"
     assert vus == []
+
+
+def test_the_scope_toggle_stays_on_a_single_row(qapp):
+    """Le coeur du reproche remonte apres coup : une rangee segmentee sous le
+    champ poussait tout le reste (l'arbre) vers le bas. La barre entiere
+    doit tenir sur UNE seule rangee, meme avec le bouton "In failures"."""
+    barre = SearchBar()
+    assert isinstance(barre.layout(), QHBoxLayout)
+    assert barre.layout().indexOf(barre.field) >= 0
+    assert barre.layout().indexOf(barre.failures_button) >= 0

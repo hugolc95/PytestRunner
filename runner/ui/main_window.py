@@ -175,10 +175,6 @@ class MainWindow(QMainWindow):
         self.readers_bar.changed.connect(self._on_readers_changed)
         colonne.addWidget(self._build_run_bar())
 
-        self.stress_banner = StressBanner()
-        self.stress_banner.stop_clicked.connect(self._arreter_stress)
-        colonne.addWidget(self.stress_banner)
-
         self.split = QSplitter(Qt.Horizontal)
         self.split.setChildrenCollapsible(False)
         self.split.addWidget(self._build_left())
@@ -299,6 +295,13 @@ class MainWindow(QMainWindow):
         ligne.addSpacing(t.SPACE_6)
         ligne.addWidget(self.readers_bar)
         ligne.addStretch(1)
+
+        # Dans l'espace autrement vide a droite de la rangee : une pastille
+        # compacte plutot qu'une rangee pleine largeur qui pousserait
+        # l'arbre vers le bas des qu'un stress-test tourne.
+        self.stress_banner = StressBanner()
+        self.stress_banner.stop_clicked.connect(self._arreter_stress)
+        ligne.addWidget(self.stress_banner)
         return barre
 
     def _build_left(self) -> QWidget:
@@ -1396,19 +1399,23 @@ class MainWindow(QMainWindow):
         self._stress_worker.finished_stress.connect(self._sur_fin_stress)
 
         self.stress_banner.show_running(
-            self._titre_bandeau_stress(mode, nodeid), self._sous_titre_stress(mode, 0, cap))
+            self._bandeau_compact(mode, 0, cap), self._bandeau_detail(mode, nodeid, 0, cap))
         self.results.detail.show_stress_running(nodeid, mode, cap, 0, 0, 0)
         self._update_actions()
         self._stress_worker.start()
 
-    def _sous_titre_stress(self, mode: str, ran: int, cap: int) -> str:
-        mot = "attempt" if mode == MODE_UNTIL_FAIL else "run"
-        return f"{mot} {ran + 1} of {cap}"
+    def _bandeau_compact(self, mode: str, ran: int, cap: int) -> str:
+        """Le texte de la pastille : court expres, elle vit dans un espace
+        etroit a droite de la barre Run. Le detail complet (quel test, quel
+        mode) est dans son infobulle -- voir `_bandeau_detail`."""
+        prefixe = "Stress" if mode == MODE_UNTIL_FAIL else "Run"
+        return f"{prefixe} {ran + 1}/{cap}"
 
-    def _titre_bandeau_stress(self, mode: str, nodeid: str) -> str:
+    def _bandeau_detail(self, mode: str, nodeid: str, ran: int, cap: int) -> str:
         court = nodeid.split("::", 1)[-1].replace("::", " › ")
         verbe = "Stress-testing" if mode == MODE_UNTIL_FAIL else "Running"
-        return f"{verbe} {court}"
+        mot = "attempt" if mode == MODE_UNTIL_FAIL else "run"
+        return f"{verbe} {court} — {mot} {ran + 1} of {cap}"
 
     def _sur_tentative_stress(self, tentative: StressAttempt) -> None:
         self._stress_ran = tentative.number
@@ -1424,8 +1431,9 @@ class MainWindow(QMainWindow):
             self.model.apply_outcome(self._stress_nodeid, tentative.status, lecteur.index)
 
         self.stress_banner.show_running(
-            self._titre_bandeau_stress(self._stress_mode, self._stress_nodeid),
-            self._sous_titre_stress(self._stress_mode, self._stress_ran, self._stress_cap))
+            self._bandeau_compact(self._stress_mode, self._stress_ran, self._stress_cap),
+            self._bandeau_detail(self._stress_mode, self._stress_nodeid,
+                                 self._stress_ran, self._stress_cap))
         self.results.detail.show_stress_running(
             self._stress_nodeid, self._stress_mode, self._stress_cap,
             self._stress_ran, self._stress_passed, len(self._stress_failed))
@@ -1437,19 +1445,23 @@ class MainWindow(QMainWindow):
 
         if resume.cancelled:
             self.stress_banner.show_done(
-                f"Stopped — {court}", f"{resume.ran} of {resume.cap} runs done")
+                f"Stopped {resume.ran}/{resume.cap}",
+                f"Stopped — {court} — {resume.ran} of {resume.cap} runs done")
         elif resume.mode == MODE_UNTIL_FAIL and resume.failed_attempts:
             derniere = resume.failed_attempts[-1]
             self.stress_banner.show_failed(
-                f"Stopped — {court} failed", f"attempt {derniere.number} of {resume.cap}")
+                f"Failed {derniere.number}/{resume.cap}",
+                f"Stopped — {court} failed — attempt {derniere.number} of {resume.cap}")
         elif resume.mode == MODE_UNTIL_FAIL:
             self.stress_banner.show_done(
-                f"Never failed — {court}", f"{resume.ran} of {resume.cap} attempts")
+                f"Never failed ({resume.ran})",
+                f"Never failed — {court} — {resume.ran} of {resume.cap} attempts")
         else:
             taux = round(100 * resume.passed / resume.ran) if resume.ran else 0
             echecs = len(resume.failed_attempts)
             self.stress_banner.show_done(
-                f"{resume.ran} of {resume.cap} runs complete — {court}",
+                f"{resume.ran}/{resume.cap} · {taux}%",
+                f"{resume.ran} of {resume.cap} runs complete — {court} — "
                 f"{resume.passed} passed · {echecs} failed · {taux}% pass rate")
 
         self.results.detail.show_stress_done(nodeid, resume)

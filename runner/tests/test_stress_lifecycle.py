@@ -95,7 +95,7 @@ def test_until_fail_disables_run_and_shows_the_running_banner(fenetre, monkeypat
 
     assert fenetre._stress_worker is not None
     assert not fenetre.run_button.isEnabled()
-    assert "stress-testing" in fenetre.stress_banner._titre.text().lower()
+    assert "stress-testing" in fenetre.stress_banner.toolTip().lower()
     assert fenetre.stress_banner.stop_button.isEnabled()
 
     _attendre(fenetre, qapp)
@@ -109,7 +109,7 @@ def test_until_fail_stops_and_shows_the_failed_banner(fenetre, monkeypatch, qapp
 
     assert fenetre._stress_worker is None
     assert fenetre.run_button.isEnabled()
-    assert "failed" in fenetre.stress_banner._titre.text().lower()
+    assert "failed" in fenetre.stress_banner.toolTip().lower()
     assert fenetre.results.detail._dernier_stress is not None
 
 
@@ -119,7 +119,7 @@ def test_until_fail_reaching_the_cap_shows_a_neutral_done_banner(fenetre, monkey
     fenetre._lancer_stress(NODEID, MODE_UNTIL_FAIL, cap=5)
     _attendre(fenetre, qapp)
 
-    assert "never failed" in fenetre.stress_banner._titre.text().lower()
+    assert "never failed" in fenetre.stress_banner.toolTip().lower()
 
 
 def test_n_times_runs_to_completion_and_reports_the_tally(fenetre, monkeypatch, qapp):
@@ -180,4 +180,4 @@ def test_stop_button_on_the_banner_cancels_the_series(fenetre, monkeypatch, qapp
 
     _, resume = fenetre.results.detail._dernier_stress
     assert resume.cancelled
-    assert "stopped" in fenetre.stress_banner._titre.text().lower()
+    assert "stopped" in fenetre.stress_banner.toolTip().lower()
