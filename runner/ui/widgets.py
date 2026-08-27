@@ -6,11 +6,12 @@ recoivent du texte et des couleurs, ils n'appellent rien.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QFontMetrics
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PyQt5.QtWidgets import (
     QDialog,
     QFrame,
+    QGraphicsOpacityEffect,
     QHeaderView,
     QHBoxLayout,
     QLabel,
@@ -133,11 +134,13 @@ class EmptyState(QWidget):
 
 
 class StatusPill(QWidget):
-    """Compteur d'un statut : une pastille de couleur, un nombre, un libelle.
+    """Compteur d'un statut : un badge teinte a sa couleur, une icone, un
+    nombre.
 
-    Sans boite ni bordure. Quatre compteurs encadres se disputaient
-    l'attention, dont trois affichant zero ; ici tout s'eteint a zero et seul
-    ce qui a une valeur ressort.
+    Chacun se detache des autres -- comme les badges d'une check-suite --
+    plutot que du texte colore flottant a plat. A zero, le badge s'eteint
+    (fond transparent, icone et texte en gris) : seul ce qui a une valeur
+    ressort.
 
     C'est aussi un filtre : cliquer ne montre plus que les tests de ce statut.
     Le compteur et le filtre sont le meme geste -- on lit « 44 failed », on
@@ -154,13 +157,14 @@ class StatusPill(QWidget):
         self._large = large
 
         ligne = QHBoxLayout(self)
-        marge = t.SPACE_3 if large else t.SPACE_2
-        ligne.setContentsMargins(marge, 0, marge, 0)
+        marge_h = t.SPACE_3 if large else t.SPACE_2
+        ligne.setContentsMargins(marge_h, t.SPACE_1, marge_h, t.SPACE_1)
         ligne.setSpacing(t.SPACE_1)
 
-        self._dot = QLabel("●")
+        self._icone = QLabel()
+        self._icone.setStyleSheet("background: transparent;")
         self._text = QLabel()
-        ligne.addWidget(self._dot)
+        ligne.addWidget(self._icone)
         ligne.addWidget(self._text)
 
         self.setCursor(Qt.PointingHandCursor)
@@ -200,20 +204,32 @@ class StatusPill(QWidget):
         allume = self._value > 0
         couleur = t.status_color(self._status)
         libelle = self._status.label.lower()
+        taille_icone = 15 if self._large else 12
 
-        self._dot.setStyleSheet(
-            f"color: {couleur if allume else t.BORDER_STRONG};"
-            f"font-size: {13 if self._large else 9}px; background: transparent;")
+        # Meme silhouette pleine/evidee que l'arbre pour la meme opposition :
+        # a zero, l'icone s'estompe en gris plutot que de rester coloree pour
+        # rien.
+        glyphe = (icons.STATUS_GLYPHS if allume else icons.STATUS_GLYPHS_GROUP
+                 ).get(self._status, "mdi.circle-small")
+        self._icone.setPixmap(
+            icons.icon(glyphe, couleur if allume else t.BORDER_STRONG)
+            .pixmap(taille_icone, taille_icone))
         self._text.setText(f"{self._value} {libelle}")
         self._text.setStyleSheet(theme.counter_style(
             couleur, allume, taille=17 if self._large else t.TEXT_SM))
 
-        # Le fond ne s'allume que sur le filtre actif : c'est le seul etat qui
-        # doit se distinguer d'un simple compteur.
+        # Badge teinte a sa couleur des qu'il a une valeur -- pas seulement en
+        # filtre actif, qui se distingue par un fond et un liseré plus soutenus.
+        if allume:
+            opacite = 0.24 if self._active else 0.14
+            fond = t.rgba(couleur, opacite)
+            bordure = couleur if self._active else t.rgba(couleur, 0.3)
+        else:
+            fond = "transparent"
+            bordure = t.BORDER
         self.setStyleSheet(
-            f"background-color: {t.rgba(couleur, 0.16)};"
-            f"border-radius: {t.RADIUS_SM}px;" if self._active
-            else "background: transparent;")
+            f"background-color: {fond}; border: 1px solid {bordure};"
+            f"border-radius: {t.RADIUS_PILL}px;")
 
         if not allume:
             self.setToolTip(f"No {libelle} test")
@@ -221,6 +237,55 @@ class StatusPill(QWidget):
             self.setToolTip(f"Showing only {libelle} tests — click to show all")
         else:
             self.setToolTip(f"{self._value} {libelle} — click to show only these")
+
+
+class LiveDot(QWidget):
+    """Point qui respire, a cote du texte de statut, tant qu'un run -- normal
+    ou stress-test -- tourne EN CE MOMENT.
+
+    Le texte seul ("Running…") se lit tout aussi bien immobile ; le pouls est
+    ce qui attire l'oeil du coin en travaillant ailleurs dans la fenetre.
+    Cache et arrete au repos : une animation qui tourne pour rien coute un
+    signal Qt a chaque frame, sans rien a montrer.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(9, 9)
+        self._couleur = t.ACCENT
+
+        self._effet = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._effet)
+
+        self._anim = QPropertyAnimation(self._effet, b"opacity", self)
+        self._anim.setDuration(1400)
+        self._anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._anim.setKeyValueAt(0.0, 1.0)
+        self._anim.setKeyValueAt(0.5, 0.25)
+        self._anim.setKeyValueAt(1.0, 1.0)
+        self._anim.setLoopCount(-1)
+
+        self.setVisible(False)
+
+    def set_color(self, couleur: str) -> None:
+        self._couleur = couleur
+        self.update()
+
+    def start(self) -> None:
+        self.setVisible(True)
+        self._anim.start()
+
+    def stop(self) -> None:
+        self._anim.stop()
+        self._effet.setOpacity(1.0)
+        self.setVisible(False)
+
+    def paintEvent(self, event) -> None:
+        peintre = QPainter(self)
+        peintre.setRenderHint(QPainter.Antialiasing)
+        peintre.setPen(Qt.NoPen)
+        peintre.setBrush(QColor(self._couleur))
+        peintre.drawEllipse(self.rect())
 
 
 class RemainingPill(QWidget):

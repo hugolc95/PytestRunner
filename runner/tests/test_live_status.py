@@ -74,3 +74,34 @@ def test_progress_ticks_stay_in_the_live_style(fenetre):
 
     assert fenetre.status_label.styleSheet() == style_au_depart
     assert "running" in fenetre.status_label.text().lower()
+
+
+def test_a_run_starts_the_pulsing_dot(fenetre):
+    fenetre._on_run_started(_requete())
+
+    assert not fenetre.live_dot.isHidden()
+
+
+def test_finishing_a_run_stops_the_pulsing_dot(fenetre):
+    fenetre._on_run_started(_requete())
+
+    fenetre._on_run_finished([])
+
+    assert fenetre.live_dot.isHidden()
+
+
+def test_a_run_wraps_the_status_in_a_tinted_chip(fenetre):
+    """Le pouls et le texte vivent DANS un badge -- pas juste cote a cote sur
+    le fond nu de la barre d'etat."""
+    fenetre._on_run_started(_requete())
+
+    assert fenetre.live_chip.styleSheet()
+
+
+def test_finishing_a_run_clears_the_chip(fenetre):
+    fenetre._on_run_started(_requete())
+    assert fenetre.live_chip.styleSheet()
+
+    fenetre._on_run_finished([])
+
+    assert fenetre.live_chip.styleSheet() == ""

@@ -66,6 +66,7 @@ from runner.ui.widgets import (
     SCOPE_TESTS,
     EmptyState,
     ErrorDialog,
+    LiveDot,
     ReaderBar,
     ReaderHeaderView,
     RemainingPill,
@@ -460,8 +461,23 @@ class MainWindow(QMainWindow):
         self.progress.setFixedWidth(180)
         self.progress.setVisible(False)
 
+        # Le pouls qui dit "ca tourne EN CE MOMENT" -- cache et arrete des
+        # que `_set_status_idle()` reprend la main.
+        self.live_dot = LiveDot()
+
         self.status_label = QLabel("Ready")
         self.status_label.setObjectName("Muted")
+
+        # Le texte et le pouls vivent DANS un badge -- pas juste cote a cote
+        # sur le fond nu de la barre d'etat. Sans fond propre, seul le texte
+        # colore distinguait un run en cours du repos ; ici c'est toute une
+        # forme qui apparait.
+        self.live_chip = QWidget()
+        puce = QHBoxLayout(self.live_chip)
+        puce.setContentsMargins(t.SPACE_2, t.SPACE_1, t.SPACE_3, t.SPACE_1)
+        puce.setSpacing(t.SPACE_2)
+        puce.addWidget(self.live_dot)
+        puce.addWidget(self.status_label)
 
         self.elapsed_label = QLabel("")
         self.elapsed_label.setObjectName("Faint")
@@ -469,7 +485,7 @@ class MainWindow(QMainWindow):
         # A gauche des verdicts : ce qui reste n'est pas un resultat.
         self.remaining_pill = RemainingPill()
 
-        barre.addWidget(self.status_label)
+        barre.addWidget(self.live_chip)
         barre.addWidget(self.progress)
         barre.addWidget(self.elapsed_label)
         barre.addPermanentWidget(QLabel(""))
@@ -1044,13 +1060,22 @@ class MainWindow(QMainWindow):
         un seul endroit a regarder, plutot qu'un widget dedie a part qui
         finit par se cacher dans un coin qu'on ne regarde plus.
         """
+        couleur = t.status_color(Status.RUNNING)
         self.status_label.setStyleSheet(
-            f"color: {t.status_color(Status.RUNNING)}; font-weight: 600;")
+            f"color: {couleur}; font-weight: 600; background: transparent;")
         self.status_label.setText(texte)
+        self.live_dot.set_color(couleur)
+        self.live_dot.start()
+        self.live_chip.setStyleSheet(
+            f"background-color: {t.rgba(couleur, 0.12)};"
+            f"border: 1px solid {t.rgba(couleur, 0.3)};"
+            f"border-radius: {t.RADIUS_PILL}px;")
 
     def _set_status_idle(self, texte: str) -> None:
         self.status_label.setStyleSheet("")
         self.status_label.setText(texte)
+        self.live_dot.stop()
+        self.live_chip.setStyleSheet("")
 
     @pyqtSlot(object)
     def _on_run_started(self, request: RunRequest) -> None:

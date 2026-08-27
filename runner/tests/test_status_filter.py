@@ -170,6 +170,17 @@ def test_the_active_pill_says_which_filter_is_on(joue):
     assert "passed" in joue.status_label.text().lower()
 
 
+def test_the_active_pill_actually_looks_different(joue):
+    """Le badge, pas seulement le drapeau : sinon rien a l'ecran ne dit quel
+    filtre est en cours."""
+    pastille = joue.pills[Status.PASSED]
+    repos = pastille.styleSheet()
+
+    joue.filter_by_status(Status.PASSED)
+
+    assert pastille.styleSheet() != repos
+
+
 def test_a_pill_at_zero_cannot_be_clicked(fenetre):
     """Filtrer sur un statut qu'aucun test ne porte viderait l'arbre sans
     rien apprendre."""

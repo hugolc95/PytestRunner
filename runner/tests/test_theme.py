@@ -493,13 +493,13 @@ def test_a_status_pill_follows_the_palette(qapp):
     t.set_theme("dark")
     pastille = StatusPill(Status.FAILED)
     pastille.set_value(3)
-    avant = pastille._dot.styleSheet()
+    avant = pastille._text.styleSheet()
 
     t.set_theme("light")
     pastille.restyle()
 
-    assert pastille._dot.styleSheet() != avant
-    assert t.LIGHT["STATUS_COLORS"][Status.FAILED] in pastille._dot.styleSheet()
+    assert pastille._text.styleSheet() != avant
+    assert t.LIGHT["STATUS_COLORS"][Status.FAILED] in pastille._text.styleSheet()
 
 
 # ---------------------------------------------------------------------------
