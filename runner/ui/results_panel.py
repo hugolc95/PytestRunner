@@ -531,6 +531,9 @@ class ResultsPanel(QWidget):
         self._durations: dict[int, dict[str, float]] = {}
         self._nodeid = ""
         self._statuses: dict[int, Status] = {}
+        self._markers: tuple[str, ...] = ()
+        self._recent_runs: dict[int, list[bool]] = {}
+        self._last_seen: float | None = None
 
         self.detail = DetailPanel()
         self.detail.open_output.connect(self.show_output)
@@ -648,10 +651,15 @@ class ResultsPanel(QWidget):
     # ---------------------------------------------------------------- detail
 
     def show_test(self, nodeid: str, statuses: dict[int, Status],
-                  workspace: str = "") -> None:
+                  workspace: str = "", markers: tuple[str, ...] = (),
+                  recent_runs: dict[int, list[bool]] | None = None,
+                  last_seen: float | None = None) -> None:
         """Selectionne un test : sa fiche, sa source, et ses logs."""
         self._nodeid = nodeid
         self._statuses = dict(statuses)
+        self._markers = markers
+        self._recent_runs = recent_runs or {}
+        self._last_seen = last_seen
         self._refresh_detail()
         self.source.show_file(source_path(workspace, nodeid), nodeid)
         self.show_logs_for(nodeid, self._readers)
@@ -712,7 +720,8 @@ class ResultsPanel(QWidget):
             lecteur.index: self._durations.get(lecteur.index, {}).get(self._nodeid)
             for lecteur in cibles
         }
-        self.detail.show_test(self._nodeid, self._readers, self._statuses, echecs, durees)
+        self.detail.show_test(self._nodeid, self._readers, self._statuses, echecs, durees,
+                              self._markers, self._recent_runs, self._last_seen)
 
     def _echecs_de(self, reader_index: int) -> dict:
         index = self._index_echecs.get(reader_index)

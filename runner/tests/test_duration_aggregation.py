@@ -53,9 +53,7 @@ def test_a_single_tests_duration_reaches_the_detail_panel(fenetre):
     fenetre._select_test(index)
 
     assert fenetre.results.detail.stack.currentIndex() == fenetre.results.detail.PAGE_TEST
-    dernier = fenetre.results.detail._results_layout.itemAt(
-        fenetre.results.detail._results_layout.count() - 1).widget()
-    assert "0.75s" in dernier.text()
+    assert "0.75s" in fenetre.results.detail._duree_visible
 
 
 def test_a_module_shows_the_sum_of_its_tests(fenetre):

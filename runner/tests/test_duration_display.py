@@ -23,11 +23,6 @@ def qapp():
     return QApplication.instance() or QApplication([])
 
 
-def _dernier_widget(layout):
-    element = layout.itemAt(layout.count() - 1)
-    return element.widget() if element is not None else None
-
-
 # --------------------------------------------------------------------- test
 
 def test_a_single_readers_duration_is_shown(qapp):
@@ -35,9 +30,7 @@ def test_a_single_readers_duration_is_shown(qapp):
     panneau.show_test(NODEID, (Reader("", 0),), {0: Status.PASSED}, {0: None},
                       {0: 0.45})
 
-    etiquette = _dernier_widget(panneau._results_layout)
-    assert etiquette is not None
-    assert "0.45s" in etiquette.text()
+    assert "0.45s" in panneau._duree_visible
 
 
 def test_each_readers_duration_is_labelled_when_there_are_several(qapp):
@@ -47,18 +40,15 @@ def test_each_readers_duration_is_labelled_when_there_are_several(qapp):
                       {0: Status.PASSED, 1: Status.PASSED}, {0: None, 1: None},
                       {0: 0.45, 1: 1.2})
 
-    texte = _dernier_widget(panneau._results_layout).text()
-    assert "Reader A: 0.45s" in texte
-    assert "Reader B: 1.20s" in texte
+    assert "Reader A: 0.45s" in panneau._duree_visible
+    assert "Reader B: 1.20s" in panneau._duree_visible
 
 
 def test_an_unknown_duration_shows_nothing_not_a_fake_zero(qapp):
     panneau = DetailPanel()
     panneau.show_test(NODEID, (Reader("", 0),), {0: Status.PASSED}, {0: None}, {0: None})
 
-    # Pas de veuve : le dernier element de la rangee est le stretch, pas une
-    # etiquette vide.
-    assert _dernier_widget(panneau._results_layout) is None
+    assert panneau._duree_visible == ""
 
 
 def test_missing_durations_argument_does_not_crash(qapp):
@@ -92,4 +82,4 @@ def test_restyle_keeps_the_duration_after_a_theme_change(qapp):
 
     panneau.restyle()
 
-    assert "0.45s" in _dernier_widget(panneau._results_layout).text()
+    assert "0.45s" in panneau._duree_visible

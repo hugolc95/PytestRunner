@@ -1232,7 +1232,9 @@ class MainWindow(QMainWindow):
         if nodeid:
             self.results.show_test(
                 nodeid, self.model.statuses_for_nodeid(nodeid),
-                self.workspace.path if self.workspace else "")
+                self.workspace.path if self.workspace else "",
+                self._markers_by_nodeid.get(nodeid, ()),
+                self._recent_runs_for(nodeid), self.history.last_seen(nodeid))
             return
 
         compteurs, echecs = self.model.subtree_summary(premiere)
@@ -1241,6 +1243,17 @@ class MainWindow(QMainWindow):
         nodeids = self.model.leaf_nodeids_under(premiere)
         self.results.show_group(chemin, nom, self.model.readers,
                                 compteurs, echecs, source, saut, nodeids)
+
+    def _recent_runs_for(self, nodeid: str) -> dict[int, list[bool]]:
+        """Mini-tendance de ce test, par lecteur -- absente des lecteurs qui
+        n'ont encore aucun run enregistre pour lui."""
+        lecteurs = self.model.readers or (Reader("", 0),)
+        resultat = {}
+        for lecteur in lecteurs:
+            runs = self.history.recent_runs(nodeid, lecteur.name)
+            if runs:
+                resultat[lecteur.index] = runs
+        return resultat
 
     def _source_du_groupe(self, index: QModelIndex) -> tuple:
         """Fichier a montrer pour ce regroupement, et ou s'y placer.

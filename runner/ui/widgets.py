@@ -312,6 +312,55 @@ class ReaderResult(QWidget):
         ligne.addWidget(texte)
 
 
+class RecentRunsSparkline(QWidget):
+    """Mini-tendance d'un test sur ses derniers runs : un trait par tentative,
+    du plus ancien (a gauche) au plus recent (a droite).
+
+    Juste assez pour repondre a une question sans ouvrir History : ce test
+    est-il fiable, ou instable depuis peu ? Pas de chiffres, pas d'axes -- une
+    barre verte ou rouge suffit a cette echelle.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._runs: tuple[bool, ...] = ()
+
+        self._ligne = QHBoxLayout(self)
+        self._ligne.setContentsMargins(0, 0, 0, 0)
+        self._ligne.setSpacing(2)
+        self.setFixedHeight(14)
+
+    def set_runs(self, runs: list[bool]) -> None:
+        self._runs = tuple(runs)
+        self._repeindre()
+
+    def _repeindre(self) -> None:
+        while self._ligne.count():
+            element = self._ligne.takeAt(0)
+            widget = element.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not self._runs:
+            self.setToolTip("No recorded history for this test yet.")
+            return
+
+        for ok in self._runs:
+            barre = QFrame()
+            barre.setFixedWidth(4)
+            couleur = t.status_color(Status.PASSED if ok else Status.FAILED)
+            barre.setStyleSheet(
+                f"background-color: {couleur}; border-radius: 1px;")
+            self._ligne.addWidget(barre)
+
+        echecs = sum(1 for ok in self._runs if not ok)
+        if echecs:
+            self.setToolTip(
+                f"Failed {echecs} of the last {len(self._runs)} runs.")
+        else:
+            self.setToolTip(f"Passed every one of the last {len(self._runs)} runs.")
+
+
 SCOPE_TESTS = "tests"
 SCOPE_FAILURES = "failures"
 

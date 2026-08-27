@@ -15,11 +15,13 @@ dossier qu'on venait de cliquer.
 
 from __future__ import annotations
 
+import time
 from html import escape
 
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QColor
 from PyQt5.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -35,12 +37,13 @@ from runner.domain.ansi import strip_ansi
 from runner.domain.failures import Failure, classify_line, failure_for, index_failures
 from runner.domain.models import Reader, Status
 from runner.domain.stress import MODE_UNTIL_FAIL, StressAttempt, StressSummary
-from runner.ui import theme
+from runner.ui import icons, theme
 from runner.ui import tokens as t
 from runner.ui.widgets import (
     EmptyState,
     ReaderBadge,
     ReaderResult,
+    RecentRunsSparkline,
     StatusRibbon,
 )
 
@@ -84,6 +87,11 @@ class DetailPanel(QWidget):
         self._dernier_groupe: tuple | None = None
         self._dernier_stress: tuple | None = None
         self._tentatives_ratees: list[StressAttempt] = []
+        # Texte exact de la case Duration, et une pastille de tendance par
+        # lecteur -- lus par les tests, plutot que de deviner le duree dans
+        # la disposition du dernier widget d'une rangee.
+        self._duree_visible = ""
+        self._sparklines: dict[int, RecentRunsSparkline] = {}
 
         self.empty = EmptyState(
             "mdi.cursor-default-click-outline",
@@ -126,10 +134,41 @@ class DetailPanel(QWidget):
         colonne.addWidget(self.path_label)
         colonne.addWidget(self.name_label)
 
+        # L'identifiant complet, copiable d'un geste : le retrouver ailleurs
+        # (un ticket, un message) ne devrait pas obliger a rouvrir le menu
+        # contextuel de l'arbre pour "Copy nodeid".
+        ligne_nodeid = QHBoxLayout()
+        ligne_nodeid.setContentsMargins(0, 0, 0, 0)
+        ligne_nodeid.setSpacing(t.SPACE_1)
+
+        self.nodeid_label = QLabel()
+        self.nodeid_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.nodeid_label.setStyleSheet(
+            f"font-family: {t.FONT_MONO}; font-size: {t.TEXT_XS}px;"
+            f" color: {t.TEXT_FAINT}; background: transparent;")
+
+        self.copy_nodeid_button = QPushButton()
+        self.copy_nodeid_button.setObjectName("IconSm")
+        self.copy_nodeid_button.setIcon(icons.icon("mdi.content-copy", t.TEXT_FAINT))
+        self.copy_nodeid_button.setToolTip("Copy the full test id")
+        self.copy_nodeid_button.clicked.connect(self._copier_nodeid)
+
+        ligne_nodeid.addWidget(self.nodeid_label, 1)
+        ligne_nodeid.addWidget(self.copy_nodeid_button)
+        colonne.addLayout(ligne_nodeid)
+
+        # Les markers, seulement s'il y en a : une rangee vide qui reserve sa
+        # hauteur en permanence decalerait tout le reste sans rien dire.
+        self.markers_row = QWidget()
+        self._markers_layout = QHBoxLayout(self.markers_row)
+        self._markers_layout.setContentsMargins(0, 0, 0, 0)
+        self._markers_layout.setSpacing(t.SPACE_1)
+        colonne.addWidget(self.markers_row)
+
         self.results_row = QWidget()
         self._results_layout = QHBoxLayout(self.results_row)
         self._results_layout.setContentsMargins(0, 0, 0, 0)
-        self._results_layout.setSpacing(t.SPACE_4)
+        self._results_layout.setSpacing(t.SPACE_2)
         colonne.addWidget(self.results_row)
 
         self.body = QTextEdit()
@@ -509,22 +548,74 @@ class DetailPanel(QWidget):
     def show_test(self, nodeid: str, readers: tuple[Reader, ...],
                   statuses: dict[int, Status],
                   failures: dict[int, Failure | None],
-                  durations: dict[int, float | None] | None = None) -> None:
-        """Affiche un test. `statuses` et `failures` sont indexes par lecteur."""
+                  durations: dict[int, float | None] | None = None,
+                  markers: tuple[str, ...] = (),
+                  recent_runs: dict[int, list[bool]] | None = None,
+                  last_seen: float | None = None) -> None:
+        """Affiche un test. `statuses` et `failures` sont indexes par lecteur.
+
+        `recent_runs` est la mini-tendance de ce nodeid, par lecteur, du plus
+        ancien au plus recent -- absent des lecteurs sans historique connu.
+        """
         if not nodeid:
             self.clear()
             return
 
         self._nodeid = nodeid
-        self._dernier = (nodeid, readers, statuses, failures, durations)
+        self._dernier = (nodeid, readers, statuses, failures, durations,
+                        markers, recent_runs, last_seen)
         self.stack.setCurrentWidget(self.stack.widget(1))
 
         chemin, _, reste = nodeid.partition("::")
         self.path_label.setText(chemin)
         self.name_label.setText(reste.replace("::", " › ") or chemin)
+        self.nodeid_label.setText(nodeid)
 
-        self._remplir_resultats(readers, statuses, durations or {})
-        self._remplir_corps(readers, statuses, failures)
+        self._remplir_markers(markers)
+        self._remplir_resultats(readers, statuses, durations or {}, recent_runs or {})
+        self._remplir_corps(readers, statuses, failures, last_seen, recent_runs or {})
+
+    def _copier_nodeid(self) -> None:
+        from PyQt5.QtWidgets import QApplication
+
+        if self._nodeid:
+            QApplication.clipboard().setText(self._nodeid)
+
+    def _remplir_markers(self, markers: tuple[str, ...]) -> None:
+        while self._markers_layout.count():
+            element = self._markers_layout.takeAt(0)
+            widget = element.widget()
+            if widget is not None:
+                widget.hide()
+                widget.deleteLater()
+
+        for nom in markers:
+            chip = QLabel(nom)
+            chip.setStyleSheet(theme.pill_style(t.TEXT_MUTED))
+            self._markers_layout.addWidget(chip)
+        self._markers_layout.addStretch(1)
+        self.markers_row.setVisible(bool(markers))
+
+    def _stat_cell(self, legende: str, valeur: QWidget) -> QWidget:
+        """Case etiquetee du bandeau de stats : une legende discrete au-dessus
+        d'une valeur qui, elle, doit se voir du premier coup d'oeil -- la
+        duree d'un test se perdait avant dans une simple etiquette grise en
+        bout de rangee."""
+        cellule = QFrame()
+        cellule.setStyleSheet(
+            f"background-color: {t.BG_RAISED}; border: 1px solid {t.BORDER};"
+            f"border-radius: {t.RADIUS_MD}px;")
+        colonne = QVBoxLayout(cellule)
+        colonne.setContentsMargins(t.SPACE_2, t.SPACE_1, t.SPACE_2, t.SPACE_1)
+        colonne.setSpacing(2)
+
+        libelle = QLabel(legende.upper())
+        libelle.setStyleSheet(
+            f"color: {t.TEXT_FAINT}; font-size: 10px; font-weight: 700;"
+            f" letter-spacing: 0.05em; background: transparent;")
+        colonne.addWidget(libelle)
+        colonne.addWidget(valeur)
+        return cellule
 
     def _texte_duree(self, cibles, durations: dict[int, float | None]) -> str:
         """Duree connue de chaque lecteur, telle que pytest l'a chronometree.
@@ -544,28 +635,51 @@ class DetailPanel(QWidget):
         return "   ".join(morceaux)
 
     def _remplir_resultats(self, readers, statuses: dict[int, Status],
-                           durations: dict[int, float | None]) -> None:
+                           durations: dict[int, float | None],
+                           recent_runs: dict[int, list[bool]]) -> None:
         while self._results_layout.count():
             element = self._results_layout.takeAt(0)
             widget = element.widget()
             if widget is not None:
+                # `hide()` tout de suite : retire du layout, un widget garde
+                # sa derniere position et reste peint par-dessus les
+                # nouvelles cases tant que `deleteLater()` n'a pas ete traite.
+                widget.hide()
                 widget.deleteLater()
+        self._sparklines = {}
 
         cibles = readers or (Reader("", 0),)
+        plusieurs = len(cibles) > 1
         for lecteur in cibles:
             statut = statuses.get(lecteur.index, Status.PENDING)
-            self._results_layout.addWidget(
-                ReaderResult(lecteur.short_name, lecteur.index, statut))
+            legende = lecteur.short_name if lecteur.name else "Status"
+            valeur = ReaderResult("", lecteur.index, statut)
+            self._results_layout.addWidget(self._stat_cell(legende, valeur))
+
+        self._duree_visible = self._texte_duree(cibles, durations)
+        if self._duree_visible:
+            duree_label = QLabel(self._duree_visible)
+            duree_label.setStyleSheet(
+                f"font-size: {t.TEXT_MD}px; font-weight: 700;"
+                f" color: {t.TEXT}; background: transparent;")
+            self._results_layout.addWidget(self._stat_cell("Duration", duree_label))
+
+        for lecteur in cibles:
+            runs = recent_runs.get(lecteur.index, [])
+            if not runs:
+                continue
+            sparkline = RecentRunsSparkline()
+            sparkline.set_runs(runs)
+            self._sparklines[lecteur.index] = sparkline
+            legende = f"{lecteur.short_name} history" if plusieurs and lecteur.name else "Last runs"
+            self._results_layout.addWidget(self._stat_cell(legende, sparkline))
+
         self._results_layout.addStretch(1)
 
-        texte = self._texte_duree(cibles, durations)
-        if texte:
-            duree_label = QLabel(texte)
-            duree_label.setObjectName("Faint")
-            self._results_layout.addWidget(duree_label)
-
     def _remplir_corps(self, readers, statuses: dict[int, Status],
-                       failures: dict[int, Failure | None]) -> None:
+                       failures: dict[int, Failure | None],
+                       last_seen: float | None = None,
+                       recent_runs: dict[int, list[bool]] | None = None) -> None:
         cibles = readers or (Reader("", 0),)
         blocs: list[str] = []
         brut: list[str] = []
@@ -580,7 +694,7 @@ class DetailPanel(QWidget):
             brut.append("\n".join(x for x in (entete, echec.body if echec else "") if x))
 
         if not blocs:
-            blocs.append(self._html_sans_echec(cibles, statuses))
+            blocs.append(self._html_sans_echec(cibles, statuses, last_seen, recent_runs or {}))
 
         self.body.setHtml(
             f'<body style="background:transparent;">{"".join(blocs)}</body>')
@@ -637,17 +751,43 @@ class DetailPanel(QWidget):
         return (f'<p style="margin:0 0 {t.SPACE_3}px 0; color:{t.TEXT_MUTED};'
                 f' font-size:{t.TEXT_SM}px;">{escape(texte)}</p>')
 
-    def _html_sans_echec(self, cibles, statuses: dict[int, Status]) -> str:
+    def _html_sans_echec(self, cibles, statuses: dict[int, Status],
+                         last_seen: float | None = None,
+                         recent_runs: dict[int, list[bool]] | None = None) -> str:
         vus = [statuses.get(l.index, Status.PENDING) for l in cibles]
         if all(s is Status.PENDING for s in vus):
             return self._html_note("This test has not run yet.")
         if all(s is Status.SKIPPED for s in vus):
             return self._html_note("Skipped everywhere in the last run.")
 
+        # Le vide d'un test qui passe etait le coeur du reproche : une seule
+        # phrase grise, perdue dans un grand cadre vide, ne disait rien de
+        # plus qu'un point vert deja visible dans l'arbre. La carte ci-dessous
+        # y ajoute au moins la derniere execution, et si l'historique le sait,
+        # a quel point ce verdict tient d'un run a l'autre.
         pluriel = "every reader" if len(cibles) > 1 else "the last run"
-        return (f'<p style="margin:0; color:{t.status_color(Status.PASSED)};'
-                f' font-size:{t.TEXT_MD}px; font-weight:600;">'
-                f"Passed on {pluriel}. Nothing to explain.</p>")
+        sous_ligne = ""
+        if last_seen is not None:
+            sous_ligne = f"Last run: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_seen))}"
+
+        runs = [ok for liste in (recent_runs or {}).values() for ok in liste]
+        echecs = sum(1 for ok in runs if not ok)
+        if runs and echecs:
+            fragment = f"flaky {echecs} time{'s' if echecs > 1 else ''} in the last {len(runs)} runs"
+            sous_ligne = f"{sous_ligne} · {fragment}" if sous_ligne else fragment[0].upper() + fragment[1:]
+
+        sous_html = ""
+        if sous_ligne:
+            sous_html = (f'<p style="margin:{t.SPACE_1}px 0 0 0; color:{t.TEXT_MUTED};'
+                        f' font-size:{t.TEXT_SM}px;">{escape(sous_ligne)}</p>')
+
+        return (
+            f'<div style="border:1px dashed {t.BORDER_STRONG};'
+            f' border-radius:{t.RADIUS_MD}px;'
+            f' padding:{t.SPACE_3}px {t.SPACE_4}px; margin-top:{t.SPACE_1}px;">'
+            f'<p style="margin:0; color:{t.status_color(Status.PASSED)};'
+            f' font-size:{t.TEXT_MD}px; font-weight:600;">'
+            f"Passed on {pluriel}.</p>{sous_html}</div>")
 
     def _copier(self) -> None:
         from PyQt5.QtWidgets import QApplication
