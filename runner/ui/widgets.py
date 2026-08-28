@@ -18,6 +18,7 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QStyleFactory,
     QVBoxLayout,
     QWidget,
 )
@@ -164,6 +165,18 @@ class StatusPill(QPushButton):
         self._value = 0
         self._active = False
         self._large = large
+
+        # Le style natif Windows ("windowsvista") delegue une partie du
+        # rendu d'un QPushButton au theme du systeme (UxTheme), qui ignore
+        # purement et simplement `border-radius` -- le badge ressortait
+        # avec le meme angle discret que n'importe quel autre bouton,
+        # jamais la pilule voulue. Fusion, lui, dessine tout depuis la
+        # feuille de style et la respecte a la lettre, sur toutes les
+        # plateformes. Garder une reference (`self._style`) est necessaire :
+        # sans elle, Python ramasse l'objet et Qt garde un pointeur mort.
+        self._style = QStyleFactory.create("Fusion")
+        if self._style is not None:
+            self.setStyle(self._style)
 
         self.setFlat(True)
         self.setCursor(Qt.PointingHandCursor)
