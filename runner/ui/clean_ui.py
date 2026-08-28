@@ -30,6 +30,7 @@ def install() -> None:
     from runner.ui.detail_panel import DetailPanel
     from runner.ui.main_window import MainWindow
     from runner.ui.tree_model import TestTreeModel
+    from runner.ui.widgets import CompassRing
 
     def flat_stat_cell(self, legende: str, valeur: QWidget) -> QWidget:
         cellule = QWidget()
@@ -56,6 +57,55 @@ def install() -> None:
 
     DetailPanel._stat_cell = flat_stat_cell
     MainWindow._set_status_live = flat_status_live
+
+    # ------------------------------------------------------------------
+    # Compass: completed verdicts + tests still expected
+    # ------------------------------------------------------------------
+    # Keep unfinished tests as a real segment of the same ring. This makes an
+    # incomplete/aborted run visible immediately: if pytest exits before every
+    # selected (test, reader) pair produced a verdict, a grey PENDING segment
+    # remains in the compass instead of the ring looking deceptively complete.
+    CompassRing.ORDER = (
+        Status.PASSED,
+        Status.FAILED,
+        Status.SKIPPED,
+        Status.ERROR,
+        Status.PENDING,
+    )
+    original_compass_set_counts = CompassRing.set_counts
+
+    def compass_set_counts_with_remaining(self, counts) -> None:
+        merged = dict(counts)
+        merged[Status.PENDING] = max(0, int(getattr(self, "_remaining", 0)))
+        original_compass_set_counts(self, merged)
+
+    def compass_set_remaining(self, remaining: int) -> None:
+        remaining = max(0, int(remaining))
+        if remaining == getattr(self, "_remaining", None):
+            return
+        self._remaining = remaining
+        # Reuse the already cached verdict counts. No tree/model scan is
+        # involved: one tiny widget repaint per completed test only.
+        merged = dict(getattr(self, "_counts", {}))
+        merged[Status.PENDING] = remaining
+        original_compass_set_counts(self, merged)
+
+    CompassRing.set_counts = compass_set_counts_with_remaining
+    CompassRing.set_remaining = compass_set_remaining
+
+    original_run_started = MainWindow._on_run_started
+    original_progress = MainWindow._on_progress
+
+    def run_started_with_compass_remaining(self, request) -> None:
+        self.compass_ring.set_remaining(request.total_tests)
+        original_run_started(self, request)
+
+    def progress_with_compass_remaining(self, done: int, total: int) -> None:
+        original_progress(self, done, total)
+        self.compass_ring.set_remaining(total - done)
+
+    MainWindow._on_run_started = run_started_with_compass_remaining
+    MainWindow._on_progress = progress_with_compass_remaining
 
     # ------------------------------------------------------------------
     # Live branch indicator
