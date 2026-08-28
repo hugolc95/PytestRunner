@@ -11,6 +11,7 @@ from app_icon import install_application_icon, set_windows_app_user_model_id
 from runner.ui.main_window import APP, ORG, WINDOW_TITLE, MainWindow
 from runner.ui.theme import app_stylesheet
 from runner.ui.clean_ui import install as install_clean_ui
+from runner.ui.end_run_feedback import install as install_end_run_feedback
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -32,6 +33,10 @@ def main(argv: list[str] | None = None) -> int:
     # cases de resultat et du statut "Running...". Les informations restent
     # identiques, seule la presentation devient plus plate et plus propre.
     install_clean_ui()
+    # Le dernier verdict peut preceder de peu la fin reelle du processus pytest.
+    # Montrer alors "Finalizing" puis le resultat avant l'archivage rend la fin
+    # du run immediate sans annoncer la fin tant que pytest travaille encore.
+    install_end_run_feedback()
 
     fenetre = MainWindow()
     fenetre.show()
