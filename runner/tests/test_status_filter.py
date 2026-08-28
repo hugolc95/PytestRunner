@@ -10,7 +10,7 @@ from __future__ import annotations
 import textwrap
 
 import pytest
-from PyQt5.QtCore import QModelIndex
+from PyQt5.QtCore import QModelIndex, Qt
 
 from runner.domain.models import Reader, Status
 from runner.domain.tree import build_tree
@@ -181,34 +181,35 @@ def test_the_active_pill_actually_looks_different(joue):
     assert pastille.styleSheet() != repos
 
 
+def test_a_pill_defines_its_own_hover_style(joue):
+    """Sans une regle `:hover` explicite, le style natif de Windows dessine
+    son propre relief au survol -- un rectangle sombre par-dessus le fond
+    clair du badge, illisible en theme clair."""
+    pastille = joue.pills[Status.FAILED]
+
+    assert "QPushButton:hover" in pastille.styleSheet()
+
+
 def test_a_pill_at_zero_cannot_be_clicked(fenetre):
     """Filtrer sur un statut qu'aucun test ne porte viderait l'arbre sans
     rien apprendre."""
     recus = []
     pastille = fenetre.pills[Status.ERROR]
-    pastille.clicked.connect(recus.append)
+    pastille.filter_clicked.connect(recus.append)
     pastille.set_value(0)
 
-    from PyQt5.QtCore import QPoint, Qt
-    from PyQt5.QtGui import QMouseEvent
+    pastille.click()
 
-    event = QMouseEvent(QMouseEvent.MouseButtonPress, QPoint(2, 2),
-                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
-    pastille.mousePressEvent(event)
     assert recus == []
 
 
 def test_a_pill_with_results_emits_its_status(joue):
     recus = []
     pastille = joue.pills[Status.FAILED]
-    pastille.clicked.connect(recus.append)
+    pastille.filter_clicked.connect(recus.append)
 
-    from PyQt5.QtCore import QPoint, Qt
-    from PyQt5.QtGui import QMouseEvent
+    pastille.click()
 
-    event = QMouseEvent(QMouseEvent.MouseButtonPress, QPoint(2, 2),
-                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
-    pastille.mousePressEvent(event)
     assert recus == [Status.FAILED]
 
 

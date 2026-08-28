@@ -240,7 +240,7 @@ class MainWindow(QMainWindow):
             for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
         }
         for pastille in self.pills.values():
-            pastille.clicked.connect(self.filter_by_status)
+            pastille.filter_clicked.connect(self.filter_by_status)
 
         # Cette barre ne parle que du WORKSPACE : ou il est, et ce qui le
         # decrit. Les actions de run ont leur propre rangee, juste en dessous.
@@ -473,6 +473,10 @@ class MainWindow(QMainWindow):
         # colore distinguait un run en cours du repos ; ici c'est toute une
         # forme qui apparait.
         self.live_chip = QWidget()
+        # Meme piege que le badge de statut : sans cet attribut, le style
+        # natif Windows ignore silencieusement le fond/lisere poses par
+        # `setStyleSheet()` sur un QWidget nu.
+        self.live_chip.setAttribute(Qt.WA_StyledBackground, True)
         puce = QHBoxLayout(self.live_chip)
         puce.setContentsMargins(t.SPACE_2, t.SPACE_1, t.SPACE_3, t.SPACE_1)
         puce.setSpacing(t.SPACE_2)

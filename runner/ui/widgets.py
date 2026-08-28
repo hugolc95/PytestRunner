@@ -6,7 +6,7 @@ recoivent du texte et des couleurs, ils n'appellent rien.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, QSize, Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PyQt5.QtWidgets import (
     QDialog,
@@ -133,9 +133,18 @@ class EmptyState(QWidget):
         self.detail_label.setText(detail)
 
 
-class StatusPill(QWidget):
+class StatusPill(QPushButton):
     """Compteur d'un statut : un badge teinte a sa couleur, une icone, un
-    nombre.
+    nombre -- un vrai QPushButton, comme Run/Stop/les lecteurs, pas un
+    QWidget nu recompose a la main.
+
+    Un QWidget nu ignore silencieusement `background-color`/`border` poses
+    par une feuille de style sous le style natif Windows tant que
+    `WA_StyledBackground` n'est pas force -- le bug deja vu une fois ce
+    sprint sur le bandeau de stress-test, puis a nouveau sur la premiere
+    version de ce badge. Un QPushButton, lui, peint son fond depuis sa
+    feuille de style nativement : c'est le meme mecanisme que les boutons
+    Run/Stop/Ghost et les lecteurs (`ReaderToggle`) juste a cote.
 
     Chacun se detache des autres -- comme les badges d'une check-suite --
     plutot que du texte colore flottant a plat. A zero, le badge s'eteint
@@ -147,7 +156,7 @@ class StatusPill(QWidget):
     veut voir lesquels, on clique dessus.
     """
 
-    clicked = pyqtSignal(object)  # le Status de cette pastille
+    filter_clicked = pyqtSignal(object)  # le Status de cette pastille
 
     def __init__(self, status: Status, parent=None, large: bool = False):
         super().__init__(parent)
@@ -156,18 +165,9 @@ class StatusPill(QWidget):
         self._active = False
         self._large = large
 
-        ligne = QHBoxLayout(self)
-        marge_h = t.SPACE_3 if large else t.SPACE_2
-        ligne.setContentsMargins(marge_h, t.SPACE_1, marge_h, t.SPACE_1)
-        ligne.setSpacing(t.SPACE_1)
-
-        self._icone = QLabel()
-        self._icone.setStyleSheet("background: transparent;")
-        self._text = QLabel()
-        ligne.addWidget(self._icone)
-        ligne.addWidget(self._text)
-
+        self.setFlat(True)
         self.setCursor(Qt.PointingHandCursor)
+        self.clicked.connect(self._sur_clic)
         self.set_value(0)
 
     @property
@@ -195,41 +195,54 @@ class StatusPill(QWidget):
 
     # ------------------------------------------------------------------
 
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self._value:
-            self.clicked.emit(self._status)
-        super().mousePressEvent(event)
+    def _sur_clic(self) -> None:
+        if self._value:
+            self.filter_clicked.emit(self._status)
 
     def _repaint(self) -> None:
         allume = self._value > 0
         couleur = t.status_color(self._status)
         libelle = self._status.label.lower()
         taille_icone = 15 if self._large else 12
+        taille_texte = 17 if self._large else t.TEXT_SM
 
-        # Meme silhouette pleine/evidee que l'arbre pour la meme opposition :
-        # a zero, l'icone s'estompe en gris plutot que de rester coloree pour
-        # rien.
-        glyphe = (icons.STATUS_GLYPHS if allume else icons.STATUS_GLYPHS_GROUP
-                 ).get(self._status, "mdi.circle-small")
-        self._icone.setPixmap(
-            icons.icon(glyphe, couleur if allume else t.BORDER_STRONG)
-            .pixmap(taille_icone, taille_icone))
-        self._text.setText(f"{self._value} {libelle}")
-        self._text.setStyleSheet(theme.counter_style(
-            couleur, allume, taille=17 if self._large else t.TEXT_SM))
+        # La variante EVIDEE (contour + marque, sans aplat) partout : pleine,
+        # la marque est une decoupe transparente dans le glyphe -- posee sur
+        # un fond deja teinte, elle laissait ce fond transparaitre au milieu
+        # de l'icone au lieu d'un trait net.
+        glyphe = icons.STATUS_GLYPHS_GROUP.get(self._status, "mdi.circle-small")
+        self.setIcon(icons.icon(glyphe, couleur if allume else t.BORDER_STRONG))
+        self.setIconSize(QSize(taille_icone, taille_icone))
+        self.setText(f"{self._value} {libelle}")
 
         # Badge teinte a sa couleur des qu'il a une valeur -- pas seulement en
         # filtre actif, qui se distingue par un fond et un liseré plus soutenus.
         if allume:
             opacite = 0.24 if self._active else 0.14
             fond = t.rgba(couleur, opacite)
+            fond_survol = t.rgba(couleur, opacite + 0.08)
             bordure = couleur if self._active else t.rgba(couleur, 0.3)
+            couleur_texte = couleur
         else:
             fond = "transparent"
+            fond_survol = t.rgba(t.TEXT_FAINT, 0.08)
             bordure = t.BORDER
+            couleur_texte = t.TEXT_FAINT
+
+        marge_h = t.SPACE_3 if self._large else t.SPACE_2
+        marge_v = t.SPACE_2 if self._large else t.SPACE_1
+        base = (
+            f"color: {couleur_texte};"
+            f"border: 1px solid {bordure}; border-radius: {t.RADIUS_PILL}px;"
+            f"padding: {marge_v}px {marge_h}px;"
+            f"font-size: {taille_texte}px; font-weight: {'600' if allume else '400'};")
+        # Le survol/l'appui doivent etre ecrits ICI : sans eux, le style natif
+        # de Windows dessine SON propre relief au survol -- un rectangle
+        # sombre par-dessus notre fond clair, illisible en theme clair.
         self.setStyleSheet(
-            f"background-color: {fond}; border: 1px solid {bordure};"
-            f"border-radius: {t.RADIUS_PILL}px;")
+            f"QPushButton {{ background-color: {fond}; {base} }}"
+            f"QPushButton:hover {{ background-color: {fond_survol}; {base} }}"
+            f"QPushButton:pressed {{ background-color: {fond_survol}; {base} }}")
 
         if not allume:
             self.setToolTip(f"No {libelle} test")
