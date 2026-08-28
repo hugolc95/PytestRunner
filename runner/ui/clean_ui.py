@@ -4,7 +4,7 @@ Keep the result summary and live run status flat: both already sit inside a
 larger panel/status bar, so drawing another box around them creates a nested
 "box in a box" effect on Windows.
 
-This module also adds a lightweight live-run indicator to the test tree.  A
+This module also adds a lightweight live-run indicator to the test tree. A
 small loading icon follows the branch that currently contains the executing
 test, so a collapsed folder/module/class still makes it obvious where pytest
 is working.
@@ -27,7 +27,6 @@ _START_PREFIX = "PYTESTRUNNER_START\t"
 def install() -> None:
     """Install the visual refinements before the main window is created."""
     from runner.domain import execution, reader_isolation
-    from runner.services.run_service import RunService
     from runner.ui.detail_panel import DetailPanel
     from runner.ui.main_window import MainWindow
     from runner.ui.tree_model import TestTreeModel
@@ -53,8 +52,6 @@ def install() -> None:
         self.status_label.setText(texte)
         self.live_dot.set_color(couleur)
         self.live_dot.start()
-        # No extra background/border here: the status bar already provides
-        # the visual container and the live dot + blue text carry the state.
         self.live_chip.setStyleSheet("")
 
     DetailPanel._stat_cell = flat_stat_cell
@@ -63,12 +60,6 @@ def install() -> None:
     # ------------------------------------------------------------------
     # Live branch indicator
     # ------------------------------------------------------------------
-    # pytest's normal -v terminal output does not reliably expose a test start
-    # as a complete line: for a long-running test the line can stay buffered
-    # until the verdict arrives.  The internal reader plugin already owns a
-    # stable machine-readable channel for verdicts, so append the matching
-    # start hook there as well.  It is generated into the temporary pytest
-    # process and never touches the user's test sources.
     if _START_PREFIX not in reader_isolation._SOURCE:
         reader_isolation._SOURCE += '''\
 \n
@@ -83,10 +74,8 @@ def pytest_runtest_logstart(nodeid, location):
         sys.__stdout__.flush()
 '''
 
-    # ReaderRun keeps every ordinary stdout line in the report.  The start
-    # marker deliberately travels through on_line() so the UI sees it live,
-    # then is removed from the stored output before history/log views receive
-    # the finished report.
+    # The start marker travels through the live output channel, then is
+    # stripped from the finished report so it never pollutes logs/history.
     original_reader_run = execution.ReaderRun.run
 
     def reader_run_without_start_marker(self, on_line, on_outcome):
@@ -102,21 +91,26 @@ def pytest_runtest_logstart(nodeid, location):
 
     original_name_data = TestTreeModel._data_colonne_nom
 
-    def _running_groups(self) -> set:
-        groupes = set()
-        for nodeid in getattr(self, "_running_by_reader", {}).values():
-            ligne = self._by_nodeid.get(nodeid)
-            if ligne is None:
-                continue
-            parent = ligne.parent
-            while parent is not None:
-                # Mark every grouping level, not only Kind.FOLDER.  This means
-                # the indicator remains visible whether the user collapsed a
-                # folder, a module or a class.
-                if parent.children:
-                    groupes.add(parent)
-                parent = parent.parent
-        return groupes
+    def _branch_for_nodeid(self, nodeid: str) -> tuple:
+        """Return grouping ancestors once, in O(tree depth)."""
+        ligne = self._by_nodeid.get(nodeid)
+        if ligne is None:
+            return ()
+        groupes = []
+        parent = ligne.parent
+        while parent is not None:
+            if parent.children:
+                groupes.append(parent)
+            parent = parent.parent
+        return tuple(groupes)
+
+    def _ensure_running_state(self) -> None:
+        if not hasattr(self, "_running_branch_by_reader"):
+            self._running_branch_by_reader = {}
+            # Reference count instead of rebuilding the active set for every
+            # paint. Multiple readers may legitimately share the same branch.
+            self._running_group_refs = {}
+            self._running_groups_cache = set()
 
     def _repaint_running_rows(self, rows) -> None:
         for ligne in rows:
@@ -126,35 +120,68 @@ def pytest_runtest_logstart(nodeid, location):
                 [Qt.DecorationRole, Qt.ForegroundRole, Qt.ToolTipRole],
             )
 
+    def _remove_branch(self, reader_index: int) -> set:
+        _ensure_running_state(self)
+        changed = set()
+        ancien = self._running_branch_by_reader.pop(int(reader_index), ())
+        for groupe in ancien:
+            refs = self._running_group_refs.get(groupe, 0) - 1
+            if refs <= 0:
+                self._running_group_refs.pop(groupe, None)
+                if groupe in self._running_groups_cache:
+                    self._running_groups_cache.remove(groupe)
+                    changed.add(groupe)
+            else:
+                self._running_group_refs[groupe] = refs
+        return changed
+
     def set_running_test(self, reader_index: int, nodeid: str) -> None:
-        avant = _running_groups(self)
-        mapping = getattr(self, "_running_by_reader", None)
-        if mapping is None:
-            mapping = {}
-            self._running_by_reader = mapping
-        mapping[int(reader_index)] = nodeid
-        apres = _running_groups(self)
-        _repaint_running_rows(self, avant | apres)
+        """Move one reader's indicator without repainting an unchanged branch.
+
+        The old implementation recomputed every active branch from scratch for
+        every Qt data() call, then repainted all ancestors at every test. On a
+        large visible tree that made scrolling and live updates noticeably
+        slower. Here the active groups are cached, and only rows whose active
+        state really toggles are repainted.
+        """
+        _ensure_running_state(self)
+        reader_index = int(reader_index)
+        nouveau = _branch_for_nodeid(self, nodeid)
+        ancien = self._running_branch_by_reader.get(reader_index, ())
+        if nouveau == ancien:
+            return
+
+        changed = _remove_branch(self, reader_index)
+        self._running_branch_by_reader[reader_index] = nouveau
+        for groupe in nouveau:
+            refs = self._running_group_refs.get(groupe, 0)
+            self._running_group_refs[groupe] = refs + 1
+            if refs == 0:
+                self._running_groups_cache.add(groupe)
+                changed.add(groupe)
+        _repaint_running_rows(self, changed)
 
     def clear_running_reader(self, reader_index: int) -> None:
-        mapping = getattr(self, "_running_by_reader", None)
-        if not mapping or int(reader_index) not in mapping:
-            return
-        avant = _running_groups(self)
-        mapping.pop(int(reader_index), None)
-        apres = _running_groups(self)
-        _repaint_running_rows(self, avant | apres)
+        changed = _remove_branch(self, int(reader_index))
+        if changed:
+            _repaint_running_rows(self, changed)
 
     def clear_running_tests(self) -> None:
-        mapping = getattr(self, "_running_by_reader", None)
-        if not mapping:
+        _ensure_running_state(self)
+        if not self._running_groups_cache:
+            self._running_branch_by_reader.clear()
+            self._running_group_refs.clear()
             return
-        avant = _running_groups(self)
-        mapping.clear()
-        _repaint_running_rows(self, avant)
+        changed = set(self._running_groups_cache)
+        self._running_branch_by_reader.clear()
+        self._running_group_refs.clear()
+        self._running_groups_cache.clear()
+        _repaint_running_rows(self, changed)
 
     def name_data_with_running_branch(self, ligne, role):
-        active = ligne in _running_groups(self)
+        # Hot path: Qt calls data() repeatedly while painting/scrolling. This
+        # must stay an O(1) set lookup; never walk the tree from here.
+        active = ligne in getattr(self, "_running_groups_cache", ())
         if active and role == Qt.DecorationRole:
             return icons.status_icon(Status.RUNNING, group=True)
         if active and role == Qt.ForegroundRole:
@@ -169,9 +196,6 @@ def pytest_runtest_logstart(nodeid, location):
     TestTreeModel.clear_running_tests = clear_running_tests
     TestTreeModel._data_colonne_nom = name_data_with_running_branch
 
-    # Replace the normal service wiring only to intercept the private start
-    # marker.  Every normal console line and every existing signal keeps the
-    # same destination as before.
     def connect_service_with_running_branch(self) -> None:
         self.service.started.connect(self._on_run_started)
 
@@ -192,10 +216,6 @@ def pytest_runtest_logstart(nodeid, location):
             self.model.clear_running_tests()
             self._on_run_finished(rapports)
 
-        # Keep Python references to the local slots for as long as the window
-        # lives.  PyQt usually retains connected callables, but explicit refs
-        # make their lifetime unambiguous and avoid hard-to-reproduce Windows
-        # disconnects during long runs.
         self._live_branch_line_slot = live_line
         self._live_branch_reader_finished_slot = reader_finished
         self._live_branch_run_finished_slot = run_finished
