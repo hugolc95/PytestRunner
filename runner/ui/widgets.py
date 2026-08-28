@@ -6,11 +6,12 @@ recoivent du texte et des couleurs, ils n'appellent rien.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QFontMetrics
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PyQt5.QtWidgets import (
     QDialog,
     QFrame,
+    QGraphicsOpacityEffect,
     QHeaderView,
     QHBoxLayout,
     QLabel,
@@ -132,19 +133,30 @@ class EmptyState(QWidget):
         self.detail_label.setText(detail)
 
 
-class StatusPill(QWidget):
-    """Compteur d'un statut : une pastille de couleur, un nombre, un libelle.
+class StatusPill(QPushButton):
+    """Compteur d'un statut : icone + nombre, pose en legende a cote de
+    l'anneau (`CompassRing`) -- un vrai QPushButton, comme Run/Stop/les
+    lecteurs, pas un QWidget nu recompose a la main.
 
-    Sans boite ni bordure. Quatre compteurs encadres se disputaient
-    l'attention, dont trois affichant zero ; ici tout s'eteint a zero et seul
-    ce qui a une valeur ressort.
+    Un QWidget nu ignore silencieusement `background-color`/`border` poses
+    par une feuille de style sous le style natif Windows tant que
+    `WA_StyledBackground` n'est pas force -- le bug deja vu une fois ce
+    sprint sur le bandeau de stress-test, puis a nouveau sur la premiere
+    version de ce badge. Un QPushButton, lui, peint son fond depuis sa
+    feuille de style nativement : c'est le meme mecanisme que les boutons
+    Run/Stop/Ghost et les lecteurs (`ReaderToggle`) juste a cote.
+
+    A zero, la legende s'eteint (icone et texte en gris) : seul ce qui a une
+    valeur ressort. Un rectangle discretement teinte marque le filtre actif --
+    pas un aplat pilule complet, cette legende reste un texte compact, pas un
+    badge autonome.
 
     C'est aussi un filtre : cliquer ne montre plus que les tests de ce statut.
     Le compteur et le filtre sont le meme geste -- on lit « 44 failed », on
     veut voir lesquels, on clique dessus.
     """
 
-    clicked = pyqtSignal(object)  # le Status de cette pastille
+    filter_clicked = pyqtSignal(object)  # le Status de cette pastille
 
     def __init__(self, status: Status, parent=None):
         super().__init__(parent)
@@ -152,16 +164,9 @@ class StatusPill(QWidget):
         self._value = 0
         self._active = False
 
-        ligne = QHBoxLayout(self)
-        ligne.setContentsMargins(t.SPACE_2, 0, t.SPACE_2, 0)
-        ligne.setSpacing(t.SPACE_1)
-
-        self._dot = QLabel("●")
-        self._text = QLabel()
-        ligne.addWidget(self._dot)
-        ligne.addWidget(self._text)
-
+        self.setFlat(True)
         self.setCursor(Qt.PointingHandCursor)
+        self.clicked.connect(self._sur_clic)
         self.set_value(0)
 
     @property
@@ -189,28 +194,40 @@ class StatusPill(QWidget):
 
     # ------------------------------------------------------------------
 
-    def mousePressEvent(self, event) -> None:
-        if event.button() == Qt.LeftButton and self._value:
-            self.clicked.emit(self._status)
-        super().mousePressEvent(event)
+    def _sur_clic(self) -> None:
+        if self._value:
+            self.filter_clicked.emit(self._status)
 
     def _repaint(self) -> None:
         allume = self._value > 0
         couleur = t.status_color(self._status)
         libelle = self._status.label.lower()
 
-        self._dot.setStyleSheet(
-            f"color: {couleur if allume else t.BORDER_STRONG};"
-            f"font-size: 9px; background: transparent;")
-        self._text.setText(f"{self._value} {libelle}")
-        self._text.setStyleSheet(theme.counter_style(couleur, allume))
+        # La variante EVIDEE (contour + marque, sans aplat) partout : pleine,
+        # la marque est une decoupe transparente dans le glyphe -- posee sur
+        # un fond deja teinte, elle laissait ce fond transparaitre au milieu
+        # de l'icone au lieu d'un trait net.
+        glyphe = icons.STATUS_GLYPHS_GROUP.get(self._status, "mdi.circle-small")
+        self.setIcon(icons.icon(glyphe, couleur if allume else t.BORDER_STRONG))
+        self.setIconSize(QSize(13, 13))
+        self.setText(str(self._value))
 
-        # Le fond ne s'allume que sur le filtre actif : c'est le seul etat qui
-        # doit se distinguer d'un simple compteur.
+        couleur_texte = couleur if allume else t.TEXT_FAINT
+        fond = t.rgba(couleur, 0.18) if self._active else "transparent"
+        fond_survol = t.rgba(couleur, 0.1) if allume else t.rgba(t.TEXT_FAINT, 0.08)
+        poids = "700" if self._active else "600" if allume else "400"
+
+        base = (
+            f"color: {couleur_texte}; border: none; border-radius: {t.RADIUS_SM}px;"
+            f"padding: {t.SPACE_1}px {t.SPACE_2}px;"
+            f"font-size: {t.TEXT_SM + 1}px; font-weight: {poids};")
+        # Le survol/l'appui doivent etre ecrits ICI : sans eux, le style natif
+        # de Windows dessine SON propre relief au survol -- un rectangle
+        # sombre par-dessus notre fond clair, illisible en theme clair.
         self.setStyleSheet(
-            f"background-color: {t.rgba(couleur, 0.16)};"
-            f"border-radius: {t.RADIUS_SM}px;" if self._active
-            else "background: transparent;")
+            f"QPushButton {{ background-color: {fond}; {base} }}"
+            f"QPushButton:hover {{ background-color: {fond_survol}; {base} }}"
+            f"QPushButton:pressed {{ background-color: {fond_survol}; {base} }}")
 
         if not allume:
             self.setToolTip(f"No {libelle} test")
@@ -218,6 +235,124 @@ class StatusPill(QWidget):
             self.setToolTip(f"Showing only {libelle} tests — click to show all")
         else:
             self.setToolTip(f"{self._value} {libelle} — click to show only these")
+
+
+class CompassRing(QWidget):
+    """Anneau proportionnel passed/failed/skipped/error : la largeur de
+    chaque arc dit la part de ce statut dans le run, le taux de reussite
+    global tient dans une seule bulle-info.
+
+    Purement visuel -- l'interaction (filtrer, voir le detail par statut)
+    reste sur les `StatusPill` en legende juste a cote, qui l'avaient deja
+    et restent testes pour ca. Dupliquer le clic sur l'anneau (par angle)
+    ajouterait une seconde facon de faire la meme chose sans rien montrer de
+    plus.
+    """
+
+    ORDER = (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
+
+    def __init__(self, parent=None, diameter: int = 45, thickness: int = 8):
+        super().__init__(parent)
+        self._diameter = diameter
+        self._thickness = thickness
+        self._counts = {statut: 0 for statut in self.ORDER}
+        self.setFixedSize(diameter, diameter)
+        self.restyle()
+
+    def set_counts(self, counts) -> None:
+        self._counts = {statut: counts.get(statut, 0) for statut in self.ORDER}
+        total = sum(self._counts.values())
+        passed = self._counts[Status.PASSED]
+        taux = round(100 * passed / total) if total else 0
+        self.setToolTip(
+            f"{taux}% pass — " +
+            "  ".join(f"{self._counts[s]} {s.label.lower()}" for s in self.ORDER))
+        self.update()
+
+    def restyle(self) -> None:
+        """Rejoue le dessin : les couleurs par statut dependent du theme."""
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        peintre = QPainter(self)
+        peintre.setRenderHint(QPainter.Antialiasing)
+        marge = self._thickness / 2
+        zone = QRectF(marge, marge,
+                      self._diameter - self._thickness, self._diameter - self._thickness)
+
+        trait = QPen()
+        trait.setWidth(self._thickness)
+        trait.setCapStyle(Qt.FlatCap)
+
+        total = sum(self._counts.values())
+        if not total:
+            trait.setColor(QColor(t.BORDER))
+            peintre.setPen(trait)
+            peintre.drawArc(zone, 0, 360 * 16)
+            peintre.end()
+            return
+
+        # Depart a midi, sens horaire -- comme une jauge de chargement.
+        depart = 90 * 16
+        for statut in self.ORDER:
+            valeur = self._counts[statut]
+            if not valeur:
+                continue
+            portee = round(360 * 16 * valeur / total)
+            trait.setColor(QColor(t.status_color(statut)))
+            peintre.setPen(trait)
+            peintre.drawArc(zone, depart, -portee)
+            depart -= portee
+        peintre.end()
+
+
+class LiveDot(QWidget):
+    """Point qui respire, a cote du texte de statut, tant qu'un run -- normal
+    ou stress-test -- tourne EN CE MOMENT.
+
+    Le texte seul ("Running…") se lit tout aussi bien immobile ; le pouls est
+    ce qui attire l'oeil du coin en travaillant ailleurs dans la fenetre.
+    Cache et arrete au repos : une animation qui tourne pour rien coute un
+    signal Qt a chaque frame, sans rien a montrer.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(9, 9)
+        self._couleur = t.ACCENT
+
+        self._effet = QGraphicsOpacityEffect(self)
+        self.setGraphicsEffect(self._effet)
+
+        self._anim = QPropertyAnimation(self._effet, b"opacity", self)
+        self._anim.setDuration(1400)
+        self._anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._anim.setKeyValueAt(0.0, 1.0)
+        self._anim.setKeyValueAt(0.5, 0.25)
+        self._anim.setKeyValueAt(1.0, 1.0)
+        self._anim.setLoopCount(-1)
+
+        self.setVisible(False)
+
+    def set_color(self, couleur: str) -> None:
+        self._couleur = couleur
+        self.update()
+
+    def start(self) -> None:
+        self.setVisible(True)
+        self._anim.start()
+
+    def stop(self) -> None:
+        self._anim.stop()
+        self._effet.setOpacity(1.0)
+        self.setVisible(False)
+
+    def paintEvent(self, event) -> None:
+        peintre = QPainter(self)
+        peintre.setRenderHint(QPainter.Antialiasing)
+        peintre.setPen(Qt.NoPen)
+        peintre.setBrush(QColor(self._couleur))
+        peintre.drawEllipse(self.rect())
 
 
 class RemainingPill(QWidget):
@@ -291,22 +426,76 @@ class ReaderResult(QWidget):
         # Pas de `restyle()` ici : le panneau de detail rebatit ces etiquettes
         # a chaque affichage, y compris quand il rejoue le theme. Les couleurs
         # lues maintenant sont donc toujours celles de la palette courante.
-        couleur = t.status_color(status)
         actif = status is not Status.PENDING
 
         icone = QLabel()
         icone.setPixmap(icons.status_icon(status).pixmap(14, 14))
-        icone.setStyleSheet("background: transparent;")
         icone.setVisible(actif)
 
+        # Nom d'objet + regle globale (voir QLabel#ReaderVerdict_* dans
+        # theme.py), PAS `setStyleSheet()` sur ce label : assez imbrique dans
+        # la mise en page (cette rangee, dans une carte, dans un panneau,
+        # dans une fenetre), poser une feuille ici -- meme une seule regle de
+        # couleur -- faisait dessiner a Qt un contour fantome autour de la
+        # rangee entiere.
         texte = QLabel(status.label if actif else "NOT RUN")
-        texte.setStyleSheet(
-            f"color: {couleur if actif else t.TEXT_FAINT};"
-            f"font-size: {t.TEXT_XS}px; font-weight: 700;"
-            "background: transparent;")
+        texte.setObjectName(f"ReaderVerdict_{status.value}")
 
         ligne.addWidget(icone)
         ligne.addWidget(texte)
+
+
+class RecentRunsSparkline(QWidget):
+    """Mini-tendance d'un test sur ses derniers runs : un trait par tentative,
+    du plus ancien (a gauche) au plus recent (a droite).
+
+    Juste assez pour repondre a une question sans ouvrir History : ce test
+    est-il fiable, ou instable depuis peu ? Pas de chiffres, pas d'axes -- une
+    barre verte ou rouge suffit a cette echelle.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._runs: tuple[bool, ...] = ()
+
+        self._ligne = QHBoxLayout(self)
+        self._ligne.setContentsMargins(0, 0, 0, 0)
+        self._ligne.setSpacing(2)
+        self.setFixedHeight(14)
+
+    def set_runs(self, runs: list[bool]) -> None:
+        self._runs = tuple(runs)
+        self._repeindre()
+
+    def _repeindre(self) -> None:
+        while self._ligne.count():
+            element = self._ligne.takeAt(0)
+            widget = element.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not self._runs:
+            self.setToolTip("No recorded history for this test yet.")
+            return
+
+        for ok in self._runs:
+            barre = QFrame()
+            barre.setFixedWidth(4)
+            couleur = t.status_color(Status.PASSED if ok else Status.FAILED)
+            barre.setStyleSheet(
+                f"background-color: {couleur}; border-radius: 1px;")
+            self._ligne.addWidget(barre)
+
+        echecs = sum(1 for ok in self._runs if not ok)
+        if echecs:
+            self.setToolTip(
+                f"Failed {echecs} of the last {len(self._runs)} runs.")
+        else:
+            self.setToolTip(f"Passed every one of the last {len(self._runs)} runs.")
+
+
+SCOPE_TESTS = "tests"
+SCOPE_FAILURES = "failures"
 
 
 class SearchBar(QWidget):
@@ -314,17 +503,23 @@ class SearchBar(QWidget):
 
     Une recherche, pas un filtre : masquer ce qui ne correspond pas fait perdre
     le contexte du test trouve (son fichier, sa classe, ses voisins).
+
+    Deux portees : par NOM (les tests eux-memes) ou dans les TRACES d'echec du
+    dernier run. Le meme champ, le meme compteur, la meme navigation -- seul
+    ce qui est compare change, d'un cote a l'autre du selecteur.
     """
 
     query_changed = pyqtSignal(str)
     next_match = pyqtSignal()
     previous_match = pyqtSignal()
+    scope_changed = pyqtSignal(str)  # SCOPE_TESTS ou SCOPE_FAILURES
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from PyQt5.QtWidgets import QLineEdit
+        from PyQt5.QtWidgets import QButtonGroup, QLineEdit
 
         self._last_emitted = ""
+        self._scope = SCOPE_TESTS
         self._typing_timer = QTimer(self)
         self._typing_timer.setSingleShot(True)
         self._typing_timer.setInterval(120)
@@ -354,10 +549,52 @@ class SearchBar(QWidget):
         self.next_button = self._nav("mdi.chevron-down", "Next match (Enter)",
                                      self.next_match)
 
+        # Deux icones a bascule, PAS une rangee segmentee sous le champ : une
+        # deuxieme rangee poussait tout le reste (l'arbre) vers le bas des
+        # qu'on ouvrait la fenetre. Le fond allume dit lequel est actif,
+        # comme le bouton de comparaison des consoles juste a cote ailleurs
+        # dans l'appli -- pas besoin d'un libelle en toutes lettres.
+        self._scope_group = QButtonGroup(self)
+        self._scope_group.setExclusive(True)
+        self.tests_button = self._nav("mdi.magnify", "Search by test name",
+                                      lambda: self._set_scope(SCOPE_TESTS))
+        self.tests_button.setCheckable(True)
+        self.tests_button.setChecked(True)
+        self.tests_button.setEnabled(True)
+
+        self.failures_button = self._nav(
+            "mdi.alert-circle-outline",
+            "Search inside the failure output of the last run",
+            lambda: self._set_scope(SCOPE_FAILURES))
+        self.failures_button.setCheckable(True)
+        self.failures_button.setEnabled(True)
+
+        self._scope_group.addButton(self.tests_button)
+        self._scope_group.addButton(self.failures_button)
+
         ligne.addWidget(self.field, 1)
         ligne.addWidget(self.counter)
         ligne.addWidget(self.prev_button)
         ligne.addWidget(self.next_button)
+        ligne.addWidget(self.tests_button)
+        ligne.addWidget(self.failures_button)
+
+    @property
+    def scope(self) -> str:
+        return self._scope
+
+    def _set_scope(self, scope: str) -> None:
+        if scope == self._scope:
+            return
+        self._scope = scope
+        self.field.setPlaceholderText(
+            "Find a test…" if scope == SCOPE_TESTS
+            else "Search in failure output…")
+        # Une recherche par nom n'a aucun sens rejouee dans les traces, et
+        # inversement : mieux vaut repartir d'un champ vide que d'un resultat
+        # qui pretend repondre a la meme question.
+        self.field.clear()
+        self.scope_changed.emit(scope)
 
     def _nav(self, glyph: str, infobulle: str, signal) -> QPushButton:
         bouton = QPushButton()
@@ -372,6 +609,8 @@ class SearchBar(QWidget):
         self._magnify.setIcon(icons.icon("mdi.magnify", t.TEXT_FAINT))
         self.prev_button.setIcon(icons.icon("mdi.chevron-up", t.TEXT_MUTED))
         self.next_button.setIcon(icons.icon("mdi.chevron-down", t.TEXT_MUTED))
+        self.tests_button.setIcon(icons.icon("mdi.magnify", t.TEXT_MUTED))
+        self.failures_button.setIcon(icons.icon("mdi.alert-circle-outline", t.TEXT_MUTED))
 
     def _queue_query(self, texte: str) -> None:
         """Regroupe une rafale de frappes en une seule recherche.

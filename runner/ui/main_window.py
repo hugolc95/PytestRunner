@@ -23,15 +23,20 @@ from PyQt5.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QMenu,
     QProgressBar,
     QPushButton,
     QSplitter,
     QStackedWidget,
+    QSystemTrayIcon,
     QTreeView,
     QVBoxLayout,
     QWidget,
@@ -41,6 +46,7 @@ from runner.domain import history
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Kind, Reader, RunRequest, Status
 from runner.domain.source import path_of as source_path
+from runner.domain.stress import MODE_N_TIMES, MODE_UNTIL_FAIL, StressAttempt, StressSummary
 from runner.domain.tree import build_tree, collapse_single_class
 from runner.domain.workspace import (
     MODE_SEQUENTIEL,
@@ -50,6 +56,7 @@ from runner.domain.workspace import (
 from runner.services.allure_service import AllureReportWorker
 from runner.services.interpreter_service import ProbeWorker
 from runner.services.run_service import CollectWorker, RunService
+from runner.services.stress_service import StressRunWorker
 from runner.ui import icons, theme
 from runner.ui import tokens as t
 from runner.ui.interpreter_dialog import InterpreterDialog
@@ -61,10 +68,15 @@ from runner.ui.results_panel import (
     ONGLET_SOURCE,
     ResultsPanel,
 )
+from runner.ui.run_n_times_dialog import RunNTimesDialog
 from runner.ui.tree_model import NODE_ROLE, NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import (
+    SCOPE_FAILURES,
+    SCOPE_TESTS,
+    CompassRing,
     EmptyState,
     ErrorDialog,
+    LiveDot,
     ReaderBar,
     ReaderHeaderView,
     RemainingPill,
@@ -177,6 +189,28 @@ class MainWindow(QMainWindow):
         self._elapsed.timeout.connect(self._tick)
         self._seconds = 0
 
+        # Un run long tourne souvent pendant qu'on fait autre chose : la
+        # notification systeme le signale sans qu'il faille revenir surveiller
+        # la fenetre. `isSystemTrayAvailable()` est faux sous un environnement
+        # sans bureau (CI, tests offscreen) -- l'icone reste alors invisible,
+        # `showMessage()` ne fait rien, et le reste de l'appli continue
+        # normalement.
+        self._tray = QSystemTrayIcon(icons.icon("mdi.flask-outline"), self)
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self._tray.show()
+
+        # "Run until it fails" / "Run N times" : un seul test rejoue plusieurs
+        # fois, hors du `RunService` normal -- sinon chaque tentative serait
+        # archivee dans l'historique et redeclencherait la notification de fin
+        # de run, comme si c'etait un vrai run complet.
+        self._stress_worker: StressRunWorker | None = None
+        self._stress_nodeid = ""
+        self._stress_mode = MODE_UNTIL_FAIL
+        self._stress_cap = 0
+        self._stress_ran = 0
+        self._stress_passed = 0
+        self._stress_failed: list[StressAttempt] = []
+
         self.model = TestTreeModel(self)
         self.model.selection_changed.connect(self._on_selection_changed)
 
@@ -271,6 +305,21 @@ class MainWindow(QMainWindow):
         self.allure_button.setToolTip("Open the Allure report of the last run")
         self.allure_button.clicked.connect(self.open_allure_report)
 
+        # Les verdicts, dans l'espace vide a droite de cette rangee -- un
+        # anneau qui dit la proportion d'un coup d'oeil, le detail par statut
+        # juste a cote pour filtrer, comme avant.
+        self.compass_ring = CompassRing()
+        self.compass_pct = QLabel("—")
+        self.compass_pct.setStyleSheet(
+            f"color: {t.TEXT}; font-weight: 600; font-size: {t.TEXT_SM + 4}px;")
+
+        self.pills = {
+            statut: StatusPill(statut)
+            for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
+        }
+        for pastille in self.pills.values():
+            pastille.filter_clicked.connect(self.filter_by_status)
+
         # Cette barre ne parle que du WORKSPACE : ou il est, et ce qui le
         # decrit. Les actions de run ont leur propre rangee, juste en dessous.
         ligne.addWidget(self.workspace_combo)
@@ -280,6 +329,10 @@ class MainWindow(QMainWindow):
         ligne.addWidget(self.history_button)
         ligne.addWidget(self.allure_button)
         ligne.addStretch(1)
+        ligne.addWidget(self.compass_ring)
+        ligne.addWidget(self.compass_pct)
+        for pastille in self.pills.values():
+            ligne.addWidget(pastille)
         return barre
 
     def _build_run_bar(self) -> QWidget:
@@ -350,6 +403,7 @@ class MainWindow(QMainWindow):
         self.search.query_changed.connect(self._on_search)
         self.search.next_match.connect(lambda: self._goto_match(1))
         self.search.previous_match.connect(lambda: self._goto_match(-1))
+        self.search.scope_changed.connect(self._on_search_scope_changed)
 
         self.select_all_button = self._quiet("mdi.checkbox-multiple-marked-outline",
                                              "Select all  (Ctrl+A)",
@@ -388,6 +442,16 @@ class MainWindow(QMainWindow):
         self.tree_toolbar.setVisible(False)
         colonne.addWidget(self.tree_toolbar)
 
+        # Resultats de la recherche "In failures" : un extrait par test
+        # touche, plutot que de forcer a naviguer un par un avec Entree pour
+        # savoir ce qu'on va trouver avant d'y sauter.
+        self.failure_results = QListWidget()
+        self.failure_results.setObjectName("Failures")
+        self.failure_results.setVisible(False)
+        self.failure_results.setMaximumHeight(180)
+        self.failure_results.itemClicked.connect(self._sur_resultat_echec_clique)
+        colonne.addWidget(self.failure_results)
+
         self.tree = QTreeView()
         self.tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.tree))
         self.tree.setModel(self.model)
@@ -400,6 +464,8 @@ class MainWindow(QMainWindow):
         # Au clavier aussi : parcourir l'arbre aux fleches doit mettre a jour
         # la fiche, sinon la souris devient obligatoire pour lire un echec.
         self.tree.selectionModel().currentRowChanged.connect(self._on_tree_current)
+        self.tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree.customContextMenuRequested.connect(self._menu_contextuel_arbre)
 
         entete = self.tree.header()
         entete.setStretchLastSection(False)
@@ -476,29 +542,39 @@ class MainWindow(QMainWindow):
         self.progress.setFixedWidth(180)
         self.progress.setVisible(False)
 
+        # Le pouls qui dit "ca tourne EN CE MOMENT" -- cache et arrete des
+        # que `_set_status_idle()` reprend la main.
+        self.live_dot = LiveDot()
+
         self.status_label = QLabel("Ready")
         self.status_label.setObjectName("Muted")
+
+        # Le texte et le pouls vivent DANS un badge -- pas juste cote a cote
+        # sur le fond nu de la barre d'etat. Sans fond propre, seul le texte
+        # colore distinguait un run en cours du repos ; ici c'est toute une
+        # forme qui apparait.
+        self.live_chip = QWidget()
+        # Meme piege que le badge de statut : sans cet attribut, le style
+        # natif Windows ignore silencieusement le fond/lisere poses par
+        # `setStyleSheet()` sur un QWidget nu.
+        self.live_chip.setAttribute(Qt.WA_StyledBackground, True)
+        puce = QHBoxLayout(self.live_chip)
+        puce.setContentsMargins(t.SPACE_2, t.SPACE_1, t.SPACE_3, t.SPACE_1)
+        puce.setSpacing(t.SPACE_2)
+        puce.addWidget(self.live_dot)
+        puce.addWidget(self.status_label)
 
         self.elapsed_label = QLabel("")
         self.elapsed_label.setObjectName("Faint")
 
-        self.pills = {
-            statut: StatusPill(statut)
-            for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
-        }
-        for pastille in self.pills.values():
-            pastille.clicked.connect(self.filter_by_status)
-
         # A gauche des verdicts : ce qui reste n'est pas un resultat.
         self.remaining_pill = RemainingPill()
 
-        barre.addWidget(self.status_label)
+        barre.addWidget(self.live_chip)
         barre.addWidget(self.progress)
         barre.addWidget(self.elapsed_label)
         barre.addPermanentWidget(QLabel(""))
         barre.addPermanentWidget(self.remaining_pill)
-        for pastille in self.pills.values():
-            barre.addPermanentWidget(pastille)
 
     def _build_menus(self) -> None:
         """Menus et raccourcis. Chaque action frequente en a un, visible ici."""
@@ -891,8 +967,6 @@ class MainWindow(QMainWindow):
         coloration, pastilles dont la teinte depend d'une donnee -- que les
         `restyle()` ci-dessous rejouent.
         """
-        from PyQt5.QtWidgets import QApplication
-
         t.set_theme(nom)
         self.settings.setValue(K_THEME, t.current_theme())
 
@@ -909,6 +983,10 @@ class MainWindow(QMainWindow):
             "mdi.weather-sunny" if soleil else "mdi.weather-night", t.TEXT_MUTED))
         self.theme_button.setToolTip(
             "Switch to the light theme" if soleil else "Switch to the dark theme")
+        # Ni une icone teintee ni un StatusPill : juste un label dont la
+        # couleur ne vient pas de la feuille globale, a rejouer a la main.
+        self.compass_pct.setStyleSheet(
+            f"color: {t.TEXT}; font-weight: 600; font-size: {t.TEXT_SM + 4}px;")
 
         for glyphe, bouton in (
                 ("mdi.folder-open-outline", self.browse_button),
@@ -1213,13 +1291,58 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot()
     def stop_run(self) -> None:
+        """Arrete ce qui tourne -- un run normal, ou une serie de stress-test.
+
+        Un seul bouton pour les deux : avant, arreter un stress-test passait
+        par le bouton d'un bandeau a part, qu'il fallait d'abord retrouver.
+        """
         if self.service.busy:
             self.service.cancel()
             self.status_label.setText("Stopping…")
+        elif self._stress_worker is not None:
+            self._arreter_stress()
+            self.status_label.setText("Stopping…")
+
+    def _set_status_live(self, texte: str) -> None:
+        """Style "en cours" du label de statut : couleur pleine et gras au
+        lieu du gris attenue du repos.
+
+        Le meme traitement sert un run normal ET une serie de stress-test --
+        un seul endroit a regarder, plutot qu'un widget dedie a part qui
+        finit par se cacher dans un coin qu'on ne regarde plus.
+        """
+        couleur = t.status_color(Status.RUNNING)
+        # Nom d'objet + regle globale (`QLabel#StatusLive` dans theme.py),
+        # jamais `setStyleSheet()` directement sur ce label : loge dans le
+        # badge `live_chip`, lui-meme dans la barre de statut de la fenetre,
+        # une feuille posee ici faisait dessiner a Qt un contour fantome
+        # autour de la ligne qui le contient. `unpolish`/`polish` est
+        # necessaire ici (et pas ailleurs dans ce fichier) parce que ce
+        # label existant change de nom d'objet en cours de vie -- les autres
+        # ne font que naitre avec le bon nom.
+        self.status_label.setObjectName("StatusLive")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+        self.status_label.setText(texte)
+        self.live_dot.set_color(couleur)
+        self.live_dot.start()
+        self.live_chip.setStyleSheet(
+            f"background-color: {t.rgba(couleur, 0.12)};"
+            f"border: 1px solid {t.rgba(couleur, 0.3)};"
+            f"border-radius: {t.RADIUS_PILL}px;")
+
+    def _set_status_idle(self, texte: str) -> None:
+        self.status_label.setObjectName("Muted")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
+        self.status_label.setText(texte)
+        self.live_dot.stop()
+        self.live_chip.setStyleSheet("")
 
     @pyqtSlot(object)
     def _on_run_started(self, request: RunRequest) -> None:
         self.model.clear_statuses()
+        self.model.clear_stress_annotation()
         self.results.begin_run()
 
         self.progress.setVisible(True)
@@ -1238,7 +1361,7 @@ class MainWindow(QMainWindow):
         self._seconds = 0
         self.elapsed_label.setText("0s")
         self._elapsed.start()
-        self.status_label.setText(f"Running {len(request.nodeids)} tests…")
+        self._set_status_live(f"Running {len(request.nodeids)} tests…")
         self._update_actions()
 
     @pyqtSlot(object)
@@ -1266,6 +1389,10 @@ class MainWindow(QMainWindow):
         rendus = self.model.status_counts()
         for statut, pastille in self.pills.items():
             pastille.set_value(rendus.get(statut, 0))
+        self.compass_ring.set_counts(rendus)
+        total = sum(rendus.values())
+        passed = rendus.get(Status.PASSED, 0)
+        self.compass_pct.setText(f"{round(100 * passed / total)}%" if total else "—")
 
         faits = self.model.done()
         self.progress.setValue(faits)
@@ -1279,7 +1406,7 @@ class MainWindow(QMainWindow):
         # Les nombres viennent de l'arbre, pas du compte de signaux porte par
         # le service : c'est la meme raison que pour les pastilles.
         self._rafraichir_compteurs()
-        self.status_label.setText(f"Running… {self.remaining_pill.value()} left")
+        self._set_status_live(f"Running… {self.remaining_pill.value()} left")
 
     @pyqtSlot(list)
     def _on_run_finished(self, rapports: list) -> None:
@@ -1297,7 +1424,7 @@ class MainWindow(QMainWindow):
             resume = f"{echecs} failed"
         else:
             resume = "All tests passed"
-        self.status_label.setText(f"{resume} · {self._seconds}s")
+        self._set_status_idle(f"{resume} · {self._seconds}s")
         # La duree est deja dans le resume : la laisser aussi a cote
         # l'afficherait deux fois.
         self.elapsed_label.clear()
@@ -1307,6 +1434,31 @@ class MainWindow(QMainWindow):
             # Auto-regeneration : l'utilisateur n'a jamais besoin de cliquer
             # sur le bouton Allure juste pour rafraichir le HTML apres un run.
             self._lancer_generation_allure(ouvrir_apres=False)
+        if not annule:
+            self._notifier_fin_de_run(resume)
+
+    def _notifier_fin_de_run(self, resume: str) -> None:
+        """Notification systeme : le run a souvent fini pendant qu'on faisait
+        autre chose, et rien d'autre ne le signale une fois la fenetre hors
+        de vue.
+
+        Les quatre compteurs sont TOUJOURS les quatre, meme a zero : contrairement
+        aux pastilles de la barre d'etat, une notification qui disparait ne se
+        relit pas -- mieux vaut le zero explicite qu'un compte qu'on devine absent.
+        """
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            return
+        rendus = self.model.status_counts()
+        detail = (
+            f"{rendus.get(Status.PASSED, 0)} passed · "
+            f"{rendus.get(Status.FAILED, 0)} failed · "
+            f"{rendus.get(Status.SKIPPED, 0)} skipped · "
+            f"{rendus.get(Status.ERROR, 0)} error"
+        )
+        icone = (QSystemTrayIcon.Critical
+                if rendus.get(Status.FAILED, 0) or rendus.get(Status.ERROR, 0)
+                else QSystemTrayIcon.Information)
+        self._tray.showMessage(resume, detail, icone)
 
     def _archiver(self, rapports: list) -> None:
         """Depose un run par lecteur dans l'historique.
@@ -1375,14 +1527,28 @@ class MainWindow(QMainWindow):
         if nodeid:
             self.results.show_test(
                 nodeid, self.model.statuses_for_nodeid(nodeid),
-                self.workspace.path if self.workspace else "")
+                self.workspace.path if self.workspace else "",
+                self._markers_by_nodeid.get(nodeid, ()),
+                self._recent_runs_for(nodeid), self.history.last_seen(nodeid))
             return
 
         compteurs, echecs = self.model.subtree_summary(premiere)
         chemin, nom = self._situer(premiere)
         source, saut = self._source_du_groupe(premiere)
+        nodeids = self.model.leaf_nodeids_under(premiere)
         self.results.show_group(chemin, nom, self.model.readers,
-                                compteurs, echecs, source, saut)
+                                compteurs, echecs, source, saut, nodeids)
+
+    def _recent_runs_for(self, nodeid: str) -> dict[int, list[bool]]:
+        """Mini-tendance de ce test, par lecteur -- absente des lecteurs qui
+        n'ont encore aucun run enregistre pour lui."""
+        lecteurs = self.model.readers or (Reader("", 0),)
+        resultat = {}
+        for lecteur in lecteurs:
+            runs = self.history.recent_runs(nodeid, lecteur.name)
+            if runs:
+                resultat[lecteur.index] = runs
+        return resultat
 
     def _source_du_groupe(self, index: QModelIndex) -> tuple:
         """Fichier a montrer pour ce regroupement, et ou s'y placer.
@@ -1426,6 +1592,244 @@ class MainWindow(QMainWindow):
             return
         self.tree.setCurrentIndex(index)
         self.tree.scrollTo(index)
+
+    # =====================================================================
+    # Menu contextuel de l'arbre
+    # =====================================================================
+
+    # Filet de securite de "Run until it fails" : sans lui, un test qui ne
+    # casse jamais tournerait indefiniment, sans que rien ne le dise.
+    STRESS_CAP_UNTIL_FAIL = 50
+
+    def _menu_contextuel_arbre(self, point) -> None:
+        index = self.tree.indexAt(point)
+        if not index.isValid():
+            return
+        # Meme geste qu'un clic : la fiche affichee suit le noeud sur lequel
+        # on vient de faire un clic droit, pas celui d'avant.
+        self.tree.setCurrentIndex(index)
+        premiere = index.siblingAtColumn(0)
+        nodeid = self.model.data(premiere, NODEID_ROLE)
+
+        menu = QMenu(self)
+        if nodeid:
+            self._construire_menu_test(menu, nodeid)
+        else:
+            self._construire_menu_groupe(menu, premiere)
+        if menu.actions():
+            menu.exec_(self.tree.viewport().mapToGlobal(point))
+
+    def _construire_menu_test(self, menu: QMenu, nodeid: str) -> None:
+        occupe = self.service.busy or self._stress_worker is not None
+        action_run = menu.addAction(
+            icons.icon("mdi.play"), "Run only this test",
+            lambda: self._start([nodeid]))
+        action_run.setEnabled(not occupe)
+
+        action_until = menu.addAction(
+            icons.icon("mdi.repeat"), "Run until it fails…",
+            lambda: self._lancer_stress(nodeid, MODE_UNTIL_FAIL,
+                                        self.STRESS_CAP_UNTIL_FAIL))
+        action_until.setEnabled(not occupe)
+
+        action_n_fois = menu.addAction(
+            icons.icon("mdi.layers-triple-outline"), "Run N times…",
+            lambda: self._demander_run_n_fois(nodeid))
+        action_n_fois.setEnabled(not occupe)
+
+        menu.addSeparator()
+        menu.addAction(icons.icon("mdi.content-copy"), "Copy nodeid",
+                       lambda: QApplication.clipboard().setText(nodeid))
+
+        echec = self._echec_connu_pour(nodeid)
+        action_trace = menu.addAction(
+            icons.icon("mdi.content-copy"), "Copy failure trace",
+            lambda: QApplication.clipboard().setText(f"{echec.title}\n\n{echec.body}"))
+        action_trace.setEnabled(echec is not None)
+
+        menu.addSeparator()
+        menu.addAction(icons.icon("mdi.file-outline"), "Open file",
+                       lambda: self.results.show_tab(ONGLET_SOURCE))
+
+    def _construire_menu_groupe(self, menu: QMenu, index: QModelIndex) -> None:
+        occupe = self.service.busy or self._stress_worker is not None
+        nodeids = self.model.leaf_nodeids_under(index)
+        action_run = menu.addAction(
+            icons.icon("mdi.play"), "Run only this",
+            lambda: self._start(nodeids))
+        action_run.setEnabled(not occupe and bool(nodeids))
+
+        noeud = self.model.data(index, NODE_ROLE)
+        if noeud is not None and noeud.kind is not Kind.FOLDER:
+            menu.addSeparator()
+            menu.addAction(icons.icon("mdi.file-outline"), "Open file",
+                           lambda: self.results.show_tab(ONGLET_SOURCE))
+
+    def _echec_connu_pour(self, nodeid: str):
+        """Le dernier echec connu de ce test, tous lecteurs confondus.
+
+        Assez pour activer "Copy failure trace" : le menu ne pretend pas
+        choisir LE bon lecteur quand plusieurs ont echoue differemment, il
+        prend juste le premier qui a quelque chose a montrer.
+        """
+        for lecteur in (self.model.readers or (Reader("", 0),)):
+            echec = self.results.failure_for(nodeid, lecteur.index)
+            if echec is not None:
+                return echec
+        return None
+
+    # =====================================================================
+    # "Run until it fails" / "Run N times"
+    # =====================================================================
+
+    def _demander_run_n_fois(self, nodeid: str) -> None:
+        dialogue = RunNTimesDialog(20, self)
+        if dialogue.exec_() == QDialog.Accepted:
+            self._lancer_stress(nodeid, MODE_N_TIMES, dialogue.count())
+
+    def _lancer_stress(self, nodeid: str, mode: str, cap: int) -> None:
+        if (self.workspace is None or self.service.busy
+                or self._stress_worker is not None):
+            return
+
+        # Meme garde qu'un run normal : une correction encore dans l'editeur
+        # ferait rejouer la version d'avant, cap fois, sans que rien ne le dise.
+        if not self.results.source.save():
+            ErrorDialog.show_error(
+                self, "Could not save the source",
+                "The file you edited could not be written, so the run would "
+                "use the previous version.",
+                str(self.results.source.path() or ""))
+            return
+
+        python = self._require_interpreter()
+        if not python:
+            return
+
+        lecteurs = self._readers_to_run() or (Reader("", 0),)
+        requete = RunRequest(
+            workspace=self.workspace.path, interpreter=python,
+            nodeids=(nodeid,), readers=lecteurs,
+            config_path=self.workspace.config_path, sequential=True,
+        )
+
+        self._stress_nodeid = nodeid
+        self._stress_mode = mode
+        self._stress_cap = cap
+        self._stress_ran = 0
+        self._stress_passed = 0
+        self._stress_failed = []
+
+        self._stress_worker = StressRunWorker(
+            requete, lecteurs, self.workspace.env, mode, cap, self)
+        self._stress_worker.attempt_done.connect(self._sur_tentative_stress)
+        self._stress_worker.finished_stress.connect(self._sur_fin_stress)
+
+        self._set_status_live(self._stress_detail(mode, nodeid, 0, cap))
+        self.model.set_stress_annotation(nodeid, self._stress_compact(mode, 0, cap))
+        self.results.detail.show_stress_running(nodeid, mode, cap, 0, 0, 0)
+        self._update_actions()
+        self._stress_worker.start()
+
+    def _stress_compact(self, mode: str, ran: int, cap: int) -> str:
+        """Le texte colle sur la ligne du test dans l'arbre : court expres,
+        il partage la ligne avec le nom du test. Le detail complet est dans
+        la barre de statut -- voir `_stress_detail`."""
+        prefixe = "Stress" if mode == MODE_UNTIL_FAIL else "Run"
+        return f"{prefixe} {ran + 1}/{cap}"
+
+    def _stress_detail(self, mode: str, nodeid: str, ran: int, cap: int) -> str:
+        court = nodeid.split("::", 1)[-1].replace("::", " › ")
+        verbe = "Stress-testing" if mode == MODE_UNTIL_FAIL else "Running"
+        mot = "attempt" if mode == MODE_UNTIL_FAIL else "run"
+        return f"{verbe} {court} — {mot} {ran + 1} of {cap}"
+
+    def _sur_tentative_stress(self, tentative: StressAttempt) -> None:
+        self._stress_ran = tentative.number
+        if tentative.ok:
+            self._stress_passed += 1
+        else:
+            self._stress_failed.append(tentative)
+
+        # Le point sur l'arbre suit le verdict propre a CHAQUE lecteur : un
+        # flaky qui ne rate que sur l'un d'eux ne doit pas se voir imputer aux
+        # autres, qui ont reellement passe cette tentative.
+        for resultat in tentative.reports:
+            self.model.apply_outcome(
+                self._stress_nodeid, resultat.status, resultat.reader.index)
+
+        self._archiver_stress(tentative)
+
+        self._set_status_live(self._stress_detail(
+            self._stress_mode, self._stress_nodeid, self._stress_ran, self._stress_cap))
+        self.model.set_stress_annotation(
+            self._stress_nodeid,
+            self._stress_compact(self._stress_mode, self._stress_ran, self._stress_cap))
+        self.results.detail.show_stress_running(
+            self._stress_nodeid, self._stress_mode, self._stress_cap,
+            self._stress_ran, self._stress_passed, len(self._stress_failed))
+
+    def _archiver_stress(self, tentative: StressAttempt) -> None:
+        """Depose une tentative dans l'historique, un lecteur = une entree --
+        exactement comme un run normal (`_archiver`).
+
+        Sans ca, "Run until it fails" et "Run N times" ne laissaient RIEN
+        dans l'onglet History : chaque tentative doit s'y retrouver, avec sa
+        propre sortie et son propre JUnit, pour pouvoir la rejouer ou lire ses
+        logs plus tard comme n'importe quel autre run.
+        """
+        if self.workspace is None:
+            return
+        identifiant = history.nouvel_identifiant()
+        for resultat in tentative.reports:
+            rapport = resultat.report
+            entree = history.RunEntry(
+                id=identifiant,
+                timestamp=time.time(),
+                workspace=self.workspace.path,
+                build_number=None,
+                log_root=str(self.workspace.log_root),
+                reader=resultat.reader.name,
+                duration=rapport.duration,
+                exit_code=rapport.exit_code,
+                counts={s.name: n for s, n in rapport.counts.items()},
+                nodeids=(self._stress_nodeid,),
+                failed_nodeids=(() if resultat.ok else (self._stress_nodeid,)),
+                junit_path=rapport.junit_path,
+            )
+            self.history.add(entree, rapport.output)
+
+    def _sur_fin_stress(self, resume: StressSummary) -> None:
+        self._stress_worker = None
+        nodeid = self._stress_nodeid
+        court = nodeid.split("::", 1)[-1].replace("::", " › ")
+
+        if resume.cancelled:
+            compact = f"Stopped {resume.ran}/{resume.cap}"
+            detail = f"Stopped — {court} — {resume.ran} of {resume.cap} runs done"
+        elif resume.mode == MODE_UNTIL_FAIL and resume.failed_attempts:
+            derniere = resume.failed_attempts[-1]
+            compact = f"Failed {derniere.number}/{resume.cap}"
+            detail = (f"Stopped — {court} failed — "
+                     f"attempt {derniere.number} of {resume.cap}")
+        elif resume.mode == MODE_UNTIL_FAIL:
+            compact = f"Never failed ({resume.ran})"
+            detail = f"Never failed — {court} — {resume.ran} of {resume.cap} attempts"
+        else:
+            taux = round(100 * resume.passed / resume.ran) if resume.ran else 0
+            echecs = len(resume.failed_attempts)
+            compact = f"{resume.ran}/{resume.cap} · {taux}%"
+            detail = (f"{resume.ran} of {resume.cap} runs complete — {court} — "
+                     f"{resume.passed} passed · {echecs} failed · {taux}% pass rate")
+
+        self._set_status_idle(detail)
+        self.model.set_stress_annotation(nodeid, compact)
+        self.results.detail.show_stress_done(nodeid, resume)
+        self._update_actions()
+
+    def _arreter_stress(self) -> None:
+        if self._stress_worker is not None:
+            self._stress_worker.cancel()
 
     @pyqtSlot(int, int)
     def _on_selection_changed(self, coches: int, total: int) -> None:
@@ -1593,10 +1997,89 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(str)
     def _on_search(self, texte: str) -> None:
-        self._matches = self.model.matching_nodeids(texte)
+        if self.search.scope == SCOPE_FAILURES:
+            trouvailles = self._matching_failures(texte)
+            self._matches = [nodeid for nodeid, _ in trouvailles]
+            self._remplir_resultats_echecs(trouvailles, texte)
+        else:
+            self._matches = self.model.matching_nodeids(texte)
+            self.failure_results.setVisible(False)
+
         self._match_index = 0 if self._matches else -1
         if self._matches:
             self._reveal(self._matches[0])
+        self.search.set_matches(self._match_index + 1, len(self._matches))
+
+    def _on_search_scope_changed(self, scope: str) -> None:
+        # `field.clear()` ne redeclenche pas `_on_search` si le champ etait
+        # deja vide (aucun texte a supprimer) : sans cette remise a plat, un
+        # changement de portee a vide laisserait les resultats de l'autre.
+        self._matches = []
+        self._match_index = -1
+        self.search.set_matches(0, 0)
+        self.failure_results.clear()
+        self.failure_results.setVisible(False)
+
+    def _matching_failures(self, texte: str) -> list[tuple[str, object]]:
+        """Nodeids dont la trace d'echec CONNUE contient `texte`.
+
+        Cherche dans les traces deja extraites pour l'affichage (voir
+        `ResultsPanel.failure_for`), pas en relisant la sortie brute a
+        chaque frappe.
+        """
+        aiguille = texte.strip().lower()
+        if not aiguille:
+            return []
+        lecteurs = self.model.readers or (Reader("", 0),)
+        trouvailles: list[tuple[str, object]] = []
+        for nodeid in self.model.nodeids():
+            for lecteur in lecteurs:
+                echec = self.results.failure_for(nodeid, lecteur.index)
+                if echec is not None and aiguille in echec.body.lower():
+                    trouvailles.append((nodeid, echec))
+                    break
+        return trouvailles
+
+    def _remplir_resultats_echecs(self, trouvailles: list, texte: str) -> None:
+        self.failure_results.clear()
+        if not texte.strip():
+            self.failure_results.setVisible(False)
+            return
+        if not trouvailles:
+            self.failure_results.setVisible(True)
+            vide = QListWidgetItem("No failure output matches this search.")
+            vide.setFlags(Qt.NoItemFlags)
+            self.failure_results.addItem(vide)
+            return
+
+        self.failure_results.setVisible(True)
+        for nodeid, echec in trouvailles:
+            court = nodeid.split("::", 1)[-1].replace("::", " › ")
+            extrait = self._extrait_correspondant(echec.body, texte)
+            item = QListWidgetItem(f"{court}\n{extrait}" if extrait else court)
+            item.setData(Qt.UserRole, nodeid)
+            item.setToolTip(nodeid)
+            self.failure_results.addItem(item)
+
+    def _extrait_correspondant(self, corps: str, texte: str) -> str:
+        """La premiere ligne de la trace qui contient `texte`, tronquee.
+
+        C'est ce qui permet de juger un resultat SANS y sauter d'abord : la
+        ligne qui a matche, pas tout le pave de trace.
+        """
+        aiguille = texte.strip().lower()
+        for ligne in corps.splitlines():
+            if aiguille in ligne.lower():
+                propre = ligne.strip()
+                return propre if len(propre) <= 120 else propre[:117] + "…"
+        return ""
+
+    def _sur_resultat_echec_clique(self, item: QListWidgetItem) -> None:
+        nodeid = item.data(Qt.UserRole)
+        if not nodeid:
+            return
+        self._match_index = self._matches.index(nodeid) if nodeid in self._matches else -1
+        self._reveal(nodeid)
         self.search.set_matches(self._match_index + 1, len(self._matches))
 
     def _goto_match(self, pas: int) -> None:
@@ -1623,7 +2106,11 @@ class MainWindow(QMainWindow):
 
     def _update_actions(self) -> None:
         charge = self.workspace is not None
-        occupe = self.service.busy
+        # Un stress-test occupe l'interpreteur tout autant qu'un run normal :
+        # Run / Re-run doivent s'eteindre pendant qu'il tourne, sous peine de
+        # deux processus pytest qui se marchent dessus. Stop les couvre tous
+        # les deux desormais -- `stop_run()` sait lequel des deux arreter.
+        occupe = self.service.busy or self._stress_worker is not None
         coches, _ = self.model.counts()
 
         # Tout decocher dans la barre des lecteurs ne laisse rien a parcourir.
@@ -1683,4 +2170,7 @@ class MainWindow(QMainWindow):
         if self._allure_server is not None:
             self._allure_server.shutdown()
             self._allure_server.server_close()
+        if self._stress_worker is not None:
+            self._stress_worker.cancel()
+            self._stress_worker.wait(3000)
         super().closeEvent(event)

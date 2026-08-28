@@ -10,7 +10,7 @@ from __future__ import annotations
 import textwrap
 
 import pytest
-from PyQt5.QtCore import QModelIndex
+from PyQt5.QtCore import QModelIndex, Qt
 
 from runner.domain.models import Reader, Status
 from runner.domain.tree import build_tree
@@ -71,11 +71,25 @@ def joue(fenetre):
     fenetre.model.apply_outcome(NODEIDS[1], Status.FAILED, 0)
     fenetre.model.apply_outcome(NODEIDS[2], Status.PASSED, 0)
     fenetre.model.apply_outcome(NODEIDS[3], Status.SKIPPED, 0)
-    for statut, pastille in fenetre.pills.items():
-        pastille.set_value(sum(
-            1 for n in NODEIDS
-            if fenetre.model.statuses_for_nodeid(n).get(0) is statut))
+    fenetre._rafraichir_compteurs()
     return fenetre
+
+
+# =========================================================================
+# Emplacement des compteurs
+# =========================================================================
+
+
+def test_the_pills_live_in_the_workspace_bar_not_the_status_bar(fenetre):
+    """Les verdicts vivent desormais, plus grands, dans l'espace vide de la
+    barre du workspace -- plus question de les repeter en plus petit tout en
+    bas, ce qui affichait deux fois le meme chiffre."""
+    barre_workspace = fenetre.workspace_combo.parentWidget().layout()
+    for pastille in fenetre.pills.values():
+        assert barre_workspace.indexOf(pastille) >= 0
+
+    for pastille in fenetre.pills.values():
+        assert pastille.parentWidget() is not fenetre.statusBar()
 
 
 # =========================================================================
@@ -153,34 +167,59 @@ def test_the_active_pill_says_which_filter_is_on(joue):
     assert "passed" in joue.status_label.text().lower()
 
 
+def test_the_active_pill_actually_looks_different(joue):
+    """Le badge, pas seulement le drapeau : sinon rien a l'ecran ne dit quel
+    filtre est en cours."""
+    pastille = joue.pills[Status.PASSED]
+    repos = pastille.styleSheet()
+
+    joue.filter_by_status(Status.PASSED)
+
+    assert pastille.styleSheet() != repos
+
+
+def test_a_pill_defines_its_own_hover_style(joue):
+    """Sans une regle `:hover` explicite, le style natif de Windows dessine
+    son propre relief au survol -- un rectangle sombre par-dessus le fond
+    clair du badge, illisible en theme clair."""
+    pastille = joue.pills[Status.FAILED]
+
+    assert "QPushButton:hover" in pastille.styleSheet()
+
+
 def test_a_pill_at_zero_cannot_be_clicked(fenetre):
     """Filtrer sur un statut qu'aucun test ne porte viderait l'arbre sans
     rien apprendre."""
     recus = []
     pastille = fenetre.pills[Status.ERROR]
-    pastille.clicked.connect(recus.append)
+    pastille.filter_clicked.connect(recus.append)
     pastille.set_value(0)
 
-    from PyQt5.QtCore import QPoint, Qt
-    from PyQt5.QtGui import QMouseEvent
+    pastille.click()
 
-    event = QMouseEvent(QMouseEvent.MouseButtonPress, QPoint(2, 2),
-                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
-    pastille.mousePressEvent(event)
     assert recus == []
+
+
+def test_the_compass_ring_reflects_the_same_counts_as_the_pills(joue):
+    """L'anneau et les pastilles lisent le meme etat -- pas question qu'ils
+    divergent apres un run."""
+    for statut, pastille in joue.pills.items():
+        assert f"{pastille.value()} {statut.label.lower()}" in joue.compass_ring.toolTip()
+
+
+def test_the_compass_percentage_matches_the_passed_share(joue):
+    total = sum(p.value() for p in joue.pills.values())
+    attendu = round(100 * joue.pills[Status.PASSED].value() / total)
+    assert joue.compass_pct.text() == f"{attendu}%"
 
 
 def test_a_pill_with_results_emits_its_status(joue):
     recus = []
     pastille = joue.pills[Status.FAILED]
-    pastille.clicked.connect(recus.append)
+    pastille.filter_clicked.connect(recus.append)
 
-    from PyQt5.QtCore import QPoint, Qt
-    from PyQt5.QtGui import QMouseEvent
+    pastille.click()
 
-    event = QMouseEvent(QMouseEvent.MouseButtonPress, QPoint(2, 2),
-                        Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
-    pastille.mousePressEvent(event)
     assert recus == [Status.FAILED]
 
 

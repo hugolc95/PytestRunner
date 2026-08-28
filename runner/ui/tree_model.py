@@ -89,6 +89,9 @@ class TestTreeModel(QAbstractItemModel):
         # fil de l'eau : le recalculer a chaque resultat reparcourrait tout
         # l'arbre, ce qui redonnerait le gel quadratique deja corrige.
         self._tally: dict[Status, int] = {}
+        # Le nodeid stress-teste, et le texte court a coller sur sa ligne --
+        # voir `set_stress_annotation`.
+        self._stress_annotation: tuple[str, str] | None = None
 
     # ------------------------------------------------------------- chargement
 
@@ -192,7 +195,11 @@ class TestTreeModel(QAbstractItemModel):
         return self._data_colonne_statut(ligne, index.column() - 1, role)
 
     def _data_colonne_nom(self, ligne: _Row, role):
+        annotee = (self._stress_annotation is not None
+                  and ligne.node.nodeid == self._stress_annotation[0])
         if role == Qt.DisplayRole:
+            if annotee:
+                return f"{ligne.node.name}   {self._stress_annotation[1]}"
             return ligne.node.name
         if role == Qt.CheckStateRole:
             return self._check_state(ligne)
@@ -203,12 +210,42 @@ class TestTreeModel(QAbstractItemModel):
         if role == NODEID_ROLE:
             return ligne.node.nodeid
         if role == Qt.ToolTipRole:
+            if annotee:
+                return f"{ligne.node.nodeid or ligne.node.name} — {self._stress_annotation[1]}"
             return ligne.node.nodeid or ligne.node.name
-        if role == Qt.ForegroundRole and ligne.node.kind is Kind.FOLDER:
+        if role == Qt.ForegroundRole:
             from PyQt5.QtGui import QColor
 
-            return QColor(t.TEXT_MUTED)
+            if annotee:
+                return QColor(t.ACCENT)
+            if ligne.node.kind is Kind.FOLDER:
+                return QColor(t.TEXT_MUTED)
         return None
+
+    def set_stress_annotation(self, nodeid: str, texte: str) -> None:
+        """Colle `texte` a la suite du nom de `nodeid`, dans l'arbre.
+
+        Le badge vit sur la ligne du test qu'on stresse, la ou on a clique
+        "Run N times" pour le lancer -- pas dans un widget a part, ailleurs
+        dans la fenetre, qu'il faut associer mentalement au bon test.
+        """
+        self._stress_annotation = (nodeid, texte)
+        self._repeindre_annotation(nodeid)
+
+    def clear_stress_annotation(self) -> None:
+        if self._stress_annotation is None:
+            return
+        nodeid = self._stress_annotation[0]
+        self._stress_annotation = None
+        self._repeindre_annotation(nodeid)
+
+    def _repeindre_annotation(self, nodeid: str) -> None:
+        ligne = self._by_nodeid.get(nodeid)
+        if ligne is None:
+            return
+        index = self.createIndex(ligne.row, 0, ligne)
+        self.dataChanged.emit(
+            index, index, [Qt.DisplayRole, Qt.ForegroundRole, Qt.ToolTipRole])
 
     def _data_colonne_statut(self, ligne: _Row, reader_index: int, role):
         statut = self.status_for(ligne, reader_index)
@@ -485,6 +522,18 @@ class TestTreeModel(QAbstractItemModel):
         for feuille in ligne.leaves():
             return feuille.node.nodeid
         return ""
+
+    def leaf_nodeids_under(self, index: QModelIndex) -> list[str]:
+        """Tous les nodeids sous ce noeud, coches ou non.
+
+        Pour "Run only this" depuis le menu contextuel d'un dossier ou d'un
+        fichier : le geste porte sur ce qui est sous le clic, pas sur ce qui
+        est coche ailleurs dans l'arbre.
+        """
+        ligne = index.internalPointer() if index.isValid() else None
+        if ligne is None:
+            return []
+        return [feuille.node.nodeid for feuille in ligne.leaves()]
 
     def nodeids(self) -> list[str]:
         """Tous les nodeids de l'arbre, dans l'ordre ou il les montre."""

@@ -304,6 +304,52 @@ def test_only_the_recent_runs_are_looked_at(historique):
     assert [f.nodeid for f in historique.flaky(fenetre=10)] == ["t1"]
 
 
+# ------------------------------------------------------ historique par test
+
+def test_recent_runs_reads_oldest_to_newest(historique):
+    """Pour une mini-tendance qui se lit de gauche a droite comme le temps."""
+    historique.add(entree("r1", decalage=-30, echecs=("t1",)))
+    historique.add(entree("r2", decalage=-20, echecs=()))
+    historique.add(entree("r3", decalage=-10, echecs=()))
+
+    assert historique.recent_runs("t1") == [False, True, True]
+
+
+def test_recent_runs_keeps_readers_apart(historique):
+    """Meme principe que `flaky()` : un lecteur ne doit rien dire de l'autre."""
+    historique.add(entree("a1", reader="A", echecs=("t1",)))
+    historique.add(entree("b1", reader="B", echecs=()))
+
+    assert historique.recent_runs("t1", reader="A") == [False]
+    assert historique.recent_runs("t1", reader="B") == [True]
+
+
+def test_recent_runs_stops_at_the_limit(historique):
+    for i in range(15):
+        historique.add(entree(f"r{i}", echecs=()))
+
+    assert len(historique.recent_runs("t1", limite=10)) == 10
+
+
+def test_recent_runs_is_empty_for_a_nodeid_never_seen(historique):
+    historique.add(entree("r1"))
+
+    assert historique.recent_runs("never-run") == []
+
+
+def test_last_seen_is_the_newest_matching_run(historique):
+    historique.add(entree("r1", decalage=-100))
+    historique.add(entree("r2", decalage=-10))
+
+    assert historique.last_seen("t1") == historique.find("r2").timestamp
+
+
+def test_last_seen_is_none_for_a_nodeid_never_seen(historique):
+    historique.add(entree("r1"))
+
+    assert historique.last_seen("never-run") is None
+
+
 # ------------------------------------------------------------------ rapport
 
 def test_the_report_holds_together_on_its_own(historique):

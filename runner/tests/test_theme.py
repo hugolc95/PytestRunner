@@ -493,13 +493,30 @@ def test_a_status_pill_follows_the_palette(qapp):
     t.set_theme("dark")
     pastille = StatusPill(Status.FAILED)
     pastille.set_value(3)
-    avant = pastille._dot.styleSheet()
+    avant = pastille.styleSheet()
 
     t.set_theme("light")
     pastille.restyle()
 
-    assert pastille._dot.styleSheet() != avant
-    assert t.LIGHT["STATUS_COLORS"][Status.FAILED] in pastille._dot.styleSheet()
+    assert pastille.styleSheet() != avant
+    assert t.LIGHT["STATUS_COLORS"][Status.FAILED] in pastille.styleSheet()
+
+
+def test_a_status_pill_is_a_real_pushbutton(qapp):
+    """Le bug reel deja vu sur le bandeau de stress-test, puis sur la premiere
+    version de ce badge : un QWidget nu ignore silencieusement
+    `background-color`/`border` sous le style natif Windows, sans un
+    `WA_StyledBackground` qu'on a deja oublie une fois.
+
+    Un vrai QPushButton -- comme Run/Stop/les lecteurs -- peint son fond
+    nativement, sans ce piege : c'est la garantie qui compte ici, pas un
+    attribut qu'on pourrait a nouveau oublier de poser sur un QWidget.
+    """
+    from PyQt5.QtWidgets import QPushButton
+
+    from runner.ui.widgets import StatusPill
+
+    assert isinstance(StatusPill(Status.FAILED), QPushButton)
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,139 @@
+"""Le label de statut passe en "vivant" (couleur pleine, gras) pendant un
+run -- normal ou stress-test -- et revient au gris attenue une fois fini.
+
+Meme mecanique pour les deux : avant, seul le stress-test avait un widget
+dedie pour ca (un bandeau a part, mal place). Desormais le meme label sert
+les deux, qu'on lance une selection classique, un filtre par marker, ou
+"Run until it fails" / "Run N times".
+"""
+
+from __future__ import annotations
+
+import pytest
+from PyQt5.QtCore import Qt
+
+from runner.domain.models import Reader, RunRequest
+
+NODEIDS = [
+    "suite/apdu/test_select.py::test_atr",
+    "suite/apdu/test_select.py::test_aid",
+]
+
+
+@pytest.fixture(scope="session")
+def qapp():
+    from PyQt5.QtWidgets import QApplication
+
+    return QApplication.instance() or QApplication([])
+
+
+@pytest.fixture
+def fenetre(qapp):
+    from PyQt5.QtCore import QSettings
+
+    from runner.ui.main_window import APP, ORG, MainWindow
+
+    QSettings(ORG, APP).clear()
+    f = MainWindow()
+    yield f
+    f.settings.clear()
+    f.close()
+    f.deleteLater()
+    qapp.processEvents()
+
+
+def _requete(**kwargs) -> RunRequest:
+    base = dict(workspace="/w", interpreter="python",
+               nodeids=tuple(NODEIDS), readers=(Reader("", 0),))
+    base.update(kwargs)
+    return RunRequest(**base)
+
+
+def test_a_classic_run_turns_the_status_label_live(fenetre):
+    """Qu'on lance une selection de tests cochee a la main, ou un sous-
+    ensemble filtre par marker, le chemin est le meme : `_on_run_started`.
+
+    Le nom d'objet pilote une regle globale (`QLabel#StatusLive`), pas un
+    `setStyleSheet()` direct -- voir le commentaire de `_set_status_live`."""
+    fenetre._on_run_started(_requete())
+
+    assert fenetre.status_label.objectName() == "StatusLive"
+    assert "running" in fenetre.status_label.text().lower()
+
+
+def test_finishing_a_classic_run_returns_to_the_idle_style(fenetre):
+    fenetre._on_run_started(_requete())
+    assert fenetre.status_label.objectName() == "StatusLive"
+
+    fenetre._on_run_finished([])
+
+    assert fenetre.status_label.objectName() == "Muted"
+
+
+def test_progress_ticks_stay_in_the_live_style(fenetre):
+    fenetre._on_run_started(_requete())
+
+    fenetre._on_progress(1, 2)
+
+    assert fenetre.status_label.objectName() == "StatusLive"
+    assert "running" in fenetre.status_label.text().lower()
+
+
+def test_a_run_starts_the_pulsing_dot(fenetre):
+    fenetre._on_run_started(_requete())
+
+    assert not fenetre.live_dot.isHidden()
+
+
+def test_finishing_a_run_stops_the_pulsing_dot(fenetre):
+    fenetre._on_run_started(_requete())
+
+    fenetre._on_run_finished([])
+
+    assert fenetre.live_dot.isHidden()
+
+
+def test_the_chip_is_forced_to_paint_its_background_from_the_stylesheet(qapp, monkeypatch):
+    """Meme bug reel que le badge de statut : sous le style natif Windows, un
+    QWidget nu ignore `background-color`/`border` sans cet attribut.
+
+    `MainWindow.__init__` charge le theme sauvegarde en se construisant, ce
+    qui pose une feuille globale sur toute l'appli -- et masque l'oubli, en
+    faisant deja adopter l'attribut a tout QWidget existant. On neutralise ce
+    chargement pour tester le widget comme s'il etait le premier construit,
+    avant que quoi que ce soit d'autre n'ait pose de feuille.
+    """
+    from PyQt5.QtCore import QSettings
+    from PyQt5.QtWidgets import QApplication
+
+    from runner.ui.main_window import APP, ORG, MainWindow
+
+    QSettings(ORG, APP).clear()
+    monkeypatch.setattr(MainWindow, "apply_theme", lambda self, nom: None)
+    QApplication.instance().setStyleSheet("")
+
+    f = MainWindow()
+    try:
+        assert f.live_chip.testAttribute(Qt.WA_StyledBackground)
+    finally:
+        f.settings.clear()
+        f.close()
+        f.deleteLater()
+        qapp.processEvents()
+
+
+def test_a_run_wraps_the_status_in_a_tinted_chip(fenetre):
+    """Le pouls et le texte vivent DANS un badge -- pas juste cote a cote sur
+    le fond nu de la barre d'etat."""
+    fenetre._on_run_started(_requete())
+
+    assert fenetre.live_chip.styleSheet()
+
+
+def test_finishing_a_run_clears_the_chip(fenetre):
+    fenetre._on_run_started(_requete())
+    assert fenetre.live_chip.styleSheet()
+
+    fenetre._on_run_finished([])
+
+    assert fenetre.live_chip.styleSheet() == ""

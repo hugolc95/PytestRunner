@@ -263,6 +263,32 @@ class History:
                 return entree
         return None
 
+    def recent_runs(self, nodeid: str, reader: str = "",
+                    limite: int = 10) -> list[bool]:
+        """Verdicts de ce nodeid sur CE lecteur, du plus ancien au plus recent.
+
+        Meme decoupage par lecteur que `flaky()` : un test qui echoue toujours
+        sur un lecteur et passe toujours sur l'autre n'est pas instable, et
+        melanger les deux rendrait la mini-tendance illisible.
+        """
+        trouves: list[bool] = []
+        for entree in self._entrees:
+            if entree.reader != reader or nodeid not in entree.nodeids:
+                continue
+            trouves.append(nodeid not in entree.failed_nodeids)
+            if len(trouves) >= limite:
+                break
+        trouves.reverse()
+        return trouves
+
+    def last_seen(self, nodeid: str) -> float | None:
+        """Horodatage du dernier run ayant joue ce nodeid, tous lecteurs
+        confondus -- ou `None` si l'historique n'en garde aucune trace."""
+        for entree in self._entrees:
+            if nodeid in entree.nodeids:
+                return entree.timestamp
+        return None
+
     # ------------------------------------------------------------ ecriture
 
     def _enregistrer(self) -> None:

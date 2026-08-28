@@ -528,8 +528,12 @@ class ResultsPanel(QWidget):
         self._readers: tuple[Reader, ...] = ()
         self._sorties: dict[int, str] = {}
         self._index_echecs: dict[int, dict] = {}
+        self._durations: dict[int, dict[str, float]] = {}
         self._nodeid = ""
         self._statuses: dict[int, Status] = {}
+        self._markers: tuple[str, ...] = ()
+        self._recent_runs: dict[int, list[bool]] = {}
+        self._last_seen: float | None = None
 
         self.detail = DetailPanel()
         self.detail.open_output.connect(self.show_output)
@@ -607,6 +611,7 @@ class ResultsPanel(QWidget):
         self._statuses = {}
         self._sorties.clear()
         self._index_echecs.clear()
+        self._durations.clear()
         self.detail.clear()
         self.source.save()
         self.source.clear()
@@ -624,6 +629,7 @@ class ResultsPanel(QWidget):
         self.logs.clear()
         self._sorties.clear()
         self._index_echecs.clear()
+        self._durations.clear()
         self._refresh_detail()
 
     def set_report(self, rapport: ReaderReport) -> None:
@@ -636,6 +642,7 @@ class ResultsPanel(QWidget):
         index = rapport.reader.index
         self._sorties[index] = rapport.output
         self._index_echecs.pop(index, None)
+        self._durations[index] = rapport.durations
         self._refresh_detail()
 
     def append_output(self, index: int, texte: str) -> None:
@@ -644,17 +651,22 @@ class ResultsPanel(QWidget):
     # ---------------------------------------------------------------- detail
 
     def show_test(self, nodeid: str, statuses: dict[int, Status],
-                  workspace: str = "") -> None:
+                  workspace: str = "", markers: tuple[str, ...] = (),
+                  recent_runs: dict[int, list[bool]] | None = None,
+                  last_seen: float | None = None) -> None:
         """Selectionne un test : sa fiche, sa source, et ses logs."""
         self._nodeid = nodeid
         self._statuses = dict(statuses)
+        self._markers = markers
+        self._recent_runs = recent_runs or {}
+        self._last_seen = last_seen
         self._refresh_detail()
         self.source.show_file(source_path(workspace, nodeid), nodeid)
         self.show_logs_for(nodeid, self._readers)
 
     def show_group(self, path: str, name: str, readers, counts: dict,
                    failures: list, source: Path | None = None,
-                   jump_nodeid: str = "") -> None:
+                   jump_nodeid: str = "", nodeids: tuple[str, ...] = ()) -> None:
         """Selectionne un regroupement : son bilan, et sa source s'il en a une.
 
         Un module a un fichier, un dossier n'en a pas. Laisser celui du test
@@ -667,9 +679,22 @@ class ResultsPanel(QWidget):
         """
         self._nodeid = ""
         self._statuses = {}
-        self.detail.show_group(path, name, tuple(readers), counts, failures)
+        cibles = readers or (Reader("", 0),)
+        durees = {lecteur.index: self._duree_totale(lecteur.index, nodeids)
+                 for lecteur in cibles}
+        self.detail.show_group(path, name, tuple(readers), counts, failures, durees)
         self.source.show_file(source, jump_nodeid)
         self.logs.clear()
+
+    def _duree_totale(self, reader_index: int, nodeids: tuple[str, ...]) -> float | None:
+        """Somme des durees connues de ces nodeids pour ce lecteur.
+
+        `None` si aucune n'est connue -- distinct de 0s, qui dirait a tort
+        "mesure et instantane".
+        """
+        connues = self._durations.get(reader_index, {})
+        vues = [connues[n] for n in nodeids if n in connues]
+        return sum(vues) if vues else None
 
     def update_statuses(self, nodeid: str, statuses: dict[int, Status]) -> None:
         """Rafraichit la fiche si elle porte sur ce test, sans toucher aux logs.
@@ -691,7 +716,12 @@ class ResultsPanel(QWidget):
                 self._echecs_de(lecteur.index), self._nodeid)
             for lecteur in cibles
         }
-        self.detail.show_test(self._nodeid, self._readers, self._statuses, echecs)
+        durees = {
+            lecteur.index: self._durations.get(lecteur.index, {}).get(self._nodeid)
+            for lecteur in cibles
+        }
+        self.detail.show_test(self._nodeid, self._readers, self._statuses, echecs, durees,
+                              self._markers, self._recent_runs, self._last_seen)
 
     def _echecs_de(self, reader_index: int) -> dict:
         index = self._index_echecs.get(reader_index)
@@ -699,6 +729,14 @@ class ResultsPanel(QWidget):
             index = failures_mod.index_failures(self._sorties.get(reader_index, ""))
             self._index_echecs[reader_index] = index
         return index
+
+    def failure_for(self, nodeid: str, reader_index: int):
+        """Le bloc d'echec de ce nodeid pour ce lecteur, ou None.
+
+        Expose pour le menu contextuel de l'arbre : "Copy failure trace" ne
+        doit s'activer que si ce test a vraiment un echec a copier.
+        """
+        return failures_mod.failure_for(self._echecs_de(reader_index), nodeid)
 
     # ------------------------------------------------------------------ logs
 
