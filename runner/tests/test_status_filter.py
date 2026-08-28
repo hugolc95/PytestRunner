@@ -71,10 +71,7 @@ def joue(fenetre):
     fenetre.model.apply_outcome(NODEIDS[1], Status.FAILED, 0)
     fenetre.model.apply_outcome(NODEIDS[2], Status.PASSED, 0)
     fenetre.model.apply_outcome(NODEIDS[3], Status.SKIPPED, 0)
-    for statut, pastille in fenetre.pills.items():
-        pastille.set_value(sum(
-            1 for n in NODEIDS
-            if fenetre.model.statuses_for_nodeid(n).get(0) is statut))
+    fenetre._rafraichir_compteurs()
     return fenetre
 
 
@@ -201,6 +198,19 @@ def test_a_pill_at_zero_cannot_be_clicked(fenetre):
     pastille.click()
 
     assert recus == []
+
+
+def test_the_compass_ring_reflects_the_same_counts_as_the_pills(joue):
+    """L'anneau et les pastilles lisent le meme etat -- pas question qu'ils
+    divergent apres un run."""
+    for statut, pastille in joue.pills.items():
+        assert f"{pastille.value()} {statut.label.lower()}" in joue.compass_ring.toolTip()
+
+
+def test_the_compass_percentage_matches_the_passed_share(joue):
+    total = sum(p.value() for p in joue.pills.values())
+    attendu = round(100 * joue.pills[Status.PASSED].value() / total)
+    assert joue.compass_pct.text() == f"{attendu}%"
 
 
 def test_a_pill_with_results_emits_its_status(joue):

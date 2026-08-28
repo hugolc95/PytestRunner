@@ -23,6 +23,17 @@ QWidget {{
     font-family: {t.FONT_UI};
     font-size: {t.TEXT_MD}px;
 }}
+/* Cette regle globale accorde `WA_StyledBackground` a TOUT QWidget -- y
+   compris un simple QLabel qui ne demande qu'une couleur de texte. Sans ce
+   `border: none`, le moteur de feuilles de style de Qt peut lui dessiner
+   quand meme un contour par defaut. Ligne de defense de base ; certains
+   labels, trop imbriques dans la mise en page (une carte, dans une rangee,
+   dans un panneau, dans la fenetre), avaient besoin d'aller plus loin --
+   voir les regles `QLabel#StatCellLabel` / `#ReaderVerdict_*` / `#StatusLive`
+   plus bas, posees par nom d'objet plutot que par `setStyleSheet()` direct. */
+QLabel {{
+    border: none;
+}}
 QToolTip {{
     background-color: {t.BG_RAISED};
     color: {t.TEXT};
@@ -523,6 +534,45 @@ QLabel#Faint {{
 QLabel#Title {{
     color: {t.TEXT};
     font-size: {t.TEXT_LG}px;
+    font-weight: 600;
+    background: transparent;
+}}
+
+/* Case du bandeau de stats (READER A, DURATION, ...) : legende et valeur.
+   Meme raison que Muted/Faint/Title ci-dessus -- posees par nom d'objet,
+   PAS par un `setStyleSheet()` sur le label lui-meme. Assez imbrique dans
+   la mise en page (une carte, dans une rangee, dans un panneau, dans une
+   fenetre), un `setStyleSheet()` pose directement sur ces labels faisait
+   dessiner a Qt un contour fantome autour de la ligne de mise en page qui
+   les contient -- quel que soit le contenu de la feuille posee, meme une
+   seule regle de couleur. Une regle globale ne declenche jamais ca.  */
+QLabel#StatCellLabel {{
+    color: {t.TEXT_FAINT};
+    font-size: 10px;
+    font-weight: 700;
+    background: transparent;
+}}
+QLabel#StatCellValue {{
+    color: {t.TEXT};
+    font-size: {t.TEXT_MD}px;
+    font-weight: 700;
+    background: transparent;
+}}
+QLabel#ReaderVerdict_passed, QLabel#ReaderVerdict_failed,
+QLabel#ReaderVerdict_skipped, QLabel#ReaderVerdict_error,
+QLabel#ReaderVerdict_running, QLabel#ReaderVerdict_pending {{
+    font-size: {t.TEXT_XS}px;
+    font-weight: 700;
+    background: transparent;
+}}
+QLabel#ReaderVerdict_passed {{ color: {t.status_color(Status.PASSED)}; }}
+QLabel#ReaderVerdict_failed {{ color: {t.status_color(Status.FAILED)}; }}
+QLabel#ReaderVerdict_skipped {{ color: {t.status_color(Status.SKIPPED)}; }}
+QLabel#ReaderVerdict_error {{ color: {t.status_color(Status.ERROR)}; }}
+QLabel#ReaderVerdict_running {{ color: {t.status_color(Status.RUNNING)}; }}
+QLabel#ReaderVerdict_pending {{ color: {t.TEXT_FAINT}; }}
+QLabel#StatusLive {{
+    color: {t.status_color(Status.RUNNING)};
     font-weight: 600;
     background: transparent;
 }}

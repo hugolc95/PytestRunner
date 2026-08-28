@@ -51,29 +51,31 @@ def _requete(**kwargs) -> RunRequest:
 
 def test_a_classic_run_turns_the_status_label_live(fenetre):
     """Qu'on lance une selection de tests cochee a la main, ou un sous-
-    ensemble filtre par marker, le chemin est le meme : `_on_run_started`."""
+    ensemble filtre par marker, le chemin est le meme : `_on_run_started`.
+
+    Le nom d'objet pilote une regle globale (`QLabel#StatusLive`), pas un
+    `setStyleSheet()` direct -- voir le commentaire de `_set_status_live`."""
     fenetre._on_run_started(_requete())
 
-    assert fenetre.status_label.styleSheet()
+    assert fenetre.status_label.objectName() == "StatusLive"
     assert "running" in fenetre.status_label.text().lower()
 
 
 def test_finishing_a_classic_run_returns_to_the_idle_style(fenetre):
     fenetre._on_run_started(_requete())
-    assert fenetre.status_label.styleSheet()
+    assert fenetre.status_label.objectName() == "StatusLive"
 
     fenetre._on_run_finished([])
 
-    assert fenetre.status_label.styleSheet() == ""
+    assert fenetre.status_label.objectName() == "Muted"
 
 
 def test_progress_ticks_stay_in_the_live_style(fenetre):
     fenetre._on_run_started(_requete())
-    style_au_depart = fenetre.status_label.styleSheet()
 
     fenetre._on_progress(1, 2)
 
-    assert fenetre.status_label.styleSheet() == style_au_depart
+    assert fenetre.status_label.objectName() == "StatusLive"
     assert "running" in fenetre.status_label.text().lower()
 
 

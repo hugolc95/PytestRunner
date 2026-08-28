@@ -64,6 +64,7 @@ from runner.ui.tree_model import NODE_ROLE, NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import (
     SCOPE_FAILURES,
     SCOPE_TESTS,
+    CompassRing,
     EmptyState,
     ErrorDialog,
     LiveDot,
@@ -232,11 +233,16 @@ class MainWindow(QMainWindow):
         self.history_button.setToolTip("Runs already recorded  (Ctrl+H)")
         self.history_button.clicked.connect(self.open_history)
 
-        # Les verdicts, plus grands qu'en bas de fenetre -- l'espace vide a
-        # droite de cette rangee etait juste assez large pour les accueillir
-        # sans repeter le compte plus petit ailleurs.
+        # Les verdicts, dans l'espace vide a droite de cette rangee -- un
+        # anneau qui dit la proportion d'un coup d'oeil, le detail par statut
+        # juste a cote pour filtrer, comme avant.
+        self.compass_ring = CompassRing()
+        self.compass_pct = QLabel("—")
+        self.compass_pct.setStyleSheet(
+            f"color: {t.TEXT}; font-weight: 600; font-size: {t.TEXT_SM + 4}px;")
+
         self.pills = {
-            statut: StatusPill(statut, large=True)
+            statut: StatusPill(statut)
             for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
         }
         for pastille in self.pills.values():
@@ -250,6 +256,8 @@ class MainWindow(QMainWindow):
         ligne.addWidget(self.config_button)
         ligne.addWidget(self.history_button)
         ligne.addStretch(1)
+        ligne.addWidget(self.compass_ring)
+        ligne.addWidget(self.compass_pct)
         for pastille in self.pills.values():
             ligne.addWidget(pastille)
         return barre
@@ -767,6 +775,10 @@ class MainWindow(QMainWindow):
             "mdi.weather-sunny" if soleil else "mdi.weather-night", t.TEXT_MUTED))
         self.theme_button.setToolTip(
             "Switch to the light theme" if soleil else "Switch to the dark theme")
+        # Ni une icone teintee ni un StatusPill : juste un label dont la
+        # couleur ne vient pas de la feuille globale, a rejouer a la main.
+        self.compass_pct.setStyleSheet(
+            f"color: {t.TEXT}; font-weight: 600; font-size: {t.TEXT_SM + 4}px;")
 
         for glyphe, bouton in (
                 ("mdi.folder-open-outline", self.browse_button),
@@ -1065,8 +1077,17 @@ class MainWindow(QMainWindow):
         finit par se cacher dans un coin qu'on ne regarde plus.
         """
         couleur = t.status_color(Status.RUNNING)
-        self.status_label.setStyleSheet(
-            f"color: {couleur}; font-weight: 600; background: transparent;")
+        # Nom d'objet + regle globale (`QLabel#StatusLive` dans theme.py),
+        # jamais `setStyleSheet()` directement sur ce label : loge dans le
+        # badge `live_chip`, lui-meme dans la barre de statut de la fenetre,
+        # une feuille posee ici faisait dessiner a Qt un contour fantome
+        # autour de la ligne qui le contient. `unpolish`/`polish` est
+        # necessaire ici (et pas ailleurs dans ce fichier) parce que ce
+        # label existant change de nom d'objet en cours de vie -- les autres
+        # ne font que naitre avec le bon nom.
+        self.status_label.setObjectName("StatusLive")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         self.status_label.setText(texte)
         self.live_dot.set_color(couleur)
         self.live_dot.start()
@@ -1076,7 +1097,9 @@ class MainWindow(QMainWindow):
             f"border-radius: {t.RADIUS_PILL}px;")
 
     def _set_status_idle(self, texte: str) -> None:
-        self.status_label.setStyleSheet("")
+        self.status_label.setObjectName("Muted")
+        self.status_label.style().unpolish(self.status_label)
+        self.status_label.style().polish(self.status_label)
         self.status_label.setText(texte)
         self.live_dot.stop()
         self.live_chip.setStyleSheet("")
@@ -1131,6 +1154,10 @@ class MainWindow(QMainWindow):
         rendus = self.model.status_counts()
         for statut, pastille in self.pills.items():
             pastille.set_value(rendus.get(statut, 0))
+        self.compass_ring.set_counts(rendus)
+        total = sum(rendus.values())
+        passed = rendus.get(Status.PASSED, 0)
+        self.compass_pct.setText(f"{round(100 * passed / total)}%" if total else "—")
 
         faits = self.model.done()
         self.progress.setValue(faits)

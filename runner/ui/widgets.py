@@ -6,8 +6,8 @@ recoivent du texte et des couleurs, ils n'appellent rien.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PyQt5.QtWidgets import (
     QDialog,
     QFrame,
@@ -18,7 +18,6 @@ from PyQt5.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
-    QStyleFactory,
     QVBoxLayout,
     QWidget,
 )
@@ -135,9 +134,9 @@ class EmptyState(QWidget):
 
 
 class StatusPill(QPushButton):
-    """Compteur d'un statut : un badge teinte a sa couleur, une icone, un
-    nombre -- un vrai QPushButton, comme Run/Stop/les lecteurs, pas un
-    QWidget nu recompose a la main.
+    """Compteur d'un statut : icone + nombre, pose en legende a cote de
+    l'anneau (`CompassRing`) -- un vrai QPushButton, comme Run/Stop/les
+    lecteurs, pas un QWidget nu recompose a la main.
 
     Un QWidget nu ignore silencieusement `background-color`/`border` poses
     par une feuille de style sous le style natif Windows tant que
@@ -147,10 +146,10 @@ class StatusPill(QPushButton):
     feuille de style nativement : c'est le meme mecanisme que les boutons
     Run/Stop/Ghost et les lecteurs (`ReaderToggle`) juste a cote.
 
-    Chacun se detache des autres -- comme les badges d'une check-suite --
-    plutot que du texte colore flottant a plat. A zero, le badge s'eteint
-    (fond transparent, icone et texte en gris) : seul ce qui a une valeur
-    ressort.
+    A zero, la legende s'eteint (icone et texte en gris) : seul ce qui a une
+    valeur ressort. Un rectangle discretement teinte marque le filtre actif --
+    pas un aplat pilule complet, cette legende reste un texte compact, pas un
+    badge autonome.
 
     C'est aussi un filtre : cliquer ne montre plus que les tests de ce statut.
     Le compteur et le filtre sont le meme geste -- on lit « 44 failed », on
@@ -159,24 +158,11 @@ class StatusPill(QPushButton):
 
     filter_clicked = pyqtSignal(object)  # le Status de cette pastille
 
-    def __init__(self, status: Status, parent=None, large: bool = False):
+    def __init__(self, status: Status, parent=None):
         super().__init__(parent)
         self._status = status
         self._value = 0
         self._active = False
-        self._large = large
-
-        # Le style natif Windows ("windowsvista") delegue une partie du
-        # rendu d'un QPushButton au theme du systeme (UxTheme), qui ignore
-        # purement et simplement `border-radius` -- le badge ressortait
-        # avec le meme angle discret que n'importe quel autre bouton,
-        # jamais la pilule voulue. Fusion, lui, dessine tout depuis la
-        # feuille de style et la respecte a la lettre, sur toutes les
-        # plateformes. Garder une reference (`self._style`) est necessaire :
-        # sans elle, Python ramasse l'objet et Qt garde un pointeur mort.
-        self._style = QStyleFactory.create("Fusion")
-        if self._style is not None:
-            self.setStyle(self._style)
 
         self.setFlat(True)
         self.setCursor(Qt.PointingHandCursor)
@@ -216,8 +202,6 @@ class StatusPill(QPushButton):
         allume = self._value > 0
         couleur = t.status_color(self._status)
         libelle = self._status.label.lower()
-        taille_icone = 15 if self._large else 12
-        taille_texte = 17 if self._large else t.TEXT_SM
 
         # La variante EVIDEE (contour + marque, sans aplat) partout : pleine,
         # la marque est une decoupe transparente dans le glyphe -- posee sur
@@ -225,30 +209,18 @@ class StatusPill(QPushButton):
         # de l'icone au lieu d'un trait net.
         glyphe = icons.STATUS_GLYPHS_GROUP.get(self._status, "mdi.circle-small")
         self.setIcon(icons.icon(glyphe, couleur if allume else t.BORDER_STRONG))
-        self.setIconSize(QSize(taille_icone, taille_icone))
-        self.setText(f"{self._value} {libelle}")
+        self.setIconSize(QSize(13, 13))
+        self.setText(str(self._value))
 
-        # Badge teinte a sa couleur des qu'il a une valeur -- pas seulement en
-        # filtre actif, qui se distingue par un fond et un liseré plus soutenus.
-        if allume:
-            opacite = 0.24 if self._active else 0.14
-            fond = t.rgba(couleur, opacite)
-            fond_survol = t.rgba(couleur, opacite + 0.08)
-            bordure = couleur if self._active else t.rgba(couleur, 0.3)
-            couleur_texte = couleur
-        else:
-            fond = "transparent"
-            fond_survol = t.rgba(t.TEXT_FAINT, 0.08)
-            bordure = t.BORDER
-            couleur_texte = t.TEXT_FAINT
+        couleur_texte = couleur if allume else t.TEXT_FAINT
+        fond = t.rgba(couleur, 0.18) if self._active else "transparent"
+        fond_survol = t.rgba(couleur, 0.1) if allume else t.rgba(t.TEXT_FAINT, 0.08)
+        poids = "700" if self._active else "600" if allume else "400"
 
-        marge_h = t.SPACE_3 if self._large else t.SPACE_2
-        marge_v = t.SPACE_2 if self._large else t.SPACE_1
         base = (
-            f"color: {couleur_texte};"
-            f"border: 1px solid {bordure}; border-radius: {t.RADIUS_PILL}px;"
-            f"padding: {marge_v}px {marge_h}px;"
-            f"font-size: {taille_texte}px; font-weight: {'600' if allume else '400'};")
+            f"color: {couleur_texte}; border: none; border-radius: {t.RADIUS_SM}px;"
+            f"padding: {t.SPACE_1}px {t.SPACE_2}px;"
+            f"font-size: {t.TEXT_SM + 1}px; font-weight: {poids};")
         # Le survol/l'appui doivent etre ecrits ICI : sans eux, le style natif
         # de Windows dessine SON propre relief au survol -- un rectangle
         # sombre par-dessus notre fond clair, illisible en theme clair.
@@ -263,6 +235,75 @@ class StatusPill(QPushButton):
             self.setToolTip(f"Showing only {libelle} tests — click to show all")
         else:
             self.setToolTip(f"{self._value} {libelle} — click to show only these")
+
+
+class CompassRing(QWidget):
+    """Anneau proportionnel passed/failed/skipped/error : la largeur de
+    chaque arc dit la part de ce statut dans le run, le taux de reussite
+    global tient dans une seule bulle-info.
+
+    Purement visuel -- l'interaction (filtrer, voir le detail par statut)
+    reste sur les `StatusPill` en legende juste a cote, qui l'avaient deja
+    et restent testes pour ca. Dupliquer le clic sur l'anneau (par angle)
+    ajouterait une seconde facon de faire la meme chose sans rien montrer de
+    plus.
+    """
+
+    ORDER = (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
+
+    def __init__(self, parent=None, diameter: int = 45, thickness: int = 8):
+        super().__init__(parent)
+        self._diameter = diameter
+        self._thickness = thickness
+        self._counts = {statut: 0 for statut in self.ORDER}
+        self.setFixedSize(diameter, diameter)
+        self.restyle()
+
+    def set_counts(self, counts) -> None:
+        self._counts = {statut: counts.get(statut, 0) for statut in self.ORDER}
+        total = sum(self._counts.values())
+        passed = self._counts[Status.PASSED]
+        taux = round(100 * passed / total) if total else 0
+        self.setToolTip(
+            f"{taux}% pass — " +
+            "  ".join(f"{self._counts[s]} {s.label.lower()}" for s in self.ORDER))
+        self.update()
+
+    def restyle(self) -> None:
+        """Rejoue le dessin : les couleurs par statut dependent du theme."""
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        peintre = QPainter(self)
+        peintre.setRenderHint(QPainter.Antialiasing)
+        marge = self._thickness / 2
+        zone = QRectF(marge, marge,
+                      self._diameter - self._thickness, self._diameter - self._thickness)
+
+        trait = QPen()
+        trait.setWidth(self._thickness)
+        trait.setCapStyle(Qt.FlatCap)
+
+        total = sum(self._counts.values())
+        if not total:
+            trait.setColor(QColor(t.BORDER))
+            peintre.setPen(trait)
+            peintre.drawArc(zone, 0, 360 * 16)
+            peintre.end()
+            return
+
+        # Depart a midi, sens horaire -- comme une jauge de chargement.
+        depart = 90 * 16
+        for statut in self.ORDER:
+            valeur = self._counts[statut]
+            if not valeur:
+                continue
+            portee = round(360 * 16 * valeur / total)
+            trait.setColor(QColor(t.status_color(statut)))
+            peintre.setPen(trait)
+            peintre.drawArc(zone, depart, -portee)
+            depart -= portee
+        peintre.end()
 
 
 class LiveDot(QWidget):
@@ -385,19 +426,20 @@ class ReaderResult(QWidget):
         # Pas de `restyle()` ici : le panneau de detail rebatit ces etiquettes
         # a chaque affichage, y compris quand il rejoue le theme. Les couleurs
         # lues maintenant sont donc toujours celles de la palette courante.
-        couleur = t.status_color(status)
         actif = status is not Status.PENDING
 
         icone = QLabel()
         icone.setPixmap(icons.status_icon(status).pixmap(14, 14))
-        icone.setStyleSheet("background: transparent;")
         icone.setVisible(actif)
 
+        # Nom d'objet + regle globale (voir QLabel#ReaderVerdict_* dans
+        # theme.py), PAS `setStyleSheet()` sur ce label : assez imbrique dans
+        # la mise en page (cette rangee, dans une carte, dans un panneau,
+        # dans une fenetre), poser une feuille ici -- meme une seule regle de
+        # couleur -- faisait dessiner a Qt un contour fantome autour de la
+        # rangee entiere.
         texte = QLabel(status.label if actif else "NOT RUN")
-        texte.setStyleSheet(
-            f"color: {couleur if actif else t.TEXT_FAINT};"
-            f"font-size: {t.TEXT_XS}px; font-weight: 700;"
-            "background: transparent;")
+        texte.setObjectName(f"ReaderVerdict_{status.value}")
 
         ligne.addWidget(icone)
         ligne.addWidget(texte)

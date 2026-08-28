@@ -519,27 +519,6 @@ def test_a_status_pill_is_a_real_pushbutton(qapp):
     assert isinstance(StatusPill(Status.FAILED), QPushButton)
 
 
-def test_a_status_pill_forces_the_fusion_style_for_its_rounded_corners(qapp):
-    """Sous le style natif Windows, un QPushButton delegue une partie de son
-    rendu au theme du systeme -- qui ignore `border-radius` : le badge
-    ressortait avec le meme angle discret que n'importe quel autre bouton,
-    jamais la pilule voulue. Fusion, lui, dessine tout depuis la feuille de
-    style et la respecte, sur toutes les plateformes.
-
-    Des qu'on appelle `setStyleSheet`, Qt enveloppe le style effectif dans un
-    `QStyleSheetStyle` proxy -- `pastille.style()` ne renvoie donc plus le
-    Fusion pose, mais ce wrapper (`objectName()` vide). PyQt5 n'expose pas
-    l'accesseur `baseStyle()` qui permettrait de le retraverser : on verifie
-    donc plutot le style explicitement pose et conserve par le widget.
-    """
-    from runner.ui.widgets import StatusPill
-
-    pastille = StatusPill(Status.FAILED)
-
-    assert pastille._style is not None
-    assert pastille._style.objectName().lower() == "fusion"
-
-
 # ---------------------------------------------------------------------------
 # La bascule dans la fenetre
 # ---------------------------------------------------------------------------

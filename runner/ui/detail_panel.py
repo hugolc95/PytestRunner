@@ -610,9 +610,7 @@ class DetailPanel(QWidget):
         colonne.setSpacing(2)
 
         libelle = QLabel(legende.upper())
-        libelle.setStyleSheet(
-            f"color: {t.TEXT_FAINT}; font-size: 10px; font-weight: 700;"
-            f" letter-spacing: 0.05em; background: transparent;")
+        libelle.setObjectName("StatCellLabel")
         colonne.addWidget(libelle)
         colonne.addWidget(valeur)
         return cellule
@@ -659,9 +657,7 @@ class DetailPanel(QWidget):
         self._duree_visible = self._texte_duree(cibles, durations)
         if self._duree_visible:
             duree_label = QLabel(self._duree_visible)
-            duree_label.setStyleSheet(
-                f"font-size: {t.TEXT_MD}px; font-weight: 700;"
-                f" color: {t.TEXT}; background: transparent;")
+            duree_label.setObjectName("StatCellValue")
             self._results_layout.addWidget(self._stat_cell("Duration", duree_label))
 
         for lecteur in cibles:
