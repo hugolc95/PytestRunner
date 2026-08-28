@@ -10,6 +10,7 @@ from PyQt5.QtWidgets import QApplication
 from app_icon import install_application_icon, set_windows_app_user_model_id
 from runner.ui.main_window import APP, ORG, WINDOW_TITLE, MainWindow
 from runner.ui.theme import app_stylesheet
+from runner.ui.clean_ui import install as install_clean_ui
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -26,6 +27,11 @@ def main(argv: list[str] | None = None) -> int:
     app.setApplicationDisplayName(WINDOW_TITLE)
     install_application_icon(app)
     app.setStyleSheet(app_stylesheet())
+
+    # Evite les contours imbriques visibles sous Windows autour des petites
+    # cases de resultat et du statut "Running...". Les informations restent
+    # identiques, seule la presentation devient plus plate et plus propre.
+    install_clean_ui()
 
     fenetre = MainWindow()
     fenetre.show()
