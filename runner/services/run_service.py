@@ -42,7 +42,15 @@ class CollectWorker(QThread):
 
 
 class _ReaderWorker(QThread):
-    """Un fil par lecteur : les lecteurs tournent vraiment en meme temps."""
+    """Un fil par lecteur : les lecteurs tournent vraiment en meme temps.
+
+    Le rapport public ``done`` n'est emis qu'apres ``QThread.finished``. Emettre
+    ``done`` depuis ``run()`` ouvrait une petite fenetre de course : l'UI pouvait
+    commencer sa finalisation pendant que Qt considerait encore le QThread comme
+    actif. Un clic utilisateur au meme moment pouvait alors declencher des
+    changements d'etat pendant cette phase et provoquer une fermeture native
+    sous Windows.
+    """
 
     line = pyqtSignal(int, str)
     outcome = pyqtSignal(object)
@@ -52,16 +60,22 @@ class _ReaderWorker(QThread):
         super().__init__(parent)
         self._run = execution.ReaderRun(request, reader, env)
         self._reader = reader
+        self._report: ReaderReport | None = None
+        self.finished.connect(self._emit_done_after_finished)
 
     def cancel(self) -> None:
         self._run.cancel()
 
     def run(self) -> None:  # pragma: no cover - execute dans un thread Qt
-        rapport = self._run.run(
+        self._report = self._run.run(
             on_line=lambda texte: self.line.emit(self._reader.index, texte),
             on_outcome=self.outcome.emit,
         )
-        self.done.emit(rapport)
+
+    def _emit_done_after_finished(self) -> None:
+        """Publie le rapport seulement quand le thread Qt est reellement fini."""
+        if self._report is not None:
+            self.done.emit(self._report)
 
 
 class RunService(QObject):
