@@ -253,6 +253,10 @@ class History:
         lues = (RunEntry.from_json(d) for d in brut if isinstance(d, dict))
         self._entrees = [e for e in lues if e is not None]
 
+    def reload(self) -> None:
+        """Recharge l'historique apres une ecriture effectuee en arriere-plan."""
+        self._charger()
+
     def entries(self) -> list[RunEntry]:
         """Les runs, du plus recent au plus ancien."""
         return list(self._entrees)
