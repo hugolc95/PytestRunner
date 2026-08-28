@@ -12,6 +12,7 @@ from runner.ui.main_window import APP, ORG, WINDOW_TITLE, MainWindow
 from runner.ui.theme import app_stylesheet
 from runner.ui.clean_ui import install as install_clean_ui
 from runner.ui.end_run_feedback import install as install_end_run_feedback
+from runner.ui.ux_cleanup import install as install_ux_cleanup
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -37,6 +38,9 @@ def main(argv: list[str] | None = None) -> int:
     # Montrer alors "Finalizing" puis le resultat avant l'archivage rend la fin
     # du run immediate sans annoncer la fin tant que pytest travaille encore.
     install_end_run_feedback()
+    # Prototype UX volontairement isole sur une branche : barre workspace plus
+    # legere, Compass = progression, et actions Stop/Allure contextuelles.
+    install_ux_cleanup()
 
     fenetre = MainWindow()
     fenetre.show()
