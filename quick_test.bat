@@ -40,18 +40,23 @@ if errorlevel 1 (
     )
 )
 
-call build_exe.bat run
+python -c "import PyQt5, yaml, qtawesome" >nul 2>nul
 if errorlevel 1 (
-    echo.
-    echo Build failed.
-    pause
-    exit /b 1
+    echo Installing Pytest Runner UI dependencies...
+    python -m pip install PyQt5 PyYAML qtawesome
+    if errorlevel 1 (
+        pause
+        exit /b 1
+    )
 )
 
 echo.
 echo ------------------------------------------------------------
 echo Demo workspace ready:
 echo   %CD%\demo_workspace
+echo.
+echo Pytest Runner will now start directly from the current Python sources.
+echo This avoids rebuilding the EXE and always tests the exact branch code.
 echo.
 echo In Pytest Runner, paste this path in the Workspace field,
 echo click Load, select the tests and run them.
@@ -60,4 +65,13 @@ echo The demo intentionally contains PASS, FAIL, SKIP, XFAIL and
 echo parametrized tests so the end-of-run behaviour is easy to check.
 echo ------------------------------------------------------------
 echo.
-pause
+
+python -m runner
+if errorlevel 1 (
+    echo.
+    echo Pytest Runner exited with an error.
+    pause
+    exit /b 1
+)
+
+endlocal
