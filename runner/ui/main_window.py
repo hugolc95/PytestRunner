@@ -301,9 +301,9 @@ class MainWindow(QMainWindow):
         self.nav_buttons = {}
         entrees = (
             ("workspace", "Workspace", "mdi.folder-outline"),
+            ("yaml", "Configuration YAML", "mdi.file-cog-outline"),
             ("history", "Historique", "mdi.history"),
             ("python", "Environnement Python", "mdi.language-python"),
-            ("yaml", "Configuration YAML", "mdi.file-cog-outline"),
         )
         for cle, texte, glyph in entrees:
             bouton = QPushButton(texte)
@@ -315,12 +315,15 @@ class MainWindow(QMainWindow):
             self.nav_buttons[cle] = bouton
             colonne.addWidget(bouton)
         colonne.addStretch(1)
-        self.page_theme_button = QPushButton("Changer de thème")
-        self.page_theme_button.setObjectName("NavigationUtility")
+        self.page_theme_button = QPushButton()
+        self.page_theme_button.setObjectName("NavigationUtilityIcon")
+        self.page_theme_button.setFixedSize(t.ICON_BUTTON, t.ICON_BUTTON)
         self.page_theme_button.setIcon(
             icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
+        self.page_theme_button.setToolTip("Changer de thème")
+        self.page_theme_button.setCursor(Qt.PointingHandCursor)
         self.page_theme_button.clicked.connect(self.toggle_theme)
-        colonne.addWidget(self.page_theme_button)
+        colonne.addWidget(self.page_theme_button, 0, Qt.AlignLeft)
         self.nav_buttons["workspace"].setChecked(True)
         return navigation
 

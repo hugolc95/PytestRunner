@@ -15,10 +15,12 @@ def test_main_navigation_separates_python_and_yaml_configuration(qapp):
     window = MainWindow()
     try:
         assert list(window.nav_buttons) == [
-            "workspace", "history", "python", "yaml"]
+            "workspace", "yaml", "history", "python"]
         assert [button.text() for button in window.nav_buttons.values()] == [
-            "Workspace", "Historique", "Environnement Python",
-            "Configuration YAML"]
+            "Workspace", "Configuration YAML", "Historique",
+            "Environnement Python"]
+        assert window.page_theme_button.text() == ""
+        assert window.page_theme_button.width() <= 32
         assert window.pages.currentWidget() is window.workspace_page
         assert window.menuBar().isHidden()
     finally:

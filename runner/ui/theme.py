@@ -69,17 +69,17 @@ QPushButton#NavigationItem:checked {{
     background-color: {t.rgba(t.ACCENT, 0.16)};
     color: {t.ACCENT};
 }}
-QPushButton#NavigationUtility {{
+QPushButton#NavigationUtilityIcon {{
     background-color: transparent;
     border: none;
-    color: {t.TEXT_MUTED};
-    min-height: {t.CONTROL_MD}px;
-    padding: 0 {t.SPACE_3}px;
-    text-align: left;
+    min-width: {t.ICON_BUTTON}px;
+    max-width: {t.ICON_BUTTON}px;
+    min-height: {t.ICON_BUTTON}px;
+    max-height: {t.ICON_BUTTON}px;
+    padding: 0;
 }}
-QPushButton#NavigationUtility:hover {{
+QPushButton#NavigationUtilityIcon:hover {{
     background-color: {t.BG_HOVER};
-    color: {t.TEXT};
 }}
 QLabel#PageTitle {{
     color: {t.TEXT};
