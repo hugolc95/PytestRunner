@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -33,8 +33,12 @@ from runner.ui import tokens as t
 
 
 class InterpreterDialog(QDialog):
-    def __init__(self, current: str, declared_by_workspace: str = "", parent=None):
+    saved = Signal(str)
+
+    def __init__(self, current: str, declared_by_workspace: str = "", parent=None,
+                 embedded: bool = False):
         super().__init__(parent)
+        self._embedded = embedded
         self.setWindowTitle("Test Python interpreter")
         self.resize(640, 260)
         self._probe: ProbeWorker | None = None
@@ -89,18 +93,19 @@ class InterpreterDialog(QDialog):
                 f"color: {t.status_color(Status.SKIPPED)};"
                 "background: transparent;")
 
-        ok_button = QPushButton("Save")
-        ok_button.setObjectName("Primary")
-        ok_button.clicked.connect(self.accept)
+        self.save_button = QPushButton("Save")
+        self.save_button.setObjectName("Primary")
+        self.save_button.clicked.connect(self._save)
 
-        cancel_button = QPushButton("Cancel")
-        cancel_button.setObjectName("Ghost")
-        cancel_button.clicked.connect(self.reject)
+        self.cancel_button = QPushButton("Cancel")
+        self.cancel_button.setObjectName("Ghost")
+        self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setVisible(not embedded)
 
         ligne_boutons = QHBoxLayout()
         ligne_boutons.addStretch(1)
-        ligne_boutons.addWidget(cancel_button)
-        ligne_boutons.addWidget(ok_button)
+        ligne_boutons.addWidget(self.cancel_button)
+        ligne_boutons.addWidget(self.save_button)
 
         colonne = QVBoxLayout(self)
         colonne.setSpacing(t.SPACE_3)
@@ -111,7 +116,13 @@ class InterpreterDialog(QDialog):
         colonne.addStretch(1)
         colonne.addLayout(ligne_boutons)
 
-        self.test_now()
+        if not embedded:
+            self.test_now()
+
+    def _save(self) -> None:
+        self.saved.emit(self.interpreter_path())
+        if not self._embedded:
+            self.accept()
 
     def interpreter_path(self) -> str:
         return self.path_field.text().strip()

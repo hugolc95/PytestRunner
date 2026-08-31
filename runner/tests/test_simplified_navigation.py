@@ -32,15 +32,30 @@ def test_python_and_yaml_have_distinct_pages(qapp):
     try:
         window._show_page("python")
         assert window.pages.currentWidget() is window.python_page
-        assert window.interpreter_config_button.isVisibleTo(window.python_page)
+        assert window.python_editor.isVisibleTo(window.python_page)
         assert not window.workspace_config_button.isVisibleTo(window.python_page)
-        assert "environnement Python" in window.interpreter_config_button.text()
 
         window._show_page("yaml")
         assert window.pages.currentWidget() is window.yaml_page
-        assert window.workspace_config_button.isVisibleTo(window.yaml_page)
+        assert window.yaml_empty.isVisibleTo(window.yaml_page)
         assert not window.interpreter_config_button.isVisibleTo(window.yaml_page)
-        assert "fichiers YAML" in window.workspace_config_button.text()
+    finally:
+        window.close()
+
+
+def test_yaml_editor_is_embedded_when_workspace_has_a_configuration(
+        qapp, tmp_path):
+    config = tmp_path / "config.yaml"
+    config.write_text("Reader: OMNIKEY\nLOG_PATH: logs\n", encoding="utf-8")
+    window = MainWindow()
+    try:
+        window.workspace = Workspace.load(str(tmp_path))
+        window._show_page("yaml")
+
+        assert window.yaml_stack.currentWidget() is window.yaml_editor_host
+        assert window.yaml_editor.parentWidget() is window.yaml_editor_host
+        assert not window.yaml_editor.isWindow()
+        assert window.yaml_editor.tabs.count() == 2
     finally:
         window.close()
 

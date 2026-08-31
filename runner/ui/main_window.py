@@ -374,17 +374,11 @@ class MainWindow(QMainWindow):
             "Environnement Python",
             "Configurez le moteur Python utilisé pour collecter et exécuter "
             "les tests. Ce réglage est indépendant des fichiers YAML.")
-
-        python_section, python_layout = self._config_section(
-            "Interpréteur de test",
-            "Choisissez le Python utilisé pour collecter et exécuter pytest. "
-            "Ce réglage concerne le moteur d’exécution, pas le contenu des tests.")
-        self.interpreter_config_button = QPushButton("Configurer l’environnement Python…")
-        self.interpreter_config_button.setIcon(icons.icon("mdi.language-python", t.TEXT_MUTED))
-        self.interpreter_config_button.clicked.connect(self.open_interpreter_dialog)
-        python_layout.addWidget(self.interpreter_config_button, 0, Qt.AlignLeft)
-        layout.addWidget(python_section)
-        layout.addStretch(1)
+        self.python_editor = InterpreterDialog("", "", page, embedded=True)
+        self.python_editor.setWindowFlags(Qt.Widget)
+        self.python_editor.saved.connect(self._save_python_from_page)
+        self.interpreter_config_button = self.python_editor.save_button
+        layout.addWidget(self.python_editor, 1)
         return page
 
     def _build_yaml_page(self) -> QWidget:
@@ -392,17 +386,25 @@ class MainWindow(QMainWindow):
             "Configuration YAML",
             "Gérez séparément les fichiers de configuration propres au "
             "workspace et aux tests.")
-        yaml_section, yaml_layout = self._config_section(
-            "Fichiers YAML des tests",
-            "Choisissez et modifiez le fichier .yml ou .yaml du workspace : "
-            "lecteurs, chemins de logs, campagnes et paramètres des tests.")
-        self.workspace_config_button = QPushButton("Configurer les fichiers YAML…")
+        self.yaml_empty = EmptyState(
+            "mdi.file-cog-outline", "Aucune configuration YAML ouverte",
+            "Chargez un workspace puis choisissez son fichier .yml ou .yaml.",
+            action="Choisir un fichier YAML…")
+        self.yaml_empty.action_clicked.connect(self._choose_yaml_for_page)
+        self.workspace_config_button = QPushButton("Choisir un fichier YAML…")
+        self.workspace_config_button.setVisible(False)
         self.workspace_config_button.setIcon(
             icons.icon("mdi.file-cog-outline", t.TEXT_MUTED))
-        self.workspace_config_button.clicked.connect(self.open_config_dialog)
-        yaml_layout.addWidget(self.workspace_config_button, 0, Qt.AlignLeft)
-        layout.addWidget(yaml_section)
-        layout.addStretch(1)
+        self.workspace_config_button.clicked.connect(self._choose_yaml_for_page)
+
+        self.yaml_editor_host = QWidget()
+        self.yaml_editor_layout = QVBoxLayout(self.yaml_editor_host)
+        self.yaml_editor_layout.setContentsMargins(0, 0, 0, 0)
+        self.yaml_stack = QStackedWidget()
+        self.yaml_stack.addWidget(self.yaml_empty)
+        self.yaml_stack.addWidget(self.yaml_editor_host)
+        self.yaml_editor = None
+        layout.addWidget(self.yaml_stack, 1)
         return page
 
     def _show_page(self, page: str) -> None:
@@ -416,9 +418,97 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(cible)
         if page == "history":
             self.history_dashboard.refresh()
+        elif page == "python":
+            self._refresh_python_page()
+        elif page == "yaml":
+            self._refresh_yaml_page()
         for cle, bouton in self.nav_buttons.items():
             bouton.setChecked(cle == page)
         self.statusBar().setVisible(page == "workspace")
+
+    def _refresh_python_page(self) -> None:
+        self.python_editor.path_field.setText(self._interpreter_override)
+        declare = self.workspace.declared_interpreter if self.workspace else ""
+        self.python_editor.override_label.setVisible(bool(declare))
+        if declare:
+            self.python_editor.override_label.setText(
+                "Le fichier YAML du workspace impose actuellement cet "
+                f"interpréteur : {declare}")
+        chemin = self._effective_interpreter()
+        info = interpreter_mod.cached_probe(chemin) if chemin else None
+        if info is not None:
+            self.python_editor._on_probed(info)
+        elif chemin:
+            self.python_editor.status_label.setText(
+                "Cliquez sur Test pour vérifier cet environnement.")
+
+    def _save_python_from_page(self, path: str) -> None:
+        nouveau = path.strip()
+        change = nouveau != self._interpreter_override
+        self._interpreter_override = nouveau
+        self.settings.setValue(K_INTERPRETER, nouveau)
+        self.python_editor.status_label.setText("Configuration enregistrée.")
+        self._refresh_interpreter_alert()
+        if change and self.workspace is not None and not self.workspace.declared_interpreter:
+            self.load_workspace()
+
+    def _choose_yaml_for_page(self) -> None:
+        if self.workspace is None:
+            self._show_page("workspace")
+            return
+        choisi, _ = QFileDialog.getOpenFileName(
+            self, "Choose the workspace configuration", self.workspace.path,
+            "YAML files (*.yml *.yaml)")
+        if not choisi:
+            return
+        self._retenir_config(self.workspace.path, choisi)
+        self.workspace = Workspace.load(
+            self.workspace.path, self._config_retenue(self.workspace.path))
+        self._refresh_yaml_page(force=True)
+        self._update_actions()
+
+    def _refresh_yaml_page(self, force: bool = False) -> None:
+        if self.workspace is None:
+            self.yaml_empty.update_text(
+                "Aucun workspace chargé",
+                "Chargez d’abord un workspace pour accéder à sa configuration YAML.")
+            self.yaml_stack.setCurrentWidget(self.yaml_empty)
+            return
+        if not self.workspace.config_path:
+            self.yaml_empty.update_text(
+                "Aucun fichier YAML sélectionné",
+                "Choisissez le fichier de configuration de ce workspace.")
+            self.yaml_stack.setCurrentWidget(self.yaml_empty)
+            return
+        if (not force and self.yaml_editor is not None
+                and Path(self.yaml_editor.path) == Path(self.workspace.config_path)):
+            self.yaml_editor.reload()
+            self.yaml_stack.setCurrentWidget(self.yaml_editor_host)
+            return
+
+        if self.yaml_editor is not None:
+            self.yaml_editor.setParent(None)
+            self.yaml_editor.deleteLater()
+        from runner.ui.config_dialog import ConfigDialog
+        self.yaml_editor = ConfigDialog(
+            self.workspace.config_path,
+            [reader.name for reader in self.workspace.readers],
+            self.yaml_editor_host,
+            candidats=[str(path) for path in fichiers_config(self.workspace.path)],
+            workspace_path=self.workspace.path,
+            embedded=True)
+        self.yaml_editor.setWindowFlags(Qt.Widget)
+        self.yaml_editor.saved.connect(self._on_yaml_page_saved)
+        self.yaml_editor_layout.addWidget(self.yaml_editor, 1)
+        self.yaml_stack.setCurrentWidget(self.yaml_editor_host)
+
+    def _on_yaml_page_saved(self, path: str) -> None:
+        if self.workspace is None:
+            return
+        self._retenir_config(self.workspace.path, path)
+        self.workspace = Workspace.load(
+            self.workspace.path, self._config_retenue(self.workspace.path))
+        self.load_workspace()
 
     def _build_command_bar(self) -> QWidget:
         barre = QWidget()
@@ -2368,6 +2458,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.results.source.save()
+        self.python_editor.wait_for_probe()
         self.settings.setValue(K_GEOMETRY, self.saveGeometry())
         self.settings.setValue(K_STATE, self.saveState())
         self.settings.setValue(K_SPLIT_MAIN, self.split.saveState())

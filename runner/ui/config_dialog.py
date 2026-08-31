@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -180,10 +180,13 @@ class _Champ:
 class ConfigDialog(QDialog):
     """Le fichier de configuration du workspace, editable sans quitter l'outil."""
 
+    saved = Signal(str)
+
     def __init__(self, config_path: str, readers_connus=(), parent=None,
-                 candidats=(), workspace_path: str = ""):
+                 candidats=(), workspace_path: str = "", embedded: bool = False):
         super().__init__(parent)
         self.path = Path(config_path)
+        self._embedded = embedded
         self._workspace_path = (Path(workspace_path) if workspace_path
                                 else self.path.parent)
         self._readers_connus = tuple(readers_connus)
@@ -266,6 +269,7 @@ class ConfigDialog(QDialog):
         self.close_button = QPushButton("Close")
         self.close_button.setObjectName("Ghost")
         self.close_button.clicked.connect(self.reject)
+        self.close_button.setVisible(not embedded)
 
         actions = QHBoxLayout()
         actions.setSpacing(t.SPACE_2)
@@ -537,6 +541,7 @@ class ConfigDialog(QDialog):
         self.reload()
         combien = len(changements)
         self._dire(f"Saved {combien} setting{'s' if combien > 1 else ''}.")
+        self.saved.emit(str(self.path))
 
     def _enregistrer_texte(self) -> None:
         texte = self.raw.toPlainText()
@@ -556,6 +561,7 @@ class ConfigDialog(QDialog):
         self.reload()
         self.tabs.setCurrentIndex(ONGLET_YAML)
         self._dire("Saved.")
+        self.saved.emit(str(self.path))
 
     def _dire(self, message: str, alerte: bool = False) -> None:
         from runner.domain.models import Status
