@@ -1,0 +1,13 @@
+# Runtime utilise par l'interpreteur externe de tests (Python 3.13 x86).
+# Il est volontairement separe des dependances GUI PySide6 x64.
+
+--no-index
+--find-links ./wheels
+
+pytest==9.1.1
+PyYAML==6.0.3
+colorama==0.4.6
+pytest-xdist==3.8.0
+execnet==2.1.2
+
+# Ajouter ici les dependances x86 propres au SmartCardFramework/workspace.
