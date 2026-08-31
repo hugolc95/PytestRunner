@@ -1,14 +1,13 @@
 @echo off
-REM Construit Pytest Runner en application Windows autonome.
+REM Construit Pytest Runner en application Windows x64 autonome (PySide6 / Qt 6).
 REM
 REM   build_exe.bat            interface courante -> dist\PytestRunner
 REM   build_exe.bat run        construit puis lance la derniere version
-REM   build_exe.bat classic    ancienne interface -> dist\PytestRunnerClassic
-REM   build_exe.bat both       les deux
 REM   build_exe.bat help       ce message
 REM
-REM L'exe produit ne contient QUE l'interface : pytest et les dependances des
-REM tests restent du cote de l'interpreteur configure dans l'application.
+REM IMPORTANT : ce Python sert UNIQUEMENT a construire/lancer l'interface.
+REM Les tests sont executes par l'interpreteur externe configure dans le Runner
+REM (Python 3.13 x86 possible et recommande pour les DLL smart-card 32 bits).
 
 setlocal
 cd /d "%~dp0"
@@ -21,30 +20,27 @@ if /i "%CIBLE%"=="/?"      goto :usage
 if /i "%CIBLE%"=="-h"      goto :usage
 if /i "%CIBLE%"=="--help"  goto :usage
 
+call :verifier_python_x64
+if errorlevel 1 exit /b 1
 call :verifier_dependances
 if errorlevel 1 exit /b 1
 
 if /i "%CIBLE%"=="new"     goto :build_new
 if /i "%CIBLE%"=="run"     goto :build_and_run
 if /i "%CIBLE%"=="latest"  goto :build_and_run
-if /i "%CIBLE%"=="classic" goto :build_classic
-if /i "%CIBLE%"=="old"     goto :build_classic
-if /i "%CIBLE%"=="v1"      goto :build_classic
-if /i "%CIBLE%"=="both"    goto :build_both
-if /i "%CIBLE%"=="all"     goto :build_both
 
 echo Cible inconnue : %CIBLE%
 echo.
 goto :usage
 
 :build_new
-call :construire PytestRunner.spec "interface courante"
+call :construire PytestRunner.spec "PySide6 x64"
 if errorlevel 1 exit /b 1
 call :bilan PytestRunner
 exit /b 0
 
 :build_and_run
-call :construire PytestRunner.spec "interface courante"
+call :construire PytestRunner.spec "PySide6 x64"
 if errorlevel 1 exit /b 1
 call :bilan PytestRunner
 echo.
@@ -52,27 +48,24 @@ echo Lancement de la version qui vient d'etre construite...
 start "Pytest Runner" "%CD%\dist\PytestRunner\PytestRunner.exe"
 exit /b 0
 
-:build_classic
-call :construire PytestRunnerClassic.spec "ancienne interface"
-if errorlevel 1 exit /b 1
-call :bilan PytestRunnerClassic
-exit /b 0
-
-:build_both
-call :construire PytestRunner.spec "interface courante"
-if errorlevel 1 exit /b 1
-call :construire PytestRunnerClassic.spec "ancienne interface"
-if errorlevel 1 exit /b 1
-call :bilan PytestRunner
-call :bilan PytestRunnerClassic
+:verifier_python_x64
+python -c "import struct,sys; sys.exit(0 if struct.calcsize('P')*8 == 64 else 1)" 2>nul
+if errorlevel 1 (
+    echo.
+    echo ERREUR : le build PySide6 doit etre lance avec un Python 64 bits.
+    echo Le Python 32 bits reste uniquement l'interpreteur de lancement des tests.
+    echo.
+    python -c "import struct; print('Python detecte :', struct.calcsize('P')*8, 'bits')"
+    exit /b 1
+)
 exit /b 0
 
 :verifier_dependances
-python -c "import PyQt5" 2>nul
+python -c "import PySide6" 2>nul
 if errorlevel 1 (
-    echo PyQt5 est introuvable pour ce Python.
-    echo Installation des dependances de build...
-    python -m pip install PyQt5 PyYAML qtawesome pyinstaller
+    echo PySide6 est introuvable pour ce Python x64.
+    echo Installation des dependances GUI...
+    python -m pip install -r requirements.txt
     if errorlevel 1 exit /b 1
 )
 python -c "import qtawesome" 2>nul
@@ -101,16 +94,16 @@ exit /b 0
 :bilan
 echo.
 echo === Termine : dist\%~1\%~1.exe ===
+echo GUI : x64 / PySide6 / Qt 6
+echo Tests : interpreteur externe configure dans l'application ^(x86 accepte^)
 echo Distribuez le dossier dist\%~1 complet ^(zippe^), pas seulement l'exe.
 exit /b 0
 
 :usage
 echo.
-echo   build_exe.bat            construit l'interface courante
-echo   build_exe.bat run        construit puis lance l'interface courante
-echo   build_exe.bat classic    construit l'ancienne interface
-echo   build_exe.bat both       construit les deux
+echo   build_exe.bat            construit l'interface PySide6 x64
+echo   build_exe.bat run        construit puis lance l'interface PySide6 x64
 echo.
-echo Les deux dossiers cohabitent dans dist\ : l'un n'ecrase pas l'autre.
+echo Le runtime de tests 32 bits est independant de l'EXE x64.
 echo.
 exit /b 0
