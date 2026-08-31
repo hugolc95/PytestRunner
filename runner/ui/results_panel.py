@@ -22,11 +22,12 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QKeySequence
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QShortcut,
     QSplitter,
     QTabBar,
     QTabWidget,
@@ -101,8 +102,16 @@ class ReaderViews(QWidget):
         self.compare.setVisible(False)
         self.compare.toggled.connect(self._on_compare_toggled)
 
+        # Pas de bouton d'ouverture ici : il en faut UN PAR CONSOLE, pose dans
+        # la barre de chaque vue a cote de son bouton de copie (voir
+        # `_add_view`). Un bouton unique en tete portait sur l'onglet courant,
+        # notion qui n'existe plus des qu'on compare : les deux logs sont a
+        # l'ecran, et rien ne disait lequel des deux allait s'ouvrir.
         self.open_buttons: list[QPushButton] = []
 
+        # La navigation n'a de sens que lorsque la comparaison semantique est
+        # active. Elle reste donc entierement absente de la barre le reste du
+        # temps, au lieu d'ajouter deux boutons inertes a l'interface.
         self.previous_difference = QPushButton()
         self.previous_difference.setObjectName("IconSm")
         self.previous_difference.setIcon(
@@ -159,28 +168,36 @@ class ReaderViews(QWidget):
 
         self._add_view()
 
+    # ------------------------------------------------------------- structure
+
     def _add_view(self) -> ConsoleView:
         vue = ConsoleView(show_lens=self._show_lens)
+
         entete = QLabel()
         entete.setVisible(False)
         entete.setObjectName("Faint")
+
         boite = QWidget()
         col = QVBoxLayout(boite)
         col.setContentsMargins(0, 0, 0, 0)
         col.setSpacing(t.SPACE_1)
         col.addWidget(entete)
         col.addWidget(vue, 1)
+
         self.views.append(vue)
         self.headers.append(entete)
         self._paths.append(None)
         self.split.addWidget(boite)
+
         if self._external_open:
             index = len(self.views) - 1
             vue.add_tool(self._make_open_button(index))
             vue.view.setContextMenuPolicy(Qt.CustomContextMenu)
             vue.view.customContextMenuRequested.connect(
                 lambda position, i=index, v=vue.view:
-                self._show_external_context_menu(i, v, position))
+                self._show_external_context_menu(i, v, position)
+            )
+
         if self._sync:
             for sens in ("verticalScrollBar", "horizontalScrollBar"):
                 getattr(vue, sens)().valueChanged.connect(
@@ -188,6 +205,12 @@ class ReaderViews(QWidget):
         return vue
 
     def _make_open_button(self, index: int) -> QPushButton:
+        """Le bouton « Open log » de la console numero `index`.
+
+        Desactive tant que ce lecteur n'a pas de fichier a ouvrir : grise, il
+        dit que ce log n'existe pas encore, la ou un bouton actif qui ne fait
+        rien laisserait croire que Notepad++ a echoue.
+        """
         bouton = QPushButton()
         bouton.setObjectName("IconSm")
         bouton.setIcon(icons.icon("mdi.open-in-new", t.TEXT_MUTED))
@@ -198,6 +221,9 @@ class ReaderViews(QWidget):
         return bouton
 
     def _propager(self, sens: str, source, valeur: int) -> None:
+        """Fait suivre les autres vues : cote a cote, chacune ne montre qu'une
+        fraction de la largeur, et sans cela comparer deux valeurs demanderait
+        de faire defiler chaque colonne separement."""
         if self._defile:
             return
         self._defile = True
@@ -213,11 +239,14 @@ class ReaderViews(QWidget):
     def set_readers(self, readers: tuple[Reader, ...]) -> None:
         self._readers = tuple(readers)
         multi = len(self._readers) > 1
+
         while len(self.views) < max(1, len(self._readers)):
             self._add_view()
+
         if self._external_open:
             self._paths = [None] * len(self.views)
             self._update_external_buttons()
+
         self.tabs.blockSignals(True)
         for libelle in self._tab_labels:
             libelle.deleteLater()
@@ -225,7 +254,12 @@ class ReaderViews(QWidget):
         while self.tabs.count():
             self.tabs.removeTab(0)
         for lecteur in (self._readers if multi else ()):
+            # Le texte natif d'un onglet herite de la couleur globale du QSS.
+            # Un libelle dedie permet de garder la couleur du lecteur, meme au
+            # survol et dans l'onglet selectionne.
             position = self.tabs.addTab("")
+            # Un point discret porte la couleur comme dans une legende : plus
+            # lisible et plus moderne qu'un grand rectangle teinte.
             libelle = QLabel(f"●  {lecteur.short_name}")
             libelle.setAlignment(Qt.AlignCenter)
             libelle.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -234,6 +268,7 @@ class ReaderViews(QWidget):
             self._tab_labels.append(libelle)
             self.tabs.setTabToolTip(position, lecteur.name)
         self.tabs.blockSignals(False)
+
         for position, entete in enumerate(self.headers):
             if position < len(self._readers):
                 lecteur = self._readers[position]
@@ -241,10 +276,12 @@ class ReaderViews(QWidget):
                 entete.setToolTip(lecteur.name)
             else:
                 entete.clear()
+
         self.tabs.setVisible(multi)
         self.compare.setVisible(multi)
         self.difference_navigation.setVisible(
-            multi and self.compare.isChecked() and self._highlight_differences)
+            multi and self.compare.isChecked()
+            and self._highlight_differences)
         self._restyle_reader_names()
         self._apply_layout()
 
@@ -252,6 +289,7 @@ class ReaderViews(QWidget):
         nombre = max(1, len(self._readers))
         comparer = self.compare.isChecked()
         courant = max(0, self.tabs.currentIndex())
+
         for position, vue in enumerate(self.views):
             boite = vue.parentWidget()
             visible = position < nombre and (comparer or nombre == 1 or position == courant)
@@ -259,7 +297,8 @@ class ReaderViews(QWidget):
             self.headers[position].setVisible(visible and comparer and nombre > 1)
 
     def _on_compare_toggled(self, checked: bool) -> None:
-        self.difference_navigation.setVisible(checked and self._highlight_differences)
+        self.difference_navigation.setVisible(
+            checked and self._highlight_differences)
         self._apply_layout()
         self._update_difference_highlights(reveal=checked)
 
@@ -269,6 +308,8 @@ class ReaderViews(QWidget):
         self.reader_selected.emit(index)
 
     def select_silently(self, index: int) -> None:
+        """Change d'onglet sans reemettre : evite que deux panneaux qui se
+        suivent ne se renvoient leur choix indefiniment."""
         if 0 <= index < self.tabs.count() and index != self.tabs.currentIndex():
             self.tabs.blockSignals(True)
             self.tabs.setCurrentIndex(index)
@@ -283,6 +324,11 @@ class ReaderViews(QWidget):
         return path if path is not None and path.is_file() else None
 
     def _update_external_buttons(self) -> None:
+        """Chaque bouton suit SON log, pas l'onglet courant.
+
+        Cote a cote, un lecteur peut avoir son fichier quand l'autre ne l'a pas
+        encore : les deux boutons doivent alors dire deux choses differentes.
+        """
         for index, bouton in enumerate(self.open_buttons):
             bouton.setEnabled(self.path_at(index) is not None)
 
@@ -296,34 +342,44 @@ class ReaderViews(QWidget):
         action = menu.addAction("Open log")
         action.setEnabled(self.path_at(index) is not None)
         action.triggered.connect(lambda: self._request_external_open(index))
-        menu.exec(view.mapToGlobal(position))
+        menu.exec_(view.mapToGlobal(position))
 
     def toggle_compare(self) -> None:
         if self.compare.isVisible():
             self.compare.setChecked(not self.compare.isChecked())
 
     def navigate_difference(self, direction: int) -> None:
+        """Va a l'ecart suivant ou precedent, avec retour en boucle."""
         if not self.compare.isChecked() or not self._difference_groups:
             return
         courant = self._difference_index
         if courant < 0:
             courant = 0 if direction < 0 else -1
-        self._show_difference((courant + direction) % len(self._difference_groups))
+        self._show_difference((courant + direction)
+                              % len(self._difference_groups))
+
+    # ---------------------------------------------------------------- contenu
 
     def append(self, index: int, texte: str) -> None:
         if 0 <= index < len(self.views):
             self.views[index].append(texte)
 
-    def set_text(self, index: int, texte: str, entete: str = "", chemin: str = "") -> None:
+    def set_text(self, index: int, texte: str, entete: str = "",
+                 chemin: str = "") -> None:
         if 0 <= index < len(self.views):
             self.views[index].set_text(texte)
             self.headers[index].setText(entete)
             self._paths[index] = Path(chemin) if chemin else None
+            # Le chemin en infobulle plutot qu'en clair : deux logs se
+            # ressemblent beaucoup et savoir DUQUEL on parle est la premiere
+            # chose qu'on verifie, mais l'afficher en entier mangerait la
+            # largeur de la console.
             self.headers[index].setToolTip(chemin)
             self._update_external_buttons()
             self._update_difference_highlights()
 
     def _update_difference_highlights(self, reveal: bool = False) -> None:
+        """Compare les logs et colore seulement les ecarts significatifs."""
         active = (self._highlight_differences and self.compare.isChecked()
                   and len(self._readers) > 1)
         if not active:
@@ -333,98 +389,411 @@ class ReaderViews(QWidget):
             for view in self.views:
                 view.highlight_lines()
             return
-        count = len(self._readers)
-        texts = [self.views[index].toPlainText() for index in range(count)]
-        groups = log_compare.semantic_difference_groups(texts)
-        self._difference_groups = list(groups)
-        for index, view in enumerate(self.views):
-            line_numbers = {
-                line
-                for group in self._difference_groups
-                for line in group[index]
-            }
-            view.highlight_lines(line_numbers)
-        if not self._difference_groups:
-            self._difference_index = -1
-        elif self._difference_index >= len(self._difference_groups):
-            self._difference_index = len(self._difference_groups) - 1
-        self._refresh_difference_navigation()
-        if reveal and self._difference_groups:
-            self._show_difference(0)
 
-    def _show_difference(self, index: int) -> None:
-        if not self._difference_groups:
+        count = len(self._readers)
+        texts = [self.views[index].text() for index in range(count)]
+        ignored = [reader.name for reader in self._readers]
+        ignored.extend(reader.short_name for reader in self._readers)
+        differences = log_compare.compare_logs(texts, ignored)
+        self._build_difference_groups(differences)
+
+        for index, view in enumerate(self.views):
+            if index < count:
+                view.highlight_lines(differences.changed[index],
+                                     differences.errors[index])
+            else:
+                view.highlight_lines()
+
+        if reveal and self._difference_groups:
+            # A l'ouverture, une erreur explicite est plus utile que le tout
+            # premier ecart. La navigation conserve ensuite l'ordre du log.
+            priority = next((position for position, groups in
+                             enumerate(self._difference_groups)
+                             if any(group & errors for group, errors in
+                                    zip(groups, differences.errors))), 0)
+            self._show_difference(priority)
+
+    @staticmethod
+    def _contiguous_groups(indices: frozenset[int]) -> list[frozenset[int]]:
+        """Regroupe des lignes voisines en une seule difference navigable."""
+        groups: list[set[int]] = []
+        for index in sorted(indices):
+            if not groups or index > max(groups[-1]) + 1:
+                groups.append({index})
+            else:
+                groups[-1].add(index)
+        return [frozenset(group) for group in groups]
+
+    def _build_difference_groups(self, differences) -> None:
+        """Aligne les blocs differents de chaque lecteur par leur ordre."""
+        by_reader = [self._contiguous_groups(indices)
+                     for indices in differences.changed]
+        count = max((len(groups) for groups in by_reader), default=0)
+        self._difference_groups = [
+            tuple(groups[position] if position < len(groups) else frozenset()
+                  for groups in by_reader)
+            for position in range(count)
+        ]
+        if self._difference_index >= count:
+            self._difference_index = count - 1
+        self._refresh_difference_navigation()
+
+    def _show_difference(self, position: int) -> None:
+        """Centre chaque console sur son bloc correspondant."""
+        if not 0 <= position < len(self._difference_groups):
             return
-        self._difference_index = index % len(self._difference_groups)
-        group = self._difference_groups[self._difference_index]
-        for view_index, lines in enumerate(group):
-            if view_index < len(self.views) and lines:
-                self.views[view_index].scroll_to_line(min(lines))
+        self._difference_index = position
+        self._defile = True
+        try:
+            for view, group in zip(self.views, self._difference_groups[position]):
+                if group:
+                    view.reveal_line(min(group))
+        finally:
+            self._defile = False
         self._refresh_difference_navigation()
 
     def _refresh_difference_navigation(self) -> None:
-        total = len(self._difference_groups)
-        current = self._difference_index + 1 if self._difference_index >= 0 else 0
-        self.difference_counter.setText(f"{current} / {total}")
-        enabled = total > 0
+        count = len(self._difference_groups)
+        enabled = count > 0
         self.previous_difference.setEnabled(enabled)
         self.next_difference.setEnabled(enabled)
+        shown = self._difference_index + 1 if enabled else 0
+        self.difference_counter.setText(f"{shown} / {count}")
 
     def _restyle_reader_names(self) -> None:
-        for position, libelle in enumerate(self._tab_labels):
-            reader_index = self.tabs.tabData(position)
-            if reader_index is None and position < len(self._readers):
-                reader_index = self._readers[position].index
-            colour = theme.reader_color(int(reader_index or 0))
-            libelle.setStyleSheet(f"color: {colour};")
+        courant = self.tabs.currentIndex()
+        for position, (lecteur, libelle) in enumerate(
+                zip(self._readers, self._tab_labels)):
+            couleur = t.reader_color(lecteur.index)
+            libelle.setStyleSheet(
+                f"color: {couleur}; background: transparent;"
+                f"font-size: {t.TEXT_XS}px;"
+                f"font-weight: {700 if position == courant else 600};"
+                f"padding: 0 {t.SPACE_1}px;")
+
         for position, entete in enumerate(self.headers):
-            if position < len(self._readers):
-                colour = theme.reader_color(self._readers[position].index)
-                entete.setStyleSheet(f"color: {colour};")
+            if position >= len(self._readers):
+                entete.setStyleSheet("")
+                continue
+            couleur = t.reader_color(self._readers[position].index)
+            entete.setStyleSheet(
+                f"color: {couleur};"
+                f"background-color: {t.rgba(couleur, 0.07)};"
+                f"border: none; border-left: 3px solid {couleur};"
+                f"border-radius: {t.RADIUS_SM}px;"
+                f"font-size: {t.TEXT_XS}px; font-weight: 600;"
+                f"padding: {t.SPACE_1}px {t.SPACE_2}px;")
+
+    def restyle(self) -> None:
+        for vue in self.views:
+            vue.restyle()
+        self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
+        for bouton in self.open_buttons:
+            bouton.setIcon(icons.icon("mdi.open-in-new", t.TEXT_MUTED))
+        self.previous_difference.setIcon(
+            icons.icon("mdi.chevron-up", t.TEXT_MUTED))
+        self.next_difference.setIcon(
+            icons.icon("mdi.chevron-down", t.TEXT_MUTED))
+        self._restyle_reader_names()
+        self._update_difference_highlights()
 
     def clear(self) -> None:
-        for view in self.views:
-            view.clear()
-        self._paths = [None] * len(self.views)
-        self._update_external_buttons()
-        self._difference_groups.clear()
-        self._difference_index = -1
-        self._refresh_difference_navigation()
-
-    def open_external(self, index: int) -> bool:
-        path = self.path_at(index)
-        return bool(path and open_in_notepad_plus_plus(path))
+        for vue in self.views:
+            vue.clear()
+        if self._external_open:
+            self._paths = [None] * len(self.views)
+            self._update_external_buttons()
+        # Le contenu disparait, pas l'identite des colonnes. En comparaison,
+        # un en-tete vide au debut d'un run rendrait les consoles impossibles
+        # a attribuer jusqu'au premier rapport complet.
+        for position, entete in enumerate(self.headers):
+            if position < len(self._readers):
+                lecteur = self._readers[position]
+                entete.setText(lecteur.short_name)
+                entete.setToolTip(lecteur.name)
+            else:
+                entete.clear()
+        self._update_difference_highlights()
 
 
 class ResultsPanel(QWidget):
-    """Panneau central de resultats."""
+    """Fiche du test, sortie brute et logs, derriere un etat vide au demarrage."""
+
+    reader_selected = Signal(int)
+    test_chosen = Signal(str)   # relaye la fiche de groupe vers l'arbre
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.tabs = QTabWidget()
+        self._log_root: Path | None = None
+        self._readers: tuple[Reader, ...] = ()
+        self._sorties: dict[int, str] = {}
+        self._index_echecs: dict[int, dict] = {}
+        self._durations: dict[int, dict[str, float]] = {}
+        self._nodeid = ""
+        self._statuses: dict[int, Status] = {}
+        self._markers: tuple[str, ...] = ()
+        self._recent_runs: dict[int, list[bool]] = {}
+        self._last_seen: float | None = None
+
         self.detail = DetailPanel()
+        self.detail.open_output.connect(self.show_output)
+        self.detail.test_chosen.connect(self.test_chosen)
+
         self.source = SourcePanel()
-        self.outputs = ReaderViews()
-        self.logs = ReaderViews(orientation=Qt.Horizontal, sync_scroll=True,
-                                highlight_differences=True, external_open=True)
-        self.tabs.addTab(self.detail, "Detail")
-        self.tabs.addTab(self.source, "Source")
-        self.tabs.addTab(self.outputs, "Output")
-        self.tabs.addTab(self.logs, "Logs")
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.tabs)
+
+        self.output = ReaderViews(Qt.Vertical)
+        self.logs = ReaderViews(
+            Qt.Horizontal, sync_scroll=True, show_lens=False,
+            highlight_differences=True, external_open=True)
+        self.logs.open_file_requested.connect(self._open_log_in_notepad_plus_plus)
+
+        # Les trois panneaux suivent le meme lecteur : lire le log de l'un en
+        # regardant la sortie de l'autre n'a pas de sens.
+        self.output.reader_selected.connect(self._on_reader, Qt.UniqueConnection)
+        self.logs.reader_selected.connect(self._on_reader, Qt.UniqueConnection)
+
+        self.tabs = QTabWidget()
+        self.tabs.tabBar().setObjectName("PrimaryTabs")
+        self.tabs.addTab(self.detail,
+                         icons.icon("mdi.text-box-search-outline", t.TEXT_MUTED),
+                         "Detail")
+        self.tabs.addTab(self.source,
+                         icons.icon("mdi.file-code-outline", t.TEXT_MUTED),
+                         "Source")
+        self.tabs.addTab(self.output, icons.icon("mdi.console", t.TEXT_MUTED),
+                         "Output")
+        self.tabs.addTab(self.logs,
+                         icons.icon("mdi.file-document-outline", t.TEXT_MUTED),
+                         "Logs")
+        self.tabs.setTabToolTip(ONGLET_DETAIL,
+                                "What happened to the selected test  (Ctrl+1)")
+        self.tabs.setTabToolTip(ONGLET_SOURCE,
+                                "The file of the selected test, editable  (Ctrl+2)")
+        self.tabs.setTabToolTip(ONGLET_OUTPUT, "Everything pytest wrote  (Ctrl+3)")
+        self.tabs.setTabToolTip(ONGLET_LOGS,
+                                "The .log files of the selected test  (Ctrl+4)")
+
+        colonne = QVBoxLayout(self)
+        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.addWidget(self.tabs)
+
+    # ------------------------------------------------------------- navigation
+
+    def restyle(self) -> None:
+        """Fait redescendre le changement de theme dans tout le panneau."""
+        for vues in (self.output, self.logs):
+            vues.restyle()
+        self.source.restyle()
+        for position, glyphe in (
+                (ONGLET_DETAIL, "mdi.text-box-search-outline"),
+                (ONGLET_SOURCE, "mdi.file-code-outline"),
+                (ONGLET_OUTPUT, "mdi.console"),
+                (ONGLET_LOGS, "mdi.file-document-outline")):
+            self.tabs.setTabIcon(position, icons.icon(glyphe, t.TEXT_MUTED))
+
+    def show_tab(self, position: int) -> None:
+        self.tabs.setCurrentIndex(position)
+
+    def show_output(self) -> None:
+        self.show_tab(ONGLET_OUTPUT)
+
+    def _on_reader(self, index: int) -> None:
+        self.output.select_silently(index)
+        self.logs.select_silently(index)
+        self.reader_selected.emit(index)
+
+    # ------------------------------------------------------------------- run
 
     def set_readers(self, readers: tuple[Reader, ...]) -> None:
-        self.outputs.set_readers(readers)
+        """Nouvelle collecte : les lecteurs changent, la selection ne vaut plus."""
+        self._readers = tuple(readers)
+        self._nodeid = ""
+        self._statuses = {}
+        self._sorties.clear()
+        self._index_echecs.clear()
+        self._durations.clear()
+        self.detail.clear()
+        self.source.save()
+        self.source.clear()
+        self.output.set_readers(readers)
         self.logs.set_readers(readers)
 
-    def select_reader(self, index: int) -> None:
-        self.outputs.select_silently(index)
-        self.logs.select_silently(index)
+    def begin_run(self) -> None:
+        """Vide les vues sans changer d'onglet.
 
-    def clear(self) -> None:
-        self.detail.clear()
-        self.source.clear()
-        self.outputs.clear()
+        Basculer d'office sur la console au lancement volait l'ecran a
+        l'utilisateur : l'avancement se lit dans l'arbre et dans la barre
+        d'etat, la console n'a pas a s'imposer.
+        """
+        self.output.clear()
         self.logs.clear()
+        self._sorties.clear()
+        self._index_echecs.clear()
+        self._durations.clear()
+        self._refresh_detail()
+
+    def set_report(self, rapport: ReaderReport) -> None:
+        """Range la sortie complete d'un lecteur qui vient de finir.
+
+        Les traces d'echec ne sont extraites qu'a la demande : sur un run de
+        plusieurs milliers de lignes, les decouper a chaque fin de lecteur
+        couterait pour rien si personne ne clique.
+        """
+        index = rapport.reader.index
+        self._sorties[index] = rapport.output
+        self._index_echecs.pop(index, None)
+        self._durations[index] = rapport.durations
+        self._refresh_detail()
+
+    def append_output(self, index: int, texte: str) -> None:
+        self.output.append(index, texte)
+
+    # ---------------------------------------------------------------- detail
+
+    def show_test(self, nodeid: str, statuses: dict[int, Status],
+                  workspace: str = "", markers: tuple[str, ...] = (),
+                  recent_runs: dict[int, list[bool]] | None = None,
+                  last_seen: float | None = None) -> None:
+        """Selectionne un test : sa fiche, sa source, et ses logs."""
+        self._nodeid = nodeid
+        self._statuses = dict(statuses)
+        self._markers = markers
+        self._recent_runs = recent_runs or {}
+        self._last_seen = last_seen
+        self._refresh_detail()
+        self.source.show_file(source_path(workspace, nodeid), nodeid)
+        self.show_logs_for(nodeid, self._readers)
+
+    def show_group(self, path: str, name: str, readers, counts: dict,
+                   failures: list, source: Path | None = None,
+                   jump_nodeid: str = "", nodeids: tuple[str, ...] = ()) -> None:
+        """Selectionne un regroupement : son bilan, et sa source s'il en a une.
+
+        Un module a un fichier, un dossier n'en a pas. Laisser celui du test
+        precedent quand il n'y en a pas ferait croire qu'il parle de ce qu'on
+        vient de cliquer ; le refuser a un module priverait du geste le plus
+        courant, cliquer un `.py` pour le lire.
+
+        Les logs, eux, restent vides : ils sont ecrits PAR TEST, et il n'y en
+        a aucun qui reponde pour un lot entier.
+        """
+        self._nodeid = ""
+        self._statuses = {}
+        cibles = readers or (Reader("", 0),)
+        durees = {lecteur.index: self._duree_totale(lecteur.index, nodeids)
+                 for lecteur in cibles}
+        self.detail.show_group(path, name, tuple(readers), counts, failures, durees)
+        self.source.show_file(source, jump_nodeid)
+        self.logs.clear()
+
+    def _duree_totale(self, reader_index: int, nodeids: tuple[str, ...]) -> float | None:
+        """Somme des durees connues de ces nodeids pour ce lecteur.
+
+        `None` si aucune n'est connue -- distinct de 0s, qui dirait a tort
+        "mesure et instantane".
+        """
+        connues = self._durations.get(reader_index, {})
+        vues = [connues[n] for n in nodeids if n in connues]
+        return sum(vues) if vues else None
+
+    def update_statuses(self, nodeid: str, statuses: dict[int, Status]) -> None:
+        """Rafraichit la fiche si elle porte sur ce test, sans toucher aux logs.
+
+        Appele a chaque resultat pendant un run : relire les .log a ce
+        rythme-la balayerait le disque des centaines de fois.
+        """
+        if nodeid and nodeid == self._nodeid:
+            self._statuses = dict(statuses)
+            self._refresh_detail()
+
+    def _refresh_detail(self) -> None:
+        if not self._nodeid:
+            self.detail.clear()
+            return
+        cibles = self._readers or (Reader("", 0),)
+        echecs = {
+            lecteur.index: failures_mod.failure_for(
+                self._echecs_de(lecteur.index), self._nodeid)
+            for lecteur in cibles
+        }
+        durees = {
+            lecteur.index: self._durations.get(lecteur.index, {}).get(self._nodeid)
+            for lecteur in cibles
+        }
+        self.detail.show_test(self._nodeid, self._readers, self._statuses, echecs, durees,
+                              self._markers, self._recent_runs, self._last_seen)
+
+    def _echecs_de(self, reader_index: int) -> dict:
+        index = self._index_echecs.get(reader_index)
+        if index is None:
+            index = failures_mod.index_failures(self._sorties.get(reader_index, ""))
+            self._index_echecs[reader_index] = index
+        return index
+
+    def failure_for(self, nodeid: str, reader_index: int):
+        """Le bloc d'echec de ce nodeid pour ce lecteur, ou None.
+
+        Expose pour le menu contextuel de l'arbre : "Copy failure trace" ne
+        doit s'activer que si ce test a vraiment un echec a copier.
+        """
+        return failures_mod.failure_for(self._echecs_de(reader_index), nodeid)
+
+    # ------------------------------------------------------------------ logs
+
+    def set_log_root(self, racine: Path | None) -> None:
+        self._log_root = racine
+
+    def show_logs_for(self, nodeid: str, readers: tuple[Reader, ...]) -> None:
+        """Charge le .log de ce test, un par lecteur."""
+        if not nodeid or self._log_root is None:
+            return
+
+        cibles = readers or (Reader("", 0),)
+        for lecteur in cibles:
+            chemin = logs.find_test_log(self._log_root, nodeid, lecteur.name)
+            if chemin is None:
+                self.logs.set_text(lecteur.index,
+                                   self._rien_trouve(lecteur),
+                                   lecteur.name or "")
+                continue
+            try:
+                contenu = chemin.read_text(encoding="utf-8", errors="replace")
+            except OSError as exc:
+                contenu = f"Could not read {chemin}:\n{exc}"
+            # Le chemin en tete : deux logs se ressemblent beaucoup, et savoir
+            # DUQUEL on parle est la premiere chose qu'on veut verifier.
+            self.logs.set_text(lecteur.index, contenu,
+                               lecteur.name or chemin.name, str(chemin))
+
+    def refresh_logs(self) -> None:
+        """Recharge les logs du test encore selectionne apres un run."""
+        if self._nodeid:
+            self.show_logs_for(self._nodeid, self._readers)
+
+    def _open_log_in_notepad_plus_plus(self, reader_index: int) -> None:
+        path = self.logs.path_at(reader_index)
+        if path is not None:
+            open_in_notepad_plus_plus(self, path)
+
+    def _rien_trouve(self, lecteur: Reader) -> str:
+        """Dire ou l'on a cherche, et pas seulement qu'on n'a rien trouve.
+
+        « No log found » tout seul se lit comme une panne de l'outil. La liste
+        des dossiers examines montre au contraire tout de suite si le dossier
+        est vide, si le run n'a rien ecrit, ou si le reglage du chemin des logs
+        ne pointe pas la ou l'on croyait.
+        """
+        ou = logs.places_searched(self._log_root)
+        lignes = ["No log found for this test"
+                  + (f" on {lecteur.name}." if lecteur.name else ".")]
+
+        if not ou:
+            lignes += ["", f"The log folder does not exist yet:",
+                       f"    {self._log_root}", "",
+                       "It is created by the workspace conftest on the first "
+                       "run. Check the log path setting if the run did write "
+                       "somewhere else."]
+        else:
+            lignes += ["", "Looked in, most recent first:"]
+            lignes += [f"    {chemin}" for chemin in ou]
+        return "\n".join(lignes)
