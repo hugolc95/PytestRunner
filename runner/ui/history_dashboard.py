@@ -917,7 +917,8 @@ class HistoryWindow(QDialog):
         if group is None or not group.nodeids:
             return
         self.rerun_requested.emit(group)
-        self.accept()
+        if self.isWindow():
+            self.accept()
 
     def export_html(self, entry: RunEntry | None = None) -> None:
         entry = entry or self._first_entry()

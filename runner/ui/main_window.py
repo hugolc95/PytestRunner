@@ -330,17 +330,32 @@ class MainWindow(QMainWindow):
         return page, layout
 
     def _build_history_page(self) -> QWidget:
-        page, layout = self._page_landing(
-            "Historique",
-            "Retrouvez les exécutions passées, comparez les lecteurs et "
-            "relancez une sélection sans modifier le Workspace courant.")
-        button = QPushButton("Ouvrir l’historique des exécutions")
-        button.setObjectName("Primary")
-        button.setIcon(icons.icon("mdi.history", t.ON_ACCENT))
-        button.clicked.connect(self.open_history)
-        layout.addWidget(button, 0, Qt.AlignLeft)
-        layout.addStretch(1)
+        from runner.ui.history_dashboard import HistoryWindow
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.history_dashboard = HistoryWindow(self.history, page)
+        self.history_dashboard.setWindowFlags(Qt.Widget)
+        self.history_dashboard.rerun_requested.connect(self._rerun_history)
+        layout.addWidget(self.history_dashboard, 1)
         return page
+
+    def _config_section(self, title: str, description: str) -> tuple[QFrame, QVBoxLayout]:
+        section = QFrame()
+        section.setObjectName("ConfigSection")
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(t.SPACE_4, t.SPACE_4, t.SPACE_4, t.SPACE_4)
+        layout.setSpacing(t.SPACE_2)
+        heading = QLabel(title)
+        heading.setObjectName("ConfigSectionTitle")
+        copy = QLabel(description)
+        copy.setObjectName("Muted")
+        copy.setWordWrap(True)
+        layout.addWidget(heading)
+        layout.addWidget(copy)
+        return section, layout
 
     def _build_configuration_page(self) -> QWidget:
         page, layout = self._page_landing(
@@ -349,23 +364,35 @@ class MainWindow(QMainWindow):
             "workspace. L’interpréteur de test n’est affiché sur le Workspace "
             "que lorsqu’il nécessite votre attention.")
 
-        self.interpreter_config_button = QPushButton("Configurer l’interpréteur de test…")
+        python_section, python_layout = self._config_section(
+            "Environnement Python",
+            "Choisissez le Python utilisé pour collecter et exécuter pytest. "
+            "Ce réglage concerne le moteur d’exécution, pas le contenu des tests.")
+        self.interpreter_config_button = QPushButton("Configurer l’environnement Python…")
         self.interpreter_config_button.setIcon(icons.icon("mdi.language-python", t.TEXT_MUTED))
         self.interpreter_config_button.clicked.connect(self.open_interpreter_dialog)
-        layout.addWidget(self.interpreter_config_button, 0, Qt.AlignLeft)
+        python_layout.addWidget(self.interpreter_config_button, 0, Qt.AlignLeft)
+        layout.addWidget(python_section)
 
-        self.workspace_config_button = QPushButton("Configurer le workspace…")
-        self.workspace_config_button.setObjectName("Ghost")
+        yaml_section, yaml_layout = self._config_section(
+            "Configuration des tests YAML",
+            "Choisissez et modifiez le fichier .yml ou .yaml du workspace : "
+            "lecteurs, chemins de logs, campagnes et paramètres des tests.")
+        self.workspace_config_button = QPushButton("Configurer les fichiers YAML…")
         self.workspace_config_button.setIcon(
             icons.icon("mdi.file-cog-outline", t.TEXT_MUTED))
         self.workspace_config_button.clicked.connect(self.open_config_dialog)
-        layout.addWidget(self.workspace_config_button, 0, Qt.AlignLeft)
+        yaml_layout.addWidget(self.workspace_config_button, 0, Qt.AlignLeft)
+        layout.addWidget(yaml_section)
 
+        appearance_section, appearance_layout = self._config_section(
+            "Apparence", "Réglez uniquement l’apparence de l’application.")
         self.page_theme_button = QPushButton("Changer de thème")
         self.page_theme_button.setObjectName("Ghost")
         self.page_theme_button.setIcon(icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
         self.page_theme_button.clicked.connect(self.toggle_theme)
-        layout.addWidget(self.page_theme_button, 0, Qt.AlignLeft)
+        appearance_layout.addWidget(self.page_theme_button, 0, Qt.AlignLeft)
+        layout.addWidget(appearance_section)
         layout.addStretch(1)
         return page
 
@@ -377,6 +404,8 @@ class MainWindow(QMainWindow):
         }
         cible = pages.get(page, self.workspace_page)
         self.pages.setCurrentWidget(cible)
+        if page == "history":
+            self.history_dashboard.refresh()
         for cle, bouton in self.nav_buttons.items():
             bouton.setChecked(cle == page)
         self.statusBar().setVisible(page == "workspace")
@@ -873,13 +902,8 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def open_history(self) -> None:
-        """Les runs passes. Accessible sans workspace charge : on vient
-        souvent y chercher ce qu'a donne le run d'hier."""
-        from runner.ui.history_dashboard import HistoryWindow
-
-        dialogue = HistoryWindow(self.history, self)
-        dialogue.rerun_requested.connect(self._rerun_history)
-        dialogue.exec()
+        """Affiche les runs passes dans la page integree de la fenetre."""
+        self._show_page("history")
 
     @Slot()
     def open_allure_report(self) -> None:
@@ -1022,6 +1046,7 @@ class MainWindow(QMainWindow):
         if self.service.busy:
             self.status_label.setText("A run is already in progress")
             return
+        self._show_page("workspace")
         self._pending_history_run = group
         courant = self.workspace.path if self.workspace else ""
         if courant and Path(courant) == Path(group.workspace):

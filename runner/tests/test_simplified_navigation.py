@@ -1,6 +1,7 @@
 """The main shell stays intentionally small while runner features remain wired."""
 
 from PySide6.QtCore import QSettings
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel
 
 from runner.domain import interpreter as interpreter_mod
@@ -29,7 +30,24 @@ def test_configuration_is_a_real_page_with_both_interpreter_and_workspace(qapp):
         window._show_page("configuration")
         assert window.pages.currentWidget() is window.configuration_page
         assert window.interpreter_config_button.isVisibleTo(window.configuration_page)
-        assert window.workspace_config_button.text().startswith("Configurer le workspace")
+        assert "environnement Python" in window.interpreter_config_button.text()
+        assert "fichiers YAML" in window.workspace_config_button.text()
+        headings = {label.text() for label in window.configuration_page.findChildren(QLabel)}
+        assert "Environnement Python" in headings
+        assert "Configuration des tests YAML" in headings
+    finally:
+        window.close()
+
+
+def test_history_navigation_shows_the_dashboard_inside_the_main_window(qapp):
+    window = MainWindow()
+    try:
+        window.open_history()
+
+        assert window.pages.currentWidget() is window.history_page
+        assert window.history_dashboard.parentWidget() is window.history_page
+        assert window.history_dashboard.windowFlags() & Qt.WindowType_Mask == Qt.Widget
+        assert not window.history_dashboard.isWindow()
     finally:
         window.close()
 

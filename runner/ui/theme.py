@@ -83,6 +83,16 @@ QFrame#InterpreterAlert QLabel {{
     color: {t.status_color(Status.FAILED)};
     background: transparent;
 }}
+QFrame#ConfigSection {{
+    background-color: {t.BG_SURFACE};
+    border: 1px solid {t.BORDER};
+    border-radius: {t.RADIUS_LG}px;
+}}
+QLabel#ConfigSectionTitle {{
+    color: {t.TEXT};
+    font-size: {t.TEXT_LG}px;
+    font-weight: 700;
+}}
 QFrame#Surface, QWidget#Surface {{
     background-color: {t.BG_SURFACE};
     border: 1px solid {t.BORDER};
