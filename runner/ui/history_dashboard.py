@@ -13,10 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PySide6.QtCore import QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtGui import QActionGroup, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QActionGroup,
     QComboBox,
     QDialog,
     QFileDialog,
