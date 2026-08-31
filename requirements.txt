@@ -1,13 +1,8 @@
---no-index
---find-links ./wheels
-
-PyQt5==5.15.11
-pytest==9.1.1
+PySide6==6.11.2
 PyYAML==6.0.3
 colorama==0.4.6
-pytest-xdist==3.8.0
-execnet==2.1.2
-
-# Icones vectorielles de l'interface v2 (runner/). Wheel pur Python,
-# compatible win32.
 qtawesome==1.4.2
+
+# GUI/runtime x64 only. Pytest itself is intentionally not required by the
+# packaged UI: test execution is delegated to the external interpreter chosen
+# in the Runner (the target can therefore remain Python 3.13 x86).
