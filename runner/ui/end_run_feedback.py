@@ -15,7 +15,32 @@ def install() -> None:
     """Install responsive end-of-run handling before MainWindow is created."""
     from runner.ui.main_window import MainWindow
 
+    original_started = MainWindow._on_run_started
+    original_outcome = MainWindow._on_outcome
     original_progress = MainWindow._on_progress
+
+    def remember_run_for_archive(self, request) -> None:
+        # Keep exactly what was launched.  Reading the complete tree again at
+        # the end was both wrong for partial selections and expensive on very
+        # large suites.
+        self._archive_run_nodeids = tuple(request.nodeids)
+        self._archive_failed_by_reader = {
+            reader.index: set() for reader in request.readers
+        }
+        original_started(self, request)
+
+    def remember_outcome_for_archive(self, outcome) -> None:
+        original_outcome(self, outcome)
+        failures = getattr(self, "_archive_failed_by_reader", None)
+        if failures is None:
+            return
+        bucket = failures.setdefault(outcome.reader_index, set())
+        if outcome.status.is_bad:
+            bucket.add(outcome.nodeid)
+        else:
+            # The latest final verdict wins if pytest reports a node more than
+            # once (setup/retry/plugin behaviour).
+            bucket.discard(outcome.nodeid)
 
     def progress_with_finalizing_state(self, done: int, total: int) -> None:
         original_progress(self, done, total)
@@ -23,18 +48,20 @@ def install() -> None:
             self._set_status_live("Finalizing run…")
 
     def _archive_entries(self, rapports: list) -> tuple[tuple[RunEntry, str], ...]:
-        """Snapshot everything the background writer needs while still on GUI."""
+        """Snapshot only cheap, already-cached data on the GUI thread."""
         if self._run_id is None or self.workspace is None:
             return ()
 
-        played = tuple(self.model.nodeids())
+        played = tuple(getattr(self, "_archive_run_nodeids", ()))
+        failed_by_reader = getattr(self, "_archive_failed_by_reader", {})
         entries: list[tuple[RunEntry, str]] = []
+        now = time.time()
         for report in rapports:
             if report.cancelled:
                 continue
             entry = history.RunEntry(
                 id=self._run_id,
-                timestamp=time.time(),
+                timestamp=now,
                 workspace=self.workspace.path,
                 build_number=self._build_number,
                 log_root=str(self.workspace.log_root),
@@ -43,8 +70,8 @@ def install() -> None:
                 exit_code=report.exit_code,
                 counts={status.name: count for status, count in report.counts.items()},
                 nodeids=played,
-                failed_nodeids=tuple(
-                    self.model.failed_nodeids_for(report.reader.index)),
+                failed_nodeids=tuple(sorted(
+                    failed_by_reader.get(report.reader.index, ()))),
                 junit_path=report.junit_path,
             )
             entries.append((entry, report.output))
@@ -72,11 +99,10 @@ def install() -> None:
         entries = _archive_entries(self, rapports)
         self._run_id = None
         self._build_number = None
+        self._archive_run_nodeids = ()
+        self._archive_failed_by_reader = {}
 
         def finish_lightweight_bookkeeping() -> None:
-            # These operations are deliberately kept on the GUI thread because
-            # they touch widgets. They are small; the heavy history/output disk
-            # writes happen in RunArchiveWorker instead.
             self.results.refresh_logs()
             if self._last_allure_dir:
                 self._lancer_generation_allure(ouvrir_apres=False)
@@ -86,24 +112,31 @@ def install() -> None:
             QTimer.singleShot(0, finish_lightweight_bookkeeping)
             return
 
-        # History can be opened while the archive is running, but destructive
-        # history actions must not race with the atomic JSON replacement.
+        # History can be read while the worker runs, but destructive history
+        # actions must not race with its atomic JSON replacement.
         self.history_button.setEnabled(False)
         worker = RunArchiveWorker(
             self.history.racine, self.history.max_entrees, entries, self)
         self._archive_worker = worker
 
-        def archive_done(_ok: bool, _detail: str) -> None:
-            # The worker's done signal is emitted only after QThread.finished,
-            # so dropping this reference cannot destroy a running QThread.
+        def archive_done(ok: bool, detail: str) -> None:
             self.history.reload()
             self._archive_worker = None
             self.history_button.setEnabled(True)
+            if not ok:
+                # Archiving is non-fatal, but losing a run must no longer be
+                # silent. Keep the main result visible and report the storage
+                # problem in the status line.
+                self.status_label.setText(
+                    "Run finished, but history could not be fully saved"
+                    + (f": {detail}" if detail else ""))
             finish_lightweight_bookkeeping()
 
         self._archive_done_slot = archive_done
         worker.done.connect(archive_done)
         worker.start()
 
+    MainWindow._on_run_started = remember_run_for_archive
+    MainWindow._on_outcome = remember_outcome_for_archive
     MainWindow._on_progress = progress_with_finalizing_state
     MainWindow._on_run_finished = finish_with_background_archive
