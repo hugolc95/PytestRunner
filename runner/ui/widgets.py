@@ -209,18 +209,19 @@ class StatusPill(QPushButton):
         # de l'icone au lieu d'un trait net.
         glyphe = icons.STATUS_GLYPHS_GROUP.get(self._status, "mdi.circle-small")
         self.setIcon(icons.icon(glyphe, couleur if allume else t.BORDER_STRONG))
-        self.setIconSize(QSize(13, 13))
-        self.setText(str(self._value))
+        self.setIconSize(QSize(20, 20))
+        self.setText(f"{self._value}\n{self._status.label}")
 
         couleur_texte = couleur if allume else t.TEXT_FAINT
-        fond = t.rgba(couleur, 0.18) if self._active else "transparent"
-        fond_survol = t.rgba(couleur, 0.1) if allume else t.rgba(t.TEXT_FAINT, 0.08)
+        fond = t.rgba(couleur, 0.22 if self._active else 0.10 if allume else 0.04)
+        fond_survol = t.rgba(couleur, 0.16 if allume else 0.07)
+        bordure = couleur if self._active else t.rgba(couleur, 0.32 if allume else 0.14)
         poids = "700" if self._active else "600" if allume else "400"
 
         base = (
-            f"color: {couleur_texte}; border: none; border-radius: {t.RADIUS_SM}px;"
-            f"padding: {t.SPACE_1}px {t.SPACE_2}px;"
-            f"font-size: {t.TEXT_SM + 1}px; font-weight: {poids};")
+            f"color: {couleur_texte}; border: 1px solid {bordure}; "
+            f"border-radius: {t.RADIUS_MD}px; padding: {t.SPACE_1}px {t.SPACE_2}px;"
+            f"font-size: {t.TEXT_SM + 2}px; font-weight: {poids};")
         # Le survol/l'appui doivent etre ecrits ICI : sans eux, le style natif
         # de Windows dessine SON propre relief au survol -- un rectangle
         # sombre par-dessus notre fond clair, illisible en theme clair.
@@ -228,6 +229,9 @@ class StatusPill(QPushButton):
             f"QPushButton {{ background-color: {fond}; {base} }}"
             f"QPushButton:hover {{ background-color: {fond_survol}; {base} }}"
             f"QPushButton:pressed {{ background-color: {fond_survol}; {base} }}")
+        # Apres la feuille locale : le QSS global des QPushButton ne doit pas
+        # ramener ces compteurs a la hauteur compacte des boutons ordinaires.
+        self.setMinimumSize(72, 48)
 
         if not allume:
             self.setToolTip(f"No {libelle} test")

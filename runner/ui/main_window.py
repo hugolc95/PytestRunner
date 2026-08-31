@@ -568,10 +568,10 @@ class MainWindow(QMainWindow):
         # Les verdicts, dans l'espace vide a droite de cette rangee -- un
         # anneau qui dit la proportion d'un coup d'oeil, le detail par statut
         # juste a cote pour filtrer, comme avant.
-        self.compass_ring = CompassRing()
+        self.compass_ring = CompassRing(diameter=56, thickness=9)
         self.compass_pct = QLabel("—")
         self.compass_pct.setStyleSheet(
-            f"color: {t.TEXT}; font-weight: 600; font-size: {t.TEXT_SM + 4}px;")
+            f"color: {t.TEXT}; font-weight: 700; font-size: {t.TEXT_SM + 6}px;")
 
         self.pills = {
             statut: StatusPill(statut)
@@ -1280,7 +1280,7 @@ class MainWindow(QMainWindow):
         # Ni une icone teintee ni un StatusPill : juste un label dont la
         # couleur ne vient pas de la feuille globale, a rejouer a la main.
         self.compass_pct.setStyleSheet(
-            f"color: {t.TEXT}; font-weight: 600; font-size: {t.TEXT_SM + 4}px;")
+            f"color: {t.TEXT}; font-weight: 700; font-size: {t.TEXT_SM + 6}px;")
 
         for glyphe, bouton in (
                 ("mdi.folder-open-outline", self.browse_button),

@@ -92,6 +92,14 @@ def test_the_pills_live_in_the_workspace_bar_not_the_status_bar(fenetre):
         assert pastille.parentWidget() is not fenetre.statusBar()
 
 
+def test_result_counters_are_large_enough_to_read_at_a_glance(fenetre):
+    for status, pill in fenetre.pills.items():
+        assert pill.minimumWidth() >= 72
+        assert pill.minimumHeight() >= 48
+        assert pill.iconSize().width() >= 20
+        assert status.label in pill.text()
+
+
 # =========================================================================
 # Le filtre
 # =========================================================================
