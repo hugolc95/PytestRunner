@@ -1,41 +1,42 @@
-"""Reglages partages par les deux recettes PyInstaller.
+"""Reglages PyInstaller partages.
 
-Les deux interfaces vivent dans le meme depot et excluent les memes modules.
-Recopier la liste dans chaque `.spec` la ferait diverger a la premiere
-correction : l'une des deux embarquerait QtWebEngine sans que personne ne s'en
-apercoive avant de peser le dossier produit.
+La GUI active est construite avec PySide6/Qt 6 en Python x64. Pytest et toutes
+les dependances des tests restent hors de l'exe et sont executes par
+l'interpreteur externe configure dans l'application (x86 ou x64).
 """
 
-# Modules lourds ou inutiles aux interfaces. QtWebEngine pese a lui seul
-# plusieurs centaines de Mo ; pytest et ses dependances vivent cote
-# interpreteur des tests, dans un processus separe.
+# Modules lourds ou inutiles a l'interface. QtWebEngine/Quick ne sont pas
+# utilises par le Runner. On exclut aussi explicitement PyQt5 : meme s'il est
+# installe sur le poste de build, il ne doit jamais etre embarque dans l'exe
+# PySide6.
 EXCLUDES = [
-    "PyQt5.QtWebEngine",
-    "PyQt5.QtWebEngineCore",
-    "PyQt5.QtWebEngineWidgets",
-    "PyQt5.QtWebKit",
-    "PyQt5.QtWebKitWidgets",
-    "PyQt5.QtBluetooth",
-    "PyQt5.QtDesigner",
-    "PyQt5.QtHelp",
-    "PyQt5.QtLocation",
-    "PyQt5.QtMultimedia",
-    "PyQt5.QtMultimediaWidgets",
-    "PyQt5.QtNfc",
-    "PyQt5.QtOpenGL",
-    "PyQt5.QtPositioning",
-    "PyQt5.QtQml",
-    "PyQt5.QtQuick",
-    "PyQt5.QtQuick3D",
-    "PyQt5.QtQuickWidgets",
-    "PyQt5.QtSensors",
-    "PyQt5.QtSerialPort",
-    "PyQt5.QtSql",
-    "PyQt5.QtTest",
-    "PyQt5.QtTextToSpeech",
-    "PyQt5.QtWebChannel",
-    "PyQt5.QtWebSockets",
-    "PyQt5.QtXmlPatterns",
+    "PyQt5",
+    "PyQt5.QtCore",
+    "PyQt5.QtGui",
+    "PyQt5.QtWidgets",
+    "PySide6.QtWebEngineCore",
+    "PySide6.QtWebEngineWidgets",
+    "PySide6.QtWebEngineQuick",
+    "PySide6.QtBluetooth",
+    "PySide6.QtDesigner",
+    "PySide6.QtHelp",
+    "PySide6.QtLocation",
+    "PySide6.QtMultimedia",
+    "PySide6.QtMultimediaWidgets",
+    "PySide6.QtNfc",
+    "PySide6.QtOpenGLWidgets",
+    "PySide6.QtPositioning",
+    "PySide6.QtQml",
+    "PySide6.QtQuick",
+    "PySide6.QtQuick3D",
+    "PySide6.QtQuickWidgets",
+    "PySide6.QtSensors",
+    "PySide6.QtSerialPort",
+    "PySide6.QtSql",
+    "PySide6.QtTest",
+    "PySide6.QtTextToSpeech",
+    "PySide6.QtWebChannel",
+    "PySide6.QtWebSockets",
     "pytest",
     "_pytest",
     "xdist",
@@ -46,8 +47,6 @@ EXCLUDES = [
     "pandas",
 ]
 
-# Chaque interface ignore l'autre. Les deux cohabitent dans le depot mais
-# n'ont aucun lien : sans ces exclusions, PyInstaller suivrait un import
-# oublie et embarquerait les deux dans le meme exe.
+# L'interface active n'embarque pas l'ancienne GUI PyQt5/classic.
 EXCLUDES_CLASSIC = ["runner"]
-EXCLUDES_RUNNER = ["gui_qt", "main_tk"]
+EXCLUDES_RUNNER = ["gui_qt", "main_qt", "main_tk"]
