@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDialog,
+    QFrame,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -226,11 +227,34 @@ class MainWindow(QMainWindow):
 
     def _build_ui(self) -> None:
         central = QWidget()
-        colonne = QVBoxLayout(central)
+        racine = QHBoxLayout(central)
+        racine.setContentsMargins(0, 0, 0, 0)
+        racine.setSpacing(0)
+
+        racine.addWidget(self._build_navigation())
+
+        self.pages = QStackedWidget()
+        self.workspace_page = QWidget()
+        colonne = QVBoxLayout(self.workspace_page)
         colonne.setContentsMargins(t.SPACE_3, t.SPACE_3, t.SPACE_3, t.SPACE_2)
         colonne.setSpacing(t.SPACE_3)
 
         colonne.addWidget(self._build_command_bar())
+
+        self.interpreter_alert = QFrame()
+        self.interpreter_alert.setObjectName("InterpreterAlert")
+        alerte = QHBoxLayout(self.interpreter_alert)
+        alerte.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
+        self.interpreter_alert_label = QLabel(
+            "The configured test interpreter is unavailable.")
+        self.interpreter_alert_label.setWordWrap(True)
+        self.interpreter_alert_button = QPushButton("Open configuration")
+        self.interpreter_alert_button.clicked.connect(
+            lambda: self._show_page("configuration"))
+        alerte.addWidget(self.interpreter_alert_label, 1)
+        alerte.addWidget(self.interpreter_alert_button)
+        self.interpreter_alert.setVisible(False)
+        colonne.addWidget(self.interpreter_alert)
 
         # Le choix des lecteurs porte sur le RUN : il partage donc la rangee
         # des actions Run / Stop / Re-run, plutot que d'occuper une ligne a
@@ -249,8 +273,113 @@ class MainWindow(QMainWindow):
         self.split.setStretchFactor(1, 55)
         colonne.addWidget(self.split, 1)
 
+        self.pages.addWidget(self.workspace_page)
+        self.history_page = self._build_history_page()
+        self.configuration_page = self._build_configuration_page()
+        self.pages.addWidget(self.history_page)
+        self.pages.addWidget(self.configuration_page)
+        racine.addWidget(self.pages, 1)
+
         self.setCentralWidget(central)
         self._build_status_bar()
+
+    def _build_navigation(self) -> QWidget:
+        navigation = QFrame()
+        navigation.setObjectName("Navigation")
+        navigation.setFixedWidth(190)
+        colonne = QVBoxLayout(navigation)
+        colonne.setContentsMargins(t.SPACE_3, t.SPACE_4, t.SPACE_3, t.SPACE_3)
+        colonne.setSpacing(t.SPACE_2)
+
+        titre = QLabel("PYTEST RUNNER")
+        titre.setObjectName("NavigationTitle")
+        colonne.addWidget(titre)
+        colonne.addSpacing(t.SPACE_4)
+
+        self.nav_buttons = {}
+        entrees = (
+            ("workspace", "Workspace", "mdi.folder-outline"),
+            ("history", "Historique", "mdi.history"),
+            ("configuration", "Configuration", "mdi.cog-outline"),
+        )
+        for cle, texte, glyph in entrees:
+            bouton = QPushButton(texte)
+            bouton.setObjectName("NavigationItem")
+            bouton.setCheckable(True)
+            bouton.setIcon(icons.icon(glyph, t.TEXT_MUTED))
+            bouton.setCursor(Qt.PointingHandCursor)
+            bouton.clicked.connect(lambda checked=False, page=cle: self._show_page(page))
+            self.nav_buttons[cle] = bouton
+            colonne.addWidget(bouton)
+        colonne.addStretch(1)
+        self.nav_buttons["workspace"].setChecked(True)
+        return navigation
+
+    def _page_landing(self, title: str, description: str) -> tuple[QWidget, QVBoxLayout]:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(t.SPACE_6, t.SPACE_6, t.SPACE_6, t.SPACE_6)
+        layout.setSpacing(t.SPACE_3)
+        heading = QLabel(title)
+        heading.setObjectName("PageTitle")
+        layout.addWidget(heading)
+        copy = QLabel(description)
+        copy.setObjectName("Muted")
+        copy.setWordWrap(True)
+        layout.addWidget(copy)
+        return page, layout
+
+    def _build_history_page(self) -> QWidget:
+        page, layout = self._page_landing(
+            "Historique",
+            "Retrouvez les exécutions passées, comparez les lecteurs et "
+            "relancez une sélection sans modifier le Workspace courant.")
+        button = QPushButton("Ouvrir l’historique des exécutions")
+        button.setObjectName("Primary")
+        button.setIcon(icons.icon("mdi.history", t.ON_ACCENT))
+        button.clicked.connect(self.open_history)
+        layout.addWidget(button, 0, Qt.AlignLeft)
+        layout.addStretch(1)
+        return page
+
+    def _build_configuration_page(self) -> QWidget:
+        page, layout = self._page_landing(
+            "Configuration",
+            "Configurez ici l’environnement d’exécution et les réglages du "
+            "workspace. L’interpréteur de test n’est affiché sur le Workspace "
+            "que lorsqu’il nécessite votre attention.")
+
+        self.interpreter_config_button = QPushButton("Configurer l’interpréteur de test…")
+        self.interpreter_config_button.setIcon(icons.icon("mdi.language-python", t.TEXT_MUTED))
+        self.interpreter_config_button.clicked.connect(self.open_interpreter_dialog)
+        layout.addWidget(self.interpreter_config_button, 0, Qt.AlignLeft)
+
+        self.workspace_config_button = QPushButton("Configurer le workspace…")
+        self.workspace_config_button.setObjectName("Ghost")
+        self.workspace_config_button.setIcon(
+            icons.icon("mdi.file-cog-outline", t.TEXT_MUTED))
+        self.workspace_config_button.clicked.connect(self.open_config_dialog)
+        layout.addWidget(self.workspace_config_button, 0, Qt.AlignLeft)
+
+        self.page_theme_button = QPushButton("Changer de thème")
+        self.page_theme_button.setObjectName("Ghost")
+        self.page_theme_button.setIcon(icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
+        self.page_theme_button.clicked.connect(self.toggle_theme)
+        layout.addWidget(self.page_theme_button, 0, Qt.AlignLeft)
+        layout.addStretch(1)
+        return page
+
+    def _show_page(self, page: str) -> None:
+        pages = {
+            "workspace": self.workspace_page,
+            "history": self.history_page,
+            "configuration": self.configuration_page,
+        }
+        cible = pages.get(page, self.workspace_page)
+        self.pages.setCurrentWidget(cible)
+        for cle, bouton in self.nav_buttons.items():
+            bouton.setChecked(cle == page)
+        self.statusBar().setVisible(page == "workspace")
 
     def _build_command_bar(self) -> QWidget:
         barre = QWidget()
@@ -286,6 +415,7 @@ class MainWindow(QMainWindow):
         self.config_button.setToolTip(
             "Choose or edit this workspace's YAML configuration file")
         self.config_button.clicked.connect(self.open_config_dialog)
+        self.config_button.setVisible(False)
 
         # L'historique parle du workspace lui aussi : ce sont ses runs. Sorti
         # du menu, parce qu'on y va pour comparer au run precedent, ce qui
@@ -295,6 +425,7 @@ class MainWindow(QMainWindow):
         self.history_button.setIcon(icons.icon("mdi.history", t.TEXT_MUTED))
         self.history_button.setToolTip("Runs already recorded  (Ctrl+H)")
         self.history_button.clicked.connect(self.open_history)
+        self.history_button.setVisible(False)
 
         # A cote de History plutot que dans un menu : c'est le meme geste,
         # juste sur un rapport different -- regarder ce qu'a donne un run deja
@@ -586,6 +717,7 @@ class MainWindow(QMainWindow):
         self.theme_button.setCursor(Qt.PointingHandCursor)
         self.theme_button.clicked.connect(self.toggle_theme)
         self.menuBar().setCornerWidget(self.theme_button, Qt.TopRightCorner)
+        self.theme_button.setToolTip("Changer de thème")
 
         fichier = self.menuBar().addMenu("&File")
         self._action(fichier, "Open workspace…", QKeySequence.Open, self.browse_workspace,
@@ -646,6 +778,11 @@ class MainWindow(QMainWindow):
         self._action(vue, "Compare readers side by side", "Ctrl+Shift+D",
                      self._toggle_compare, "mdi.view-split-vertical")
 
+        # La navigation principale remplace la barre de menus. Les QAction
+        # restent rattachees a la fenetre afin de conserver tous les
+        # raccourcis clavier et les comportements existants.
+        self.menuBar().hide()
+
     def _action(self, menu, texte: str, raccourci, slot, glyph: str = ""):
         action = menu.addAction(texte)
         if glyph:
@@ -688,13 +825,22 @@ class MainWindow(QMainWindow):
         chemin = self._effective_interpreter()
         if chemin:
             return chemin
-
-        ErrorDialog.show_error(
-            self, "No Python interpreter",
-            "No Python interpreter was found automatically for the tests.",
-            "This happens when the application is packaged and no Python is "
-            "on the PATH. Set one from File > Test Python interpreter…")
+        self._set_interpreter_alert(
+            "Aucun interpréteur Python de test n’est disponible. "
+            "Configurez-le avant de charger ou lancer les tests.")
         return ""
+
+    def _set_interpreter_alert(self, message: str = "") -> None:
+        self.interpreter_alert_label.setText(message)
+        self.interpreter_alert.setVisible(bool(message))
+
+    def _on_interpreter_probed(self, info) -> None:
+        if info.ok and info.pytest_version:
+            self._set_interpreter_alert()
+            return
+        detail = info.error or "pytest n’est pas installé dans cet environnement."
+        self._set_interpreter_alert(
+            f"L’interpréteur de test configuré est indisponible : {detail}")
 
     @Slot()
     def open_interpreter_dialog(self) -> None:
@@ -711,6 +857,19 @@ class MainWindow(QMainWindow):
             # jusqu'ici : les nodeids collectes ailleurs peuvent ne plus exister.
             if self.workspace is not None and not self.workspace.declared_interpreter:
                 self.load_workspace()
+        self._refresh_interpreter_alert()
+
+    def _refresh_interpreter_alert(self) -> None:
+        if self.workspace is None:
+            self._set_interpreter_alert()
+            return
+        chemin = self._effective_interpreter()
+        if not chemin:
+            self._require_interpreter()
+            return
+        info = interpreter_mod.cached_probe(chemin)
+        if info is not None:
+            self._on_interpreter_probed(info)
 
     @Slot()
     def open_history(self) -> None:
@@ -952,6 +1111,8 @@ class MainWindow(QMainWindow):
                  self.workspace.reader_mode)
         if avant != apres:
             self.load_workspace()
+        else:
+            self._refresh_interpreter_alert()
 
     @Slot()
     def toggle_theme(self) -> None:
@@ -983,6 +1144,13 @@ class MainWindow(QMainWindow):
             "mdi.weather-sunny" if soleil else "mdi.weather-night", t.TEXT_MUTED))
         self.theme_button.setToolTip(
             "Switch to the light theme" if soleil else "Switch to the dark theme")
+        self.page_theme_button.setIcon(
+            icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
+        for cle, glyph in (
+                ("workspace", "mdi.folder-outline"),
+                ("history", "mdi.history"),
+                ("configuration", "mdi.cog-outline")):
+            self.nav_buttons[cle].setIcon(icons.icon(glyph, t.TEXT_MUTED))
         # Ni une icone teintee ni un StatusPill : juste un label dont la
         # couleur ne vient pas de la feuille globale, a rejouer a la main.
         self.compass_pct.setStyleSheet(
@@ -1070,7 +1238,10 @@ class MainWindow(QMainWindow):
         # "Run tests".
         if interpreter_mod.cached_probe(python) is None:
             self._allure_prober = ProbeWorker(python, self)
+            self._allure_prober.done.connect(self._on_interpreter_probed)
             self._allure_prober.start()
+        else:
+            self._on_interpreter_probed(interpreter_mod.cached_probe(python))
 
         self.status_label.setText("Collecting tests…")
         self.load_button.setEnabled(False)
@@ -2132,6 +2303,7 @@ class MainWindow(QMainWindow):
         editable = charge
         self.act_config.setEnabled(editable)
         self.config_button.setEnabled(editable)
+        self.workspace_config_button.setEnabled(editable)
 
     def _restore(self) -> None:
         geometrie = self.settings.value(K_GEOMETRY)
@@ -2156,6 +2328,7 @@ class MainWindow(QMainWindow):
 
         self._interpreter_override = self.settings.value(K_INTERPRETER, "", type=str)
         self.apply_theme(self.settings.value(K_THEME, "dark", type=str))
+        self._refresh_interpreter_alert()
 
     def closeEvent(self, event) -> None:
         self.results.source.save()

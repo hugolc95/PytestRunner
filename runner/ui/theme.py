@@ -43,6 +43,46 @@ QToolTip {{
 }}
 
 /* -------------------------------------------------------------- surfaces */
+QFrame#Navigation {{
+    background-color: {t.BG_SURFACE};
+    border: none;
+    border-right: 1px solid {t.BORDER};
+}}
+QLabel#NavigationTitle {{
+    color: {t.TEXT};
+    font-size: {t.TEXT_LG}px;
+    font-weight: 700;
+}}
+QPushButton#NavigationItem {{
+    background-color: transparent;
+    border: none;
+    color: {t.TEXT_MUTED};
+    min-height: {t.CONTROL_LG}px;
+    padding: 0 {t.SPACE_3}px;
+    text-align: left;
+}}
+QPushButton#NavigationItem:hover {{
+    background-color: {t.BG_HOVER};
+    color: {t.TEXT};
+}}
+QPushButton#NavigationItem:checked {{
+    background-color: {t.rgba(t.ACCENT, 0.16)};
+    color: {t.ACCENT};
+}}
+QLabel#PageTitle {{
+    color: {t.TEXT};
+    font-size: {t.TEXT_LG + 5}px;
+    font-weight: 700;
+}}
+QFrame#InterpreterAlert {{
+    background-color: {t.rgba(t.status_color(Status.FAILED), 0.10)};
+    border: 1px solid {t.status_color(Status.FAILED)};
+    border-radius: {t.RADIUS_MD}px;
+}}
+QFrame#InterpreterAlert QLabel {{
+    color: {t.status_color(Status.FAILED)};
+    background: transparent;
+}}
 QFrame#Surface, QWidget#Surface {{
     background-color: {t.BG_SURFACE};
     border: 1px solid {t.BORDER};
