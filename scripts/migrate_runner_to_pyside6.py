@@ -31,11 +31,38 @@ def python_files(target: Path):
         yield from target.rglob("*.py")
 
 
+def qt6_api_moves(path: Path, text: str) -> str:
+    """Apply API moves that happened between Qt5 and Qt6.
+
+    These are deliberately file-specific so the migration stays conservative:
+    we only move symbols that the CI has proven are imported from the wrong Qt6
+    module instead of broadly rewriting every Qt import.
+    """
+    relative = path.relative_to(ROOT).as_posix()
+
+    if relative == "runner/ui/results_panel.py":
+        text = text.replace(
+            "from PySide6.QtGui import QKeySequence\n",
+            "from PySide6.QtGui import QKeySequence, QShortcut\n",
+        )
+        text = text.replace("    QShortcut,\n", "")
+
+    if relative == "runner/ui/history_dashboard.py":
+        text = text.replace(
+            "from PySide6.QtGui import QColor, QDesktopServices\n",
+            "from PySide6.QtGui import QActionGroup, QColor, QDesktopServices\n",
+        )
+        text = text.replace("    QActionGroup,\n", "")
+
+    return text
+
+
 def migrate(path: Path) -> bool:
     original = path.read_text(encoding="utf-8")
     updated = original
     for before, after in REPLACEMENTS:
         updated = updated.replace(before, after)
+    updated = qt6_api_moves(path, updated)
 
     if updated == original:
         return False
