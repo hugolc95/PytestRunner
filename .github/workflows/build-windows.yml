@@ -1,20 +1,12 @@
-name: Build Windows executable
-
-# Construit l'interface en application Windows autonome. L'exe ne contient que
-# le GUI : pytest et les dependances des tests restent du cote de l'interpreteur
-# configure dans l'application, donc ce build ne depend pas de l'environnement
-# de test du projet.
+name: Build Windows PySide6 x64 executable
 
 on:
   push:
-    branches: [main, "main-*"]
+    branches: [pyside6-x64-migration]
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
-  # Necessaire pour publier la release "latest" a chaque push.
-  contents: write
+  contents: read
 
 jobs:
   build:
@@ -23,96 +15,52 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Python
+      - name: Install Python x64
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.13"
+          architecture: "x64"
 
-      - name: Install build dependencies
-        # Depuis PyPI (et non wheels/), qui ne contient que des roues 32 bits
-        # destinees a l'installation hors ligne sur les postes.
+      - name: Verify GUI architecture
+        run: |
+          python -c "import struct; assert struct.calcsize('P')*8 == 64; print('GUI Python: 64-bit')"
+
+      - name: Install PySide6 GUI dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install PyQt5==5.15.11 PyYAML==6.0.3 qtawesome==1.4.2 pyinstaller==6.11.1
+          python -m pip install PySide6==6.11.2 PyYAML==6.0.3 qtawesome==1.4.2 pyinstaller pytest pytest-qt pytest-xdist
 
-      - name: Run application tests
-        # PytestRunner.spec empaquette main_runner.py (runner/), pas l'ancienne
-        # interface main_qt.py. Tester tests/ ici bloquait la publication du
-        # nouvel exe sur une regression sans rapport avec le binaire livre.
+      - name: Verify PyQt5 is not installed
+        shell: pwsh
         run: |
-          pip install pytest pytest-qt pytest-xdist
-          pytest runner/tests -q
+          python -c "import importlib.util,sys; sys.exit(1 if importlib.util.find_spec('PyQt5') else 0)"
+
+      - name: Run active Runner tests on PySide6
         env:
           QT_QPA_PLATFORM: offscreen
+          QT_API: pyside6
+        run: |
+          pytest runner/tests -q
 
       - name: Build executable
-        run: pyinstaller --clean --noconfirm PytestRunner.spec
+        run: python -m PyInstaller --clean --noconfirm PytestRunner.spec
 
-      - name: Smoke test the executable
-        # Verifie que l'exe demarre et affiche sa fenetre, puis le referme.
-        # Un exe casse (DLL Qt manquante) echoue ici plutot que chez l'utilisateur.
+      - name: Smoke test executable
         shell: pwsh
         run: |
           $exe = "dist\PytestRunner\PytestRunner.exe"
           if (-not (Test-Path $exe)) { throw "Executable not found at $exe" }
           $process = Start-Process -FilePath $exe -PassThru
-          Start-Sleep -Seconds 20
+          Start-Sleep -Seconds 12
           if ($process.HasExited) {
             throw "PytestRunner.exe exited on its own with code $($process.ExitCode)"
           }
           Stop-Process -Id $process.Id -Force
-          Write-Host "Executable started and stayed alive."
+          Write-Host "PySide6 x64 executable started successfully."
 
       - name: Upload executable
         uses: actions/upload-artifact@v4
         with:
-          name: PytestRunner-windows
+          name: PytestRunner-PySide6-x64
           path: dist/PytestRunner/
           retention-days: 30
-
-      - name: Attach executable to release
-        if: github.event_name == 'release'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist\PytestRunner\* -DestinationPath PytestRunner-windows.zip
-          gh release upload "${{ github.event.release.tag_name }}" PytestRunner-windows.zip --clobber
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Publish rolling "latest" release
-        # Donne une URL de telechargement permanente, toujours a jour, plutot que
-        # d'obliger a naviguer dans les artefacts (qui expirent au bout de 30 jours).
-        if: github.event_name == 'push'
-        shell: pwsh
-        run: |
-          Compress-Archive -Path dist\PytestRunner\* -DestinationPath PytestRunner-windows.zip -Force
-
-          # La release est recreee a chaque fois pour que le tag suive le dernier
-          # commit construit. `gh release view` sert de test d'existence : son code
-          # de sortie est le seul moyen fiable, et il ne doit pas faire echouer
-          # l'etape quand la release n'existe pas encore.
-          gh release view latest 2>$null | Out-Null
-          if ($LASTEXITCODE -eq 0) {
-            gh release delete latest --yes --cleanup-tag
-          }
-
-          $notes = @"
-          Interface Pytest Runner pour Windows, construite automatiquement depuis ``$env:GITHUB_REF_NAME``.
-
-          **Installation** : telecharger ``PytestRunner-windows.zip``, dezipper, lancer ``PytestRunner.exe``.
-          Distribuez le dossier entier, pas seulement l'exe.
-
-          L'executable ne contient que l'interface. Au premier lancement, renseignez
-          **Configuration > Interpreteur Python des tests...** avec le chemin du Python
-          qui doit executer les tests (il lui faut ``pytest``, et ``pytest-xdist`` pour l'option Parallel).
-
-          Commit : $env:GITHUB_SHA
-          "@
-
-          gh release create latest PytestRunner-windows.zip `
-            --title "Derniere version (build automatique)" `
-            --notes $notes `
-            --prerelease `
-            --target $env:GITHUB_SHA
-        env:
-          GH_TOKEN: ${{ github.token }}
