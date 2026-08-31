@@ -1,17 +1,18 @@
 """Background bookkeeping for the end of a pytest run.
 
-Writing the console output and the complete history JSON can take long enough on
-Windows to block the Qt event loop.  The visible run result must stay responsive
-while that disk work happens, so it lives in a dedicated QThread.
+Large console outputs must never block the GUI, and a crash while persisting a
+large output must not make the whole run disappear from history.  Metadata is
+therefore committed first; console output is attached afterwards.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 from PyQt5.QtCore import QThread, pyqtSignal
 
-from runner.domain.history import History, RunEntry
+from runner.domain.history import History, RunEntry, _sain
 
 
 class RunArchiveWorker(QThread):
@@ -31,8 +32,39 @@ class RunArchiveWorker(QThread):
     def run(self) -> None:  # pragma: no cover - executes in a Qt worker thread
         try:
             history = History(self._root, self._max_entries)
+
+            # First commit the lightweight run metadata.  This is intentional:
+            # on a very large suite the console output can be tens of MB.  If
+            # Windows/AV/disk kills the process while that file is being
+            # written, the next application launch still knows what ran and
+            # what passed/failed.
+            saved: list[tuple[RunEntry, str]] = []
             for entry, output in self._entries:
-                history.add(entry, output)
+                saved_entry = history.add(entry, "")
+                saved.append((saved_entry, output))
+
+            # Then persist the potentially large outputs.  Update the in-memory
+            # entries in one pass and rewrite the history JSON once at the end.
+            changed = False
+            for entry, output in saved:
+                if not output:
+                    continue
+                name = f"{entry.id}{'_' + _sain(entry.reader) if entry.reader else ''}.log"
+                path = history.racine / name
+                try:
+                    path.write_text(output, encoding="utf-8")
+                except OSError:
+                    continue
+
+                replacement = replace(entry, output_file=str(path))
+                for index, current in enumerate(history._entrees):
+                    if current.id == entry.id and current.reader == entry.reader:
+                        history._entrees[index] = replacement
+                        changed = True
+                        break
+
+            if changed:
+                history._enregistrer()
         except Exception as exc:  # history is optional; never crash the app
             self._result = (False, str(exc))
             return
