@@ -69,6 +69,18 @@ QPushButton#NavigationItem:checked {{
     background-color: {t.rgba(t.ACCENT, 0.16)};
     color: {t.ACCENT};
 }}
+QPushButton#NavigationUtility {{
+    background-color: transparent;
+    border: none;
+    color: {t.TEXT_MUTED};
+    min-height: {t.CONTROL_MD}px;
+    padding: 0 {t.SPACE_3}px;
+    text-align: left;
+}}
+QPushButton#NavigationUtility:hover {{
+    background-color: {t.BG_HOVER};
+    color: {t.TEXT};
+}}
 QLabel#PageTitle {{
     color: {t.TEXT};
     font-size: {t.TEXT_LG + 5}px;
@@ -87,6 +99,9 @@ QFrame#ConfigSection {{
     background-color: {t.BG_SURFACE};
     border: 1px solid {t.BORDER};
     border-radius: {t.RADIUS_LG}px;
+}}
+QFrame#ConfigSection QLabel {{
+    background-color: transparent;
 }}
 QLabel#ConfigSectionTitle {{
     color: {t.TEXT};

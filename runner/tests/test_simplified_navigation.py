@@ -10,31 +10,35 @@ from runner.domain.workspace import Workspace
 from runner.ui.main_window import APP, ORG, MainWindow
 
 
-def test_main_navigation_contains_only_the_three_primary_destinations(qapp):
+def test_main_navigation_separates_python_and_yaml_configuration(qapp):
     QSettings(ORG, APP).clear()
     window = MainWindow()
     try:
         assert list(window.nav_buttons) == [
-            "workspace", "history", "configuration"]
+            "workspace", "history", "python", "yaml"]
         assert [button.text() for button in window.nav_buttons.values()] == [
-            "Workspace", "Historique", "Configuration"]
+            "Workspace", "Historique", "Environnement Python",
+            "Configuration YAML"]
         assert window.pages.currentWidget() is window.workspace_page
         assert window.menuBar().isHidden()
     finally:
         window.close()
 
 
-def test_configuration_is_a_real_page_with_both_interpreter_and_workspace(qapp):
+def test_python_and_yaml_have_distinct_pages(qapp):
     window = MainWindow()
     try:
-        window._show_page("configuration")
-        assert window.pages.currentWidget() is window.configuration_page
-        assert window.interpreter_config_button.isVisibleTo(window.configuration_page)
+        window._show_page("python")
+        assert window.pages.currentWidget() is window.python_page
+        assert window.interpreter_config_button.isVisibleTo(window.python_page)
+        assert not window.workspace_config_button.isVisibleTo(window.python_page)
         assert "environnement Python" in window.interpreter_config_button.text()
+
+        window._show_page("yaml")
+        assert window.pages.currentWidget() is window.yaml_page
+        assert window.workspace_config_button.isVisibleTo(window.yaml_page)
+        assert not window.interpreter_config_button.isVisibleTo(window.yaml_page)
         assert "fichiers YAML" in window.workspace_config_button.text()
-        headings = {label.text() for label in window.configuration_page.findChildren(QLabel)}
-        assert "Environnement Python" in headings
-        assert "Configuration des tests YAML" in headings
     finally:
         window.close()
 

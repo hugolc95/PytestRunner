@@ -250,7 +250,7 @@ class MainWindow(QMainWindow):
         self.interpreter_alert_label.setWordWrap(True)
         self.interpreter_alert_button = QPushButton("Open configuration")
         self.interpreter_alert_button.clicked.connect(
-            lambda: self._show_page("configuration"))
+            lambda: self._show_page("python"))
         alerte.addWidget(self.interpreter_alert_label, 1)
         alerte.addWidget(self.interpreter_alert_button)
         self.interpreter_alert.setVisible(False)
@@ -275,9 +275,11 @@ class MainWindow(QMainWindow):
 
         self.pages.addWidget(self.workspace_page)
         self.history_page = self._build_history_page()
-        self.configuration_page = self._build_configuration_page()
+        self.python_page = self._build_python_page()
+        self.yaml_page = self._build_yaml_page()
         self.pages.addWidget(self.history_page)
-        self.pages.addWidget(self.configuration_page)
+        self.pages.addWidget(self.python_page)
+        self.pages.addWidget(self.yaml_page)
         racine.addWidget(self.pages, 1)
 
         self.setCentralWidget(central)
@@ -286,7 +288,7 @@ class MainWindow(QMainWindow):
     def _build_navigation(self) -> QWidget:
         navigation = QFrame()
         navigation.setObjectName("Navigation")
-        navigation.setFixedWidth(190)
+        navigation.setFixedWidth(220)
         colonne = QVBoxLayout(navigation)
         colonne.setContentsMargins(t.SPACE_3, t.SPACE_4, t.SPACE_3, t.SPACE_3)
         colonne.setSpacing(t.SPACE_2)
@@ -300,7 +302,8 @@ class MainWindow(QMainWindow):
         entrees = (
             ("workspace", "Workspace", "mdi.folder-outline"),
             ("history", "Historique", "mdi.history"),
-            ("configuration", "Configuration", "mdi.cog-outline"),
+            ("python", "Environnement Python", "mdi.language-python"),
+            ("yaml", "Configuration YAML", "mdi.file-cog-outline"),
         )
         for cle, texte, glyph in entrees:
             bouton = QPushButton(texte)
@@ -312,6 +315,12 @@ class MainWindow(QMainWindow):
             self.nav_buttons[cle] = bouton
             colonne.addWidget(bouton)
         colonne.addStretch(1)
+        self.page_theme_button = QPushButton("Changer de thème")
+        self.page_theme_button.setObjectName("NavigationUtility")
+        self.page_theme_button.setIcon(
+            icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
+        self.page_theme_button.clicked.connect(self.toggle_theme)
+        colonne.addWidget(self.page_theme_button)
         self.nav_buttons["workspace"].setChecked(True)
         return navigation
 
@@ -357,15 +366,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(copy)
         return section, layout
 
-    def _build_configuration_page(self) -> QWidget:
+    def _build_python_page(self) -> QWidget:
         page, layout = self._page_landing(
-            "Configuration",
-            "Configurez ici l’environnement d’exécution et les réglages du "
-            "workspace. L’interpréteur de test n’est affiché sur le Workspace "
-            "que lorsqu’il nécessite votre attention.")
+            "Environnement Python",
+            "Configurez le moteur Python utilisé pour collecter et exécuter "
+            "les tests. Ce réglage est indépendant des fichiers YAML.")
 
         python_section, python_layout = self._config_section(
-            "Environnement Python",
+            "Interpréteur de test",
             "Choisissez le Python utilisé pour collecter et exécuter pytest. "
             "Ce réglage concerne le moteur d’exécution, pas le contenu des tests.")
         self.interpreter_config_button = QPushButton("Configurer l’environnement Python…")
@@ -373,9 +381,16 @@ class MainWindow(QMainWindow):
         self.interpreter_config_button.clicked.connect(self.open_interpreter_dialog)
         python_layout.addWidget(self.interpreter_config_button, 0, Qt.AlignLeft)
         layout.addWidget(python_section)
+        layout.addStretch(1)
+        return page
 
+    def _build_yaml_page(self) -> QWidget:
+        page, layout = self._page_landing(
+            "Configuration YAML",
+            "Gérez séparément les fichiers de configuration propres au "
+            "workspace et aux tests.")
         yaml_section, yaml_layout = self._config_section(
-            "Configuration des tests YAML",
+            "Fichiers YAML des tests",
             "Choisissez et modifiez le fichier .yml ou .yaml du workspace : "
             "lecteurs, chemins de logs, campagnes et paramètres des tests.")
         self.workspace_config_button = QPushButton("Configurer les fichiers YAML…")
@@ -384,15 +399,6 @@ class MainWindow(QMainWindow):
         self.workspace_config_button.clicked.connect(self.open_config_dialog)
         yaml_layout.addWidget(self.workspace_config_button, 0, Qt.AlignLeft)
         layout.addWidget(yaml_section)
-
-        appearance_section, appearance_layout = self._config_section(
-            "Apparence", "Réglez uniquement l’apparence de l’application.")
-        self.page_theme_button = QPushButton("Changer de thème")
-        self.page_theme_button.setObjectName("Ghost")
-        self.page_theme_button.setIcon(icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
-        self.page_theme_button.clicked.connect(self.toggle_theme)
-        appearance_layout.addWidget(self.page_theme_button, 0, Qt.AlignLeft)
-        layout.addWidget(appearance_section)
         layout.addStretch(1)
         return page
 
@@ -400,7 +406,8 @@ class MainWindow(QMainWindow):
         pages = {
             "workspace": self.workspace_page,
             "history": self.history_page,
-            "configuration": self.configuration_page,
+            "python": self.python_page,
+            "yaml": self.yaml_page,
         }
         cible = pages.get(page, self.workspace_page)
         self.pages.setCurrentWidget(cible)
@@ -1174,7 +1181,8 @@ class MainWindow(QMainWindow):
         for cle, glyph in (
                 ("workspace", "mdi.folder-outline"),
                 ("history", "mdi.history"),
-                ("configuration", "mdi.cog-outline")):
+                ("python", "mdi.language-python"),
+                ("yaml", "mdi.file-cog-outline")):
             self.nav_buttons[cle].setIcon(icons.icon(glyph, t.TEXT_MUTED))
         # Ni une icone teintee ni un StatusPill : juste un label dont la
         # couleur ne vient pas de la feuille globale, a rejouer a la main.
