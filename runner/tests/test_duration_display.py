@@ -18,7 +18,7 @@ NODEID = "tests/test_x.py::test_slow"
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

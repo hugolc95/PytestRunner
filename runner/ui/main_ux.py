@@ -10,8 +10,8 @@ Only the changes explicitly retained for main live here:
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QSize
-from PyQt5.QtWidgets import QLabel
+from PySide6.QtCore import QSize
+from PySide6.QtWidgets import QLabel
 
 from runner.ui import icons
 from runner.ui import tokens as t

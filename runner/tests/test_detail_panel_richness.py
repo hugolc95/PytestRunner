@@ -17,7 +17,7 @@ NODEID = "tests/test_authentication.py::test_login_valid_credentials"
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -32,7 +32,7 @@ def test_the_full_nodeid_is_shown(qapp):
 
 
 def test_the_copy_button_puts_the_nodeid_on_the_clipboard(qapp):
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     panneau = DetailPanel()
     panneau.show_test(NODEID, (Reader("", 0),), {0: Status.PASSED}, {0: None})

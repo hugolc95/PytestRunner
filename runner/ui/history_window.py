@@ -12,8 +12,8 @@ from __future__ import annotations
 import time
 from pathlib import Path
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QFileDialog,
@@ -195,7 +195,7 @@ class HistoryWindow(QDialog):
         colonne.setContentsMargins(t.SPACE_3, t.SPACE_3, t.SPACE_3, t.SPACE_3)
         colonne.addWidget(vue, 1)
         colonne.addLayout(bas)
-        boite.exec_()
+        boite.exec()
 
     def export_html(self) -> None:
         choisis = self._selection()
@@ -237,13 +237,13 @@ class HistoryWindow(QDialog):
         choisis = self._selection()
         if len(choisis) != 2:
             return
-        ComparisonDialog(compare(*choisis), self).exec_()
+        ComparisonDialog(compare(*choisis), self).exec()
 
     def show_flaky(self) -> None:
-        FlakyDialog(self.history.flaky(), self).exec_()
+        FlakyDialog(self.history.flaky(), self).exec()
 
     def clear_history(self) -> None:
-        from PyQt5.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
 
         # Effacer supprime aussi les sorties conservees : c'est irreversible,
         # et cela ne doit pas tenir a un clic mal place.

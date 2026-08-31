@@ -20,8 +20,8 @@ a inventer une regle de priorite, fausse une fois sur deux.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QEvent, Qt, pyqtSignal
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
     QHBoxLayout,
@@ -59,7 +59,7 @@ class MarkerFilter(QPushButton):
     panneau peut changer sans que rien d'autre ne bouge.
     """
 
-    filter_changed = pyqtSignal()
+    filter_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -157,7 +157,7 @@ class MarkerPopup(QFrame):
     tiennent aussi bien que trois, et deux cents aussi.
     """
 
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent, Qt.Popup)
@@ -340,7 +340,7 @@ class MarkerPopup(QFrame):
 
     def open_under(self, ancre: QWidget) -> None:
         """Ouvre le panneau sous le bouton, sans deborder de l'ecran."""
-        from PyQt5.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
         self.adjustSize()
         coin = ancre.mapToGlobal(ancre.rect().bottomLeft())

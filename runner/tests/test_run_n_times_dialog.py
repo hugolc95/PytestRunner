@@ -9,7 +9,7 @@ from runner.ui.run_n_times_dialog import RunNTimesDialog
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

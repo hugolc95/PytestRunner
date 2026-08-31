@@ -6,7 +6,7 @@ donnees recues, ceux-ci verifient qu'elles lui arrivent bien.
 from __future__ import annotations
 
 import pytest
-from PyQt5.QtCore import QSettings
+from PySide6.QtCore import QSettings
 
 from runner.domain.history import History, RunEntry
 from runner.domain.models import Reader
@@ -19,7 +19,7 @@ NODEID = "suite/apdu/test_select.py::test_atr"
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

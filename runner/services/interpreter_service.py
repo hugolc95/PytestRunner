@@ -7,7 +7,7 @@ Le faire depuis le fil de l'interface gele la fenetre.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from runner.domain import interpreter
 
@@ -15,7 +15,7 @@ from runner.domain import interpreter
 class ProbeWorker(QThread):
     """Interroge un interpreteur hors du fil de l'interface."""
 
-    done = pyqtSignal(object)  # InterpreterInfo
+    done = Signal(object)  # InterpreterInfo
 
     def __init__(self, path: str, parent=None):
         super().__init__(parent)

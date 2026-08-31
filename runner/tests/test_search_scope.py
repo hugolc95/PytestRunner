@@ -5,14 +5,14 @@ traces d'echec. Un seul champ, un seul compteur -- seule la portee change.
 from __future__ import annotations
 
 import pytest
-from PyQt5.QtWidgets import QHBoxLayout
+from PySide6.QtWidgets import QHBoxLayout
 
 from runner.ui.widgets import SCOPE_FAILURES, SCOPE_TESTS, SearchBar
 
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

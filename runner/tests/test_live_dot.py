@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 import pytest
-from PyQt5.QtCore import QAbstractAnimation
+from PySide6.QtCore import QAbstractAnimation
 
 from runner.ui.widgets import LiveDot
 
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

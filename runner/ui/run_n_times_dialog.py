@@ -7,7 +7,7 @@ raccourcis les plus courants restent a portee d'un clic.
 
 from __future__ import annotations
 
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QLabel,

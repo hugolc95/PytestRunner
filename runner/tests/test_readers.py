@@ -27,7 +27,7 @@ NODEIDS = [
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -291,7 +291,7 @@ def test_the_reports_come_back_in_column_order(qapp, faux_runs, service):
 
 @pytest.fixture
 def fenetre(qapp, tmp_path):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
 

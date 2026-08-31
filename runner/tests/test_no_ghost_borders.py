@@ -19,7 +19,7 @@ regle globale posee par nom d'objet (voir `QLabel#StatCellLabel`,
 from __future__ import annotations
 
 import pytest
-from PyQt5.QtWidgets import QApplication, QLabel
+from PySide6.QtWidgets import QApplication, QLabel
 
 from runner.domain.models import Reader, RunRequest, Status
 from runner.domain.tree import build_tree
@@ -35,7 +35,7 @@ def qapp():
 
 @pytest.fixture
 def fenetre(qapp, tmp_path):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
 

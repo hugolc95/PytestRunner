@@ -10,7 +10,7 @@ from __future__ import annotations
 import textwrap
 
 import pytest
-from PyQt5.QtCore import QModelIndex, Qt
+from PySide6.QtCore import QModelIndex, Qt
 
 from runner.domain.models import Reader, Status
 from runner.domain.tree import build_tree
@@ -26,14 +26,14 @@ NODEIDS = [
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture
 def fenetre(qapp, tmp_path):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
 

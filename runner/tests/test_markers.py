@@ -300,7 +300,7 @@ def test_the_probe_never_invents_a_test(suite_marquee):
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

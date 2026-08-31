@@ -23,7 +23,7 @@ NODEID = "tests/test_authentication.py::test_login_timeout_retries"
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

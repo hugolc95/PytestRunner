@@ -13,7 +13,7 @@ flaky qui ne se manifeste que sur un lecteur precis doit quand meme etre vu.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from runner.domain.execution import ReaderRun
 from runner.domain.models import Reader, RunRequest, Status
@@ -28,8 +28,8 @@ from runner.domain.stress import (
 class StressRunWorker(QThread):
     """Relance un seul nodeid jusqu'a l'echec, ou exactement `cap` fois."""
 
-    attempt_done = pyqtSignal(object)      # StressAttempt
-    finished_stress = pyqtSignal(object)   # StressSummary
+    attempt_done = Signal(object)      # StressAttempt
+    finished_stress = Signal(object)   # StressSummary
 
     def __init__(self, request: RunRequest, readers: tuple[Reader, ...], env: dict,
                 mode: str, cap: int, parent=None):

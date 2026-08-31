@@ -10,7 +10,7 @@ les deux, qu'on lance une selection classique, un filtre par marker, ou
 from __future__ import annotations
 
 import pytest
-from PyQt5.QtCore import Qt
+from PySide6.QtCore import Qt
 
 from runner.domain.models import Reader, RunRequest
 
@@ -22,14 +22,14 @@ NODEIDS = [
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture
 def fenetre(qapp):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
 
@@ -103,8 +103,8 @@ def test_the_chip_is_forced_to_paint_its_background_from_the_stylesheet(qapp, mo
     chargement pour tester le widget comme s'il etait le premier construit,
     avant que quoi que ce soit d'autre n'ait pose de feuille.
     """
-    from PyQt5.QtCore import QSettings
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtCore import QSettings
+    from PySide6.QtWidgets import QApplication
 
     from runner.ui.main_window import APP, ORG, MainWindow
 

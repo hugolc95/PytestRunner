@@ -6,7 +6,7 @@ pytest n'a pas garde la mesure.
 from __future__ import annotations
 
 import pytest
-from PyQt5.QtCore import QSettings
+from PySide6.QtCore import QSettings
 
 from runner.domain.execution import ReaderReport
 from runner.domain.models import Reader
@@ -23,7 +23,7 @@ NODEIDS = [
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

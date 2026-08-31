@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from PyQt5.QtWidgets import QMessageBox
+from PySide6.QtWidgets import QMessageBox
 
 
 def find_notepad_plus_plus() -> Path | None:

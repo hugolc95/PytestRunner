@@ -12,8 +12,8 @@ from __future__ import annotations
 import sys
 
 import pytest
-from PyQt5.QtCore import Qt, QSettings
-from PyQt5.QtWidgets import QApplication, QDialog
+from PySide6.QtCore import Qt, QSettings
+from PySide6.QtWidgets import QApplication, QDialog
 
 from runner.domain import execution
 from runner.domain.history import History

@@ -6,8 +6,8 @@ import time
 from types import SimpleNamespace
 
 import pytest
-from PyQt5.QtCore import Qt
-from PyQt5.QtWidgets import QLabel, QMessageBox, QTabWidget, QTableWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QLabel, QMessageBox, QTabWidget, QTableWidget
 
 from runner.domain.history import History, RunEntry
 from runner.domain.models import Reader, Status
@@ -21,7 +21,7 @@ from runner.ui.history_window import FlakyDialog
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

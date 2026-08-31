@@ -8,8 +8,8 @@ dessine que la partie visible.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QAbstractItemModel, QModelIndex, Qt, pyqtSignal
-from PyQt5.QtGui import QColor
+from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, Signal
+from PySide6.QtGui import QColor
 
 from runner.domain.models import Kind, Reader, Status, TestNode, worst
 from runner.ui import icons
@@ -77,7 +77,7 @@ class TestTreeModel(QAbstractItemModel):
     ses donnees par `index()` / `data()`.
     """
 
-    selection_changed = pyqtSignal(int, int)  # coches, total
+    selection_changed = Signal(int, int)  # coches, total
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -214,7 +214,7 @@ class TestTreeModel(QAbstractItemModel):
                 return f"{ligne.node.nodeid or ligne.node.name} — {self._stress_annotation[1]}"
             return ligne.node.nodeid or ligne.node.name
         if role == Qt.ForegroundRole:
-            from PyQt5.QtGui import QColor
+            from PySide6.QtGui import QColor
 
             if annotee:
                 return QColor(t.ACCENT)

@@ -26,14 +26,14 @@ LECTEURS = (Reader("Reader A", 0), Reader("Reader B", 1))
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture
 def fenetre(qapp, tmp_path):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.domain.workspace import Workspace
     from runner.ui.main_window import APP, ORG, MainWindow

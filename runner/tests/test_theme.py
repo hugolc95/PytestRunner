@@ -8,7 +8,7 @@ sont donc controlees sur le rendu.
 from __future__ import annotations
 
 import pytest
-from PyQt5.QtGui import QColor
+from PySide6.QtGui import QColor
 
 from runner.domain.models import Reader, Status
 from runner.domain.tree import build_tree
@@ -29,7 +29,7 @@ NODEIDS = ["suite/apdu/test_select.py::test_select_aid[A1]",
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -47,7 +47,7 @@ def test_the_selected_row_is_one_colour_from_edge_to_edge(qapp):
     selectionnee commencait par un bloc bleu systeme, large de toute son
     indentation, qui n'appartenait a aucune palette du theme.
     """
-    from PyQt5.QtWidgets import QHeaderView, QTreeView
+    from PySide6.QtWidgets import QHeaderView, QTreeView
 
     qapp.setStyleSheet(app_stylesheet())
 
@@ -92,8 +92,8 @@ def test_the_selected_row_is_one_colour_from_edge_to_edge(qapp):
 
 def test_reader_colours_are_really_painted_in_the_tree_header(qapp):
     """Le QSS de QHeaderView ne doit pas ecraser les couleurs du modele."""
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtWidgets import QHeaderView, QTreeView
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QHeaderView, QTreeView
 
     qapp.setStyleSheet(app_stylesheet())
     lecteurs = (Reader("Reader A", 0), Reader("Reader B", 1))
@@ -339,7 +339,7 @@ def test_the_search_bar_keeps_exactly_one_magnifier(qapp):
 
 def test_rapid_search_typing_is_coalesced_into_one_query(qapp):
     """Selectionner/deplier l'arbre apres chaque lettre bloquait la saisie."""
-    from PyQt5.QtTest import QTest
+    from PySide6.QtTest import QTest
 
     from runner.ui.widgets import SearchBar
 
@@ -358,7 +358,7 @@ def test_rapid_search_typing_is_coalesced_into_one_query(qapp):
 
 
 def test_clearing_search_is_immediate(qapp):
-    from PyQt5.QtTest import QTest
+    from PySide6.QtTest import QTest
 
     from runner.ui.widgets import SearchBar
 
@@ -512,7 +512,7 @@ def test_a_status_pill_is_a_real_pushbutton(qapp):
     nativement, sans ce piege : c'est la garantie qui compte ici, pas un
     attribut qu'on pourrait a nouveau oublier de poser sur un QWidget.
     """
-    from PyQt5.QtWidgets import QPushButton
+    from PySide6.QtWidgets import QPushButton
 
     from runner.ui.widgets import StatusPill
 
@@ -525,7 +525,7 @@ def test_a_status_pill_is_a_real_pushbutton(qapp):
 
 @pytest.fixture
 def fenetre(qapp, tmp_path):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
 
@@ -569,7 +569,7 @@ def test_the_button_offers_the_theme_you_are_not_in(fenetre):
 
 
 def test_the_chosen_theme_survives_a_restart(qapp, tmp_path):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
 
@@ -689,7 +689,7 @@ def _teintes(palette: dict) -> set:
 
 def _fenetre_peuplee(qapp, tmp_path, depart: str, bascules: tuple, onglet: int):
     """Une fenetre garnie, nee dans `depart`, puis basculee dans `bascules`."""
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.domain.failures import Failure
     from runner.ui.main_window import APP, K_THEME, ORG, MainWindow

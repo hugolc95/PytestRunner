@@ -1,6 +1,6 @@
 """Le menu contextuel (clic droit) de l'arbre.
 
-`menu.exec_()` ouvre une vraie boucle d'evenements modale : les tests
+`menu.exec()` ouvre une vraie boucle d'evenements modale : les tests
 construisent le menu (`_construire_menu_test` / `_construire_menu_groupe`)
 sans jamais l'executer, et declenchent les actions directement.
 """
@@ -10,7 +10,7 @@ from __future__ import annotations
 import sys
 
 import pytest
-from PyQt5.QtWidgets import QApplication, QMenu
+from PySide6.QtWidgets import QApplication, QMenu
 
 from runner.domain import execution
 from runner.domain.models import Reader, Status
@@ -34,7 +34,7 @@ def qapp():
 
 @pytest.fixture
 def fenetre(qapp, tmp_path):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
 

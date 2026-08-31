@@ -6,9 +6,9 @@ recoivent du texte et des couleurs, ils n'appellent rien.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
+from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QGraphicsOpacityEffect,
@@ -83,7 +83,7 @@ class EmptyState(QWidget):
     suite : c'est souvent le premier ecran qu'on voit en ouvrant l'outil.
     """
 
-    action_clicked = pyqtSignal()
+    action_clicked = Signal()
 
     def __init__(self, glyph: str, titre: str, detail: str,
                  action: str = "", raccourci: str = "", parent=None):
@@ -156,7 +156,7 @@ class StatusPill(QPushButton):
     veut voir lesquels, on clique dessus.
     """
 
-    filter_clicked = pyqtSignal(object)  # le Status de cette pastille
+    filter_clicked = Signal(object)  # le Status de cette pastille
 
     def __init__(self, status: Status, parent=None):
         super().__init__(parent)
@@ -509,14 +509,14 @@ class SearchBar(QWidget):
     ce qui est compare change, d'un cote a l'autre du selecteur.
     """
 
-    query_changed = pyqtSignal(str)
-    next_match = pyqtSignal()
-    previous_match = pyqtSignal()
-    scope_changed = pyqtSignal(str)  # SCOPE_TESTS ou SCOPE_FAILURES
+    query_changed = Signal(str)
+    next_match = Signal()
+    previous_match = Signal()
+    scope_changed = Signal(str)  # SCOPE_TESTS ou SCOPE_FAILURES
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        from PyQt5.QtWidgets import QButtonGroup, QLineEdit
+        from PySide6.QtWidgets import QButtonGroup, QLineEdit
 
         self._last_emitted = ""
         self._scope = SCOPE_TESTS
@@ -739,13 +739,13 @@ class ErrorDialog(QDialog):
 
     @staticmethod
     def _copier(texte: str) -> None:
-        from PyQt5.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
         QApplication.clipboard().setText(texte)
 
     @classmethod
     def show_error(cls, parent, titre: str, message: str, detail: str = "") -> None:
-        cls(titre, message, detail, parent).exec_()
+        cls(titre, message, detail, parent).exec()
 
 
 class ReaderToggle(QPushButton):
@@ -779,7 +779,7 @@ class ReaderBar(QWidget):
     on decoche pour restreindre.
     """
 
-    changed = pyqtSignal()
+    changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -867,7 +867,7 @@ class StatusRibbon(QWidget):
         self.update()
 
     def paintEvent(self, event) -> None:
-        from PyQt5.QtGui import QColor, QPainter
+        from PySide6.QtGui import QColor, QPainter
 
         peintre = QPainter(self)
         peintre.setRenderHint(QPainter.Antialiasing)
@@ -888,7 +888,7 @@ class StatusRibbon(QWidget):
         # Les arrondis des extremites sont obtenus en dessinant dans la forme
         # du fond : chaque segment reste rectangulaire, seul l'ensemble est
         # arrondi. Arrondir chaque segment creerait des encoches entre eux.
-        from PyQt5.QtGui import QPainterPath
+        from PySide6.QtGui import QPainterPath
 
         forme = QPainterPath()
         forme.addRoundedRect(0, 0, largeur, hauteur, rayon, rayon)

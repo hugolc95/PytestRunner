@@ -11,7 +11,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from runner.domain import interpreter
 
@@ -29,7 +29,7 @@ class AllureReportWorker(QThread):
     l'interface juste apres la fin des tests.
     """
 
-    done = pyqtSignal(bool, str)  # succes, detail (vide si succes)
+    done = Signal(bool, str)  # succes, detail (vide si succes)
 
     def __init__(self, allure_bin: str, resultats: Path, rapport: Path,
                  env: dict, parent=None):

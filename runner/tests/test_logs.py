@@ -388,7 +388,7 @@ def test_a_missing_log_folder_is_reported_as_such(tmp_path):
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -478,7 +478,7 @@ def test_the_pytest_output_has_no_open_button(panneau):
 def test_each_new_log_view_has_the_notepad_plus_plus_context_menu(
     panneau, tmp_path
 ):
-    from PyQt5.QtCore import Qt
+    from PySide6.QtCore import Qt
 
     _logs_par_lecteur(tmp_path, {"LecteurA": "A", "LecteurB": "B"})
     panneau.set_log_root(tmp_path)

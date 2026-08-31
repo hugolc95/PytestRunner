@@ -210,14 +210,14 @@ def test_forgetting_one_path_does_not_clear_the_others(monkeypatch, tmp_path):
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
 
 @pytest.fixture
 def fenetre(qapp, tmp_path, monkeypatch):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
 
@@ -418,13 +418,13 @@ def dialogue(qapp):
 
 
 def test_opening_the_dialog_probes_the_default_interpreter(dialogue, qapp):
-    from PyQt5.QtCore import QEventLoop, QTimer
+    from PySide6.QtCore import QEventLoop, QTimer
 
     boucle = QEventLoop()
     QTimer.singleShot(3000, boucle.quit)
     if dialogue._probe is not None:
         dialogue._probe.done.connect(boucle.quit)
-    boucle.exec_()
+    boucle.exec()
     dialogue.wait_for_probe()
 
     assert dialogue.status_label.text()

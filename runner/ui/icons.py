@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from PyQt5.QtGui import QIcon
+from PySide6.QtGui import QIcon
 
 from runner.domain.models import Kind, Status
 from runner.ui import tokens as t

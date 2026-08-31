@@ -5,8 +5,8 @@ from __future__ import annotations
 import time
 
 import pytest
-from PyQt5.QtCore import QModelIndex, Qt
-from PyQt5.QtGui import QColor
+from PySide6.QtCore import QModelIndex, Qt
+from PySide6.QtGui import QColor
 
 from runner.domain.models import Reader, Status
 from runner.domain.tree import build_tree
@@ -31,7 +31,7 @@ def model(qapp):
 @pytest.fixture(scope="session")
 def qapp():
     """QApplication partagee : le modele n'a pas besoin de plus."""
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     app = QApplication.instance() or QApplication([])
     return app
@@ -145,7 +145,7 @@ def test_checking_a_large_selection_stays_fast_with_a_visible_view(qapp):
     reelle de 20000 tests. Ce test attache une vraie vue, et regarde
     l'horloge -- pas seulement le resultat.
     """
-    from PyQt5.QtWidgets import QTreeView
+    from PySide6.QtWidgets import QTreeView
 
     # A cette echelle (mesuree reelle, cote utilisateur) le gel se compte en
     # dizaines de secondes -- une marge confortable au-dessus du temps reel

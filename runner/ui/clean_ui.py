@@ -12,9 +12,9 @@ is working.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from runner.domain.models import Status
 from runner.ui import icons
@@ -38,7 +38,7 @@ def install() -> None:
         colonne.setContentsMargins(t.SPACE_2, t.SPACE_1, t.SPACE_2, t.SPACE_1)
         colonne.setSpacing(2)
 
-        from PyQt5.QtWidgets import QLabel
+        from PySide6.QtWidgets import QLabel
         libelle = QLabel(legende.upper())
         libelle.setObjectName("StatCellLabel")
         colonne.addWidget(libelle)

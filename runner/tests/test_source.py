@@ -189,7 +189,7 @@ def test_the_file_of_a_nodeid(nodeid, attendu, tmp_path):
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -306,7 +306,7 @@ def test_a_write_error_is_reported_and_save_returns_false(panneau, tmp_path):
 
 def test_the_autosave_timer_fires_on_its_own(panneau, source, qapp):
     """C'est la promesse faite a l'utilisateur : il n'a pas de Ctrl+S a faire."""
-    from PyQt5.QtCore import QEventLoop, QTimer
+    from PySide6.QtCore import QEventLoop, QTimer
 
     panneau.show_file(source, "test_demo.py::test_atr")
     panneau.edit_button.setChecked(True)
@@ -314,7 +314,7 @@ def test_the_autosave_timer_fires_on_its_own(panneau, source, qapp):
 
     boucle = QEventLoop()
     QTimer.singleShot(1200, boucle.quit)
-    boucle.exec_()
+    boucle.exec()
 
     assert source.read_text(encoding="utf-8") == "def test_auto(): pass\n"
 
@@ -327,7 +327,7 @@ def test_the_autosave_timer_fires_on_its_own(panneau, source, qapp):
 @pytest.fixture
 def fenetre(qapp, tmp_path):
     """Une fenetre chargee sur un workspace reel, sans lancer de run."""
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.domain.tree import build_tree
     from runner.ui.main_window import APP, ORG, MainWindow

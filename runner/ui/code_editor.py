@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import re
 
-from PyQt5.QtCore import QRect, QSize, Qt
-from PyQt5.QtGui import (
+from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtGui import (
     QColor,
     QFont,
     QPainter,
@@ -18,7 +18,7 @@ from PyQt5.QtGui import (
     QTextCharFormat,
     QTextFormat,
 )
-from PyQt5.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
+from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
 
 from runner.ui import tokens as t
 
@@ -230,7 +230,7 @@ class CodeEditor(QPlainTextEdit):
         """
         if ligne < 0:
             return
-        from PyQt5.QtGui import QTextCursor
+        from PySide6.QtGui import QTextCursor
 
         curseur = self.textCursor()
         curseur.movePosition(QTextCursor.Start)

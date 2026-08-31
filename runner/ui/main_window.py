@@ -17,9 +17,9 @@ import time
 from functools import partial
 from pathlib import Path
 
-from PyQt5.QtCore import QModelIndex, QSettings, Qt, QTimer, QUrl, pyqtSlot
-from PyQt5.QtGui import QDesktopServices, QKeySequence
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import QModelIndex, QSettings, Qt, QTimer, QUrl, Slot
+from PySide6.QtGui import QDesktopServices, QKeySequence
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
     QComboBox,
@@ -696,11 +696,11 @@ class MainWindow(QMainWindow):
             "on the PATH. Set one from File > Test Python interpreter…")
         return ""
 
-    @pyqtSlot()
+    @Slot()
     def open_interpreter_dialog(self) -> None:
         declare = self.workspace.declared_interpreter if self.workspace else ""
         dialogue = InterpreterDialog(self._interpreter_override, declare, self)
-        if dialogue.exec_() != InterpreterDialog.Accepted:
+        if dialogue.exec() != InterpreterDialog.Accepted:
             return
 
         nouveau = dialogue.interpreter_path()
@@ -712,7 +712,7 @@ class MainWindow(QMainWindow):
             if self.workspace is not None and not self.workspace.declared_interpreter:
                 self.load_workspace()
 
-    @pyqtSlot()
+    @Slot()
     def open_history(self) -> None:
         """Les runs passes. Accessible sans workspace charge : on vient
         souvent y chercher ce qu'a donne le run d'hier."""
@@ -720,9 +720,9 @@ class MainWindow(QMainWindow):
 
         dialogue = HistoryWindow(self.history, self)
         dialogue.rerun_requested.connect(self._rerun_history)
-        dialogue.exec_()
+        dialogue.exec()
 
-    @pyqtSlot()
+    @Slot()
     def open_allure_report(self) -> None:
         """Ouvre le rapport Allure du dernier run demarre.
 
@@ -789,7 +789,7 @@ class MainWindow(QMainWindow):
             lambda ok, detail, rapport=rapport: self._sur_allure_genere(ok, detail, rapport))
         self._allure_worker.start()
 
-    @pyqtSlot(bool, str)
+    @Slot(bool, str)
     def _sur_allure_genere(self, ok: bool, detail: str, rapport: Path) -> None:
         ouvrir = self._allure_open_en_attente
         self._allure_open_en_attente = False
@@ -857,7 +857,7 @@ class MainWindow(QMainWindow):
         self._allure_server_thread = fil
         return serveur.server_address[1]
 
-    @pyqtSlot(object)
+    @Slot(object)
     def _rerun_history(self, group) -> None:
         """Recharge au besoin le workspace, puis rejoue le lancement choisi."""
         if self.service.busy:
@@ -903,7 +903,7 @@ class MainWindow(QMainWindow):
         self._pending_history_run = None
         self._start(nodeids)
 
-    @pyqtSlot()
+    @Slot()
     def open_config_dialog(self) -> None:
         """Ouvre le fichier de configuration du workspace charge.
 
@@ -939,7 +939,7 @@ class MainWindow(QMainWindow):
             [r.name for r in self.workspace.readers], self,
             candidats=[str(c) for c in fichiers_config(racine)],
             workspace_path=racine)
-        dialogue.exec_()
+        dialogue.exec()
 
         # Le fichier qu'on vient d'editer devient CELUI du workspace : avoir
         # choisi dans la liste ne servirait a rien si le prochain chargement
@@ -953,7 +953,7 @@ class MainWindow(QMainWindow):
         if avant != apres:
             self.load_workspace()
 
-    @pyqtSlot()
+    @Slot()
     def toggle_theme(self) -> None:
         """Passe de sombre a clair, et retient le choix."""
         self.apply_theme("light" if t.is_dark() else "dark")
@@ -1010,7 +1010,7 @@ class MainWindow(QMainWindow):
         # widget de cette liste qu'on laisse un ilot de l'ancien theme, et
         # l'oubli ne se voit que sur un ecran precis, dans un etat precis. Les
         # `restyle()` sont idempotents, un double appel ne coute rien.
-        from PyQt5.QtWidgets import QWidget
+        from PySide6.QtWidgets import QWidget
 
         for enfant in self.findChildren(QWidget):
             rejouer = getattr(enfant, "restyle", None)
@@ -1035,7 +1035,7 @@ class MainWindow(QMainWindow):
     # Workspace
     # =====================================================================
 
-    @pyqtSlot()
+    @Slot()
     def browse_workspace(self) -> None:
         depart = self.workspace_combo.currentText() or str(Path.home())
         chemin = QFileDialog.getExistingDirectory(self, "Choose a workspace", depart)
@@ -1043,7 +1043,7 @@ class MainWindow(QMainWindow):
             self.workspace_combo.setCurrentText(chemin)
             self.load_workspace()
 
-    @pyqtSlot()
+    @Slot()
     def load_workspace(self) -> None:
         chemin = self.workspace_combo.currentText().strip()
         if not chemin:
@@ -1083,7 +1083,7 @@ class MainWindow(QMainWindow):
         self._collector.failed.connect(self._on_collect_failed)
         self._collector.start()
 
-    @pyqtSlot(object)
+    @Slot(object)
     def _on_collected(self, collection) -> None:
         self.progress.setVisible(False)
         self.progress.setRange(0, 100)
@@ -1132,7 +1132,7 @@ class MainWindow(QMainWindow):
         if self._pending_history_run is not None:
             QTimer.singleShot(0, self._launch_pending_history_run)
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _on_collect_failed(self, message: str) -> None:
         self._pending_history_run = None
         self.progress.setVisible(False)
@@ -1211,11 +1211,11 @@ class MainWindow(QMainWindow):
     # Run
     # =====================================================================
 
-    @pyqtSlot()
+    @Slot()
     def run_selected(self) -> None:
         self._start(self.model.checked_nodeids())
 
-    @pyqtSlot()
+    @Slot()
     def rerun_failed(self) -> None:
         echecs = self.model.failed_nodeids()
         if not echecs:
@@ -1289,7 +1289,7 @@ class MainWindow(QMainWindow):
         retenus = set(self.readers_bar.selected_indexes())
         return tuple(l for l in declares if l.index in retenus)
 
-    @pyqtSlot()
+    @Slot()
     def stop_run(self) -> None:
         """Arrete ce qui tourne -- un run normal, ou une serie de stress-test.
 
@@ -1339,7 +1339,7 @@ class MainWindow(QMainWindow):
         self.live_dot.stop()
         self.live_chip.setStyleSheet("")
 
-    @pyqtSlot(object)
+    @Slot(object)
     def _on_run_started(self, request: RunRequest) -> None:
         self.model.clear_statuses()
         self.model.clear_stress_annotation()
@@ -1364,7 +1364,7 @@ class MainWindow(QMainWindow):
         self._set_status_live(f"Running {len(request.nodeids)} tests…")
         self._update_actions()
 
-    @pyqtSlot(object)
+    @Slot(object)
     def _on_outcome(self, outcome) -> None:
         connu = self.model.apply_outcome(outcome.nodeid, outcome.status,
                                          outcome.reader_index)
@@ -1401,14 +1401,14 @@ class MainWindow(QMainWindow):
         # son invariant, pas celui de la fenetre.
         self.remaining_pill.set_value(self.progress.maximum() - faits)
 
-    @pyqtSlot(int, int)
+    @Slot(int, int)
     def _on_progress(self, faits: int, total: int) -> None:
         # Les nombres viennent de l'arbre, pas du compte de signaux porte par
         # le service : c'est la meme raison que pour les pastilles.
         self._rafraichir_compteurs()
         self._set_status_live(f"Running… {self.remaining_pill.value()} left")
 
-    @pyqtSlot(list)
+    @Slot(list)
     def _on_run_finished(self, rapports: list) -> None:
         self._elapsed.stop()
         self.progress.setVisible(False)
@@ -1505,11 +1505,11 @@ class MainWindow(QMainWindow):
     # Interactions de l'arbre
     # =====================================================================
 
-    @pyqtSlot(QModelIndex)
+    @Slot(QModelIndex)
     def _on_tree_clicked(self, index: QModelIndex) -> None:
         self._select_test(index)
 
-    @pyqtSlot(QModelIndex, QModelIndex)
+    @Slot(QModelIndex, QModelIndex)
     def _on_tree_current(self, index: QModelIndex, _precedent: QModelIndex) -> None:
         self._select_test(index)
 
@@ -1584,7 +1584,7 @@ class MainWindow(QMainWindow):
             parent = parent.parent()
         return " / ".join(reversed(ancetres)), nom
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _goto_test(self, nodeid: str) -> None:
         """Un echec clique dans la fiche de groupe : l'arbre y va."""
         index = self.model.index_for_nodeid(nodeid)
@@ -1684,7 +1684,7 @@ class MainWindow(QMainWindow):
 
     def _demander_run_n_fois(self, nodeid: str) -> None:
         dialogue = RunNTimesDialog(20, self)
-        if dialogue.exec_() == QDialog.Accepted:
+        if dialogue.exec() == QDialog.Accepted:
             self._lancer_stress(nodeid, MODE_N_TIMES, dialogue.count())
 
     def _lancer_stress(self, nodeid: str, mode: str, cap: int) -> None:
@@ -1831,12 +1831,12 @@ class MainWindow(QMainWindow):
         if self._stress_worker is not None:
             self._stress_worker.cancel()
 
-    @pyqtSlot(int, int)
+    @Slot(int, int)
     def _on_selection_changed(self, coches: int, total: int) -> None:
         self.selection_label.setText(f"{coches} of {total} tests selected")
         self._update_actions()
 
-    @pyqtSlot()
+    @Slot()
     def _on_readers_changed(self) -> None:
         """Le prochain run ne parcourra plus les memes lecteurs : le dire."""
         retenus = self._readers_to_run()
@@ -1850,18 +1850,18 @@ class MainWindow(QMainWindow):
             self.status_label.setText("No reader selected")
         self._update_actions()
 
-    @pyqtSlot(int)
+    @Slot(int)
     def _on_reader_selected(self, index: int) -> None:
         lecteurs = self.workspace.readers if self.workspace else ()
         if 0 <= index < len(lecteurs):
             self.status_label.setText(f"Showing {lecteurs[index].name}")
 
-    @pyqtSlot()
+    @Slot()
     def _open_markers(self) -> None:
         if not self.markers.isHidden():
             self.markers.toggle_popup()
 
-    @pyqtSlot()
+    @Slot()
     def _on_marker_filter(self) -> None:
         """Coche exactement les tests que l'expression retient.
 
@@ -1899,7 +1899,7 @@ class MainWindow(QMainWindow):
         self.filter_label.setVisible(bool(expression))
         self.filter_clear.setVisible(bool(expression))
 
-    @pyqtSlot()
+    @Slot()
     def clear_marker_filter(self) -> None:
         """Retire le filtre sans toucher a la selection qu'il a produite.
 
@@ -1911,7 +1911,7 @@ class MainWindow(QMainWindow):
         self._show_active_filter()
         self.status_label.setText("Marker filter cleared")
 
-    @pyqtSlot(object)
+    @Slot(object)
     def filter_by_status(self, status) -> None:
         """Ne montre plus que les tests de ce statut. Recliquer rend tout.
 
@@ -1974,7 +1974,7 @@ class MainWindow(QMainWindow):
         if statut is not None:
             self.tree.expandAll()
 
-    @pyqtSlot()
+    @Slot()
     def select_divergent(self) -> None:
         """Ne garde coches que les tests sur lesquels les lecteurs different.
 
@@ -1995,7 +1995,7 @@ class MainWindow(QMainWindow):
 
     # ----------------------------------------------------------- recherche
 
-    @pyqtSlot(str)
+    @Slot(str)
     def _on_search(self, texte: str) -> None:
         if self.search.scope == SCOPE_FAILURES:
             trouvailles = self._matching_failures(texte)

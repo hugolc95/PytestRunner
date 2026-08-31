@@ -1,6 +1,6 @@
 """Le compare des logs ignore le bruit et montre les ecarts de comportement."""
 
-from PyQt5.QtCore import Qt
+from PySide6.QtCore import Qt
 
 from runner.domain.log_compare import compare_logs, is_error_line, normalize_line
 from runner.domain.models import Reader

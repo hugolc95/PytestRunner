@@ -14,9 +14,9 @@ qu'on cherche, et un suivi automatique qui se coupe des qu'on remonte lire.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import Qt
-from PyQt5.QtGui import QColor, QTextCharFormat, QTextCursor, QTextFormat
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextFormat
+from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
     QLabel,
@@ -244,7 +244,7 @@ class ConsoleView(QWidget):
         return ansi.strip_ansi("\n".join(self._lines))
 
     def copy_all(self) -> None:
-        from PyQt5.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
         QApplication.clipboard().setText(self.text())
 

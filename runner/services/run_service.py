@@ -7,7 +7,7 @@ donc jamais remonter jusqu'a un slot.
 
 from __future__ import annotations
 
-from PyQt5.QtCore import QObject, QThread, pyqtSignal
+from PySide6.QtCore import QObject, QThread, Signal
 
 from runner.domain import execution
 from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest
@@ -22,8 +22,8 @@ class CollectWorker(QThread):
 
     # `object` et non `list` : la collecte rapporte aussi les markers de chaque
     # test, releves pendant le meme passage de pytest.
-    collected = pyqtSignal(object)
-    failed = pyqtSignal(str)
+    collected = Signal(object)
+    failed = Signal(str)
 
     def __init__(self, workspace: str, interpreter: str, env: dict, parent=None):
         super().__init__(parent)
@@ -52,9 +52,9 @@ class _ReaderWorker(QThread):
     sous Windows.
     """
 
-    line = pyqtSignal(int, str)
-    outcome = pyqtSignal(object)
-    done = pyqtSignal(object)
+    line = Signal(int, str)
+    outcome = Signal(object)
+    done = Signal(object)
 
     def __init__(self, request: RunRequest, reader: Reader, env: dict, parent=None):
         super().__init__(parent)
@@ -85,12 +85,12 @@ class RunService(QObject):
     ce qui evite deux suites qui se disputent le meme materiel.
     """
 
-    started = pyqtSignal(object)          # RunRequest
-    line = pyqtSignal(int, str)           # index du lecteur, ligne brute
-    outcome = pyqtSignal(object)          # Outcome
-    progress = pyqtSignal(int, int)       # termines, total
-    reader_finished = pyqtSignal(object)  # ReaderReport
-    finished = pyqtSignal(list)           # list[ReaderReport]
+    started = Signal(object)          # RunRequest
+    line = Signal(int, str)           # index du lecteur, ligne brute
+    outcome = Signal(object)          # Outcome
+    progress = Signal(int, int)       # termines, total
+    reader_finished = Signal(object)  # ReaderReport
+    finished = Signal(list)           # list[ReaderReport]
 
     def __init__(self, parent=None):
         super().__init__(parent)

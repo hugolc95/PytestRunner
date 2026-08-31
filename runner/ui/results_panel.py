@@ -21,9 +21,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QKeySequence
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -60,8 +60,8 @@ class ReaderViews(QWidget):
     largeur ; les logs se comparent ligne a ligne, on les met cote a cote.
     """
 
-    reader_selected = pyqtSignal(int)
-    open_file_requested = pyqtSignal(int)
+    reader_selected = Signal(int)
+    open_file_requested = Signal(int)
 
     def __init__(self, orientation=Qt.Vertical, sync_scroll: bool = False,
                  show_lens: bool = True, highlight_differences: bool = False,
@@ -519,8 +519,8 @@ class ReaderViews(QWidget):
 class ResultsPanel(QWidget):
     """Fiche du test, sortie brute et logs, derriere un etat vide au demarrage."""
 
-    reader_selected = pyqtSignal(int)
-    test_chosen = pyqtSignal(str)   # relaye la fiche de groupe vers l'arbre
+    reader_selected = Signal(int)
+    test_chosen = Signal(str)   # relaye la fiche de groupe vers l'arbre
 
     def __init__(self, parent=None):
         super().__init__(parent)

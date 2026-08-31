@@ -6,7 +6,7 @@ reussite tient dans une bulle-info -- pas besoin de compter les badges.
 from __future__ import annotations
 
 import pytest
-from PyQt5.QtGui import QColor
+from PySide6.QtGui import QColor
 
 from runner.domain.models import Status
 from runner.ui import tokens as t
@@ -14,7 +14,7 @@ from runner.ui import tokens as t
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 

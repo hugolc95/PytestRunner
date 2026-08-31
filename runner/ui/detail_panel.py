@@ -18,9 +18,9 @@ from __future__ import annotations
 import time
 from html import escape
 
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QColor
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -71,8 +71,8 @@ class DetailPanel(QWidget):
     rouge dedans ? ».
     """
 
-    open_output = pyqtSignal()
-    test_chosen = pyqtSignal(str)   # un echec clique dans la fiche de groupe
+    open_output = Signal()
+    test_chosen = Signal(str)   # un echec clique dans la fiche de groupe
 
     PAGE_VIDE, PAGE_TEST, PAGE_GROUPE, PAGE_STRESS = 0, 1, 2, 3
 
@@ -576,7 +576,7 @@ class DetailPanel(QWidget):
         self._remplir_corps(readers, statuses, failures, last_seen, recent_runs or {})
 
     def _copier_nodeid(self) -> None:
-        from PyQt5.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
         if self._nodeid:
             QApplication.clipboard().setText(self._nodeid)
@@ -786,7 +786,7 @@ class DetailPanel(QWidget):
             f"Passed on {pluriel}.</p>{sous_html}</div>")
 
     def _copier(self) -> None:
-        from PyQt5.QtWidgets import QApplication
+        from PySide6.QtWidgets import QApplication
 
         if self._texte_brut:
             QApplication.clipboard().setText(self._texte_brut)

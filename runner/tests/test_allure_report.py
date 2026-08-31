@@ -35,7 +35,7 @@ from runner.ui.main_window import _environnement_pour_allure, _GestionnaireAllur
 
 @pytest.fixture
 def fenetre(qapp, tmp_path):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.domain import history as history_mod
     from runner.domain.workspace import Workspace
@@ -424,7 +424,7 @@ def test_reopening_the_report_reuses_the_same_server(fenetre, monkeypatch, tmp_p
 def test_closing_the_window_shuts_the_server_down(fenetre, monkeypatch, tmp_path, qapp):
     """Un serveur HTTP oublie en arriere-plan survivrait a la fermeture de la
     fenetre -- le port resterait occupe tant que le processus tourne."""
-    from PyQt5.QtGui import QCloseEvent
+    from PySide6.QtGui import QCloseEvent
 
     resultats = tmp_path / "allure-results"
     resultats.mkdir()

@@ -12,9 +12,9 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PyQt5.QtCore import QSize, Qt, QUrl, pyqtSignal
-from PyQt5.QtGui import QColor, QDesktopServices
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import QSize, Qt, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices
+from PySide6.QtWidgets import (
     QAbstractItemView,
     QActionGroup,
     QComboBox,
@@ -331,7 +331,7 @@ class GroupComparisonDialog(QDialog):
 class HistoryWindow(QDialog):
     """Tableau de bord des lancements enregistres."""
 
-    rerun_requested = pyqtSignal(object)
+    rerun_requested = Signal(object)
 
     def __init__(self, history: History, parent=None):
         super().__init__(parent)
@@ -976,7 +976,7 @@ class HistoryWindow(QDialog):
         self._say("History cleared.")
 
     def show_flaky(self) -> None:
-        FlakyDialog(self.history.flaky(), self).exec_()
+        FlakyDialog(self.history.flaky(), self).exec()
 
     def _say(self, message: str, alert: bool = False) -> None:
         self.status.setText(message)
@@ -997,7 +997,7 @@ class HistoryWindow(QDialog):
             self._say("Choose two runs from the same workspace with a common reader.",
                       alert=True)
             return
-        GroupComparisonDialog(groups[0], groups[1], self).exec_()
+        GroupComparisonDialog(groups[0], groups[1], self).exec()
 
     def _enter_compare_mode(self) -> None:
         if len(self._visible_groups) < 2:

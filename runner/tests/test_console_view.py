@@ -28,7 +28,7 @@ SUCCES = "test_demo.py::test_module_level"
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -59,7 +59,7 @@ def test_the_escape_codes_never_appear_in_the_document(console):
 
 
 def test_a_coloured_chunk_really_carries_its_colour(console):
-    from PyQt5.QtGui import QTextCursor
+    from PySide6.QtGui import QTextCursor
 
     from runner.ui import tokens as t
 

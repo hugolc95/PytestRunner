@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from PyQt5.QtCore import QThread, pyqtSignal
+from PySide6.QtCore import QThread, Signal
 
 from runner.domain.history import History, RunEntry, _sain
 
@@ -18,7 +18,7 @@ from runner.domain.history import History, RunEntry, _sain
 class RunArchiveWorker(QThread):
     """Persist completed run entries without blocking the GUI thread."""
 
-    done = pyqtSignal(bool, str)
+    done = Signal(bool, str)
 
     def __init__(self, root: Path, max_entries: int,
                  entries: tuple[tuple[RunEntry, str], ...], parent=None):

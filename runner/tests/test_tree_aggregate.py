@@ -13,7 +13,7 @@ silence : ces tests existent pour l'attraper quand il le fera.
 from __future__ import annotations
 
 import pytest
-from PyQt5.QtCore import QModelIndex
+from PySide6.QtCore import QModelIndex
 
 from runner.domain.models import Reader, Status
 from runner.domain.tree import build_tree
@@ -29,7 +29,7 @@ READERS = (Reader("Reader A", 0), Reader("Reader B", 1))
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -270,7 +270,7 @@ def test_a_folder_icon_is_painted_in_its_status_colour(qapp, status):
     dessine = pixels[len(pixels) // 2]
     attendu = t.blend(t.status_color(status), t.BG_SURFACE, 0.75)
 
-    from PyQt5.QtGui import QColor
+    from PySide6.QtGui import QColor
 
     cible = QColor(attendu)
     ecart = max(abs(dessine.red() - cible.red()),

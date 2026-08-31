@@ -18,8 +18,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -42,7 +42,7 @@ AUTOSAVE_MS = 700
 class SourcePanel(QWidget):
     """Fichier source du test selectionne, en lecture puis en edition."""
 
-    saved = pyqtSignal(str)  # chemin ecrit
+    saved = Signal(str)  # chemin ecrit
 
     def __init__(self, parent=None):
         super().__init__(parent)

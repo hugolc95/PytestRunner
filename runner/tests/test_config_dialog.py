@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from PyQt5.QtWidgets import (
+from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QLineEdit,
@@ -39,7 +39,7 @@ campaign:
 
 @pytest.fixture(scope="session")
 def qapp():
-    from PyQt5.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
 
     return QApplication.instance() or QApplication([])
 
@@ -281,7 +281,7 @@ def test_a_file_with_no_setting_says_so(qapp, tmp_path):
 
 @pytest.fixture
 def fenetre(qapp, tmp_path):
-    from PyQt5.QtCore import QSettings
+    from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
 
@@ -366,7 +366,7 @@ def test_the_theme_button_is_not_in_the_row_of_run_actions(fenetre):
     """Pose entre l'espace elastique et Re-run, il s'alignait avec les boutons
     de run et se lisait comme une quatrieme action -- alors que c'est un
     reglage de confort."""
-    from PyQt5.QtCore import Qt
+    from PySide6.QtCore import Qt
 
     barre = fenetre.run_button.parentWidget().layout()
     dans_la_barre = {barre.itemAt(i).widget() for i in range(barre.count())}

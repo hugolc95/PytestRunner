@@ -12,8 +12,8 @@ import sys
 import textwrap
 
 import pytest
-from PyQt5.QtCore import QEventLoop, QTimer
-from PyQt5.QtWidgets import QApplication
+from PySide6.QtCore import QEventLoop, QTimer
+from PySide6.QtWidgets import QApplication
 
 from runner.domain.execution import ENV_BUILD_NUMBER, ReaderRun
 from runner.domain.models import Reader, RunRequest, Status
@@ -60,7 +60,7 @@ def _attendre(condition, timeout_ms: int = 60000) -> bool:
     while not condition() and ecoule < timeout_ms:
         boucle = QEventLoop()
         QTimer.singleShot(25, boucle.quit)
-        boucle.exec_()
+        boucle.exec()
         ecoule += 25
     return condition()
 
