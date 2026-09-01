@@ -28,7 +28,7 @@ from PySide6.QtCore import (
     QUrl,
     Slot,
 )
-from PySide6.QtGui import QDesktopServices, QKeySequence
+from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -53,6 +53,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app_icon import APP_ICON_RELATIVE_PATH, resource_path
 from runner.domain import history
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.models import Kind, Reader, RunRequest, Status
@@ -310,6 +311,18 @@ class MainWindow(QMainWindow):
         self.navigation_title = QLabel("PYTEST RUNNER")
         self.navigation_title.setObjectName("NavigationTitle")
         colonne.addWidget(self.navigation_title)
+
+        self.navigation_logo = QLabel()
+        self.navigation_logo.setObjectName("NavigationLogo")
+        self.navigation_logo.setAlignment(Qt.AlignCenter)
+        app_icon = QApplication.instance().windowIcon()
+        if app_icon.isNull():
+            app_icon = QIcon(str(resource_path(APP_ICON_RELATIVE_PATH)))
+        if not app_icon.isNull():
+            self.navigation_logo.setPixmap(app_icon.pixmap(30, 30))
+        self.navigation_logo.setToolTip("Pytest Runner")
+        self.navigation_logo.hide()
+        colonne.addWidget(self.navigation_logo)
         colonne.addSpacing(t.SPACE_4)
 
         self.nav_buttons = {}
@@ -374,8 +387,12 @@ class MainWindow(QMainWindow):
             "python": "Environnement Python",
         }
         self.navigation_title.setVisible(not collapsed)
+        self.navigation_logo.setVisible(collapsed)
         for key, button in self.nav_buttons.items():
             button.setText("" if collapsed else labels[key])
+            button.setProperty("compact", collapsed)
+            button.style().unpolish(button)
+            button.style().polish(button)
         self.sidebar_toggle_button.setToolTip(
             "Déplier la barre latérale" if collapsed
             else "Réduire la barre latérale")
@@ -1330,6 +1347,7 @@ class MainWindow(QMainWindow):
         """
         t.set_theme(nom)
         self.settings.setValue(K_THEME, t.current_theme())
+        self.settings.sync()
 
         application = QApplication.instance()
         if application is not None:

@@ -35,13 +35,18 @@ def test_sidebar_can_collapse_to_icons_and_expand_again(qapp):
         assert window.navigation.width() == 56
         assert window.navigation.maximumWidth() == 56
         assert window.navigation_title.isHidden()
+        assert not window.navigation_logo.isHidden()
+        assert not window.navigation_logo.pixmap().isNull()
         assert all(button.text() == "" for button in window.nav_buttons.values())
+        assert all(button.property("compact") for button in window.nav_buttons.values())
         assert all(button.toolTip() for button in window.nav_buttons.values())
 
         window._set_sidebar_collapsed(False, animate=False)
         assert window.navigation.width() == 220
         assert window.nav_buttons["workspace"].text() == "Workspace"
+        assert not window.nav_buttons["workspace"].property("compact")
         assert not window.navigation_title.isHidden()
+        assert window.navigation_logo.isHidden()
     finally:
         window.close()
 

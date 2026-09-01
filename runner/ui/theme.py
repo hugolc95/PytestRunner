@@ -49,9 +49,13 @@ QFrame#Navigation {{
     border-right: 1px solid {t.BORDER};
 }}
 QLabel#NavigationTitle {{
+    background-color: transparent;
     color: {t.TEXT};
     font-size: {t.TEXT_LG}px;
     font-weight: 700;
+}}
+QLabel#NavigationLogo {{
+    background-color: transparent;
 }}
 QPushButton#NavigationItem {{
     background-color: transparent;
@@ -68,6 +72,10 @@ QPushButton#NavigationItem:hover {{
 QPushButton#NavigationItem:checked {{
     background-color: {t.rgba(t.ACCENT, 0.16)};
     color: {t.ACCENT};
+}}
+QPushButton#NavigationItem[compact="true"] {{
+    padding: 0;
+    text-align: center;
 }}
 QPushButton#NavigationUtilityIcon {{
     background-color: transparent;
