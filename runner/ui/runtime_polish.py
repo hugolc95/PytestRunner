@@ -151,6 +151,21 @@ def _find_main_window(parent=None):
     return window if window is not None else widget
 
 
+def _polish_item_view(view: QAbstractItemView) -> None:
+    """Keep scrolling smooth without bypassing Qt's background repaint.
+
+    ``WA_OpaquePaintEvent`` leaves stylesheet-backed viewports partially
+    unpainted with Qt 6.8 on Windows. The untouched regions then show up as
+    black rectangles and stale column separators after resize/scroll.
+    """
+    view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+    view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+    view.setAutoScrollMargin(24)
+    viewport = view.viewport()
+    if viewport is not None:
+        viewport.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, False)
+
+
 def install() -> None:
     """Install lightweight rendering and non-modal feedback refinements."""
     from runner.ui.main_window import MainWindow
@@ -170,12 +185,7 @@ def install() -> None:
         # Reduce geometry work and make scrolling feel continuous on large
         # parameterized suites.
         for view in self.findChildren(QAbstractItemView):
-            view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
-            view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
-            view.setAutoScrollMargin(24)
-            viewport = view.viewport()
-            if viewport is not None:
-                viewport.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
+            _polish_item_view(view)
         for tree in self.findChildren(QTreeView):
             tree.setUniformRowHeights(True)
             tree.setAnimated(False)
