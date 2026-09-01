@@ -17,7 +17,17 @@ import time
 from functools import partial
 from pathlib import Path
 
-from PySide6.QtCore import QModelIndex, QSettings, Qt, QTimer, QUrl, Slot
+from PySide6.QtCore import (
+    QEasingCurve,
+    QModelIndex,
+    QParallelAnimationGroup,
+    QPropertyAnimation,
+    QSettings,
+    Qt,
+    QTimer,
+    QUrl,
+    Slot,
+)
 from PySide6.QtGui import QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -98,6 +108,7 @@ K_LAST = "workspace/last"
 K_TREE_COLS = "tree/columns"
 K_INTERPRETER = "interpreter/override"
 K_THEME = "window/theme"
+K_SIDEBAR_COLLAPSED = "window/sidebar_collapsed"
 # Fichier de configuration retenu, par workspace. Un projet peut en
 # compter plusieurs, et le premier trouve n'est pas forcement le bon.
 K_CONFIG = "workspace/config"
@@ -189,6 +200,7 @@ class MainWindow(QMainWindow):
         self._elapsed.setInterval(1000)
         self._elapsed.timeout.connect(self._tick)
         self._seconds = 0
+        self._sidebar_collapsed = False
 
         # Un run long tourne souvent pendant qu'on fait autre chose : la
         # notification systeme le signale sans qu'il faille revenir surveiller
@@ -287,15 +299,17 @@ class MainWindow(QMainWindow):
 
     def _build_navigation(self) -> QWidget:
         navigation = QFrame()
+        self.navigation = navigation
         navigation.setObjectName("Navigation")
-        navigation.setFixedWidth(220)
+        navigation.setMinimumWidth(220)
+        navigation.setMaximumWidth(220)
         colonne = QVBoxLayout(navigation)
         colonne.setContentsMargins(t.SPACE_3, t.SPACE_4, t.SPACE_3, t.SPACE_3)
         colonne.setSpacing(t.SPACE_2)
 
-        titre = QLabel("PYTEST RUNNER")
-        titre.setObjectName("NavigationTitle")
-        colonne.addWidget(titre)
+        self.navigation_title = QLabel("PYTEST RUNNER")
+        self.navigation_title.setObjectName("NavigationTitle")
+        colonne.addWidget(self.navigation_title)
         colonne.addSpacing(t.SPACE_4)
 
         self.nav_buttons = {}
@@ -310,22 +324,83 @@ class MainWindow(QMainWindow):
             bouton.setObjectName("NavigationItem")
             bouton.setCheckable(True)
             bouton.setIcon(icons.icon(glyph, t.TEXT_MUTED))
+            bouton.setToolTip(texte)
             bouton.setCursor(Qt.PointingHandCursor)
             bouton.clicked.connect(lambda checked=False, page=cle: self._show_page(page))
             self.nav_buttons[cle] = bouton
             colonne.addWidget(bouton)
         colonne.addStretch(1)
+        utilities = QVBoxLayout()
+        utilities.setContentsMargins(0, 0, 0, 0)
+        utilities.setSpacing(t.SPACE_2)
+
+        self.sidebar_toggle_button = QPushButton()
+        self.sidebar_toggle_button.setObjectName("NavigationUtilityIcon")
+        self.sidebar_toggle_button.setFixedSize(t.ICON_BUTTON, t.ICON_BUTTON)
+        self.sidebar_toggle_button.setToolTip("Réduire la barre latérale")
+        self.sidebar_toggle_button.setCursor(Qt.PointingHandCursor)
+        self.sidebar_toggle_button.clicked.connect(self.toggle_sidebar)
+        utilities.addWidget(self.sidebar_toggle_button)
+
         self.page_theme_button = QPushButton()
         self.page_theme_button.setObjectName("NavigationUtilityIcon")
         self.page_theme_button.setFixedSize(t.ICON_BUTTON, t.ICON_BUTTON)
         self.page_theme_button.setIcon(
             icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
+        self.sidebar_toggle_button.setIcon(icons.icon(
+            "mdi.chevron-right" if self._sidebar_collapsed
+            else "mdi.chevron-left", t.TEXT_MUTED))
         self.page_theme_button.setToolTip("Changer de thème")
         self.page_theme_button.setCursor(Qt.PointingHandCursor)
         self.page_theme_button.clicked.connect(self.toggle_theme)
-        colonne.addWidget(self.page_theme_button, 0, Qt.AlignLeft)
+        utilities.addWidget(self.page_theme_button)
+        colonne.addLayout(utilities)
+
+        self._sidebar_animation = QParallelAnimationGroup(self)
         self.nav_buttons["workspace"].setChecked(True)
         return navigation
+
+    @Slot()
+    def toggle_sidebar(self) -> None:
+        self._set_sidebar_collapsed(not self._sidebar_collapsed, animate=True)
+
+    def _set_sidebar_collapsed(self, collapsed: bool, animate: bool = False) -> None:
+        collapsed = bool(collapsed)
+        self._sidebar_collapsed = collapsed
+        labels = {
+            "workspace": "Workspace",
+            "yaml": "Configuration YAML",
+            "history": "Historique",
+            "python": "Environnement Python",
+        }
+        self.navigation_title.setVisible(not collapsed)
+        for key, button in self.nav_buttons.items():
+            button.setText("" if collapsed else labels[key])
+        self.sidebar_toggle_button.setToolTip(
+            "Déplier la barre latérale" if collapsed
+            else "Réduire la barre latérale")
+        self.sidebar_toggle_button.setIcon(icons.icon(
+            "mdi.chevron-right" if collapsed else "mdi.chevron-left",
+            t.TEXT_MUTED))
+
+        start = self.navigation.width()
+        end = 56 if collapsed else 220
+        self._sidebar_animation.stop()
+        while self._sidebar_animation.animationCount():
+            self._sidebar_animation.takeAnimation(0).deleteLater()
+        if not animate:
+            self.navigation.setMinimumWidth(end)
+            self.navigation.setMaximumWidth(end)
+        else:
+            for property_name in (b"minimumWidth", b"maximumWidth"):
+                animation = QPropertyAnimation(self.navigation, property_name, self)
+                animation.setDuration(160)
+                animation.setStartValue(start)
+                animation.setEndValue(end)
+                animation.setEasingCurve(QEasingCurve.InOutCubic)
+                self._sidebar_animation.addAnimation(animation)
+            self._sidebar_animation.start()
+        self.settings.setValue(K_SIDEBAR_COLLAPSED, collapsed)
 
     def _page_landing(self, title: str, description: str) -> tuple[QWidget, QVBoxLayout]:
         page = QWidget()
@@ -2454,6 +2529,9 @@ class MainWindow(QMainWindow):
 
         self._interpreter_override = self.settings.value(K_INTERPRETER, "", type=str)
         self.apply_theme(self.settings.value(K_THEME, "dark", type=str))
+        self._set_sidebar_collapsed(
+            self.settings.value(K_SIDEBAR_COLLAPSED, False, type=bool),
+            animate=False)
         self._refresh_interpreter_alert()
 
     def closeEvent(self, event) -> None:

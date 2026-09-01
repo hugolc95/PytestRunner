@@ -21,8 +21,27 @@ def test_main_navigation_separates_python_and_yaml_configuration(qapp):
             "Environnement Python"]
         assert window.page_theme_button.text() == ""
         assert window.page_theme_button.width() <= 32
+        assert window.sidebar_toggle_button.width() <= 32
         assert window.pages.currentWidget() is window.workspace_page
         assert window.menuBar().isHidden()
+    finally:
+        window.close()
+
+
+def test_sidebar_can_collapse_to_icons_and_expand_again(qapp):
+    window = MainWindow()
+    try:
+        window._set_sidebar_collapsed(True, animate=False)
+        assert window.navigation.width() == 56
+        assert window.navigation.maximumWidth() == 56
+        assert window.navigation_title.isHidden()
+        assert all(button.text() == "" for button in window.nav_buttons.values())
+        assert all(button.toolTip() for button in window.nav_buttons.values())
+
+        window._set_sidebar_collapsed(False, animate=False)
+        assert window.navigation.width() == 220
+        assert window.nav_buttons["workspace"].text() == "Workspace"
+        assert not window.navigation_title.isHidden()
     finally:
         window.close()
 
