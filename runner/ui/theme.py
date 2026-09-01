@@ -116,6 +116,36 @@ QLabel#ConfigSectionTitle {{
     font-size: {t.TEXT_LG}px;
     font-weight: 700;
 }}
+QFrame#ConfigFileHeader, QFrame#ConfigGroup {{
+    background-color: {t.BG_SURFACE};
+    border: 1px solid {t.BORDER};
+    border-radius: {t.RADIUS_MD}px;
+}}
+QFrame#ConfigFileHeader QLabel, QFrame#ConfigGroup QLabel {{
+    background-color: transparent;
+}}
+QLabel#ConfigFileLabel {{
+    color: {t.TEXT};
+    font-weight: 700;
+}}
+QLabel#ConfigStateSaved, QLabel#ConfigStateModified, QLabel#ConfigStateError {{
+    border-radius: 10px;
+    padding: 3px {t.SPACE_2}px;
+    font-size: {t.TEXT_XS}px;
+    font-weight: 700;
+}}
+QLabel#ConfigStateSaved {{
+    color: {t.status_color(Status.PASSED)};
+    background-color: {t.rgba(t.status_color(Status.PASSED), 0.12)};
+}}
+QLabel#ConfigStateModified {{
+    color: {t.status_color(Status.SKIPPED)};
+    background-color: {t.rgba(t.status_color(Status.SKIPPED), 0.12)};
+}}
+QLabel#ConfigStateError {{
+    color: {t.status_color(Status.FAILED)};
+    background-color: {t.rgba(t.status_color(Status.FAILED), 0.12)};
+}}
 QFrame#Surface, QWidget#Surface {{
     background-color: {t.BG_SURFACE};
     border: 1px solid {t.BORDER};

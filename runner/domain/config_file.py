@@ -289,7 +289,11 @@ def valider(texte: str) -> tuple[bool, str]:
         donnees = yaml.safe_load(texte)
     except Exception as exc:
         premiere = str(exc).strip().splitlines()
-        return False, premiere[0] if premiere else "invalid YAML"
+        message = premiere[0] if premiere else "invalid YAML"
+        mark = getattr(exc, "problem_mark", None)
+        if mark is not None:
+            message += f" (line {mark.line + 1}, column {mark.column + 1})"
+        return False, message
 
     if donnees is None or isinstance(donnees, dict):
         return True, ""

@@ -230,6 +230,22 @@ def test_the_yaml_tab_saves_what_you_typed(dialogue, fichier):
     assert fichier.read_text(encoding="utf-8") == "# tout neuf\nReader: X\n"
 
 
+def test_editing_yaml_marks_the_file_as_modified(dialogue):
+    dialogue.tabs.setCurrentIndex(ONGLET_YAML)
+    dialogue.raw.appendPlainText("nouveau: true")
+
+    assert dialogue.state_badge.text() == "Modifié"
+    assert dialogue.discard_button.isEnabled()
+
+
+def test_settings_can_be_filtered_by_name(dialogue):
+    dialogue.settings_search.setText("campaign")
+
+    visible = [group for group, _ in dialogue._groupes if not group.isHidden()]
+    assert len(visible) == 1
+    assert "Campaign" in visible[0].findChild(type(dialogue.status)).text()
+
+
 def test_broken_yaml_is_refused_and_the_file_untouched(dialogue, fichier):
     """Un fichier invalide rend le workspace incollectable, et l'erreur
     ressortirait bien plus tard, sous la forme d'une collecte qui echoue sans
@@ -241,6 +257,16 @@ def test_broken_yaml_is_refused_and_the_file_untouched(dialogue, fichier):
 
     assert fichier.read_bytes() == avant
     assert "Not saved" in dialogue.status.text()
+    assert dialogue.state_badge.text() == "Erreur YAML"
+
+
+def test_broken_yaml_selects_the_faulty_line(dialogue):
+    dialogue.tabs.setCurrentIndex(ONGLET_YAML)
+    dialogue.raw.setPlainText("Reader: A\ncampaign: : bad\n")
+    dialogue.save()
+
+    assert "line 2" in dialogue.status.text()
+    assert dialogue.raw.textCursor().blockNumber() == 1
 
 
 def test_unsaved_form_changes_are_flagged_when_leaving_for_the_yaml(dialogue):
@@ -477,7 +503,7 @@ def test_choosing_the_first_config_remembers_its_relative_subfolder(
     monkeypatch.setattr(
         "runner.ui.main_window.QFileDialog.getOpenFileName",
         lambda *_args: (str(config), "YAML files (*.yml *.yaml)"))
-    monkeypatch.setattr("runner.ui.config_dialog.ConfigDialog.exec_", lambda _self: 0)
+    monkeypatch.setattr("runner.ui.config_dialog.ConfigDialog.exec", lambda _self: 0)
     recharges = []
     monkeypatch.setattr(fenetre, "load_workspace", lambda: recharges.append(True))
 

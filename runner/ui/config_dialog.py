@@ -12,9 +12,11 @@ fichier tel qu'il est. Ce qu'on y tape fait alors foi, commentaires compris.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -22,6 +24,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -194,6 +197,9 @@ class ConfigDialog(QDialog):
         if self.path not in self._candidats:
             self._candidats.insert(0, self.path)
         self._champs: list[_Champ] = []
+        self._groupes: list[tuple[QWidget, str]] = []
+        self._tracking_changes = False
+        self._loaded_raw = ""
 
         self.setWindowTitle(f"Configuration — {self.path.name}")
         # Une QDialog n'a par defaut ni agrandissement ni reduction : sur une
@@ -212,13 +218,15 @@ class ConfigDialog(QDialog):
         # le YAML voulu peut etre plus loin dans l'arborescence ou en dehors
         # des candidats automatiques. Un projet qui en a plusieurs voyait
         # auparavant l'outil en prendre un sans permettre d'en choisir un autre.
-        self.file_row = QWidget()
+        self.file_row = QFrame()
+        self.file_row.setObjectName("ConfigFileHeader")
         rangee = QHBoxLayout(self.file_row)
-        rangee.setContentsMargins(0, 0, 0, 0)
+        rangee.setContentsMargins(t.SPACE_3, t.SPACE_2,
+                                  t.SPACE_3, t.SPACE_2)
         rangee.setSpacing(t.SPACE_2)
 
-        etiquette = QLabel("File")
-        etiquette.setObjectName("Muted")
+        etiquette = QLabel("Fichier actif")
+        etiquette.setObjectName("ConfigFileLabel")
         self.file_combo = QComboBox()
         for candidat in self._candidats:
             self._ajouter_candidat(candidat)
@@ -237,6 +245,11 @@ class ConfigDialog(QDialog):
         rangee.addWidget(self.file_combo, 1)
         rangee.addWidget(self.choose_file_button)
 
+        self.state_badge = QLabel("Enregistré")
+        self.state_badge.setObjectName("ConfigStateSaved")
+        self.state_badge.setAlignment(Qt.AlignCenter)
+        rangee.addWidget(self.state_badge)
+
         self.form_host = QWidget()
         self._form = QVBoxLayout(self.form_host)
         self._form.setContentsMargins(t.SPACE_2, t.SPACE_2, t.SPACE_2, t.SPACE_2)
@@ -249,6 +262,12 @@ class ConfigDialog(QDialog):
         self.raw = QPlainTextEdit()
         self.raw.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.raw.setPlaceholderText("key: value")
+        self.raw.textChanged.connect(self._refresh_dirty_state)
+
+        self.settings_search = QLineEdit()
+        self.settings_search.setPlaceholderText("Rechercher un paramètre…")
+        self.settings_search.setClearButtonEnabled(True)
+        self.settings_search.textChanged.connect(self._filter_settings)
 
         self.tabs = QTabWidget()
         self.tabs.addTab(defilement, "Settings")
@@ -258,11 +277,16 @@ class ConfigDialog(QDialog):
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
-        self.reload_button = QPushButton("Reload")
+        self.reload_button = QPushButton("Recharger")
         self.reload_button.setObjectName("Ghost")
         self.reload_button.clicked.connect(self.reload)
 
-        self.save_button = QPushButton("Save")
+        self.discard_button = QPushButton("Annuler les modifications")
+        self.discard_button.setObjectName("Ghost")
+        self.discard_button.clicked.connect(self.reload)
+        self.discard_button.setEnabled(False)
+
+        self.save_button = QPushButton("Enregistrer")
         self.save_button.setObjectName("Primary")
         self.save_button.clicked.connect(self.save)
 
@@ -275,6 +299,7 @@ class ConfigDialog(QDialog):
         actions.setSpacing(t.SPACE_2)
         actions.addWidget(self.status, 1)
         actions.addWidget(self.reload_button)
+        actions.addWidget(self.discard_button)
         actions.addWidget(self.close_button)
         actions.addWidget(self.save_button)
 
@@ -283,6 +308,7 @@ class ConfigDialog(QDialog):
         colonne.setSpacing(t.SPACE_3)
         colonne.addWidget(self.file_row)
         colonne.addWidget(self.chemin_label)
+        colonne.addWidget(self.settings_search)
         colonne.addWidget(self.tabs, 1)
         colonne.addLayout(actions)
 
@@ -341,11 +367,15 @@ class ConfigDialog(QDialog):
 
     def reload(self) -> None:
         """Relit le fichier et rebatit les deux vues."""
+        self._tracking_changes = False
         donnees = config_file.charger(self.path)
         texte = config_file.lire_texte(self.path)
-        self.raw.setPlainText(texte if texte is not None else "")
+        self._loaded_raw = texte if texte is not None else ""
+        self.raw.setPlainText(self._loaded_raw)
         self._batir(donnees)
         self._dire("")
+        self._tracking_changes = True
+        self._set_state("saved")
 
     def _batir(self, donnees: dict) -> None:
         while self._form.count():
@@ -354,6 +384,7 @@ class ConfigDialog(QDialog):
             if widget is not None:
                 widget.deleteLater()
         self._champs = []
+        self._groupes = []
 
         simples = {c: v for c, v in donnees.items() if not isinstance(v, dict)}
         sections = {c: v for c, v in donnees.items() if isinstance(v, dict)}
@@ -370,11 +401,15 @@ class ConfigDialog(QDialog):
             self._form.addWidget(vide)
 
         self._form.addStretch(1)
+        self._connect_change_tracking()
+        self._filter_settings(self.settings_search.text())
 
     def _groupe(self, titre: str, prefixe: tuple, contenu: dict) -> QWidget:
-        boite = QWidget()
+        boite = QFrame()
+        boite.setObjectName("ConfigGroup")
         colonne = QVBoxLayout(boite)
-        colonne.setContentsMargins(0, 0, 0, 0)
+        colonne.setContentsMargins(t.SPACE_3, t.SPACE_3,
+                                   t.SPACE_3, t.SPACE_3)
         colonne.setSpacing(t.SPACE_2)
 
         etiquette = QLabel(titre)
@@ -397,6 +432,8 @@ class ConfigDialog(QDialog):
                               self._widget(prefixe + (nom,), nom, valeur))
 
         colonne.addLayout(formulaire)
+        recherche = " ".join((titre, *(_joli(nom) for nom in contenu))).lower()
+        self._groupes.append((boite, recherche))
         return boite
 
     # ------------------------------------------------------------------ champs
@@ -498,6 +535,53 @@ class ConfigDialog(QDialog):
 
     # ------------------------------------------------------------- onglets
 
+    def _connect_change_tracking(self) -> None:
+        """Observe les widgets du formulaire sans connaitre leur type métier."""
+        for field in self.form_host.findChildren(QLineEdit):
+            field.textChanged.connect(self._refresh_dirty_state)
+        for field in self.form_host.findChildren(QComboBox):
+            field.currentTextChanged.connect(self._refresh_dirty_state)
+        for field in self.form_host.findChildren(QCheckBox):
+            field.toggled.connect(self._refresh_dirty_state)
+        for field in self.form_host.findChildren(QSpinBox):
+            field.valueChanged.connect(self._refresh_dirty_state)
+        for field in self.form_host.findChildren(QDoubleSpinBox):
+            field.valueChanged.connect(self._refresh_dirty_state)
+        for field in self.form_host.findChildren(QPlainTextEdit):
+            field.textChanged.connect(self._refresh_dirty_state)
+        for readers in self.form_host.findChildren(ReaderList):
+            readers.list.itemChanged.connect(self._refresh_dirty_state)
+            readers.list.model().rowsInserted.connect(self._refresh_dirty_state)
+            readers.list.model().rowsRemoved.connect(self._refresh_dirty_state)
+
+    def _filter_settings(self, text: str) -> None:
+        query = text.strip().lower()
+        for group, haystack in self._groupes:
+            group.setVisible(not query or query in haystack)
+
+    def _has_raw_changes(self) -> bool:
+        return self.raw.toPlainText() != self._loaded_raw
+
+    def _refresh_dirty_state(self, *_args) -> None:
+        if not self._tracking_changes:
+            return
+        dirty = (self._has_raw_changes() if self.tabs.currentIndex() == ONGLET_YAML
+                 else bool(self._modifications()))
+        self._set_state("modified" if dirty else "saved")
+
+    def _set_state(self, state: str) -> None:
+        labels = {
+            "saved": ("Enregistré", "ConfigStateSaved"),
+            "modified": ("Modifié", "ConfigStateModified"),
+            "error": ("Erreur YAML", "ConfigStateError"),
+        }
+        text, object_name = labels[state]
+        self.state_badge.setText(text)
+        self.state_badge.setObjectName(object_name)
+        self.state_badge.style().unpolish(self.state_badge)
+        self.state_badge.style().polish(self.state_badge)
+        self.discard_button.setEnabled(state != "saved")
+
     def _on_tab(self, index: int) -> None:
         """Passer a l'onglet YAML relit le FICHIER, pas le formulaire.
 
@@ -506,6 +590,8 @@ class ConfigDialog(QDialog):
         eviter. Les modifications non enregistrees sont signalees plutot que
         recopiees.
         """
+        self.settings_search.setVisible(index == ONGLET_FORMULAIRE)
+        self._refresh_dirty_state()
         if index != ONGLET_YAML:
             return
         if self._modifications():
@@ -551,6 +637,18 @@ class ConfigDialog(QDialog):
             # incollectable, et l'erreur ressortirait bien plus tard sous la
             # forme d'une collecte qui echoue sans raison apparente.
             self._dire(f"Not saved — {probleme}", alerte=True)
+            self._set_state("error")
+            match = re.search(r"line\s+(\d+)", str(probleme), re.IGNORECASE)
+            if match:
+                line = max(1, int(match.group(1)))
+                cursor = self.raw.textCursor()
+                cursor.movePosition(QTextCursor.Start)
+                cursor.movePosition(QTextCursor.Down, QTextCursor.MoveAnchor,
+                                    line - 1)
+                cursor.select(QTextCursor.LineUnderCursor)
+                self.raw.setTextCursor(cursor)
+                self.raw.centerCursor()
+                self.raw.setFocus()
             return
 
         ok, message = config_file.ecrire_texte(self.path, texte)
