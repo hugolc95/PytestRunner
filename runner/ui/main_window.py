@@ -327,10 +327,10 @@ class MainWindow(QMainWindow):
 
         self.nav_buttons = {}
         entrees = (
-            ("workspace", "Workspace", "mdi.folder-outline"),
-            ("yaml", "Configuration YAML", "mdi.file-cog-outline"),
-            ("history", "Historique", "mdi.history"),
-            ("python", "Environnement Python", "mdi.language-python"),
+            ("workspace", "Run Tests", "mdi.play-circle-outline"),
+            ("yaml", "YAML Configuration", "mdi.file-cog-outline"),
+            ("history", "History", "mdi.history"),
+            ("python", "Python Environment", "mdi.language-python"),
         )
         for cle, texte, glyph in entrees:
             bouton = QPushButton(texte)
@@ -350,7 +350,7 @@ class MainWindow(QMainWindow):
         self.sidebar_toggle_button = QPushButton()
         self.sidebar_toggle_button.setObjectName("NavigationUtilityIcon")
         self.sidebar_toggle_button.setFixedSize(t.ICON_BUTTON, t.ICON_BUTTON)
-        self.sidebar_toggle_button.setToolTip("Réduire la barre latérale")
+        self.sidebar_toggle_button.setToolTip("Collapse sidebar")
         self.sidebar_toggle_button.setCursor(Qt.PointingHandCursor)
         self.sidebar_toggle_button.clicked.connect(self.toggle_sidebar)
         utilities.addWidget(self.sidebar_toggle_button)
@@ -363,7 +363,7 @@ class MainWindow(QMainWindow):
         self.sidebar_toggle_button.setIcon(icons.icon(
             "mdi.chevron-right" if self._sidebar_collapsed
             else "mdi.chevron-left", t.TEXT_MUTED))
-        self.page_theme_button.setToolTip("Changer de thème")
+        self.page_theme_button.setToolTip("Switch theme")
         self.page_theme_button.setCursor(Qt.PointingHandCursor)
         self.page_theme_button.clicked.connect(self.toggle_theme)
         utilities.addWidget(self.page_theme_button)
@@ -381,10 +381,10 @@ class MainWindow(QMainWindow):
         collapsed = bool(collapsed)
         self._sidebar_collapsed = collapsed
         labels = {
-            "workspace": "Workspace",
-            "yaml": "Configuration YAML",
-            "history": "Historique",
-            "python": "Environnement Python",
+            "workspace": "Run Tests",
+            "yaml": "YAML Configuration",
+            "history": "History",
+            "python": "Python Environment",
         }
         self.navigation_title.setVisible(not collapsed)
         self.navigation_logo.setVisible(collapsed)
@@ -394,8 +394,7 @@ class MainWindow(QMainWindow):
             button.style().unpolish(button)
             button.style().polish(button)
         self.sidebar_toggle_button.setToolTip(
-            "Déplier la barre latérale" if collapsed
-            else "Réduire la barre latérale")
+            "Expand sidebar" if collapsed else "Collapse sidebar")
         self.sidebar_toggle_button.setIcon(icons.icon(
             "mdi.chevron-right" if collapsed else "mdi.chevron-left",
             t.TEXT_MUTED))
@@ -463,9 +462,9 @@ class MainWindow(QMainWindow):
 
     def _build_python_page(self) -> QWidget:
         page, layout = self._page_landing(
-            "Environnement Python",
-            "Configurez le moteur Python utilisé pour collecter et exécuter "
-            "les tests. Ce réglage est indépendant des fichiers YAML.")
+            "Python Environment",
+            "Configure the Python interpreter used to collect and run tests. "
+            "This setting is independent from YAML configuration files.")
         self.python_editor = InterpreterDialog("", "", page, embedded=True)
         self.python_editor.setWindowFlags(Qt.Widget)
         self.python_editor.saved.connect(self._save_python_from_page)
@@ -475,15 +474,14 @@ class MainWindow(QMainWindow):
 
     def _build_yaml_page(self) -> QWidget:
         page, layout = self._page_landing(
-            "Configuration YAML",
-            "Gérez séparément les fichiers de configuration propres au "
-            "workspace et aux tests.")
+            "YAML Configuration",
+            "Manage configuration files associated with the workspace and tests.")
         self.yaml_empty = EmptyState(
-            "mdi.file-cog-outline", "Aucune configuration YAML ouverte",
-            "Chargez un workspace puis choisissez son fichier .yml ou .yaml.",
-            action="Choisir un fichier YAML…")
+            "mdi.file-cog-outline", "No YAML configuration open",
+            "Load a workspace, then select its .yml or .yaml file.",
+            action="Choose YAML file…")
         self.yaml_empty.action_clicked.connect(self._choose_yaml_for_page)
-        self.workspace_config_button = QPushButton("Choisir un fichier YAML…")
+        self.workspace_config_button = QPushButton("Choose YAML file…")
         self.workspace_config_button.setVisible(False)
         self.workspace_config_button.setIcon(
             icons.icon("mdi.file-cog-outline", t.TEXT_MUTED))
@@ -524,22 +522,22 @@ class MainWindow(QMainWindow):
         self.python_editor.override_label.setVisible(bool(declare))
         if declare:
             self.python_editor.override_label.setText(
-                "Le fichier YAML du workspace impose actuellement cet "
-                f"interpréteur : {declare}")
+                "The workspace YAML file currently overrides this "
+                f"interpreter: {declare}")
         chemin = self._effective_interpreter()
         info = interpreter_mod.cached_probe(chemin) if chemin else None
         if info is not None:
             self.python_editor._on_probed(info)
         elif chemin:
             self.python_editor.status_label.setText(
-                "Cliquez sur Test pour vérifier cet environnement.")
+                "Click Test to verify this environment.")
 
     def _save_python_from_page(self, path: str) -> None:
         nouveau = path.strip()
         change = nouveau != self._interpreter_override
         self._interpreter_override = nouveau
         self.settings.setValue(K_INTERPRETER, nouveau)
-        self.python_editor.status_label.setText("Configuration enregistrée.")
+        self.python_editor.status_label.setText("Configuration saved.")
         self._refresh_interpreter_alert()
         if change and self.workspace is not None and not self.workspace.declared_interpreter:
             self.load_workspace()
@@ -562,14 +560,14 @@ class MainWindow(QMainWindow):
     def _refresh_yaml_page(self, force: bool = False) -> None:
         if self.workspace is None:
             self.yaml_empty.update_text(
-                "Aucun workspace chargé",
-                "Chargez d’abord un workspace pour accéder à sa configuration YAML.")
+                "No workspace loaded",
+                "Load a workspace to access its YAML configuration.")
             self.yaml_stack.setCurrentWidget(self.yaml_empty)
             return
         if not self.workspace.config_path:
             self.yaml_empty.update_text(
-                "Aucun fichier YAML sélectionné",
-                "Choisissez le fichier de configuration de ce workspace.")
+                "No YAML file selected",
+                "Choose the configuration file for this workspace.")
             self.yaml_stack.setCurrentWidget(self.yaml_empty)
             return
         if (not force and self.yaml_editor is not None
@@ -938,7 +936,7 @@ class MainWindow(QMainWindow):
         self.theme_button.setCursor(Qt.PointingHandCursor)
         self.theme_button.clicked.connect(self.toggle_theme)
         self.menuBar().setCornerWidget(self.theme_button, Qt.TopRightCorner)
-        self.theme_button.setToolTip("Changer de thème")
+        self.theme_button.setToolTip("Switch theme")
 
         fichier = self.menuBar().addMenu("&File")
         self._action(fichier, "Open workspace…", QKeySequence.Open, self.browse_workspace,
@@ -1047,8 +1045,8 @@ class MainWindow(QMainWindow):
         if chemin:
             return chemin
         self._set_interpreter_alert(
-            "Aucun interpréteur Python de test n’est disponible. "
-            "Configurez-le avant de charger ou lancer les tests.")
+            "No Python test interpreter is available. Configure one before "
+            "loading or running tests.")
         return ""
 
     def _set_interpreter_alert(self, message: str = "") -> None:
@@ -1059,9 +1057,9 @@ class MainWindow(QMainWindow):
         if info.ok and info.pytest_version:
             self._set_interpreter_alert()
             return
-        detail = info.error or "pytest n’est pas installé dans cet environnement."
+        detail = info.error or "pytest is not installed in this environment."
         self._set_interpreter_alert(
-            f"L’interpréteur de test configuré est indisponible : {detail}")
+            f"The configured test interpreter is unavailable: {detail}")
 
     @Slot()
     def open_interpreter_dialog(self) -> None:
@@ -1365,7 +1363,7 @@ class MainWindow(QMainWindow):
         self.page_theme_button.setIcon(
             icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
         for cle, glyph in (
-                ("workspace", "mdi.folder-outline"),
+                ("workspace", "mdi.play-circle-outline"),
                 ("history", "mdi.history"),
                 ("python", "mdi.language-python"),
                 ("yaml", "mdi.file-cog-outline")):

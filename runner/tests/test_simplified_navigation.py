@@ -17,8 +17,8 @@ def test_main_navigation_separates_python_and_yaml_configuration(qapp):
         assert list(window.nav_buttons) == [
             "workspace", "yaml", "history", "python"]
         assert [button.text() for button in window.nav_buttons.values()] == [
-            "Workspace", "Configuration YAML", "Historique",
-            "Environnement Python"]
+            "Run Tests", "YAML Configuration", "History",
+            "Python Environment"]
         assert window.page_theme_button.text() == ""
         assert window.page_theme_button.width() <= 32
         assert window.sidebar_toggle_button.width() <= 32
@@ -43,7 +43,7 @@ def test_sidebar_can_collapse_to_icons_and_expand_again(qapp):
 
         window._set_sidebar_collapsed(False, animate=False)
         assert window.navigation.width() == 220
-        assert window.nav_buttons["workspace"].text() == "Workspace"
+        assert window.nav_buttons["workspace"].text() == "Run Tests"
         assert not window.nav_buttons["workspace"].property("compact")
         assert not window.navigation_title.isHidden()
         assert window.navigation_logo.isHidden()
@@ -110,7 +110,7 @@ def test_an_unavailable_interpreter_is_reported_inline_on_workspace(
         window._refresh_interpreter_alert()
 
         assert window.interpreter_alert.isVisibleTo(window.workspace_page)
-        assert "indisponible" in window.interpreter_alert_label.text()
+        assert "unavailable" in window.interpreter_alert_label.text()
         visible_copy = " ".join(
             label.text() for label in window.workspace_page.findChildren(QLabel)
             if label is not window.interpreter_alert_label)

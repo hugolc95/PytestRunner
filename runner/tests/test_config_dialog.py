@@ -234,7 +234,7 @@ def test_editing_yaml_marks_the_file_as_modified(dialogue):
     dialogue.tabs.setCurrentIndex(ONGLET_YAML)
     dialogue.raw.appendPlainText("nouveau: true")
 
-    assert dialogue.state_badge.text() == "Modifié"
+    assert dialogue.state_badge.text() == "Modified"
     assert dialogue.discard_button.isEnabled()
 
 
@@ -257,7 +257,7 @@ def test_broken_yaml_is_refused_and_the_file_untouched(dialogue, fichier):
 
     assert fichier.read_bytes() == avant
     assert "Not saved" in dialogue.status.text()
-    assert dialogue.state_badge.text() == "Erreur YAML"
+    assert dialogue.state_badge.text() == "YAML error"
 
 
 def test_broken_yaml_selects_the_faulty_line(dialogue):

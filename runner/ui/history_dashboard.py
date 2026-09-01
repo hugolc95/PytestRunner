@@ -356,7 +356,7 @@ class HistoryWindow(QDialog):
     # ------------------------------------------------------------ construction
 
     def _build_ui(self) -> None:
-        title = QLabel("Historique")
+        title = QLabel("History")
         title.setStyleSheet(
             f"font-size:22px;font-weight:700;color:{t.TEXT};background:transparent;")
         self.subtitle = QLabel()
@@ -367,7 +367,7 @@ class HistoryWindow(QDialog):
         titles.addWidget(self.subtitle)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Rechercher un run, un test, un lecteur…")
+        self.search.setPlaceholderText("Search runs, tests, or readers…")
         self.search.setMinimumWidth(240)
         self.search.setMaximumWidth(360)
         self.search.textChanged.connect(self._apply_filters)
@@ -377,7 +377,7 @@ class HistoryWindow(QDialog):
         self.workspace_filter.currentIndexChanged.connect(self._apply_filters)
 
         self.filter_button = QToolButton()
-        self.filter_button.setText("Lecteurs")
+        self.filter_button.setText("Readers")
         self.filter_button.setObjectName("HistoryAction")
         self.filter_button.setPopupMode(QToolButton.InstantPopup)
         self.filter_menu = QMenu(self.filter_button)
@@ -413,7 +413,7 @@ class HistoryWindow(QDialog):
 
         self.list_count = QLabel()
         self.list_count.setObjectName("Muted")
-        self.clear_filters_button = QPushButton("Effacer les filtres")
+        self.clear_filters_button = QPushButton("Clear filters")
         self.clear_filters_button.setObjectName("Ghost")
         self.clear_filters_button.clicked.connect(self._clear_filters)
         self.clear_filters_button.setVisible(False)
@@ -438,8 +438,8 @@ class HistoryWindow(QDialog):
             "mdi.history", "No run recorded yet",
             "Every completed run is kept here with its output and reader results.")
         self.filtered_empty = EmptyState(
-            "mdi.filter-remove-outline", "Aucun run ne correspond",
-            "Modifiez la recherche ou effacez les filtres pour retrouver vos runs.")
+            "mdi.filter-remove-outline", "No matching runs",
+            "Change your search or clear the filters to show recorded runs.")
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(self.run_list)
         self.left_stack.addWidget(self.empty)
@@ -684,7 +684,7 @@ class HistoryWindow(QDialog):
 
     def _set_reader_filter(self, reader: str) -> None:
         self._filter_reader = reader
-        self.filter_button.setText("Lecteurs (1)" if reader else "Lecteurs")
+        self.filter_button.setText("Readers (1)" if reader else "Readers")
         self._apply_filters()
 
     def _set_issue_filter(self, issues_only: bool) -> None:
@@ -698,7 +698,7 @@ class HistoryWindow(QDialog):
         self._filter_reader = ""
         self.list_all.setChecked(True)
         self.list_issues.setChecked(False)
-        self.filter_button.setText("Lecteurs")
+        self.filter_button.setText("Readers")
         self._rebuild_reader_filter()
         self._apply_filters()
 

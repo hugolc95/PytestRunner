@@ -225,7 +225,7 @@ class ConfigDialog(QDialog):
                                   t.SPACE_3, t.SPACE_2)
         rangee.setSpacing(t.SPACE_2)
 
-        etiquette = QLabel("Fichier actif")
+        etiquette = QLabel("Active file")
         etiquette.setObjectName("ConfigFileLabel")
         self.file_combo = QComboBox()
         for candidat in self._candidats:
@@ -245,7 +245,7 @@ class ConfigDialog(QDialog):
         rangee.addWidget(self.file_combo, 1)
         rangee.addWidget(self.choose_file_button)
 
-        self.state_badge = QLabel("Enregistré")
+        self.state_badge = QLabel("Saved")
         self.state_badge.setObjectName("ConfigStateSaved")
         self.state_badge.setAlignment(Qt.AlignCenter)
         rangee.addWidget(self.state_badge)
@@ -265,7 +265,7 @@ class ConfigDialog(QDialog):
         self.raw.textChanged.connect(self._refresh_dirty_state)
 
         self.settings_search = QLineEdit()
-        self.settings_search.setPlaceholderText("Rechercher un paramètre…")
+        self.settings_search.setPlaceholderText("Search settings…")
         self.settings_search.setClearButtonEnabled(True)
         self.settings_search.textChanged.connect(self._filter_settings)
 
@@ -277,16 +277,16 @@ class ConfigDialog(QDialog):
         self.status = QLabel("")
         self.status.setWordWrap(True)
 
-        self.reload_button = QPushButton("Recharger")
+        self.reload_button = QPushButton("Reload")
         self.reload_button.setObjectName("Ghost")
         self.reload_button.clicked.connect(self.reload)
 
-        self.discard_button = QPushButton("Annuler les modifications")
+        self.discard_button = QPushButton("Discard changes")
         self.discard_button.setObjectName("Ghost")
         self.discard_button.clicked.connect(self.reload)
         self.discard_button.setEnabled(False)
 
-        self.save_button = QPushButton("Enregistrer")
+        self.save_button = QPushButton("Save")
         self.save_button.setObjectName("Primary")
         self.save_button.clicked.connect(self.save)
 
@@ -571,9 +571,9 @@ class ConfigDialog(QDialog):
 
     def _set_state(self, state: str) -> None:
         labels = {
-            "saved": ("Enregistré", "ConfigStateSaved"),
-            "modified": ("Modifié", "ConfigStateModified"),
-            "error": ("Erreur YAML", "ConfigStateError"),
+            "saved": ("Saved", "ConfigStateSaved"),
+            "modified": ("Modified", "ConfigStateModified"),
+            "error": ("YAML error", "ConfigStateError"),
         }
         text, object_name = labels[state]
         self.state_badge.setText(text)
