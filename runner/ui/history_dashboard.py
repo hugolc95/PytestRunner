@@ -341,6 +341,7 @@ class HistoryWindow(QDialog):
         self._filter_reader = ""
         self._compare_mode = False
         self._adjusting_selection = False
+        self._export_submenus: list[QMenu] = []
 
         self.setWindowTitle("Run history")
         self.setWindowFlags(self.windowFlags()
@@ -355,7 +356,7 @@ class HistoryWindow(QDialog):
     # ------------------------------------------------------------ construction
 
     def _build_ui(self) -> None:
-        title = QLabel("Run history")
+        title = QLabel("Historique")
         title.setStyleSheet(
             f"font-size:22px;font-weight:700;color:{t.TEXT};background:transparent;")
         self.subtitle = QLabel()
@@ -366,8 +367,9 @@ class HistoryWindow(QDialog):
         titles.addWidget(self.subtitle)
 
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Search history…")
-        self.search.setFixedWidth(260)
+        self.search.setPlaceholderText("Rechercher un run, un test, un lecteur…")
+        self.search.setMinimumWidth(240)
+        self.search.setMaximumWidth(360)
         self.search.textChanged.connect(self._apply_filters)
 
         self.workspace_filter = QComboBox()
@@ -375,7 +377,7 @@ class HistoryWindow(QDialog):
         self.workspace_filter.currentIndexChanged.connect(self._apply_filters)
 
         self.filter_button = QToolButton()
-        self.filter_button.setText("Filters")
+        self.filter_button.setText("Lecteurs")
         self.filter_button.setObjectName("HistoryAction")
         self.filter_button.setPopupMode(QToolButton.InstantPopup)
         self.filter_menu = QMenu(self.filter_button)
@@ -409,15 +411,21 @@ class HistoryWindow(QDialog):
         self.list_all.clicked.connect(lambda: self._set_issue_filter(False))
         self.list_issues.clicked.connect(lambda: self._set_issue_filter(True))
 
+        self.list_count = QLabel()
+        self.list_count.setObjectName("Muted")
+        self.clear_filters_button = QPushButton("Effacer les filtres")
+        self.clear_filters_button.setObjectName("Ghost")
+        self.clear_filters_button.clicked.connect(self._clear_filters)
+        self.clear_filters_button.setVisible(False)
+
         list_tools = QHBoxLayout()
         list_tools.setContentsMargins(t.SPACE_3, t.SPACE_2,
                                       t.SPACE_3, t.SPACE_2)
         list_tools.addWidget(self.list_all)
         list_tools.addWidget(self.list_issues)
         list_tools.addStretch(1)
-        newest = QLabel("Newest first")
-        newest.setObjectName("Faint")
-        list_tools.addWidget(newest)
+        list_tools.addWidget(self.clear_filters_button)
+        list_tools.addWidget(self.list_count)
 
         self.run_list = QListWidget()
         self.run_list.setFrameShape(QFrame.NoFrame)
@@ -429,13 +437,19 @@ class HistoryWindow(QDialog):
         self.empty = EmptyState(
             "mdi.history", "No run recorded yet",
             "Every completed run is kept here with its output and reader results.")
+        self.filtered_empty = EmptyState(
+            "mdi.filter-remove-outline", "Aucun run ne correspond",
+            "Modifiez la recherche ou effacez les filtres pour retrouver vos runs.")
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(self.run_list)
         self.left_stack.addWidget(self.empty)
+        self.left_stack.addWidget(self.filtered_empty)
 
         left = QFrame()
+        self.history_list_panel = left
         left.setObjectName("Surface")
-        left.setFixedWidth(460)
+        left.setMinimumWidth(360)
+        left.setMaximumWidth(520)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.addLayout(list_tools)
@@ -458,8 +472,8 @@ class HistoryWindow(QDialog):
 
         body = QHBoxLayout()
         body.setSpacing(t.SPACE_3)
-        body.addWidget(left)
-        body.addWidget(right, 1)
+        body.addWidget(left, 4)
+        body.addWidget(right, 7)
 
         self.status = QLabel()
         self.status.setObjectName("Muted")
@@ -670,12 +684,22 @@ class HistoryWindow(QDialog):
 
     def _set_reader_filter(self, reader: str) -> None:
         self._filter_reader = reader
-        self.filter_button.setText("Filters (1)" if reader else "Filters")
+        self.filter_button.setText("Lecteurs (1)" if reader else "Lecteurs")
         self._apply_filters()
 
     def _set_issue_filter(self, issues_only: bool) -> None:
         self.list_all.setChecked(not issues_only)
         self.list_issues.setChecked(issues_only)
+        self._apply_filters()
+
+    def _clear_filters(self) -> None:
+        self.search.clear()
+        self.workspace_filter.setCurrentIndex(0)
+        self._filter_reader = ""
+        self.list_all.setChecked(True)
+        self.list_issues.setChecked(False)
+        self.filter_button.setText("Lecteurs")
+        self._rebuild_reader_filter()
         self._apply_filters()
 
     def _apply_filters(self) -> None:
@@ -697,6 +721,13 @@ class HistoryWindow(QDialog):
             return query in haystack
 
         self._visible_groups = [group for group in self._groups if matches(group)]
+        active_filters = sum((bool(query), bool(workspace),
+                              bool(self._filter_reader), issues_only))
+        self.clear_filters_button.setVisible(bool(active_filters))
+        shown = len(self._visible_groups)
+        total = len(self._groups)
+        self.list_count.setText(
+            f"{shown}/{total} runs" if active_filters else f"{total} runs")
         self._populate_list()
 
     def _populate_list(self) -> None:
@@ -721,8 +752,12 @@ class HistoryWindow(QDialog):
             self._cards.append((item, card))
         self.run_list.blockSignals(False)
 
-        has_any = bool(self._groups)
-        self.left_stack.setCurrentWidget(self.run_list if has_any else self.empty)
+        if not self._groups:
+            self.left_stack.setCurrentWidget(self.empty)
+        elif not self._visible_groups:
+            self.left_stack.setCurrentWidget(self.filtered_empty)
+        else:
+            self.left_stack.setCurrentWidget(self.run_list)
         if self._visible_groups:
             first = self._first_run_item()
             if first is not None:
@@ -878,9 +913,17 @@ class HistoryWindow(QDialog):
 
     def _fill_export_menu(self, group: RunGroup) -> None:
         self.export_menu.clear()
+        self._export_submenus.clear()
         for entry in group.entries:
-            menu = (self.export_menu.addMenu(_short_reader(entry.reader))
-                    if len(group.entries) > 1 else self.export_menu)
+            if len(group.entries) > 1:
+                # Un parent explicite est necessaire avec PySide 6.8 : les
+                # sous-menus crees par ``addMenu(str)`` peuvent etre vus comme
+                # des fenetres orphelines et detruits par le nettoyage Qt.
+                menu = QMenu(_short_reader(entry.reader), self.export_menu)
+                self.export_menu.addMenu(menu)
+                self._export_submenus.append(menu)
+            else:
+                menu = self.export_menu
             html = menu.addAction("Export HTML…")
             html.triggered.connect(
                 lambda checked=False, value=entry: self.export_html(value))

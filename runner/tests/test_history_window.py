@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -114,7 +115,7 @@ def test_history_shows_the_build_and_opens_its_log_folder(
                         lambda url: opened.append(url) or True)
     window.open_logs()
 
-    assert opened[0].toLocalFile() == str(log_file.parent)
+    assert Path(opened[0].toLocalFile()) == log_file.parent
 
 
 def test_runs_are_listed_newest_first(fenetre):
@@ -144,7 +145,27 @@ def test_search_that_matches_nothing_clears_the_detail(fenetre):
     fenetre.search.setText("there-is-no-such-run")
 
     assert run_items(fenetre) == []
+    assert fenetre.left_stack.currentWidget() is fenetre.filtered_empty
     assert fenetre.detail_stack.currentWidget() is fenetre.detail_empty
+
+
+def test_active_filters_are_visible_and_can_be_cleared(fenetre):
+    fenetre.search.setText("there-is-no-such-run")
+
+    assert not fenetre.clear_filters_button.isHidden()
+    assert fenetre.list_count.text() == "0/2 runs"
+
+    fenetre._clear_filters()
+
+    assert fenetre.search.text() == ""
+    assert fenetre.list_all.isChecked()
+    assert fenetre.list_count.text() == "2 runs"
+    assert len(run_items(fenetre)) == 2
+
+
+def test_history_list_resizes_with_the_embedded_page(fenetre):
+    assert fenetre.history_list_panel.minimumWidth() == 360
+    assert fenetre.history_list_panel.maximumWidth() == 520
 
 
 def test_issue_filter_keeps_only_runs_with_problems(qapp, tmp_path):
