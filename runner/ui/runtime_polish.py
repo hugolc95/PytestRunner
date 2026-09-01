@@ -1,13 +1,10 @@
 """Runtime polish for the PySide6 interface.
 
-The runner already keeps collection and execution outside the GUI thread.  This
+The runner already keeps collection and execution outside the GUI thread. This
 module focuses on the remaining interaction details that are easy to feel on a
 large workspace: modal error windows, expensive live repaints while resizing,
 and tree painting work that Qt can avoid when every test row has the same
 height.
-
-Installed as a small compatibility layer before ``MainWindow`` is created so
-none of the domain/execution code needs to know about visual behaviour.
 """
 
 from __future__ import annotations
@@ -34,9 +31,9 @@ from runner.ui import tokens as t
 class InlineNotice(QFrame):
     """Non-modal message hosted inside the main window.
 
-    Errors used to be displayed with ``QDialog.exec()``.  Besides interrupting
+    Errors used to be displayed with ``QDialog.exec()``. Besides interrupting
     keyboard/mouse flow, native Windows dialogs can briefly flash as a second
-    top-level window while Qt applies its stylesheet.  Keeping the exact same
+    top-level window while Qt applies its stylesheet. Keeping the same
     information inline removes that distraction and never blocks the event
     loop.
     """
@@ -80,12 +77,11 @@ class InlineNotice(QFrame):
         self.copy_button.clicked.connect(self._copy)
         row.addWidget(self.copy_button, 0, Qt.AlignTop)
 
-        close = QPushButton()
-        close.setObjectName("IconSm")
-        close.setIcon(icons.icon("mdi.close", t.TEXT_MUTED))
-        close.setToolTip("Dismiss")
-        close.clicked.connect(self.hide_notice)
-        row.addWidget(close, 0, Qt.AlignTop)
+        self.close_button = QPushButton()
+        self.close_button.setObjectName("IconSm")
+        self.close_button.setToolTip("Dismiss")
+        self.close_button.clicked.connect(self.hide_notice)
+        row.addWidget(self.close_button, 0, Qt.AlignTop)
         root.addLayout(row)
 
         self.detail_view = QPlainTextEdit()
@@ -96,6 +92,27 @@ class InlineNotice(QFrame):
         root.addWidget(self.detail_view)
 
         self._clipboard_text = ""
+        self.restyle()
+
+    def restyle(self) -> None:
+        """Follow the current light/dark theme without recreating the widget."""
+        colour = t.status_color(Status.FAILED)
+        self.setStyleSheet(
+            f"QFrame#InlineNotice {{"
+            f"background-color: {t.rgba(colour, 0.09)};"
+            f"border: 1px solid {t.rgba(colour, 0.55)};"
+            f"border-radius: {t.RADIUS_MD}px;"
+            f"}}"
+            f"QLabel#InlineNoticeTitle {{"
+            f"background: transparent; color: {colour}; font-weight: 700;"
+            f"}}"
+            f"QLabel#InlineNoticeMessage {{"
+            f"background: transparent; color: {t.TEXT};"
+            f"}}")
+        self.close_button.setIcon(icons.icon("mdi.close", t.TEXT_MUTED))
+        if self.isVisible():
+            self.icon_label.setPixmap(
+                icons.icon("mdi.alert-circle-outline", colour).pixmap(20, 20))
 
     def show_error(self, title: str, message: str, detail: str = "") -> None:
         colour = t.status_color(Status.FAILED)
@@ -144,34 +161,30 @@ def install() -> None:
     def build_ui_polished(self) -> None:
         original_build_ui(self)
 
-        # Resizing should move the splitter outline first and repaint the two
-        # heavy panels only when the user releases the handle.  This is much
-        # smoother on workspaces with thousands of visible rows/live output.
+        # Move only the splitter outline while dragging. The expensive tree and
+        # output panels repaint once when the handle is released.
         if hasattr(self, "split"):
             self.split.setOpaqueResize(False)
             self.split.setHandleWidth(max(5, t.SPACE_1 + 2))
 
-        # Qt can skip a large amount of per-row geometry calculation when test
-        # rows all use the same height.  Per-pixel scrolling also removes the
-        # small jump visible with long parameter names.
+        # Reduce geometry work and make scrolling feel continuous on large
+        # parameterized suites.
         for view in self.findChildren(QAbstractItemView):
             view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
             view.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
             view.setAutoScrollMargin(24)
             viewport = view.viewport()
             if viewport is not None:
-                viewport.setAttribute(Qt.WA_OpaquePaintEvent, True)
+                viewport.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent, True)
         for tree in self.findChildren(QTreeView):
             tree.setUniformRowHeights(True)
             tree.setAnimated(False)
 
-        # Insert the notice just below the workspace command bar.  It consumes
-        # no space while hidden and therefore does not change the normal UI.
+        # Hidden notices consume no space. They appear below the workspace bar
+        # and never become a second top-level Windows window.
         notice = InlineNotice(self.workspace_page)
         self._inline_notice = notice
         layout = self.workspace_page.layout()
-        # command bar is index 0; the existing interpreter alert remains below
-        # the generic notice if both ever need to be shown.
         layout.insertWidget(1, notice)
 
     MainWindow._build_ui = build_ui_polished
@@ -183,9 +196,8 @@ def install() -> None:
         notice = getattr(window, "_inline_notice", None) if window is not None else None
         if notice is not None:
             notice.show_error(title, message, detail)
-            # An error raised from History/Configuration must still be visible:
-            # bring the user back to Workspace where the notice lives, but do
-            # not create another top-level window.
+            # If an error originates from History/Configuration, show it in the
+            # main workspace instead of opening a floating dialog.
             if hasattr(window, "_show_page"):
                 window._show_page("workspace")
             return
