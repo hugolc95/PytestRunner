@@ -11,7 +11,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from PySide6.QtWidgets import QMessageBox
+from runner.ui.widgets import ErrorDialog
 
 
 def find_notepad_plus_plus() -> Path | None:
@@ -40,30 +40,22 @@ def open_in_notepad_plus_plus(parent, path: Path) -> bool:
     """Ouvre le fichier complet dans Notepad++, avec une erreur explicite."""
     path = Path(path)
     if not path.is_file():
-        QMessageBox.warning(
-            parent,
-            "Log not found",
-            f"This log no longer exists:\n{path}",
-        )
+        ErrorDialog.show_error(
+            parent, "Log not found", f"This log no longer exists:\n{path}")
         return False
 
     executable = find_notepad_plus_plus()
     if executable is None:
-        QMessageBox.warning(
-            parent,
-            "Notepad++ not found",
-            "Notepad++ was not found in PATH or in its usual Windows folders.\n\n"
-            f"Log file:\n{path}",
-        )
+        ErrorDialog.show_error(
+            parent, "Notepad++ not found",
+            "Notepad++ was not found in PATH or in its usual Windows folders.",
+            f"Log file:\n{path}")
         return False
 
     try:
         subprocess.Popen([str(executable), str(path)])
     except OSError as exc:
-        QMessageBox.critical(
-            parent,
-            "Could not open Notepad++",
-            f"Could not open:\n{path}\n\n{exc}",
-        )
+        ErrorDialog.show_error(
+            parent, "Could not open Notepad++", f"Could not open:\n{path}", str(exc))
         return False
     return True

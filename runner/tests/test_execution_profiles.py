@@ -17,6 +17,7 @@ from runner.domain.execution_profile import (
     validate_profile,
 )
 from runner.ui.execution_profiles_page import AddTestsDialog, ExecutionProfilesPage
+from runner.ui.widgets import ErrorDialog
 
 
 def sample_profile() -> ExecutionProfile:
@@ -153,6 +154,31 @@ def test_store_does_not_overwrite_same_imported_identifier(tmp_path):
 
     assert first.profile_id != second.profile_id
     assert len(store.list()) == 2
+
+
+def test_a_failed_save_reports_through_error_dialog_not_a_bare_message_box(
+        qapp, tmp_path, monkeypatch):
+    """`QMessageBox.critical()` ouvre une vraie fenetre native independante :
+    sous Windows, elle peut apparaitre un instant sans le style de l'appli, le
+    temps que Qt le lui applique -- visible comme une mini-fenetre qui
+    s'affiche puis se recompose. `ErrorDialog.show_error()` est le seul
+    chemin d'erreur que `runtime_polish.py` sait rediriger vers le bandeau
+    integre a la fenetre principale ; y passer directement evite cette classe
+    de bug entiere plutot que de la corriger au cas par cas."""
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.name_edit.setText("")  # nom vide -> ProfileValidationError
+        appels = []
+        monkeypatch.setattr(
+            ErrorDialog, "show_error",
+            classmethod(lambda cls, *args, **kwargs: appels.append(args)))
+
+        ok = page.save_current()
+
+        assert ok is False
+        assert appels, "save_current() n'est pas passe par ErrorDialog.show_error"
+    finally:
+        page.close()
 
 
 def test_profile_page_can_add_the_same_test_more_than_once(qapp, tmp_path):

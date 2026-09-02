@@ -43,6 +43,7 @@ from runner.domain.tree import build_tree
 from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
+from runner.ui.widgets import ErrorDialog
 
 
 class AddTestsDialog(QDialog):
@@ -423,7 +424,7 @@ class ExecutionProfilesPage(QWidget):
             profile = self._profile_from_editor()
             self.store.save(profile)
         except (OSError, UnicodeError, ProfileValidationError) as exc:
-            QMessageBox.critical(self, "Could not save profile", str(exc))
+            ErrorDialog.show_error(self, "Could not save profile", str(exc))
             return False
         row = self.profile_list.currentRow()
         self._profiles[row] = profile
@@ -439,7 +440,7 @@ class ExecutionProfilesPage(QWidget):
             profile.source = "local"
             self.store.save(profile)
         except (OSError, UnicodeError, ProfileValidationError) as exc:
-            QMessageBox.critical(self, "Could not save profile", str(exc))
+            ErrorDialog.show_error(self, "Could not save profile", str(exc))
             return
         self.refresh()
 
@@ -534,7 +535,7 @@ class ExecutionProfilesPage(QWidget):
                 return
             target = export_profile(profile, path)
         except (OSError, UnicodeError, ProfileValidationError) as exc:
-            QMessageBox.critical(self, "Could not export profile", str(exc))
+            ErrorDialog.show_error(self, "Could not export profile", str(exc))
             return
         self._show_notice(f"Profile exported to {target}", warning=False)
 
@@ -547,9 +548,9 @@ class ExecutionProfilesPage(QWidget):
         try:
             validation = inspect_profile(path, self._available_nodeids)
         except ProfileValidationError as exc:
-            QMessageBox.critical(
+            ErrorDialog.show_error(
                 self, "Invalid execution profile",
-                f"The profile was rejected and was not added.\n\n{exc}")
+                "The profile was rejected and was not added.", str(exc))
             return
         warning = ""
         if validation.missing_steps:
@@ -569,7 +570,7 @@ class ExecutionProfilesPage(QWidget):
         try:
             self.store.import_copy(path, self._available_nodeids)
         except (OSError, ProfileValidationError) as exc:
-            QMessageBox.critical(self, "Could not import profile", str(exc))
+            ErrorDialog.show_error(self, "Could not import profile", str(exc))
             return
         self.refresh()
         self._show_notice(
@@ -584,12 +585,12 @@ class ExecutionProfilesPage(QWidget):
             from runner.domain.execution_profile import validate_profile
             validate_profile(profile)
         except (OSError, UnicodeError, ProfileValidationError) as exc:
-            QMessageBox.warning(self, "Profile is not ready", str(exc))
+            ErrorDialog.show_error(self, "Profile is not ready", str(exc))
             return
         missing = [nodeid for nodeid in profile.sequence
                    if self._available_nodeids and nodeid not in self._available_nodeids]
         if missing:
-            QMessageBox.warning(
+            ErrorDialog.show_error(
                 self, "Profile is not compatible",
                 f"{len(missing)} sequence step(s) are missing from this workspace.")
             return
