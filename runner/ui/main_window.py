@@ -19,6 +19,7 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QEasingCurve,
+    QEvent,
     QModelIndex,
     QParallelAnimationGroup,
     QPropertyAnimation,
@@ -101,6 +102,23 @@ from runner.ui.widgets import (
 
 ORG, APP = "PytestRunner", "Runner"
 WINDOW_TITLE = "Pytest Runner"
+
+
+class ResultsTreeView(QTreeView):
+    """Tree de tests sans popup de survol.
+
+    Sous Windows, Qt peut afficher un mini-apercu flottant du contenu d'une
+    cellule apres son repaint. Il devient surtout visible une fois que les
+    cellules de statut contiennent une icone, puis clignote sous chaque clic.
+    Les informations utiles sont deja affichees dans le panneau Detail : le
+    tree ne doit donc ouvrir aucune infobulle, quelle qu'en soit la source.
+    """
+
+    def viewportEvent(self, event) -> bool:
+        if event.type() in (QEvent.Type.ToolTip, QEvent.Type.WhatsThis):
+            event.accept()
+            return True
+        return super().viewportEvent(event)
 
 # Cles QSettings. Regroupees ici : une cle ecrite a la main quelque part finit
 # par diverger de celle qu'on relit.
@@ -856,7 +874,7 @@ class MainWindow(QMainWindow):
         self.failure_results.itemClicked.connect(self._sur_resultat_echec_clique)
         colonne.addWidget(self.failure_results)
 
-        self.tree = QTreeView()
+        self.tree = ResultsTreeView()
         self.tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.tree))
         self.tree.setModel(self.model)
         self.tree.setUniformRowHeights(True)
