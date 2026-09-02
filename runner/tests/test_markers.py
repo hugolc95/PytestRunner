@@ -357,6 +357,20 @@ def test_thirty_markers_do_not_widen_the_toolbar(qapp):
     assert b.sizeHint().width() < 80  # un carre, pas une rangee qui s'etale
 
 
+def test_clicking_the_button_actually_opens_the_popup(bouton):
+    """`QApplication.desktop()` a disparu avec Qt6 : `open_under()` l'appelait
+    encore pour positionner le panneau sous le bouton, ce qui levait une
+    `AttributeError` a chaque clic -- avalee en silence par Qt au milieu du
+    slot connecte, sans rien montrer a l'ecran. Le bouton semblait ne rien
+    faire du tout.
+    """
+    assert not bouton.popup.isVisible()
+
+    bouton.click()
+
+    assert bouton.popup.isVisible()
+
+
 def test_the_popup_never_grows_past_its_bounds(bouton):
     """Il se pose par-dessus l'arbre : il ne doit pas couvrir la fenetre."""
     from runner.ui.marker_bar import HAUTEUR_LISTE, LARGEUR_PANNEAU

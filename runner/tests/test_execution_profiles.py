@@ -163,6 +163,41 @@ def test_add_tests_tree_can_select_a_folder_and_a_single_test(qapp):
         dialog.close()
 
 
+def test_loading_a_profile_enables_run_without_checking_the_tree(qapp, tmp_path):
+    """`Open in Run tests` montre bien le profil, mais rien ne le rend
+    cliquable : `_update_actions()` n'activait Run que sur les cases
+    cochees de l'arbre, jamais sur un profil charge -- qui a sa propre
+    sequence, deja validee, independante de ces cases.
+    """
+    from runner.domain.execution import Collection
+    from runner.domain.workspace import Workspace
+    from runner.ui.main_window import APP, ORG, MainWindow
+    from PySide6.QtCore import QSettings
+
+    QSettings(ORG, APP).clear()
+    nodeids = ["suite/test_a.py::test_one", "suite/test_b.py::test_two"]
+    fenetre = MainWindow()
+    try:
+        fenetre.workspace = Workspace.load(str(tmp_path))
+        fenetre._on_collected(Collection(nodeids=tuple(nodeids)))
+        fenetre.model.set_all_checked(False)
+        fenetre._update_actions()
+        assert not fenetre.run_button.isEnabled()
+
+        profile = sample_profile()
+        profile.sequence = nodeids
+        fenetre._load_execution_profile(profile)
+
+        assert fenetre.run_button.isEnabled()
+    finally:
+        if fenetre.service.busy:
+            fenetre.service.cancel()
+            fenetre.service.wait(5000)
+        fenetre.close()
+        fenetre.deleteLater()
+        qapp.processEvents()
+
+
 def test_add_tests_tree_reserves_the_full_width_for_the_name(qapp):
     """`TestTreeModel` garde toujours une deuxieme colonne de statut par
     lecteur, meme sans lecteur -- muette ici. En largeur par defaut,

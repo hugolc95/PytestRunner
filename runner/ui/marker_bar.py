@@ -340,13 +340,15 @@ class MarkerPopup(QFrame):
 
     def open_under(self, ancre: QWidget) -> None:
         """Ouvre le panneau sous le bouton, sans deborder de l'ecran."""
-        from PySide6.QtWidgets import QApplication
-
         self.adjustSize()
         coin = ancre.mapToGlobal(ancre.rect().bottomLeft())
         x, y = coin.x(), coin.y() + t.SPACE_1
 
-        ecran = QApplication.desktop().availableGeometry(ancre)
+        # `QApplication.desktop()` a disparu avec Qt6 : sous PySide6, l'ecran
+        # se lit sur le widget lui-meme. La levee d'exception qui en
+        # resultait etait avalee en silence par Qt au milieu du slot
+        # connecte au clic -- le bouton semblait ne rien faire du tout.
+        ecran = ancre.screen().availableGeometry()
         x = max(ecran.left(), min(x, ecran.right() - self.width()))
         if y + self.height() > ecran.bottom():
             y = ancre.mapToGlobal(ancre.rect().topLeft()).y() - self.height()

@@ -2635,7 +2635,13 @@ class MainWindow(QMainWindow):
         # la cause est a l'ecran, juste au-dessus.
         cible = not charge or bool(self._readers_to_run()) or not self.workspace.readers
 
-        self.run_button.setEnabled(charge and coches > 0 and not occupe and cible)
+        # Un profil charge a sa propre sequence, deja validee (au moins un
+        # pas) -- elle ne depend pas des cases cochees dans l'arbre. Ne
+        # regarder que `coches` laissait "Run profile" grise des qu'on
+        # chargeait un profil sans AUSSI cocher a la main les memes tests
+        # dans l'arbre : le profil s'affichait, rien ne pouvait le lancer.
+        a_lancer = coches > 0 or self._active_execution_profile is not None
+        self.run_button.setEnabled(charge and a_lancer and not occupe and cible)
         self.stop_button.setEnabled(occupe)
         self.act_run.setEnabled(self.run_button.isEnabled())
         self.act_stop.setEnabled(occupe)
