@@ -15,7 +15,7 @@ from runner.domain.execution_profile import (
     export_profile,
     inspect_profile,
 )
-from runner.ui.execution_profiles_page import ExecutionProfilesPage
+from runner.ui.execution_profiles_page import AddTestsDialog, ExecutionProfilesPage
 
 
 def sample_profile() -> ExecutionProfile:
@@ -137,3 +137,27 @@ def test_profile_page_can_add_the_same_test_more_than_once(qapp, tmp_path):
         assert "2 sequence steps" in page.summary.text()
     finally:
         page.close()
+
+
+def test_add_tests_tree_can_select_a_folder_and_a_single_test(qapp):
+    nodeids = [
+        "suite/test_api.py::test_login[admin]",
+        "suite/test_api.py::test_login[user]",
+        "suite/test_math.py::test_compute",
+    ]
+    dialog = AddTestsDialog(nodeids)
+    added = []
+    dialog.tests_added.connect(added.extend)
+    try:
+        folder = dialog.model.index(0, 0)
+        assert dialog.model.setData(folder, Qt.Checked, Qt.CheckStateRole)
+        dialog._add()
+        assert added == nodeids
+        assert dialog.model.checked_nodeids() == []
+
+        leaf = dialog.model.index_for_nodeid(nodeids[1])
+        assert dialog.model.setData(leaf, Qt.Checked, Qt.CheckStateRole)
+        dialog._add()
+        assert added == [*nodeids, nodeids[1]]
+    finally:
+        dialog.close()

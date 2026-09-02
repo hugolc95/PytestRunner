@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QSpinBox,
     QSplitter,
     QTextEdit,
+    QTreeView,
     QVBoxLayout,
     QWidget,
 )
@@ -37,8 +38,10 @@ from runner.domain.execution_profile import (
     export_profile,
     inspect_profile,
 )
+from runner.domain.tree import build_tree
 from runner.ui import icons
 from runner.ui import tokens as t
+from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
 
 
 class AddTestsDialog(QDialog):
@@ -66,11 +69,22 @@ class AddTestsDialog(QDialog):
         self.search.setClearButtonEnabled(True)
         layout.addWidget(self.search)
 
-        self.list = QListWidget()
-        self.list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        for nodeid in nodeids:
-            QListWidgetItem(nodeid, self.list)
-        layout.addWidget(self.list, 1)
+        self.model = TestTreeModel(self)
+        self.model.set_tree(build_tree(nodeids))
+        self.model.set_all_checked(False)
+        self.proxy = QSortFilterProxyModel(self)
+        self.proxy.setSourceModel(self.model)
+        self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
+        self.proxy.setRecursiveFilteringEnabled(True)
+        self.proxy.setFilterKeyColumn(0)
+
+        self.tree = QTreeView()
+        self.tree.setModel(self.proxy)
+        self.tree.setHeaderHidden(True)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        layout.addWidget(self.tree, 1)
 
         actions = QHBoxLayout()
         self.add_button = QPushButton("Add selected")
@@ -85,21 +99,27 @@ class AddTestsDialog(QDialog):
         layout.addLayout(actions)
 
         self.search.textChanged.connect(self._filter)
-        self.list.itemDoubleClicked.connect(lambda _item: self._add())
+        self.tree.doubleClicked.connect(self._add_clicked_test)
         self.add_button.clicked.connect(self._add)
         self.add_again_button.clicked.connect(self._add)
         self.done_button.clicked.connect(self.accept)
 
     def _filter(self, text: str) -> None:
-        needle = text.strip().casefold()
-        for index in range(self.list.count()):
-            item = self.list.item(index)
-            item.setHidden(bool(needle) and needle not in item.text().casefold())
+        self.proxy.setFilterFixedString(text.strip())
+        if text.strip():
+            self.tree.expandAll()
 
     def _add(self) -> None:
-        selected = [item.text() for item in self.list.selectedItems()]
+        selected = self.model.checked_nodeids()
         if selected:
             self.tests_added.emit(selected)
+            self.model.set_all_checked(False)
+
+    def _add_clicked_test(self, proxy_index) -> None:
+        source_index = self.proxy.mapToSource(proxy_index).siblingAtColumn(0)
+        nodeid = self.model.data(source_index, NODEID_ROLE)
+        if nodeid:
+            self.tests_added.emit([nodeid])
 
 
 class ExecutionProfilesPage(QWidget):
