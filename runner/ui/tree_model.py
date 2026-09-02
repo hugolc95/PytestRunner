@@ -209,10 +209,13 @@ class TestTreeModel(QAbstractItemModel):
             return ligne.node
         if role == NODEID_ROLE:
             return ligne.node.nodeid
-        if role == Qt.ToolTipRole:
-            if annotee:
-                return f"{ligne.node.nodeid or ligne.node.name} — {self._stress_annotation[1]}"
-            return ligne.node.nodeid or ligne.node.name
+        if role == Qt.ToolTipRole and annotee:
+            # Seul ce cas ajoute une information absente de la ligne : le
+            # nodeid complet, lui, fait doublon avec le nom deja affiche et
+            # avec l'en-tete du panneau Detail des le premier clic -- une
+            # bulle qui ne repete que ce qu'on voit deja, juste sous la
+            # souris qui vient de cliquer.
+            return f"{ligne.node.nodeid or ligne.node.name} — {self._stress_annotation[1]}"
         if role == Qt.ForegroundRole:
             from PySide6.QtGui import QColor
 
@@ -251,8 +254,10 @@ class TestTreeModel(QAbstractItemModel):
         statut = self.status_for(ligne, reader_index)
         if role == Qt.DecorationRole and statut is not Status.PENDING:
             return icons.status_icon(statut, group=not ligne.is_leaf)
-        if role == Qt.ToolTipRole and statut is not Status.PENDING:
-            return statut.label
+        # Pas de ToolTipRole ici : la couleur et la forme de l'icone disent
+        # deja le statut, et le clic qui selectionne la ligne l'affiche en
+        # toutes lettres dans le panneau Detail -- une bulle en plus ne fait
+        # que clignoter sous la souris a chaque clic.
         if role == Qt.TextAlignmentRole:
             return int(Qt.AlignCenter)
         return None

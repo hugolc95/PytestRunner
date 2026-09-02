@@ -68,6 +68,23 @@ def test_search_is_case_insensitive_and_keeps_tree_order(model):
     assert model.matching_nodeids("absent") == []
 
 
+def test_a_leaf_carries_no_tooltip(model):
+    """Une bulle avec le nodeid en entier faisait doublon avec le nom deja
+    affiche, et apparaissait pile sous la souris a chaque clic -- un test qui
+    vient d'etre selectionne le montre deja en entier dans le panneau Detail."""
+    index = model.index(0, 0, _racine(model))
+    assert model.data(index, Qt.ToolTipRole) is None
+
+
+def test_a_run_status_carries_no_tooltip(model):
+    """Meme chose pour le statut : l'icone coloree et le panneau Detail
+    disent deja tout, une bulle en plus ne fait que clignoter au clic."""
+    leaf = model.index(0, 0, _racine(model))
+    model.apply_outcome(NODEIDS[0], Status.FAILED, 0)
+    statut_index = model.index(leaf.row(), 1, leaf.parent())
+    assert model.data(statut_index, Qt.ToolTipRole) is None
+
+
 def test_without_readers_a_single_status_column_remains(qapp):
     m = TestTreeModel()
     m.set_tree(build_tree(NODEIDS))
