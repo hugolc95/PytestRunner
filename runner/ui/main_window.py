@@ -23,6 +23,7 @@ from PySide6.QtCore import (
     QParallelAnimationGroup,
     QPropertyAnimation,
     QSettings,
+    QStandardPaths,
     Qt,
     QTimer,
     QUrl,
@@ -56,6 +57,7 @@ from PySide6.QtWidgets import (
 from app_icon import APP_ICON_RELATIVE_PATH, resource_path
 from runner.domain import history
 from runner.domain import interpreter as interpreter_mod
+from runner.domain.execution_profile import ExecutionProfile, ProfileStore
 from runner.domain.models import Kind, Reader, RunRequest, Status
 from runner.domain.source import path_of as source_path
 from runner.domain.stress import MODE_N_TIMES, MODE_UNTIL_FAIL, StressAttempt, StressSummary
@@ -71,6 +73,7 @@ from runner.services.run_service import CollectWorker, RunService
 from runner.services.stress_service import StressRunWorker
 from runner.ui import icons, theme
 from runner.ui import tokens as t
+from runner.ui.execution_profiles_page import ExecutionProfilesPage
 from runner.ui.interpreter_dialog import InterpreterDialog
 from runner.ui.marker_bar import MarkerFilter
 from runner.ui.results_panel import (
@@ -202,6 +205,8 @@ class MainWindow(QMainWindow):
         self._elapsed.timeout.connect(self._tick)
         self._seconds = 0
         self._sidebar_collapsed = False
+        self._active_execution_profile: ExecutionProfile | None = None
+        self._running_execution_profile: ExecutionProfile | None = None
 
         # Un run long tourne souvent pendant qu'on fait autre chose : la
         # notification systeme le signale sans qu'il faille revenir surveiller
@@ -287,9 +292,14 @@ class MainWindow(QMainWindow):
         colonne.addWidget(self.split, 1)
 
         self.pages.addWidget(self.workspace_page)
+        profiles_root = Path(QStandardPaths.writableLocation(
+            QStandardPaths.AppDataLocation)) / "profiles"
+        self.profiles_page = ExecutionProfilesPage(ProfileStore(profiles_root), self)
+        self.profiles_page.run_requested.connect(self._load_execution_profile)
         self.history_page = self._build_history_page()
         self.python_page = self._build_python_page()
         self.yaml_page = self._build_yaml_page()
+        self.pages.addWidget(self.profiles_page)
         self.pages.addWidget(self.history_page)
         self.pages.addWidget(self.python_page)
         self.pages.addWidget(self.yaml_page)
@@ -328,6 +338,7 @@ class MainWindow(QMainWindow):
         self.nav_buttons = {}
         entrees = (
             ("workspace", "Run Tests", "mdi.play-circle-outline"),
+            ("profiles", "Execution Profiles", "mdi.playlist-edit"),
             ("yaml", "YAML Configuration", "mdi.file-cog-outline"),
             ("history", "History", "mdi.history"),
             ("python", "Python Environment", "mdi.language-python"),
@@ -382,6 +393,7 @@ class MainWindow(QMainWindow):
         self._sidebar_collapsed = collapsed
         labels = {
             "workspace": "Run Tests",
+            "profiles": "Execution Profiles",
             "yaml": "YAML Configuration",
             "history": "History",
             "python": "Python Environment",
@@ -500,6 +512,7 @@ class MainWindow(QMainWindow):
     def _show_page(self, page: str) -> None:
         pages = {
             "workspace": self.workspace_page,
+            "profiles": self.profiles_page,
             "history": self.history_page,
             "python": self.python_page,
             "yaml": self.yaml_page,
@@ -508,6 +521,8 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(cible)
         if page == "history":
             self.history_dashboard.refresh()
+        elif page == "profiles":
+            self._refresh_profiles_page()
         elif page == "python":
             self._refresh_python_page()
         elif page == "yaml":
@@ -515,6 +530,27 @@ class MainWindow(QMainWindow):
         for cle, bouton in self.nav_buttons.items():
             bouton.setChecked(cle == page)
         self.statusBar().setVisible(page == "workspace")
+
+    def _refresh_profiles_page(self) -> None:
+        nodeids = list(getattr(self.model, "_by_nodeid", {}))
+        config = self.workspace.config_path if self.workspace else ""
+        self.profiles_page.set_workspace_context(nodeids, config)
+
+    @Slot(object)
+    def _load_execution_profile(self, profile: ExecutionProfile) -> None:
+        """Load a validated profile without changing local reader selection."""
+        self._active_execution_profile = profile
+        self._show_page("workspace")
+        self.status_label.setText(
+            f'Profile loaded: {profile.name} · {len(profile.sequence)} steps × '
+            f'{profile.execution.repetitions} repetitions')
+        self.profile_chip_label.setText(
+            f'{profile.name} · {len(profile.sequence)} steps')
+        self.profile_chip.show()
+        self.run_button.setText("Run profile")
+        self.run_button.setToolTip(
+            f'Run the ordered sequence from "{profile.name}"')
+        self._update_actions()
 
     def _refresh_python_page(self) -> None:
         self.python_editor.path_field.setText(self._interpreter_override)
@@ -730,9 +766,27 @@ class MainWindow(QMainWindow):
         self.stop_button.setToolTip("Stop the current run  (Esc)")
         self.stop_button.clicked.connect(self.stop_run)
 
+        self.profile_chip = QFrame()
+        self.profile_chip.setObjectName("ProfileChip")
+        profile_layout = QHBoxLayout(self.profile_chip)
+        profile_layout.setContentsMargins(t.SPACE_2, 0, t.SPACE_1, 0)
+        profile_layout.setSpacing(t.SPACE_1)
+        self.profile_chip_label = QLabel()
+        self.profile_chip_label.setObjectName("ProfileChipLabel")
+        self.clear_profile_button = QPushButton()
+        self.clear_profile_button.setObjectName("NavigationUtilityIcon")
+        self.clear_profile_button.setFixedSize(t.CONTROL_SM, t.CONTROL_SM)
+        self.clear_profile_button.setIcon(icons.icon("mdi.close", t.TEXT_MUTED))
+        self.clear_profile_button.setToolTip("Unload execution profile")
+        self.clear_profile_button.clicked.connect(self._clear_execution_profile)
+        profile_layout.addWidget(self.profile_chip_label)
+        profile_layout.addWidget(self.clear_profile_button)
+        self.profile_chip.hide()
+
         ligne.addWidget(self.run_button)
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.rerun_button)
+        ligne.addWidget(self.profile_chip)
         # Separe visuellement les actions de leur cible materielle, tout en
         # gardant l'ensemble sur une seule rangee compacte.
         ligne.addSpacing(t.SPACE_6)
@@ -1364,6 +1418,7 @@ class MainWindow(QMainWindow):
             icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
         for cle, glyph in (
                 ("workspace", "mdi.play-circle-outline"),
+                ("profiles", "mdi.playlist-edit"),
                 ("history", "mdi.history"),
                 ("python", "mdi.language-python"),
                 ("yaml", "mdi.file-cog-outline")):
@@ -1601,7 +1656,74 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def run_selected(self) -> None:
-        self._start(self.model.checked_nodeids())
+        if self._active_execution_profile is not None:
+            self._start_profile(self._active_execution_profile)
+        else:
+            self._start(self.model.checked_nodeids())
+
+    def _clear_execution_profile(self) -> None:
+        self._active_execution_profile = None
+        self.profile_chip.hide()
+        self.run_button.setText("Run tests")
+        self.run_button.setToolTip("Run the selected tests  (F5)")
+        self.status_label.setText("Execution profile unloaded")
+        self._update_actions()
+
+    def _profile_configuration_path(self, profile: ExecutionProfile) -> str:
+        root = Path(QStandardPaths.writableLocation(
+            QStandardPaths.AppDataLocation)) / "profile-configurations"
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"{profile.profile_id}-{profile.configuration_name}"
+        path.write_text(profile.configuration_text, encoding="utf-8")
+        return str(path)
+
+    def _start_profile(self, profile: ExecutionProfile) -> None:
+        if self.workspace is None or self.service.busy:
+            return
+        missing = [nodeid for nodeid in profile.sequence
+                   if nodeid not in getattr(self.model, "_by_nodeid", {})]
+        if missing:
+            ErrorDialog.show_error(
+                self, "Profile is not compatible",
+                f"{len(missing)} sequence step(s) no longer exist in this workspace.",
+                "\n".join(missing[:20]))
+            return
+        if not self.results.source.save():
+            return
+        python = self._require_interpreter()
+        if not python:
+            return
+        try:
+            config_path = self._profile_configuration_path(profile)
+        except OSError as exc:
+            ErrorDialog.show_error(
+                self, "Could not prepare the profile configuration",
+                "The embedded YAML file could not be written.", str(exc))
+            return
+        self._running_execution_profile = profile
+        readers = self._readers_to_run()
+        self._run_id = history.nouvel_identifiant()
+        self._build_number = self.history.next_build_number()
+        self._last_allure_dir = (
+            self._allure_dir_for(python, self._run_id)
+            if profile.reports.generate_allure else "")
+        request = RunRequest(
+            workspace=self.workspace.path,
+            interpreter=python,
+            nodeids=tuple(profile.sequence),
+            readers=readers,
+            config_path=config_path,
+            sequential=self.workspace.reader_mode == MODE_SEQUENTIEL,
+            run_id=self._run_id,
+            junit_dir=str(self.history.racine),
+            build_number=self._build_number,
+            allure_dir=self._last_allure_dir,
+        )
+        self.service.start_profile(
+            request, self.workspace.env, profile.sequence,
+            repetitions=profile.execution.repetitions,
+            rerun_failures=profile.execution.rerun_failures,
+            stop_after_failure=profile.execution.stop_after_failure)
 
     @Slot()
     def rerun_failed(self) -> None:
@@ -1629,6 +1751,7 @@ class MainWindow(QMainWindow):
         if not python:
             return
 
+        self._running_execution_profile = None
         lecteurs = self._readers_to_run()
         self._run_id = history.nouvel_identifiant()
         self._build_number = self.history.next_build_number()
@@ -1862,7 +1985,10 @@ class MainWindow(QMainWindow):
         if self._run_id is None or self.workspace is None:
             return
 
-        joues = list(self.model.nodeids())
+        profile = self._running_execution_profile
+        joues = (
+            list(profile.sequence) * profile.execution.repetitions
+            if profile is not None else list(self.model.nodeids()))
         for rapport in rapports:
             if rapport.cancelled:
                 continue
@@ -1881,9 +2007,12 @@ class MainWindow(QMainWindow):
                     self.model.failed_nodeids_for(rapport.reader.index)),
                 junit_path=rapport.junit_path,
             )
-            self.history.add(entree, rapport.output)
+            output = (rapport.output if profile is None
+                      or profile.reports.save_complete_logs else "")
+            self.history.add(entree, output)
         self._run_id = None
         self._build_number = None
+        self._running_execution_profile = None
 
     def _tick(self) -> None:
         self._seconds += 1

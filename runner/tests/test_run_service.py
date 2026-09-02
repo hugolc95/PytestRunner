@@ -215,6 +215,84 @@ def test_progress_counts_every_reader(qapp, suite):
     assert vus[-1] == (2, 2)
 
 
+def test_profile_sequence_preserves_duplicate_steps(qapp, tmp_path):
+    (tmp_path / "test_profile.py").write_text(
+        "def test_repeated():\n    assert True\n", encoding="utf-8")
+    nodeid = "test_profile.py::test_repeated"
+    request = RunRequest(
+        workspace=str(tmp_path), interpreter=sys.executable,
+        nodeids=(nodeid,), readers=())
+    service = RunService()
+    outcomes, progress, reports = [], [], []
+    service.outcome.connect(outcomes.append)
+    service.progress.connect(lambda done, total: progress.append((done, total)))
+    service.finished.connect(reports.extend)
+
+    assert service.start_profile(request, dict(os.environ), [nodeid, nodeid])
+    assert _attendre(lambda: bool(reports))
+    service.wait(5000)
+
+    assert [outcome.nodeid for outcome in outcomes] == [nodeid, nodeid]
+    assert progress[-1] == (2, 2)
+    assert reports[0].counts == {Status.PASSED: 2}
+    assert reports[0].output.count("attempt 1") == 2
+
+
+def test_profile_reruns_a_failed_step_and_keeps_its_final_verdict(qapp, tmp_path):
+    (tmp_path / "test_flaky.py").write_text(textwrap.dedent('''
+        from pathlib import Path
+
+        def test_flaky():
+            marker = Path(__file__).with_name("attempt.txt")
+            attempt = int(marker.read_text() if marker.exists() else "0") + 1
+            marker.write_text(str(attempt))
+            assert attempt >= 2
+    '''), encoding="utf-8")
+    nodeid = "test_flaky.py::test_flaky"
+    request = RunRequest(
+        workspace=str(tmp_path), interpreter=sys.executable,
+        nodeids=(nodeid,), readers=())
+    service = RunService()
+    reports = []
+    service.finished.connect(reports.extend)
+
+    assert service.start_profile(
+        request, dict(os.environ), [nodeid], rerun_failures=1)
+    assert _attendre(lambda: bool(reports))
+    service.wait(5000)
+
+    assert reports[0].counts == {Status.PASSED: 1}
+    assert reports[0].output.count(f"--- {nodeid} - attempt") == 2
+
+
+def test_profile_stop_after_failure_skips_following_steps(qapp, tmp_path):
+    (tmp_path / "test_stop.py").write_text(textwrap.dedent('''
+        from pathlib import Path
+
+        def test_failure():
+            assert False
+
+        def test_must_not_run():
+            Path(__file__).with_name("unexpected.txt").write_text("ran")
+    '''), encoding="utf-8")
+    request = RunRequest(
+        workspace=str(tmp_path), interpreter=sys.executable,
+        nodeids=("test_stop.py::test_failure",), readers=())
+    service = RunService()
+    reports = []
+    service.finished.connect(reports.extend)
+
+    assert service.start_profile(
+        request, dict(os.environ),
+        ["test_stop.py::test_failure", "test_stop.py::test_must_not_run"],
+        stop_after_failure=True)
+    assert _attendre(lambda: bool(reports))
+    service.wait(5000)
+
+    assert not (tmp_path / "unexpected.txt").exists()
+    assert reports[0].counts == {Status.FAILED: 1}
+
+
 def test_progress_and_outcomes_survive_spaces_in_parameter_ids(qapp, tmp_path):
     """Reproduit le gel observe sur les longues suites PutData ECC.
 

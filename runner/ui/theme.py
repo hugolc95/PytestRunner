@@ -111,6 +111,41 @@ QFrame#ConfigSection {{
 QFrame#ConfigSection QLabel {{
     background-color: transparent;
 }}
+QFrame#ProfileNotice {{
+    background-color: {t.rgba(t.status_color(Status.PASSED), 0.10)};
+    border: 1px solid {t.status_color(Status.PASSED)};
+    border-radius: {t.RADIUS_MD}px;
+}}
+QFrame#ProfileNotice[warning="true"] {{
+    background-color: {t.rgba(t.status_color(Status.SKIPPED), 0.10)};
+    border-color: {t.status_color(Status.SKIPPED)};
+}}
+QFrame#ProfileNotice QLabel {{ background-color: transparent; }}
+QLabel#ProfileSectionTitle {{
+    color: {t.TEXT_MUTED};
+    font-size: {t.TEXT_XS}px;
+    font-weight: 700;
+}}
+QListWidget#ProfileLibrary, QListWidget#ProfileSequence {{
+    background-color: transparent;
+    border: none;
+}}
+QListWidget#ProfileLibrary::item, QListWidget#ProfileSequence::item {{
+    border-radius: {t.RADIUS_MD}px;
+    padding: {t.SPACE_2}px;
+}}
+QListWidget#ProfileLibrary::item:selected,
+QListWidget#ProfileSequence::item:selected {{
+    background-color: {t.rgba(t.ACCENT, 0.16)};
+    color: {t.ACCENT};
+}}
+QFrame#ProfileChip {{
+    background-color: {t.rgba(t.ACCENT, 0.14)};
+    border: 1px solid {t.ACCENT};
+    border-radius: {t.RADIUS_MD}px;
+}}
+QFrame#ProfileChip QLabel {{ background-color: transparent; }}
+QLabel#ProfileChipLabel {{ color: {t.ACCENT}; font-weight: 600; }}
 QLabel#ConfigSectionTitle {{
     color: {t.TEXT};
     font-size: {t.TEXT_LG}px;
@@ -150,6 +185,9 @@ QFrame#Surface, QWidget#Surface {{
     background-color: {t.BG_SURFACE};
     border: 1px solid {t.BORDER};
     border-radius: {t.RADIUS_LG}px;
+}}
+QFrame#Surface QLabel, QWidget#Surface QLabel {{
+    background-color: transparent;
 }}
 QFrame#Separator {{
     background-color: {t.BORDER};

@@ -7,10 +7,12 @@ donc jamais remonter jusqu'a un slot.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import QObject, QThread, Signal
 
 from runner.domain import execution
-from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest
+from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest, Status
 
 
 class CollectWorker(QThread):
@@ -102,6 +104,17 @@ class RunService(QObject):
         self._request: RunRequest | None = None
         self._en_attente: list[_ReaderWorker] = []
         self._lances = 0
+        self._profile_active = False
+        self._profile_cancelled = False
+        self._profile_queue: list[str] = []
+        self._profile_request: RunRequest | None = None
+        self._profile_env: dict = {}
+        self._profile_attempt = 0
+        self._profile_reruns = 0
+        self._profile_stop_after_failure = False
+        self._profile_completed = 0
+        self._profile_total = 0
+        self._profile_reports: dict[int, ReaderReport] = {}
 
     @property
     def busy(self) -> bool:
@@ -110,7 +123,8 @@ class RunService(QObject):
         # et ce slot il n'y a rien qui tourne. Sans la file, `busy` retomberait
         # a faux au milieu du run -- le bouton Run redeviendrait cliquable et
         # une deuxieme campagne partirait par-dessus la premiere.
-        return bool(self._en_attente) or any(w.isRunning() for w in self._workers)
+        return (self._profile_active or bool(self._en_attente)
+                or any(w.isRunning() for w in self._workers))
 
     def start(self, request: RunRequest, env: dict) -> bool:
         """Lance les lecteurs. Retourne False si un run tourne deja.
@@ -119,6 +133,14 @@ class RunService(QObject):
         suivant ne part qu'a la fin du precedent.
         """
         if self.busy:
+            return False
+
+        return self._start_request(request, env, emit_started=True)
+
+    def _start_request(self, request: RunRequest, env: dict,
+                       emit_started: bool) -> bool:
+        """Start one physical pytest invocation for each selected reader."""
+        if any(w.isRunning() for w in self._workers) or self._en_attente:
             return False
 
         self._workers = []
@@ -141,7 +163,8 @@ class RunService(QObject):
 
         self._en_attente = list(self._workers)
         self._lances = 0
-        self.started.emit(request)
+        if emit_started:
+            self.started.emit(request)
 
         # La file est videe AVANT de demarrer quoi que ce soit : un fil peut
         # finir pendant la boucle, et trouver alors une file deja a jour.
@@ -154,6 +177,92 @@ class RunService(QObject):
                 worker.start()
         return True
 
+    def start_profile(self, request: RunRequest, env: dict, sequence: list[str],
+                      repetitions: int = 1, rerun_failures: int = 0,
+                      stop_after_failure: bool = False) -> bool:
+        """Run an ordered sequence, preserving duplicates and retries.
+
+        Each sequence occurrence is a separate pytest invocation. This is the
+        only reliable way to keep two identical nodeids as two distinct steps.
+        The public signals still describe one logical run.
+        """
+        if self.busy or not sequence:
+            return False
+        expanded = list(sequence) * max(1, int(repetitions))
+        logical = replace(request, nodeids=tuple(expanded))
+        self._profile_active = True
+        self._profile_cancelled = False
+        self._profile_queue = expanded
+        self._profile_request = request
+        self._profile_env = dict(env)
+        self._profile_attempt = 0
+        self._profile_reruns = max(0, int(rerun_failures))
+        self._profile_stop_after_failure = bool(stop_after_failure)
+        self._profile_completed = 0
+        self._profile_total = logical.total_tests
+        readers = request.readers or (Reader("", 0),)
+        self._profile_reports = {
+            reader.index: ReaderReport(reader=reader, counts={})
+            for reader in readers
+        }
+        self.started.emit(logical)
+        self._start_profile_step()
+        return True
+
+    def _start_profile_step(self) -> None:
+        if not self._profile_queue or self._profile_cancelled:
+            self._finish_profile()
+            return
+        request = replace(
+            self._profile_request,
+            nodeids=(self._profile_queue[0],),
+            # Per-step JUnit files would overwrite one another. The aggregate
+            # history remains available through ReaderReport.
+            junit_dir="",
+        )
+        self._start_request(request, self._profile_env, emit_started=False)
+
+    def _finish_profile_step(self) -> None:
+        failed = any(not report.ok for report in self._reports)
+        for report in self._reports:
+            aggregate = self._profile_reports[report.reader.index]
+            attempt_label = self._profile_attempt + 1
+            aggregate.output += (
+                f"\n--- {self._profile_queue[0]} - attempt {attempt_label} ---\n"
+                + report.output)
+            aggregate.duration += report.duration
+            aggregate.cancelled = aggregate.cancelled or report.cancelled
+
+        if (failed and not self._profile_cancelled
+                and self._profile_attempt < self._profile_reruns):
+            self._profile_attempt += 1
+            self._start_profile_step()
+            return
+
+        for report in self._reports:
+            aggregate = self._profile_reports[report.reader.index]
+            for status, count in report.counts.items():
+                aggregate.counts[status] = aggregate.counts.get(status, 0) + count
+            aggregate.exit_code = max(aggregate.exit_code, report.exit_code)
+            aggregate.durations.update(report.durations)
+
+        reader_count = max(1, len(self._profile_request.readers))
+        self._profile_completed += reader_count
+        self.progress.emit(self._profile_completed, self._profile_total)
+        self._profile_queue.pop(0)
+        self._profile_attempt = 0
+        if failed and self._profile_stop_after_failure:
+            self._profile_queue.clear()
+        self._start_profile_step()
+
+    def _finish_profile(self) -> None:
+        reports = sorted(self._profile_reports.values(), key=lambda r: r.reader.index)
+        self._profile_active = False
+        self._profile_queue = []
+        for report in reports:
+            self.reader_finished.emit(report)
+        self.finished.emit(reports)
+
     def _demarrer_suivant(self) -> None:
         self._lances += 1
         self._en_attente.pop(0).start()
@@ -163,6 +272,8 @@ class RunService(QObject):
         # La file d'abord : sinon l'arret du lecteur en cours declencherait le
         # depart du suivant, et Stop ne s'arreterait jamais.
         self._en_attente = []
+        if self._profile_active:
+            self._profile_cancelled = True
         for worker in self._workers:
             worker.cancel()
 
@@ -172,6 +283,9 @@ class RunService(QObject):
             worker.wait(timeout_ms)
 
     def _on_outcome(self, outcome: Outcome) -> None:
+        if self._profile_active:
+            self.outcome.emit(outcome)
+            return
         cle = (outcome.reader_index, outcome.nodeid)
         if cle not in self._seen_outcomes:
             self._seen_outcomes.add(cle)
@@ -199,4 +313,7 @@ class RunService(QObject):
             # les remettre dans l'ordre des colonnes evite un bilan qui change
             # de disposition d'un run a l'autre.
             self._reports.sort(key=lambda r: r.reader.index)
-            self.finished.emit(list(self._reports))
+            if self._profile_active:
+                self._finish_profile_step()
+            else:
+                self.finished.emit(list(self._reports))
