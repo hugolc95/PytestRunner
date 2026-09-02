@@ -18,6 +18,8 @@ from runner.ui.history_dashboard import (
     group_entries,
 )
 from runner.ui.history_window import FlakyDialog
+from runner.ui import theme as theme_mod
+from runner.ui import tokens as t
 
 
 @pytest.fixture(scope="session")
@@ -395,3 +397,72 @@ def test_flaky_dialog_has_an_explicit_empty_state(qapp):
     dialog = FlakyDialog([])
     labels = [label.text() for label in dialog.findChildren(QLabel)]
     assert any("No unstable test" in text for text in labels)
+
+
+# ---------------------------------------------------------------------- theme
+
+def _colours_on_screen(widget) -> set[str]:
+    image = widget.grab().toImage()
+    return {image.pixelColor(x, y).name()
+            for x in range(image.width()) for y in range(image.height())}
+
+
+def test_the_page_titles_survive_a_theme_switch(qapp, historique):
+    """`title.setStyleSheet(f"...color:{t.TEXT}...")` figeait la couleur du
+    theme de construction pour toujours : passe au clair, "History" et le
+    titre du run selectionne restaient dans la teinte du theme sombre,
+    quasi invisibles sur un fond devenu blanc."""
+    t.set_theme("dark")
+    try:
+        window = HistoryWindow(historique)
+        select_run(window)
+        window.resize(1200, 800)
+        window.show()
+        qapp.processEvents()
+
+        t.set_theme("light")
+        window.setStyleSheet(theme_mod.app_stylesheet())
+        qapp.processEvents()
+
+        for label in (window.history_title, window.detail_title):
+            assert t.TEXT in _colours_on_screen(label), (
+                f"{label.objectName()} ne suit pas la bascule vers le "
+                "theme clair")
+        window.close()
+    finally:
+        t.set_theme("dark")
+
+
+def test_restyle_repaints_run_cards_already_on_screen(qapp, historique):
+    """Naviguer VERS la page rejoue `_populate_list()` (via `refresh()`) et
+    les cartes suivent seules. Mais rester dessus pendant la bascule ne
+    declenche aucun refresh : sans `restyle()`, les cartes deja construites
+    gardaient la teinte de l'ancien theme cote a cote avec un fond deja
+    repeint -- les "fonds de groupe pas beaux" apres une bascule sur place.
+    """
+    t.set_theme("dark")
+    try:
+        window = HistoryWindow(historique)
+        select_run(window)
+        window.resize(1200, 800)
+        window.show()
+        qapp.processEvents()
+        card = window._cards[0][1]
+        teinte_sombre = t.DARK["STATUS_COLORS"][Status.FAILED]
+
+        t.set_theme("light")
+        window.setStyleSheet(theme_mod.app_stylesheet())
+        qapp.processEvents()
+        assert teinte_sombre in _colours_on_screen(card.dot), (
+            "le garde-fou ne detecte plus rien : la carte suit deja seule")
+
+        window.restyle()
+        qapp.processEvents()
+        # `restyle()` reconstruit les cartes : la reference precedente pointe
+        # desormais sur un widget retire, il faut relire la carte courante.
+        card_apres = window._cards[0][1]
+        assert teinte_sombre not in _colours_on_screen(card_apres.dot), (
+            "la pastille du run garde la teinte du theme sombre apres restyle()")
+        window.close()
+    finally:
+        t.set_theme("dark")

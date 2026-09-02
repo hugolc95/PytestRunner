@@ -356,14 +356,13 @@ class HistoryWindow(QDialog):
     # ------------------------------------------------------------ construction
 
     def _build_ui(self) -> None:
-        title = QLabel("History")
-        title.setStyleSheet(
-            f"font-size:22px;font-weight:700;color:{t.TEXT};background:transparent;")
+        self.history_title = QLabel("History")
+        self.history_title.setObjectName("HistoryPageTitle")
         self.subtitle = QLabel()
         self.subtitle.setObjectName("Muted")
         titles = QVBoxLayout()
         titles.setSpacing(0)
-        titles.addWidget(title)
+        titles.addWidget(self.history_title)
         titles.addWidget(self.subtitle)
 
         self.search = QLineEdit()
@@ -489,8 +488,7 @@ class HistoryWindow(QDialog):
     def _build_detail(self) -> QWidget:
         panel = QWidget()
         self.detail_title = QLabel()
-        self.detail_title.setStyleSheet(
-            f"font-size:18px;font-weight:700;color:{t.TEXT};background:transparent;")
+        self.detail_title.setObjectName("HistoryDetailTitle")
         self.detail_subtitle = QLabel()
         self.detail_subtitle.setObjectName("Muted")
         names = QVBoxLayout()
@@ -638,6 +636,26 @@ class HistoryWindow(QDialog):
         table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
         table.setColumnWidth(1, 220)
         return table
+
+    def restyle(self) -> None:
+        """Rejoue les couleurs figees a la construction de chaque carte.
+
+        `RunCard`/`_label` peignent le pastille, les compteurs et les puces de
+        lecteur une fois pour toutes avec les jetons du moment : rester sur la
+        page pendant une bascule de theme les laissait dans l'ancienne teinte,
+        visibles cote a cote avec le reste de l'appli deja repeint. Reconstruire
+        la liste les rejoue toutes d'un coup ; on retient la selection pour ne
+        pas la perdre au passage.
+        """
+        selection = self._current_group()
+        self._populate_list()
+        if selection is not None:
+            for row in range(self.run_list.count()):
+                item = self.run_list.item(row)
+                if item.data(Qt.UserRole) is selection:
+                    self.run_list.setCurrentItem(item)
+                    item.setSelected(True)
+                    break
 
     # --------------------------------------------------------------- donnees
 

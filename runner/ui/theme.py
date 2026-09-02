@@ -94,6 +94,18 @@ QLabel#PageTitle {{
     font-size: {t.TEXT_LG + 5}px;
     font-weight: 700;
 }}
+QLabel#HistoryPageTitle {{
+    color: {t.TEXT};
+    font-size: 22px;
+    font-weight: 700;
+    background: transparent;
+}}
+QLabel#HistoryDetailTitle {{
+    color: {t.TEXT};
+    font-size: 18px;
+    font-weight: 700;
+    background: transparent;
+}}
 QFrame#InterpreterAlert {{
     background-color: {t.rgba(t.status_color(Status.FAILED), 0.10)};
     border: 1px solid {t.status_color(Status.FAILED)};
