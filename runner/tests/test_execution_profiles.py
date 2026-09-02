@@ -14,6 +14,7 @@ from runner.domain.execution_profile import (
     ReportOptions,
     export_profile,
     inspect_profile,
+    validate_profile,
 )
 from runner.ui.execution_profiles_page import AddTestsDialog, ExecutionProfilesPage
 
@@ -50,6 +51,40 @@ def test_profile_round_trip_preserves_order_duplicates_and_configuration(tmp_pat
     assert loaded.reports == source.reports
     assert loaded.total_executions == 60
     assert not validation.has_warnings
+
+
+def test_profile_without_configuration_is_valid_and_round_trips(tmp_path):
+    # Un run classique n'exige pas de fichier de config : un profil ne
+    # devrait pas etre plus exigeant, sous peine de forcer un YAML inutile.
+    source = ExecutionProfile(
+        name="No config",
+        configuration_name="",
+        configuration_text="",
+        sequence=["tests/test_api.py::test_login[admin]"],
+    )
+    validate_profile(source)  # ne doit pas lever
+
+    path = export_profile(source, tmp_path / "no-config")
+    loaded = inspect_profile(path, source.sequence).profile
+
+    assert loaded.configuration_name == ""
+    assert loaded.configuration_text == ""
+    assert loaded.sequence == source.sequence
+
+
+def test_store_keeps_a_configless_profile_visible_after_saving(tmp_path):
+    # Avant la correction, ProfileStore.list() avalait silencieusement
+    # ProfileValidationError et un profil sans config disparaissait de la
+    # liste des qu'il etait relu depuis le disque.
+    store = ProfileStore(tmp_path / "profiles")
+    profile = ExecutionProfile(
+        name="No config", configuration_name="", configuration_text="",
+        sequence=["tests/test_api.py::test_login[admin]"])
+    store.save(profile)
+
+    names = [loaded.name for loaded in store.list()]
+
+    assert names == ["No config"]
 
 
 def test_import_reports_each_missing_sequence_occurrence(tmp_path):

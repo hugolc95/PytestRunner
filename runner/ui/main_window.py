@@ -1670,6 +1670,14 @@ class MainWindow(QMainWindow):
         self._update_actions()
 
     def _profile_configuration_path(self, profile: ExecutionProfile) -> str:
+        """Chemin du YAML embarque, ou "" si le profil n'en a pas.
+
+        Un profil sans configuration doit tourner exactement comme "Run
+        tests" sans YAML -- pas avec un fichier vide qui, lui, ferait croire
+        a un reglage explicite ou serait relu comme une config invalide.
+        """
+        if not profile.configuration_name and not profile.configuration_text:
+            return ""
         root = Path(QStandardPaths.writableLocation(
             QStandardPaths.AppDataLocation)) / "profile-configurations"
         root.mkdir(parents=True, exist_ok=True)

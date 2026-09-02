@@ -107,12 +107,22 @@ def _boolean(value: object, label: str) -> bool:
 
 
 def _configuration_filename(value: object) -> str:
+    # Chaine vide = pas de configuration du tout, un cas volontairement valide
+    # (voir validate_profile) : ce n'est pas un nom de fichier a valider.
+    if value == "":
+        return ""
     name = _safe_name(value, "Configuration filename", 180)
     pure = PurePosixPath(name)
     if (pure.is_absolute() or len(pure.parts) != 1 or name in (".", "..")
             or pure.suffix.lower() not in (".yml", ".yaml")):
         raise ProfileValidationError("The configuration filename is unsafe.")
     return name
+
+
+# Nom d'entree ZIP fixe utilise quand un profil n'a pas de configuration : le
+# nom reel (vide) ne peut pas devenir une entree d'archive valide, mais
+# l'archive doit garder exactement 2 membres pour rester relisible.
+_NO_CONFIG_ENTRY = "_none.yaml"
 
 
 def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
@@ -140,15 +150,22 @@ def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
 def validate_profile(profile: ExecutionProfile) -> None:
     _safe_name(profile.name, "Profile name", 120)
     _safe_name(profile.profile_id, "Profile identifier", 120)
-    _configuration_filename(profile.configuration_name)
-    if len(profile.configuration_text.encode("utf-8")) > MAX_CONFIG_BYTES:
-        raise ProfileValidationError("The YAML configuration is too large.")
-    try:
-        parsed_config = yaml.safe_load(profile.configuration_text)
-    except yaml.YAMLError as exc:
-        raise ProfileValidationError(f"The YAML configuration is invalid: {exc}") from exc
-    if not isinstance(parsed_config, dict):
-        raise ProfileValidationError("The YAML configuration must contain a mapping.")
+    # Un run classique n'exige aucun fichier de config -- un profil ne
+    # devrait pas en demander plus. Sans nom NI texte, le profil tourne avec
+    # les reglages par defaut, exactement comme "Run tests" sans YAML. Des
+    # qu'un des deux est renseigne, en revanche, l'autre doit l'etre aussi et
+    # le contenu doit rester un YAML exploitable -- un profil a moitie
+    # configure serait plus trompeur qu'un profil sans configuration du tout.
+    if profile.configuration_name or profile.configuration_text:
+        _configuration_filename(profile.configuration_name)
+        if len(profile.configuration_text.encode("utf-8")) > MAX_CONFIG_BYTES:
+            raise ProfileValidationError("The YAML configuration is too large.")
+        try:
+            parsed_config = yaml.safe_load(profile.configuration_text)
+        except yaml.YAMLError as exc:
+            raise ProfileValidationError(f"The YAML configuration is invalid: {exc}") from exc
+        if not isinstance(parsed_config, dict):
+            raise ProfileValidationError("The YAML configuration must contain a mapping.")
     if not profile.sequence or len(profile.sequence) > MAX_STEPS:
         raise ProfileValidationError(
             f"A profile must contain between 1 and {MAX_STEPS} steps.")
@@ -178,9 +195,10 @@ def export_profile(profile: ExecutionProfile, destination: str | Path) -> Path:
     checksum = hashlib.sha256(config).hexdigest()
     manifest = json.dumps(
         _manifest(profile, checksum), ensure_ascii=False, indent=2).encode("utf-8")
+    entry_name = profile.configuration_name or _NO_CONFIG_ENTRY
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", manifest)
-        archive.writestr(f"configuration/{profile.configuration_name}", config)
+        archive.writestr(f"configuration/{entry_name}", config)
     return target
 
 
@@ -237,8 +255,9 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
                        (meta, config_meta, execution, reports)) or not isinstance(steps, list):
                 raise ProfileValidationError("The manifest structure is invalid.")
             config_name = _configuration_filename(config_meta.get("file"))
+            entry_name = config_name or _NO_CONFIG_ENTRY
             config = _read_member(
-                archive, f"configuration/{config_name}", MAX_CONFIG_BYTES)
+                archive, f"configuration/{entry_name}", MAX_CONFIG_BYTES)
             if hashlib.sha256(config).hexdigest() != config_meta.get("sha256"):
                 raise ProfileValidationError("The configuration checksum does not match.")
     except (zipfile.BadZipFile, OSError) as exc:
