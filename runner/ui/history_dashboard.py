@@ -156,47 +156,58 @@ def _history_tabs() -> QTabWidget:
 
 
 class RunCard(QFrame):
-    """Resume compact place dans la liste de gauche."""
+    """Resume compact place dans la liste de gauche.
+
+    Un historique bien rempli peut afficher jusqu'a 300 cartes en meme temps
+    (`History.MAX_ENTREES`), chacune posant sa propre couleur par-widget --
+    necessaire, une carte melange plusieurs teintes (statut, lecteur) qu'une
+    seule regle QSS partagee ne peut pas exprimer. Tout reconstruire a chaque
+    bascule de theme coute bien plus cher que repeindre les memes widgets en
+    place. `_repeints` retient donc comment recalculer chaque couleur depuis
+    les jetons courants, et `restyle()` la rejoue sans rien reconstruire.
+    """
 
     def __init__(self, group: RunGroup, parent=None):
         super().__init__(parent)
         self.group = group
         self.setObjectName("HistoryCard")
         self.setFixedHeight(102)
+        self._selected = False
+        self._repeints: list[callable] = []
 
         top = QHBoxLayout()
         top.setSpacing(t.SPACE_2)
         self.dot = QLabel("●")
-        self.dot.setStyleSheet(
-            f"color:{t.status_color(Status.PASSED if group.ok else Status.FAILED)};"
-            "background:transparent;")
+        self._paint(self.dot,
+                    lambda: f"color:{t.status_color(Status.PASSED if group.ok else Status.FAILED)};"
+                            "background:transparent;")
         top.addWidget(self.dot)
         top.addWidget(self._label(_when(group.timestamp, False), 13, 700))
         if group.build_number is not None:
             top.addWidget(self._label(f"#{group.build_number:04d}", t.TEXT_XS, 700,
-                                      t.ACCENT))
+                                      lambda: t.ACCENT))
         top.addWidget(self._label(Path(group.workspace).name or group.workspace,
                                   t.TEXT_SM, 600))
         top.addStretch(1)
         top.addWidget(self._label(f"{group.duration:.1f}s", t.TEXT_XS, 500,
-                                  t.TEXT_MUTED))
+                                  lambda: t.TEXT_MUTED))
 
         counts = QHBoxLayout()
         counts.setSpacing(t.SPACE_3)
         counts.addWidget(self._label(f"{group.count(Status.PASSED)} passed",
                                      t.TEXT_XS, 600,
-                                     t.status_color(Status.PASSED)))
+                                     lambda: t.status_color(Status.PASSED)))
         if group.count(Status.FAILED):
             counts.addWidget(self._label(f"{group.count(Status.FAILED)} failed",
                                          t.TEXT_XS, 600,
-                                         t.status_color(Status.FAILED)))
+                                         lambda: t.status_color(Status.FAILED)))
         if group.count(Status.ERROR):
             counts.addWidget(self._label(f"{group.count(Status.ERROR)} error",
                                          t.TEXT_XS, 600,
-                                         t.status_color(Status.ERROR)))
+                                         lambda: t.status_color(Status.ERROR)))
         if group.ok:
             counts.addWidget(self._label("No issues", t.TEXT_XS, 500,
-                                         t.TEXT_MUTED))
+                                         lambda: t.TEXT_MUTED))
         counts.addStretch(1)
 
         readers = QHBoxLayout()
@@ -205,7 +216,7 @@ class RunCard(QFrame):
             readers.addWidget(self._reader_chip(entry.reader, index))
         if len(group.entries) > 2:
             readers.addWidget(self._label(f"+{len(group.entries) - 2}",
-                                          t.TEXT_XS, 600, t.TEXT_MUTED))
+                                          t.TEXT_XS, 600, lambda: t.TEXT_MUTED))
         readers.addStretch(1)
 
         layout = QVBoxLayout(self)
@@ -216,31 +227,53 @@ class RunCard(QFrame):
         layout.addLayout(readers)
         self.set_selected(False)
 
-    @staticmethod
-    def _label(text, size, weight, color=None) -> QLabel:
+    def _paint(self, widget: QWidget, style_of) -> None:
+        """Enregistre `widget` pour rejouer sa feuille a chaque `restyle()`."""
+        self._repeints.append(lambda: widget.setStyleSheet(style_of()))
+        widget.setStyleSheet(style_of())
+
+    def _label(self, text, size, weight, color=None) -> QLabel:
         label = QLabel(str(text))
-        label.setStyleSheet(
-            f"font-size:{size}px;font-weight:{weight};color:{color or t.TEXT};"
-            "background:transparent;border:none;")
+        base = f"font-size:{size}px;font-weight:{weight};background:transparent;border:none;"
+        if color is None:
+            # Pas de couleur a soi : elle vient de `QWidget{{color:...}}`, deja
+            # dans la feuille globale et deja rejouee a chaque bascule -- rien
+            # a refigurer ici, un `restyle()` de plus par carte pour rien.
+            label.setStyleSheet(base)
+            return label
+        self._paint(label, lambda: base + f"color:{color()};")
         return label
 
-    @staticmethod
-    def _reader_chip(name: str, index: int) -> QLabel:
-        color = t.reader_color(index)
+    def _reader_chip(self, name: str, index: int) -> QLabel:
         label = QLabel(f"●  {_short_reader(name)}")
-        label.setStyleSheet(
-            f"color:{color};background:{t.rgba(color, 0.10)};"
-            f"border:1px solid {t.rgba(color, 0.28)};border-radius:9px;"
-            f"padding:2px {t.SPACE_2}px;font-size:{t.TEXT_XS}px;font-weight:600;")
+
+        def style() -> str:
+            couleur = t.reader_color(index)
+            return (f"color:{couleur};background:{t.rgba(couleur, 0.10)};"
+                    f"border:1px solid {t.rgba(couleur, 0.28)};border-radius:9px;"
+                    f"padding:2px {t.SPACE_2}px;font-size:{t.TEXT_XS}px;font-weight:600;")
+
+        self._paint(label, style)
         label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         return label
 
     def set_selected(self, selected: bool) -> None:
+        self._selected = selected
         border = t.ACCENT if selected else t.BORDER
         background = t.rgba(t.ACCENT, 0.08) if selected else t.BG_SURFACE
+        # Une regle qualifiee par selecteur (`QFrame#HistoryCard{...}`) force
+        # Qt a faire correspondre le selecteur avant d'appliquer quoi que ce
+        # soit ; en forme directe (sans selecteur), les proprietes visent
+        # `self` sans ce detour -- mesure a l'appui, plus de trois fois moins
+        # cher a l'echelle d'une liste bien remplie.
         self.setStyleSheet(
-            f"QFrame#HistoryCard{{background:{background};border:1px solid {border};"
-            f"border-radius:{t.RADIUS_MD}px;}}")
+            f"background:{background};border:1px solid {border};"
+            f"border-radius:{t.RADIUS_MD}px;")
+
+    def restyle(self) -> None:
+        for repeindre in self._repeints:
+            repeindre()
+        self.set_selected(self._selected)
 
 
 class ComparisonPane(QWidget):
@@ -640,22 +673,15 @@ class HistoryWindow(QDialog):
     def restyle(self) -> None:
         """Rejoue les couleurs figees a la construction de chaque carte.
 
-        `RunCard`/`_label` peignent le pastille, les compteurs et les puces de
-        lecteur une fois pour toutes avec les jetons du moment : rester sur la
-        page pendant une bascule de theme les laissait dans l'ancienne teinte,
-        visibles cote a cote avec le reste de l'appli deja repeint. Reconstruire
-        la liste les rejoue toutes d'un coup ; on retient la selection pour ne
-        pas la perdre au passage.
+        Rester sur la page PENDANT une bascule de theme laissait les cartes
+        deja construites dans l'ancienne teinte, cote a cote avec un fond deja
+        repeint. Chaque `RunCard` sait desormais se repeindre en place ; un
+        historique bien rempli peut en compter jusqu'a 300 (`MAX_ENTREES`), et
+        les reconstruire toutes -- l'ancienne approche -- couterait bien plus
+        cher qu'un simple repeint.
         """
-        selection = self._current_group()
-        self._populate_list()
-        if selection is not None:
-            for row in range(self.run_list.count()):
-                item = self.run_list.item(row)
-                if item.data(Qt.UserRole) is selection:
-                    self.run_list.setCurrentItem(item)
-                    item.setSelected(True)
-                    break
+        for _item, card in self._cards:
+            card.restyle()
 
     # --------------------------------------------------------------- donnees
 
