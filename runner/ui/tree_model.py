@@ -262,7 +262,15 @@ class TestTreeModel(QAbstractItemModel):
             return False
 
         ligne: _Row = index.internalPointer()
-        coche = value == Qt.Checked
+        # Qt.CheckState n'est plus un IntEnum sous PySide6 : un clic sur la
+        # case, gere par Qt en C++, traverse la frontiere Python/C++ comme un
+        # entier brut (2), pas comme le membre d'enum. `value == Qt.Checked`
+        # valait alors toujours False -- cocher ET decocher a la souris
+        # revenait donc TOUJOURS a decocher, silencieusement. Ne s'est jamais
+        # vu dans les tests, qui appellent `setData(index, Qt.Checked, ...)`
+        # directement avec le membre d'enum, sans jamais passer par ce
+        # chemin. `Qt.CheckState(value)` normalise les deux cas.
+        coche = Qt.CheckState(value) == Qt.Checked
         self._set_checked(ligne, coche)
         self._emit_selection()
         return True

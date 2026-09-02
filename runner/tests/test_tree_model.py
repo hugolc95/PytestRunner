@@ -91,6 +91,22 @@ def test_unchecking_a_folder_unchecks_what_it_holds(model):
     assert model.checked_nodeids() == []
 
 
+def test_checking_a_box_works_when_qt_passes_a_plain_int(model):
+    """Le vrai bug : cliquer une case, geree par Qt en C++, traverse la
+    frontiere Python/C++ comme un entier brut (`2`), pas comme le membre
+    d'enum `Qt.Checked` -- contrairement a CE test-ci et a tous les autres,
+    qui passent l'enum a la main et ne l'auraient jamais vu. Sous PySide6,
+    `Qt.CheckState` n'est plus un IntEnum : `2 == Qt.Checked` vaut False, et
+    `setData()` decochait alors silencieusement quoi qu'on ait clique.
+    """
+    feuille = model.index_for_nodeid(NODEIDS[0])
+    model.setData(feuille, 0, Qt.CheckStateRole)
+    assert model.data(feuille, Qt.CheckStateRole) == Qt.Unchecked
+
+    model.setData(feuille, 2, Qt.CheckStateRole)
+    assert model.data(feuille, Qt.CheckStateRole) == Qt.Checked
+
+
 def test_a_partly_checked_folder_says_so(model):
     """Ni coche ni decoche : l'etat intermediaire evite de croire que tout le
     dossier part au run."""

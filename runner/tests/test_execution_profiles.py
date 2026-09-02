@@ -161,3 +161,43 @@ def test_add_tests_tree_can_select_a_folder_and_a_single_test(qapp):
         assert added == [*nodeids, nodeids[1]]
     finally:
         dialog.close()
+
+
+def test_add_tests_tree_reserves_the_full_width_for_the_name(qapp):
+    """`TestTreeModel` garde toujours une deuxieme colonne de statut par
+    lecteur, meme sans lecteur -- muette ici. En largeur par defaut,
+    partagee entre les deux colonnes, il ne restait presque plus rien pour
+    le nom une fois l'indentation des dossiers deduite : les feuilles
+    profondement imbriquees s'affichaient vides, case comprise."""
+    dialog = AddTestsDialog(["suite/pkg/test_a.py::test_one"])
+    try:
+        assert dialog.tree.isColumnHidden(1)
+        assert dialog.tree.header().sectionResizeMode(0) == dialog.tree.header().ResizeMode.Stretch
+    finally:
+        dialog.close()
+
+
+def test_add_tests_tree_can_be_checked_with_a_real_click(qapp):
+    """Le clic reel, pas `setData()` appele a la main : c'est Qt qui decide
+    de la valeur a poser, et il ne le fait pas de la meme facon."""
+    from PySide6.QtCore import QPoint
+    from PySide6.QtTest import QTest
+
+    dialog = AddTestsDialog(["suite/test_a.py::test_one"])
+    try:
+        dialog.show()
+        qapp.processEvents()
+        dialog.tree.expandAll()
+        qapp.processEvents()
+
+        leaf = dialog.model.index_for_nodeid("suite/test_a.py::test_one")
+        proxy_index = dialog.proxy.mapFromSource(leaf)
+        rect = dialog.tree.visualRect(proxy_index)
+        point = QPoint(rect.left() + 8, rect.center().y())
+
+        QTest.mouseClick(dialog.tree.viewport(), Qt.LeftButton, Qt.NoModifier, point)
+        qapp.processEvents()
+
+        assert dialog.model.checked_nodeids() == ["suite/test_a.py::test_one"]
+    finally:
+        dialog.close()

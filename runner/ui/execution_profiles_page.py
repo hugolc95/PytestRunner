@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -84,6 +85,18 @@ class AddTestsDialog(QDialog):
         self.tree.setUniformRowHeights(True)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self.tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        # `TestTreeModel` reserve toujours une deuxieme colonne pour le statut
+        # par lecteur (utile dans l'arbre principal, muette ici -- ce dialogue
+        # n'a pas de lecteurs). Sans lecteur, le nom se serrait dans le
+        # partage par defaut entre les deux colonnes : une fois l'indentation
+        # des dossiers deduite, il ne restait presque plus rien pour le texte
+        # ni la case a cocher des feuilles profondement imbriquees -- ni l'un
+        # ni l'autre ne tombait plus dans la zone cliquable que Qt calcule
+        # pour la case. Cacher cette colonne et etirer la premiere regle les
+        # deux : le texte redevient lisible, et la case redevient cliquable.
+        self.tree.setColumnHidden(1, True)
+        self.tree.header().setStretchLastSection(False)
+        self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         layout.addWidget(self.tree, 1)
 
         actions = QHBoxLayout()
