@@ -422,7 +422,7 @@ class MainWindow(QMainWindow):
         else:
             for property_name in (b"minimumWidth", b"maximumWidth"):
                 animation = QPropertyAnimation(self.navigation, property_name, self)
-                animation.setDuration(160)
+                animation.setDuration(110)
                 animation.setStartValue(start)
                 animation.setEndValue(end)
                 animation.setEasingCurve(QEasingCurve.InOutCubic)
@@ -506,6 +506,7 @@ class MainWindow(QMainWindow):
         self.yaml_stack.addWidget(self.yaml_empty)
         self.yaml_stack.addWidget(self.yaml_editor_host)
         self.yaml_editor = None
+        self._yaml_editor_signature = None
         layout.addWidget(self.yaml_stack, 1)
         return page
 
@@ -608,7 +609,10 @@ class MainWindow(QMainWindow):
             return
         if (not force and self.yaml_editor is not None
                 and Path(self.yaml_editor.path) == Path(self.workspace.config_path)):
-            self.yaml_editor.reload()
+            signature = self._yaml_file_signature(self.workspace.config_path)
+            if signature != self._yaml_editor_signature:
+                self.yaml_editor.reload()
+                self._yaml_editor_signature = signature
             self.yaml_stack.setCurrentWidget(self.yaml_editor_host)
             return
 
@@ -626,7 +630,17 @@ class MainWindow(QMainWindow):
         self.yaml_editor.setWindowFlags(Qt.Widget)
         self.yaml_editor.saved.connect(self._on_yaml_page_saved)
         self.yaml_editor_layout.addWidget(self.yaml_editor, 1)
+        self._yaml_editor_signature = self._yaml_file_signature(
+            self.workspace.config_path)
         self.yaml_stack.setCurrentWidget(self.yaml_editor_host)
+
+    @staticmethod
+    def _yaml_file_signature(path: str):
+        try:
+            info = Path(path).stat()
+            return info.st_mtime_ns, info.st_size
+        except OSError:
+            return None
 
     def _on_yaml_page_saved(self, path: str) -> None:
         if self.workspace is None:
@@ -785,11 +799,12 @@ class MainWindow(QMainWindow):
 
         ligne.addWidget(self.run_button)
         ligne.addWidget(self.stop_button)
-        ligne.addWidget(self.rerun_button)
         ligne.addWidget(self.profile_chip)
+        ligne.addWidget(self.rerun_button)
         # Separe visuellement les actions de leur cible materielle, tout en
         # gardant l'ensemble sur une seule rangee compacte.
-        ligne.addSpacing(t.SPACE_6)
+        from PySide6.QtWidgets import QSpacerItem
+        ligne.addItem(QSpacerItem(t.SPACE_6, 0))
         ligne.addWidget(self.readers_bar)
         ligne.addStretch(1)
         return barre
@@ -1628,7 +1643,7 @@ class MainWindow(QMainWindow):
         return str(table.get(workspace, "")) if isinstance(table, dict) else ""
 
     def _retenir_config(self, workspace: str, chemin: str) -> None:
-        table = self.settings.value(K_CONFIG, {}) or {}
+        table = dict(self.settings.value(K_CONFIG, {}) or {})
         if not isinstance(table, dict):
             table = {}
         config = Path(chemin)
@@ -1642,6 +1657,7 @@ class MainWindow(QMainWindow):
             retenu = str(config.resolve())
         table[workspace] = retenu
         self.settings.setValue(K_CONFIG, table)
+        self.settings.sync()
 
     def _remember_workspace(self, chemin: str) -> None:
         recents = [chemin] + [p for p in self.settings.value(K_RECENT, [], type=list)

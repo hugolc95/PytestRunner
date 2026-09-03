@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QPoint, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QActionGroup, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -371,6 +371,9 @@ class HistoryWindow(QDialog):
         self._groups: list[RunGroup] = []
         self._visible_groups: list[RunGroup] = []
         self._cards: list[tuple[QListWidgetItem, RunCard]] = []
+        self._listed_groups: list[RunGroup] = []
+        self._items_by_id: dict[str, QListWidgetItem] = {}
+        self._day_headers: dict[str, QListWidgetItem] = {}
         self._filter_reader = ""
         self._compare_mode = False
         self._adjusting_selection = False
@@ -465,6 +468,8 @@ class HistoryWindow(QDialog):
         self.run_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.run_list.itemSelectionChanged.connect(self._on_selection_changed)
         self.run_list.itemDoubleClicked.connect(lambda _item: self.view_output())
+        self.run_list.verticalScrollBar().valueChanged.connect(
+            lambda _value: self._materialize_cards())
 
         self.empty = EmptyState(
             "mdi.history", "No run recorded yet",
@@ -776,25 +781,51 @@ class HistoryWindow(QDialog):
 
     def _populate_list(self) -> None:
         self.run_list.blockSignals(True)
-        self.run_list.clear()
-        self._cards.clear()
+        if self._listed_groups != self._groups:
+            self.run_list.clear()
+            for _item, card in self._cards:
+                card.deleteLater()
+            self._cards.clear()
+            self._items_by_id.clear()
+            self._day_headers.clear()
+            previous_day = ""
+            for group in self._groups:
+                day = time.strftime("%Y-%m-%d", time.localtime(group.timestamp))
+                if day != previous_day:
+                    header = QListWidgetItem(day)
+                    header.setFlags(Qt.NoItemFlags)
+                    header.setSizeHint(QSize(0, 24))
+                    self._day_headers[day] = header
+                    previous_day = day
+                item = QListWidgetItem()
+                item.setData(Qt.UserRole, group)
+                item.setSizeHint(QSize(0, 106))
+                self._items_by_id[group.id] = item
+            self._listed_groups = list(self._groups)
+
+        # Les objets lourds sont conserves, seuls les items legers quittent et
+        # rejoignent la liste. Les filtres ne reconstruisent donc plus aucune
+        # carte, tout en gardant une liste ne contenant que les resultats (ce
+        # qui simplifie clavier, selection et accessibilite).
+        while self.run_list.count():
+            item = self.run_list.item(0)
+            if item.data(Qt.UserRole) is not None:
+                self.run_list.removeItemWidget(item)
+            self.run_list.takeItem(0)
+        cards = {id(item): card for item, card in self._cards}
         previous_day = ""
         for group in self._visible_groups:
             day = time.strftime("%Y-%m-%d", time.localtime(group.timestamp))
             if day != previous_day:
-                header = QListWidgetItem(day)
-                header.setFlags(Qt.NoItemFlags)
-                header.setSizeHint(QSize(0, 24))
-                self.run_list.addItem(header)
+                self.run_list.addItem(self._day_headers[day])
                 previous_day = day
-            item = QListWidgetItem()
-            item.setData(Qt.UserRole, group)
-            item.setSizeHint(QSize(0, 106))
+            item = self._items_by_id[group.id]
             self.run_list.addItem(item)
-            card = RunCard(group)
-            self.run_list.setItemWidget(item, card)
-            self._cards.append((item, card))
+            card = cards.get(id(item))
+            if card is not None:
+                self.run_list.setItemWidget(item, card)
         self.run_list.blockSignals(False)
+        self._materialize_cards()
 
         if not self._groups:
             self.left_stack.setCurrentWidget(self.empty)
@@ -803,7 +834,10 @@ class HistoryWindow(QDialog):
         else:
             self.left_stack.setCurrentWidget(self.run_list)
         if self._visible_groups:
-            first = self._first_run_item()
+            current = self.run_list.currentItem()
+            first = (current if current is not None and not current.isHidden()
+                     and current.data(Qt.UserRole) is not None
+                     else self._first_run_item())
             if first is not None:
                 first.setSelected(True)
                 self.run_list.setCurrentItem(first)
@@ -812,10 +846,54 @@ class HistoryWindow(QDialog):
             self.detail_stack.setCurrentWidget(self.detail_empty)
         self._update_compare_action()
 
+    def _materialize_cards(self) -> None:
+        """Ne construit que les cartes proches de la zone visible.
+
+        Une carte est un petit arbre de widgets et de styles. En creer 300 au
+        chargement bloquait plusieurs secondes alors que l'ecran n'en montre
+        qu'une dizaine. Les items restent tous presents pour le clavier et les
+        filtres ; les widgets suivent simplement le viewport.
+        """
+        count = self.run_list.count()
+        if not count:
+            return
+        viewport = self.run_list.viewport()
+        first = self.run_list.indexAt(QPoint(1, 1)).row()
+        last = self.run_list.indexAt(
+            QPoint(1, max(1, viewport.height() - 2))).row()
+        if first < 0:
+            first = 0
+        if last < first:
+            last = min(count - 1, first + 12)
+        wanted = set(range(max(0, first - 3), min(count, last + 4)))
+
+        kept: list[tuple[QListWidgetItem, RunCard]] = []
+        for item, card in self._cards:
+            row = self.run_list.row(item)
+            if row in wanted:
+                kept.append((item, card))
+            else:
+                if row >= 0:
+                    self.run_list.removeItemWidget(item)
+                card.setParent(None)
+                card.deleteLater()
+        self._cards = kept
+        existing = {id(item) for item, _card in kept}
+        selected = set(map(id, self.run_list.selectedItems()))
+        for row in sorted(wanted):
+            item = self.run_list.item(row)
+            group = item.data(Qt.UserRole)
+            if group is None or id(item) in existing:
+                continue
+            card = RunCard(group)
+            card.set_selected(id(item) in selected)
+            self.run_list.setItemWidget(item, card)
+            self._cards.append((item, card))
+
     def _first_run_item(self) -> QListWidgetItem | None:
         for row in range(self.run_list.count()):
             item = self.run_list.item(row)
-            if item.data(Qt.UserRole) is not None:
+            if not item.isHidden() and item.data(Qt.UserRole) is not None:
                 return item
         return None
 
@@ -844,7 +922,9 @@ class HistoryWindow(QDialog):
 
         selected_items = self.run_list.selectedItems()
         for item, card in self._cards:
-            card.set_selected(any(item is selected for selected in selected_items))
+            selected = any(item is candidate for candidate in selected_items)
+            if card._selected != selected:
+                card.set_selected(selected)
 
         group = self._current_group()
         if group is not None:
