@@ -761,7 +761,21 @@ class DetailPanel(QWidget):
         # plus qu'un point vert deja visible dans l'arbre. La carte ci-dessous
         # y ajoute au moins la derniere execution, et si l'historique le sait,
         # a quel point ce verdict tient d'un run a l'autre.
-        pluriel = "every reader" if len(cibles) > 1 else "the last run"
+        #
+        # Ici, aucun lecteur n'est en echec (`is_bad`) -- mais "aucun echec"
+        # ne veut pas dire "tout a passe" : un lecteur peut avoir ete
+        # SKIPPED pendant qu'un autre passait. Le cas "skip partout" est deja
+        # sorti plus haut ; il reste le melange passe/skip a decrire sans
+        # pretendre a tort que tout le monde a passe.
+        skips = sum(1 for s in vus if s is Status.SKIPPED)
+        if skips and len(cibles) > 1:
+            passes = len(cibles) - skips
+            verdict = (
+                f"Passed on {passes} reader{'s' if passes > 1 else ''}, "
+                f"skipped on {skips}.")
+        else:
+            pluriel = "every reader" if len(cibles) > 1 else "the last run"
+            verdict = f"Passed on {pluriel}."
         sous_ligne = ""
         if last_seen is not None:
             sous_ligne = f"Last run: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_seen))}"
@@ -783,7 +797,7 @@ class DetailPanel(QWidget):
             f' padding:{t.SPACE_3}px {t.SPACE_4}px; margin-top:{t.SPACE_1}px;">'
             f'<p style="margin:0; color:{t.status_color(Status.PASSED)};'
             f' font-size:{t.TEXT_MD}px; font-weight:600;">'
-            f"Passed on {pluriel}.</p>{sous_html}</div>")
+            f"{verdict}</p>{sous_html}</div>")
 
     def _copier(self) -> None:
         from PySide6.QtWidgets import QApplication

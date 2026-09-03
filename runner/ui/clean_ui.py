@@ -142,11 +142,18 @@ def pytest_runtest_logstart(nodeid, location):
     original_name_data = TestTreeModel._data_colonne_nom
 
     def _branch_for_nodeid(self, nodeid: str) -> tuple:
-        """Return grouping ancestors once, in O(tree depth)."""
+        """Return the running leaf itself, plus its grouping ancestors, in
+        O(tree depth).
+
+        Sans la feuille, seuls les groupes (fichier, classe, fonction
+        parametree) passaient en bleu pendant l'execution : un test parametre
+        s'arretait donc a la fonction, sans jamais montrer QUEL parametre
+        tournait vraiment.
+        """
         ligne = self._by_nodeid.get(nodeid)
         if ligne is None:
             return ()
-        groupes = []
+        groupes = [ligne]
         parent = ligne.parent
         while parent is not None:
             if parent.children:

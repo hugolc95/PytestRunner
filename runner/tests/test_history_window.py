@@ -466,3 +466,45 @@ def test_restyle_repaints_run_cards_already_on_screen(qapp, historique):
         window.close()
     finally:
         t.set_theme("dark")
+
+
+# ------------------------------------------------------------- stabilite Qt
+
+def test_refreshing_with_the_same_visible_runs_touches_no_item(fenetre, monkeypatch):
+    """Un vrai crash natif (segfault, pas une exception Python) frappait
+    l'appli quand la page Historique etait regardee PENDANT qu'un run tourne
+    encore : `refresh()` retirait puis rajoutait chaque `QListWidgetItem` a
+    chaque appel, meme quand la liste visible n'avait pas change -- et faire
+    ca juste apres qu'une page redevienne visible, avant que sa mise en page
+    ne se stabilise, laissait une reference perimee dans le suivi interne des
+    "editeurs" de Qt, qui plantait au prochain retour sur la page.
+
+    Le remede : ne plus retirer/rajouter les items quand la liste visible
+    n'a pas bouge. Ce test verifie directement l'invariant (aucun item
+    retire), plutot que d'essayer de reproduire un segfault dans une suite
+    de tests -- un crash natif tuerait le process entier, pas seulement ce
+    test."""
+    appels = []
+    original_take = fenetre.run_list.takeItem
+
+    def tracked_take(row):
+        appels.append(row)
+        return original_take(row)
+
+    monkeypatch.setattr(fenetre.run_list, "takeItem", tracked_take)
+
+    fenetre.refresh()  # memes donnees, rien de visible n'a change
+
+    assert appels == [], (
+        "refresh() a retire des items alors que la liste visible etait "
+        "identique -- exactement le remue-menage qui provoquait le crash")
+
+
+def test_refreshing_after_a_real_change_still_updates_the_list(fenetre, historique):
+    """Garde-fou du test precedent : l'optimisation ne doit pas empecher un
+    vrai changement (un nouveau run) de s'afficher."""
+    ajoute(historique, "brand-new", reader="Reader A", echecs=())
+    fenetre.refresh()
+
+    assert [group.id for group in fenetre._groups][0] == "brand-new"
+    assert run_items(fenetre)[0].data(Qt.UserRole).id == "brand-new"

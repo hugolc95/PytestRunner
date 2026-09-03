@@ -372,8 +372,17 @@ class HistoryWindow(QDialog):
         self._visible_groups: list[RunGroup] = []
         self._cards: list[tuple[QListWidgetItem, RunCard]] = []
         self._listed_groups: list[RunGroup] = []
+        self._listed_visible_groups: list[RunGroup] = []
         self._items_by_id: dict[str, QListWidgetItem] = {}
         self._day_headers: dict[str, QListWidgetItem] = {}
+        # `run_list.blockSignals()` ne fait taire QUE `run_list` lui-meme, pas
+        # sa scrollbar verticale : ajouter/retirer des lignes dans
+        # `_populate_list()` peut faire bouger sa plage ou sa valeur, ce qui
+        # rappelle `_materialize_cards()` EN PLEIN MILIEU du remplissage --
+        # une carte fraichement `deleteLater()`-ee par cet appel reentrant
+        # pouvait ensuite etre reutilisee par la boucle exterieure, encore en
+        # cours, via son propre instantane (perime) de `self._cards`.
+        self._populating = False
         self._filter_reader = ""
         self._compare_mode = False
         self._adjusting_selection = False
@@ -780,11 +789,24 @@ class HistoryWindow(QDialog):
         self._populate_list()
 
     def _populate_list(self) -> None:
+        self._populating = True
         self.run_list.blockSignals(True)
         if self._listed_groups != self._groups:
-            self.run_list.clear()
-            for _item, card in self._cards:
+            # `removeItemWidget()` DOIT venir avant `clear()`/`deleteLater()` :
+            # Qt suit les widgets d'index dans la meme structure interne que
+            # les editeurs persistants, et `updateEditorGeometries()` la
+            # reparcourt a chaque fois que la vue redevient visible. Sans ce
+            # detachement explicite -- deja fait correctement dans
+            # `_materialize_cards()` -- `clear()` peut laisser une reference
+            # pendante vers une carte deja detruite, invisible tant qu'on
+            # reste sur la page mais qui fait planter l'appli (segfault natif,
+            # pas une exception Python) au prochain retour sur Historique.
+            for item, card in self._cards:
+                self.run_list.removeItemWidget(item)
+                card.setParent(None)
                 card.deleteLater()
+            while self.run_list.count():
+                self.run_list.takeItem(0)
             self._cards.clear()
             self._items_by_id.clear()
             self._day_headers.clear()
@@ -807,24 +829,38 @@ class HistoryWindow(QDialog):
         # rejoignent la liste. Les filtres ne reconstruisent donc plus aucune
         # carte, tout en gardant une liste ne contenant que les resultats (ce
         # qui simplifie clavier, selection et accessibilite).
-        while self.run_list.count():
-            item = self.run_list.item(0)
-            if item.data(Qt.UserRole) is not None:
-                self.run_list.removeItemWidget(item)
-            self.run_list.takeItem(0)
-        cards = {id(item): card for item, card in self._cards}
-        previous_day = ""
-        for group in self._visible_groups:
-            day = time.strftime("%Y-%m-%d", time.localtime(group.timestamp))
-            if day != previous_day:
-                self.run_list.addItem(self._day_headers[day])
-                previous_day = day
-            item = self._items_by_id[group.id]
-            self.run_list.addItem(item)
-            card = cards.get(id(item))
-            if card is not None:
-                self.run_list.setItemWidget(item, card)
+        #
+        # Rejouer ce remue-menage (tout retirer, tout rajouter) alors que la
+        # liste VISIBLE n'a pas change est a la fois inutile et risque : fait
+        # juste apres qu'une page redevienne visible (par exemple en
+        # regardant l'Historique pendant qu'un run tourne encore), la vue
+        # n'a pas fini de stabiliser sa mise en page, et ce retrait/rajout
+        # d'items pouvait laisser une reference perimee dans le suivi interne
+        # des "editeurs" de Qt -- invisible jusqu'au prochain retour sur la
+        # page, qui plantait alors nativement (segfault, pas une exception
+        # Python). Rien n'a besoin de bouger si la liste affichee est deja
+        # la bonne.
+        if self._visible_groups != self._listed_visible_groups:
+            while self.run_list.count():
+                item = self.run_list.item(0)
+                if item.data(Qt.UserRole) is not None:
+                    self.run_list.removeItemWidget(item)
+                self.run_list.takeItem(0)
+            cards = {id(item): card for item, card in self._cards}
+            previous_day = ""
+            for group in self._visible_groups:
+                day = time.strftime("%Y-%m-%d", time.localtime(group.timestamp))
+                if day != previous_day:
+                    self.run_list.addItem(self._day_headers[day])
+                    previous_day = day
+                item = self._items_by_id[group.id]
+                self.run_list.addItem(item)
+                card = cards.get(id(item))
+                if card is not None:
+                    self.run_list.setItemWidget(item, card)
+            self._listed_visible_groups = list(self._visible_groups)
         self.run_list.blockSignals(False)
+        self._populating = False
         self._materialize_cards()
 
         if not self._groups:
@@ -854,6 +890,13 @@ class HistoryWindow(QDialog):
         qu'une dizaine. Les items restent tous presents pour le clavier et les
         filtres ; les widgets suivent simplement le viewport.
         """
+        if self._populating:
+            # `_populate_list()` a deja prevu son propre appel une fois les
+            # lignes stabilisees ; un signal de sa scrollbar (que son
+            # `blockSignals()` ne couvre pas) peut en rappeler un second en
+            # PLEIN milieu de son remplissage, sur des lignes pas encore a
+            # leur place -- source du crash natif corrige ici.
+            return
         count = self.run_list.count()
         if not count:
             return

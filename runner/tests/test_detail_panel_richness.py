@@ -119,6 +119,21 @@ def test_a_pass_without_any_history_shows_no_sub_line(qapp):
     assert "Last run:" not in panneau.body.toPlainText()
 
 
+def test_a_pass_mixed_with_a_skip_does_not_claim_every_reader_passed(qapp):
+    """Aucun lecteur n'est en echec ici (SKIPPED n'est pas `is_bad`), donc ce
+    cas tombe dans la branche "sans echec" -- qui affichait avant a tort
+    "Passed on every reader" des qu'AUCUN lecteur n'avait echoue, meme quand
+    l'un d'eux avait ete saute plutot que reellement passe."""
+    panneau = DetailPanel()
+    panneau.show_test(
+        NODEID, (Reader("Reader A", 0), Reader("Reader B", 1)),
+        {0: Status.PASSED, 1: Status.SKIPPED}, {0: None, 1: None})
+
+    corps = panneau.body.toPlainText()
+    assert "Passed on every reader" not in corps
+    assert "Passed on 1 reader, skipped on 1." in corps
+
+
 # --------------------------------------------------------------------- restyle
 
 def test_restyle_keeps_the_nodeid_markers_and_sparkline(qapp):
