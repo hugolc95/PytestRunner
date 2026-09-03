@@ -432,7 +432,11 @@ class ReaderResult(QWidget):
         # lues maintenant sont donc toujours celles de la palette courante.
         actif = status is not Status.PENDING
 
-        icone = QLabel()
+        # Le parent doit etre defini AVANT `setVisible(True)`. Sans lui, Qt
+        # considere momentanement le QLabel comme une fenetre autonome : apres
+        # le premier run, chaque selection faisait alors clignoter une petite
+        # fenetre de 14 x 14 px contenant l'icone de statut au-dessus du tree.
+        icone = QLabel(self)
         icone.setPixmap(icons.status_icon(status).pixmap(14, 14))
         icone.setVisible(actif)
 
@@ -442,7 +446,7 @@ class ReaderResult(QWidget):
         # dans une fenetre), poser une feuille ici -- meme une seule regle de
         # couleur -- faisait dessiner a Qt un contour fantome autour de la
         # rangee entiere.
-        texte = QLabel(status.label if actif else "NOT RUN")
+        texte = QLabel(status.label if actif else "NOT RUN", self)
         texte.setObjectName(f"ReaderVerdict_{status.value}")
 
         ligne.addWidget(icone)
