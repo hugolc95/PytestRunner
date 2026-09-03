@@ -530,7 +530,7 @@ class SearchBar(QWidget):
         self._scope = SCOPE_TESTS
         self._typing_timer = QTimer(self)
         self._typing_timer.setSingleShot(True)
-        self._typing_timer.setInterval(120)
+        self._typing_timer.setInterval(80)
         self._typing_timer.timeout.connect(self._emit_query)
 
         ligne = QHBoxLayout(self)

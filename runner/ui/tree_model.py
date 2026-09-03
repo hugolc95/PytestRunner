@@ -324,7 +324,10 @@ class TestTreeModel(QAbstractItemModel):
 
     def set_all_checked(self, coche: bool) -> None:
         for racine in self._roots:
-            self._set_checked(racine, coche)
+            racine.checked = coche
+            for ligne in racine.descendants():
+                ligne.checked = coche
+        self.layoutChanged.emit()
         self._emit_selection()
 
     def set_checked_nodeids(self, nodeids) -> None:
@@ -348,16 +351,17 @@ class TestTreeModel(QAbstractItemModel):
         evite cette explosion : la vue ne requalifie chaque noeud visible
         qu'UNE fois, pas une fois par feuille cochee.
         """
-        self.set_all_checked(False)
+        for racine in self._roots:
+            racine.checked = False
+            for ligne in racine.descendants():
+                ligne.checked = False
+        self._emit_selection()
         retenus = set(nodeids)
-        trouve = False
         for nodeid in retenus:
             ligne = self._by_nodeid.get(nodeid)
             if ligne is not None:
                 ligne.checked = True
-                trouve = True
-        if trouve:
-            self._refresh_checkbox_display()
+        self.layoutChanged.emit()
         self._emit_selection()
 
     def _refresh_checkbox_display(self) -> None:
@@ -489,14 +493,7 @@ class TestTreeModel(QAbstractItemModel):
                 # garder ferait afficher en rouge des dossiers remis a zero.
                 ligne.agg.clear()
 
-        colonnes = self.columnCount() - 1
-        for racine in self._roots:
-            for ligne in [racine, *racine.descendants()]:
-                self.dataChanged.emit(
-                    self.createIndex(ligne.row, 1, ligne),
-                    self.createIndex(ligne.row, colonnes, ligne),
-                    [Qt.DecorationRole, Qt.ToolTipRole],
-                )
+        self.layoutChanged.emit()
 
     def subtree_summary(self, index: QModelIndex) -> tuple[dict, list]:
         """Bilan de ce que contient ce noeud : compteurs et echecs.
