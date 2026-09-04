@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
 from runner.domain import logs, report
 from runner.domain.history import History, RunEntry, compare
 from runner.domain.models import Reader, Status
+from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.history_window import FlakyDialog
 from runner.ui.results_panel import ReaderViews
@@ -121,6 +122,13 @@ class RunGroup:
     def ok(self) -> bool:
         return self.issues == 0
 
+    @property
+    def locked(self) -> bool:
+        # `History.set_locked()` verrouille toujours TOUTES les entrees d'un
+        # meme run d'un coup ; `all()` reste correct meme dans le cas
+        # (normalement impossible) ou elles divergeraient.
+        return bool(self.entries) and all(entry.locked for entry in self.entries)
+
     def entry_for_reader(self, reader: str) -> RunEntry | None:
         return next((entry for entry in self.entries
                      if entry.reader == reader), None)
@@ -167,6 +175,9 @@ class RunCard(QFrame):
     les jetons courants, et `restyle()` la rejoue sans rien reconstruire.
     """
 
+    lock_toggled = Signal(object)
+    delete_requested = Signal(object)
+
     def __init__(self, group: RunGroup, parent=None):
         super().__init__(parent)
         self.group = group
@@ -191,6 +202,8 @@ class RunCard(QFrame):
         top.addStretch(1)
         top.addWidget(self._label(f"{group.duration:.1f}s", t.TEXT_XS, 500,
                                   lambda: t.TEXT_MUTED))
+        top.addWidget(self._lock_button(group))
+        top.addWidget(self._delete_button())
 
         counts = QHBoxLayout()
         counts.setSpacing(t.SPACE_3)
@@ -256,6 +269,43 @@ class RunCard(QFrame):
         self._paint(label, style)
         label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         return label
+
+    def _lock_button(self, group: RunGroup) -> QPushButton:
+        bouton = QPushButton()
+        bouton.setObjectName("IconSm")
+        bouton.setCheckable(True)
+        bouton.setChecked(group.locked)
+        bouton.setCursor(Qt.PointingHandCursor)
+        bouton.clicked.connect(lambda: self.lock_toggled.emit(self.group))
+        self.lock_button = bouton
+
+        def style() -> None:
+            verrouille = bouton.isChecked()
+            bouton.setToolTip(
+                "Unprotect this run (Clear history will remove it)"
+                if verrouille else "Protect this run from Clear history")
+            couleur = t.ACCENT if verrouille else t.TEXT_MUTED
+            glyphe = "mdi.lock" if verrouille else "mdi.lock-open-variant-outline"
+            bouton.setIcon(icons.icon(glyphe, couleur))
+
+        self._repeints.append(style)
+        style()
+        return bouton
+
+    def _delete_button(self) -> QPushButton:
+        bouton = QPushButton()
+        bouton.setObjectName("IconSm")
+        bouton.setCursor(Qt.PointingHandCursor)
+        bouton.setToolTip("Delete this run")
+        bouton.clicked.connect(lambda: self.delete_requested.emit(self.group))
+        self.delete_button = bouton
+
+        def style() -> None:
+            bouton.setIcon(icons.icon("mdi.trash-can-outline", t.TEXT_MUTED))
+
+        self._repeints.append(style)
+        style()
+        return bouton
 
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
@@ -930,6 +980,8 @@ class HistoryWindow(QDialog):
                 continue
             card = RunCard(group)
             card.set_selected(id(item) in selected)
+            card.lock_toggled.connect(self._toggle_lock)
+            card.delete_requested.connect(self.delete_run)
             self.run_list.setItemWidget(item, card)
             self._cards.append((item, card))
 
@@ -1157,8 +1209,12 @@ class HistoryWindow(QDialog):
         group = self._current_group()
         return group.entries[0] if group and group.entries else None
 
-    def delete_run(self) -> None:
-        group = self._current_group()
+    def delete_run(self, group: RunGroup | None = None) -> None:
+        # `group` peut arriver d'un signal Qt sans rapport (le bouton "Delete
+        # run" du panneau emet un `bool` de coche) : ne garder que le cas ou
+        # c'est vraiment un `RunGroup`, sinon retomber sur la selection
+        # courante comme avant.
+        group = group if isinstance(group, RunGroup) else self._current_group()
         if group is None:
             return
         answer = QMessageBox.question(
@@ -1172,18 +1228,37 @@ class HistoryWindow(QDialog):
         self.refresh()
         self._say(f"Run deleted ({removed} reader entries).")
 
-    def clear_history(self) -> None:
-        if not self._groups:
+    def _toggle_lock(self, group: RunGroup) -> None:
+        if group is None:
             return
+        verrouille = not group.locked
+        self.history.set_locked(group.id, verrouille)
+        self.refresh()
+        self._say("Run protected from Clear history." if verrouille
+                  else "Run no longer protected.")
+
+    def clear_history(self) -> None:
+        removable = [group for group in self._groups if not group.locked]
+        if not removable:
+            if self._groups:
+                self._say("Every run is protected -- nothing to clear.")
+            return
+        locked_count = len(self._groups) - len(removable)
+        message = (f"Delete {len(removable)} recorded run"
+                  f"{'s' if len(removable) != 1 else ''} and their saved outputs?")
+        if locked_count:
+            message += (f" ({locked_count} protected run"
+                        f"{'s' if locked_count != 1 else ''} will be kept.)")
         answer = QMessageBox.question(
-            self, "Clear history",
-            f"Delete all {len(self._groups)} recorded runs and their saved outputs?",
+            self, "Clear history", message,
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         if answer != QMessageBox.Yes:
             return
         self.history.clear()
         self.refresh()
-        self._say("History cleared.")
+        self._say("History cleared." if not locked_count else
+                  f"History cleared ({locked_count} protected run"
+                  f"{'s' if locked_count != 1 else ''} kept).")
 
     def show_flaky(self) -> None:
         FlakyDialog(self.history.flaky(), self).exec()

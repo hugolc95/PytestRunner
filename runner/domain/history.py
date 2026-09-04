@@ -73,6 +73,9 @@ class RunEntry:
     failed_nodeids: tuple[str, ...] = ()
     output_file: str = ""
     junit_path: str = ""
+    # Protege ce run d'un "Clear history" global -- pas d'une suppression
+    # explicite au coup par coup, toujours possible meme verrouille.
+    locked: bool = False
 
     @property
     def total(self) -> int:
@@ -116,6 +119,7 @@ class RunEntry:
             "nodeids": list(self.nodeids),
             "failed_nodeids": list(self.failed_nodeids),
             "output_file": self.output_file, "junit_path": self.junit_path,
+            "locked": self.locked,
         }
 
     @classmethod
@@ -143,6 +147,7 @@ class RunEntry:
                 failed_nodeids=tuple(donnees.get("failed_nodeids") or ()),
                 output_file=str(donnees.get("output_file", "")),
                 junit_path=str(donnees.get("junit_path", "")),
+                locked=bool(donnees.get("locked", False)),
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             # `AttributeError` compte autant que les autres : un `counts`
@@ -334,10 +339,31 @@ class History:
         return entry
 
     def clear(self) -> None:
-        """Efface tout, fichiers de sortie compris."""
-        self._oublier(self._entrees)
-        self._entrees = []
+        """Efface tout SAUF les runs verrouilles, fichiers de sortie compris."""
+        a_effacer = [e for e in self._entrees if not e.locked]
+        self._oublier(a_effacer)
+        self._entrees = [e for e in self._entrees if e.locked]
         self._enregistrer()
+
+    def set_locked(self, identifiant: str, verrouille: bool) -> int:
+        """Verrouille ou deverrouille un lancement entier (toutes ses
+        entrees Reader), pour qu'un futur `clear()` le laisse tranquille.
+
+        Ne bloque jamais une suppression explicite (`remove_run`) : le
+        cadenas protege seulement du "tout effacer" en un clic, pas d'un
+        choix delibere de retirer ce run precis.
+        """
+        touchees = 0
+        nouvelles = []
+        for entree in self._entrees:
+            if entree.id == identifiant and entree.locked != verrouille:
+                entree = replace(entree, locked=verrouille)
+                touchees += 1
+            nouvelles.append(entree)
+        if touchees:
+            self._entrees = nouvelles
+            self._enregistrer()
+        return touchees
 
     def remove_run(self, identifiant: str) -> int:
         """Efface un lancement complet, donc toutes ses entrees Reader.

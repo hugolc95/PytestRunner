@@ -126,6 +126,63 @@ def test_clearing_removes_the_saved_output_too(historique, tmp_path):
     assert not (tmp_path / garde.output_file.split("/")[-1]).exists()
 
 
+def test_a_locked_run_survives_clear(historique, tmp_path):
+    """Le cadenas protege du "tout effacer" en un clic, pas d'une
+    suppression deliberee au coup par coup -- voir le test suivant."""
+    garde = historique.add(entree("protege"), output="a garder")
+    historique.set_locked("protege", True)
+    historique.add(entree("normal"), output="a jeter")
+
+    historique.clear()
+
+    assert [e.id for e in historique.entries()] == ["protege"]
+    assert garde.output() == "" or (tmp_path / garde.output_file.split("/")[-1]).exists()
+
+
+def test_locking_covers_every_reader_of_the_same_run(historique):
+    """Un meme id de run est partage par ses lecteurs : verrouiller doit les
+    proteger tous, pas seulement celui qu'on avait sous la main."""
+    historique.add(entree("run", reader="A"))
+    historique.add(entree("run", reader="B"))
+
+    touchees = historique.set_locked("run", True)
+    historique.clear()
+
+    assert touchees == 2
+    assert len(historique.entries()) == 2
+    assert all(e.locked for e in historique.entries())
+
+
+def test_unlocking_makes_a_run_clearable_again(historique):
+    historique.add(entree("run"))
+    historique.set_locked("run", True)
+    historique.set_locked("run", False)
+
+    historique.clear()
+
+    assert historique.entries() == []
+
+
+def test_locking_survives_a_restart(historique, tmp_path):
+    historique.add(entree("run"))
+    historique.set_locked("run", True)
+
+    relu = History(tmp_path)
+    assert relu.entries()[0].locked is True
+
+
+def test_a_locked_run_can_still_be_removed_explicitly(historique):
+    """Le cadenas n'empeche pas un choix delibere de retirer CE run precis --
+    seulement le "tout effacer" global."""
+    historique.add(entree("run"))
+    historique.set_locked("run", True)
+
+    removed = historique.remove_run("run")
+
+    assert removed == 1
+    assert historique.entries() == []
+
+
 def test_removing_a_run_removes_all_its_readers_and_outputs(historique):
     a = historique.add(entree("run", reader="A"), output="A")
     b = historique.add(entree("run", reader="B"), output="B")
