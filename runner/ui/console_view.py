@@ -59,6 +59,7 @@ class ConsoleView(QWidget):
         super().__init__(parent)
         self._lines: list[str] = []
         self._visibles = 0          # lignes retenues par la lentille courante
+        self._tronque_source = 0    # lignes coupees par `set_text()`, avant la lentille
         self._reste = ""            # ligne en cours, pas encore terminee
         self._lens = Lens.ALL
         # Le filtre suit le flux au fur et a mesure : il doit savoir dans
@@ -223,16 +224,32 @@ class ConsoleView(QWidget):
         self._scroll_si_suivi()
 
     def set_text(self, texte: str) -> None:
-        """Remplace tout le flux d'un coup."""
+        """Remplace tout le flux d'un coup.
+
+        Contrairement a `append()`, tout arrive ici en une seule fois -- un run
+        historique charge depuis le disque peut compter plusieurs centaines de
+        milliers de lignes. `setMaximumBlockCount()` sur la zone de texte ne
+        protege que le flux qui arrive petit a petit : il faudrait quand meme
+        d'abord INSERER chaque ligne avant que Qt n'en rejette les plus
+        anciennes, et c'est cette insertion, ligne par ligne, qui gele
+        l'interface. Le tampon est donc rogne AVANT le rendu, comme `append()`
+        le fait deja au fil de l'eau -- le fichier complet reste ouvrable via
+        "Open log", seul l'affichage se limite.
+        """
         self._reste = ""
-        self._lines = (texte or "").replace("\r\n", "\n").replace("\r", "").split("\n")
-        if self._lines and self._lines[-1] == "":
-            self._lines.pop()
+        lignes = (texte or "").replace("\r\n", "\n").replace("\r", "").split("\n")
+        if lignes and lignes[-1] == "":
+            lignes.pop()
+        self._tronque_source = max(0, len(lignes) - MAX_LIGNES) if len(lignes) > MARGE_LIGNES else 0
+        if self._tronque_source:
+            del lignes[:len(lignes) - MAX_LIGNES]
+        self._lines = lignes
         self._repaint()
 
     def clear(self) -> None:
         self._lines = []
         self._visibles = 0
+        self._tronque_source = 0
         self._reste = ""
         self._filtre.reset()
         self.view.clear()
@@ -325,6 +342,13 @@ class ConsoleView(QWidget):
 
         if not total:
             self.counter.setText("")
+        elif self._tronque_source:
+            # Le fichier source depassait largement ce qu'on garde affiche :
+            # le dire evite de croire, a tort, qu'un run enorme n'a produit
+            # que ces quelques milliers de lignes.
+            self.counter.setText(
+                f"last {visibles} of {total + self._tronque_source} lines "
+                "— open the log file for the rest")
         elif caches:
             # Dire combien de lignes sont masquees : sans ce chiffre, une
             # lentille active ressemble a une console qui a perdu sa sortie.
