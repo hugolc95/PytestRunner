@@ -45,6 +45,22 @@ from runner.ui import tokens as t
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import ErrorDialog
 
+# Separates the nodeids of one grouped sequence step in the data a
+# `QListWidgetItem` carries. `sequence_list` allows internal drag-and-drop
+# reordering, which asks Qt to move item data around on its own -- a plain
+# `str` is exactly the kind of value that machinery already handled correctly
+# before this grouping existed, unlike a Python tuple/list, which is opaque
+# to it. \x1f (ASCII "unit separator") never occurs in a real nodeid.
+_SEPARATEUR_GROUPE = "\x1f"
+
+
+def _encode_group(groupe) -> str:
+    return _SEPARATEUR_GROUPE.join(groupe)
+
+
+def _decode_group(encoded: str) -> tuple[str, ...]:
+    return tuple(encoded.split(_SEPARATEUR_GROUPE))
+
 
 class AddTestsDialog(QDialog):
     """Test picker where each Add action creates one sequence occurrence."""
@@ -400,7 +416,8 @@ class ExecutionProfilesPage(QWidget):
             config_text = Path(chosen).read_text(encoding="utf-8")
         sequence = [nodeid
                     for index in range(self.sequence_list.count())
-                    for nodeid in self.sequence_list.item(index).data(Qt.UserRole)]
+                    for nodeid in _decode_group(
+                        self.sequence_list.item(index).data(Qt.UserRole))]
         return ExecutionProfile(
             profile_id=str(uuid.uuid4()) if new_id or current is None else current.profile_id,
             name=self.name_edit.text().strip(),
@@ -472,14 +489,16 @@ class ExecutionProfilesPage(QWidget):
         dialog.exec()
 
     @staticmethod
-    def _step_label(groupe: tuple[str, ...]) -> str:
+    def _step_label(encoded: str) -> str:
+        groupe = _decode_group(encoded)
         if len(groupe) == 1:
             return groupe[0]
         return f"{parameter_base(groupe[0])}   ({len(groupe)} parameter cases)"
 
-    def _step_item(self, numero: int, groupe: tuple[str, ...]) -> QListWidgetItem:
-        item = QListWidgetItem(f"{numero:>3}   {self._step_label(groupe)}")
-        item.setData(Qt.UserRole, tuple(groupe))
+    def _step_item(self, numero: int, groupe) -> QListWidgetItem:
+        encoded = _encode_group(groupe)
+        item = QListWidgetItem(f"{numero:>3}   {self._step_label(encoded)}")
+        item.setData(Qt.UserRole, encoded)
         return item
 
     def _append_tests(self, nodeids: list[str]) -> None:
@@ -492,7 +511,7 @@ class ExecutionProfilesPage(QWidget):
         rows = sorted(self.sequence_list.row(item)
                       for item in self.sequence_list.selectedItems())
         for row in rows:
-            groupe = self.sequence_list.item(row).data(Qt.UserRole)
+            groupe = _decode_group(self.sequence_list.item(row).data(Qt.UserRole))
             self.sequence_list.insertItem(row + 1, self._step_item(0, groupe))
         self._renumber()
         self._mark_dirty()

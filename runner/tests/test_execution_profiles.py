@@ -200,6 +200,31 @@ def test_profile_page_can_add_the_same_test_more_than_once(qapp, tmp_path):
         page.close()
 
 
+def test_profile_page_collapses_parameter_cases_into_one_row_and_back(qapp, tmp_path):
+    """Le regroupement vit dans les donnees Qt de la carte (`Qt.UserRole`) --
+    ce test verifie l'aller-retour reel via le widget, pas seulement la
+    fonction de regroupement du domaine (deja couverte a part)."""
+    nodeids = [
+        "tests/test_api.py::test_login[admin]",
+        "tests/test_api.py::test_login[user]",
+        "tests/test_api.py::test_login[guest]",
+    ]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        page._append_tests(nodeids)
+
+        assert page.sequence_list.count() == 1
+        assert "3 parameter cases" in page.sequence_list.item(0).text()
+
+        page.new_profile()
+        page._append_tests(nodeids)
+        profile = page._profile_from_editor()
+        assert list(profile.sequence) == nodeids
+    finally:
+        page.close()
+
+
 def test_add_tests_tree_can_select_a_folder_and_a_single_test(qapp):
     nodeids = [
         "suite/test_api.py::test_login[admin]",
