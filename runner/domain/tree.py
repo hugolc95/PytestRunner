@@ -78,6 +78,54 @@ def build_tree(nodeids) -> list[TestNode]:
     return racines
 
 
+def parameter_base(nodeid: str) -> str:
+    """`nodeid` without its trailing `[case]`, or `nodeid` itself when it
+    isn't parametrized.
+
+    The bracket only ever sits on the last `::`-segment (pytest never
+    parametrizes a class), so only that segment needs the check.
+    """
+    chemin, separateur, dernier = nodeid.rpartition("::")
+    correspondance = _PARAMETRE.match(dernier)
+    if not correspondance:
+        return nodeid
+    return f"{chemin}{separateur}{correspondance.group('nom')}"
+
+
+def group_consecutive_parameters(nodeids) -> list[tuple[str, ...]]:
+    """Consecutive nodeids sharing the same parametrized base, grouped.
+
+    Checking one heavily parametrized test (or a whole folder) can select
+    thousands of individual cases in one click. `checked_nodeids()` already
+    returns them in tree order, so every case of the same test is already
+    adjacent -- grouping what's adjacent AND shares a base turns that into
+    one entry instead of one per case, without reordering or losing any of
+    them (a caller can always flatten a group back to its nodeids).
+
+    Two deliberate repeats of the very same nodeid -- parametrized or not --
+    must stay two distinct entries instead of silently becoming "2 parameter
+    cases" of something that only ever had one: a non-parametrized nodeid
+    never merges with its neighbour since its "base" is itself, and a
+    parametrized one is checked against the group's last entry directly.
+    """
+    groupes: list[tuple[str, ...]] = []
+    courant: list[str] = []
+    base_courante = None
+    for nodeid in nodeids:
+        base = parameter_base(nodeid)
+        if (courant and base == base_courante and base != nodeid
+                and nodeid != courant[-1]):
+            courant.append(nodeid)
+            continue
+        if courant:
+            groupes.append(tuple(courant))
+        courant = [nodeid]
+        base_courante = base
+    if courant:
+        groupes.append(tuple(courant))
+    return groupes
+
+
 def collapse_single_class(racines: list[TestNode]) -> list[TestNode]:
     """Retire les classes uniques, qui n'apportent qu'un niveau a deplier.
 

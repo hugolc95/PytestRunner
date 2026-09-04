@@ -39,7 +39,7 @@ from runner.domain.execution_profile import (
     export_profile,
     inspect_profile,
 )
-from runner.domain.tree import build_tree
+from runner.domain.tree import build_tree, group_consecutive_parameters, parameter_base
 from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
@@ -358,10 +358,8 @@ class ExecutionProfilesPage(QWidget):
         self.description_edit.setPlainText(profile.description)
         self.config_edit.setText(profile.configuration_name)
         self.sequence_list.clear()
-        for index, nodeid in enumerate(profile.sequence, 1):
-            item = QListWidgetItem(f"{index:>3}   {nodeid}")
-            item.setData(Qt.UserRole, nodeid)
-            self.sequence_list.addItem(item)
+        for index, groupe in enumerate(group_consecutive_parameters(profile.sequence), 1):
+            self.sequence_list.addItem(self._step_item(index, groupe))
         self.repetitions.setValue(profile.execution.repetitions)
         self.rerun_failures.setValue(profile.execution.rerun_failures)
         self.stop_after_failure.setChecked(profile.execution.stop_after_failure)
@@ -400,8 +398,9 @@ class ExecutionProfilesPage(QWidget):
         if chosen and Path(chosen).is_file():
             config_name = Path(chosen).name
             config_text = Path(chosen).read_text(encoding="utf-8")
-        sequence = [self.sequence_list.item(index).data(Qt.UserRole)
-                    for index in range(self.sequence_list.count())]
+        sequence = [nodeid
+                    for index in range(self.sequence_list.count())
+                    for nodeid in self.sequence_list.item(index).data(Qt.UserRole)]
         return ExecutionProfile(
             profile_id=str(uuid.uuid4()) if new_id or current is None else current.profile_id,
             name=self.name_edit.text().strip(),
@@ -472,22 +471,29 @@ class ExecutionProfilesPage(QWidget):
         dialog.tests_added.connect(self._append_tests)
         dialog.exec()
 
+    @staticmethod
+    def _step_label(groupe: tuple[str, ...]) -> str:
+        if len(groupe) == 1:
+            return groupe[0]
+        return f"{parameter_base(groupe[0])}   ({len(groupe)} parameter cases)"
+
+    def _step_item(self, numero: int, groupe: tuple[str, ...]) -> QListWidgetItem:
+        item = QListWidgetItem(f"{numero:>3}   {self._step_label(groupe)}")
+        item.setData(Qt.UserRole, tuple(groupe))
+        return item
+
     def _append_tests(self, nodeids: list[str]) -> None:
-        for nodeid in nodeids:
+        for groupe in group_consecutive_parameters(nodeids):
             index = self.sequence_list.count() + 1
-            item = QListWidgetItem(f"{index:>3}   {nodeid}")
-            item.setData(Qt.UserRole, nodeid)
-            self.sequence_list.addItem(item)
+            self.sequence_list.addItem(self._step_item(index, groupe))
         self._mark_dirty()
 
     def duplicate_steps(self) -> None:
         rows = sorted(self.sequence_list.row(item)
                       for item in self.sequence_list.selectedItems())
         for row in rows:
-            nodeid = self.sequence_list.item(row).data(Qt.UserRole)
-            item = QListWidgetItem(nodeid)
-            item.setData(Qt.UserRole, nodeid)
-            self.sequence_list.insertItem(row + 1, item)
+            groupe = self.sequence_list.item(row).data(Qt.UserRole)
+            self.sequence_list.insertItem(row + 1, self._step_item(0, groupe))
         self._renumber()
         self._mark_dirty()
 
@@ -500,7 +506,7 @@ class ExecutionProfilesPage(QWidget):
     def _renumber(self) -> None:
         for index in range(self.sequence_list.count()):
             item = self.sequence_list.item(index)
-            item.setText(f"{index + 1:>3}   {item.data(Qt.UserRole)}")
+            item.setText(f"{index + 1:>3}   {self._step_label(item.data(Qt.UserRole))}")
 
     def _options_changed(self) -> None:
         self._mark_dirty()
