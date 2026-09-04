@@ -333,6 +333,102 @@ def test_clear_after_confirmation_empties_the_dashboard(fenetre, monkeypatch):
     assert fenetre.left_stack.currentWidget() is fenetre.empty
 
 
+# --------------------------------------------------------- cadenas / suppression rapide
+
+def _group_by_id(fenetre, identifiant):
+    return next(group for group in fenetre._groups if group.id == identifiant)
+
+
+def _card_for(fenetre, identifiant):
+    return next(card for _item, card in fenetre._cards
+                if card.group.id == identifiant)
+
+
+def test_locking_a_run_protects_it_from_clear_history(fenetre, monkeypatch):
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.Yes))
+    group = select_run(fenetre, 0)
+
+    fenetre._toggle_lock(group)
+    fenetre.clear_history()
+
+    remaining = {entry.id for entry in fenetre.history.entries()}
+    assert group.id in remaining
+    assert len(fenetre.history.entries()) == 2
+
+
+def test_unlocking_a_run_makes_it_clearable_again(fenetre, monkeypatch):
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.Yes))
+    group = select_run(fenetre, 0)
+
+    fenetre._toggle_lock(group)
+    fenetre._toggle_lock(_group_by_id(fenetre, group.id))
+    fenetre.clear_history()
+
+    assert fenetre.history.entries() == []
+
+
+def test_clear_history_message_mentions_the_protected_runs(fenetre, monkeypatch):
+    seen = {}
+
+    def fake_question(*args, **kwargs):
+        seen["message"] = args[2]
+        return QMessageBox.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(fake_question))
+    group = select_run(fenetre, 0)
+    fenetre._toggle_lock(group)
+
+    fenetre.clear_history()
+
+    assert "1 protected run" in seen["message"]
+    assert "Delete 1 recorded run" in seen["message"]
+
+
+def test_run_card_lock_button_reflects_and_toggles_the_lock_state(fenetre):
+    group = fenetre._groups[0]
+    card = _card_for(fenetre, group.id)
+    assert card.lock_button.isChecked() is False
+
+    card.lock_button.click()
+
+    assert _group_by_id(fenetre, group.id).locked is True
+
+
+def test_run_card_delete_button_removes_that_specific_run(fenetre, monkeypatch):
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.Yes))
+    # Selectionne un run different de celui qu'on va supprimer depuis sa
+    # carte : le bouton doit agir sur SON run, pas sur la selection courante.
+    select_run(fenetre, 0)
+    other_id = fenetre._groups[1].id
+    card = _card_for(fenetre, other_id)
+
+    card.delete_button.click()
+
+    assert other_id not in {entry.id for entry in fenetre.history.entries()}
+    assert len(fenetre.history.entries()) == 2
+
+
+def test_a_locked_run_can_still_be_deleted_from_its_card(fenetre, monkeypatch):
+    """Le cadenas protege du "tout effacer", pas d'une suppression au coup
+    par coup deliberee via le bouton delete de la carte."""
+    monkeypatch.setattr(
+        QMessageBox, "question",
+        staticmethod(lambda *args, **kwargs: QMessageBox.Yes))
+    group = fenetre._groups[0]
+    fenetre._toggle_lock(group)
+    card = _card_for(fenetre, group.id)
+
+    card.delete_button.click()
+
+    assert group.id not in {entry.id for entry in fenetre.history.entries()}
+
+
 # -------------------------------------------------------------- comparaison
 
 def test_compare_mode_allows_two_clicks_without_ctrl(fenetre):
