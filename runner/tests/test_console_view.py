@@ -98,6 +98,30 @@ def test_going_back_to_all_restores_every_line(console):
     assert console.view.toPlainText() == attendu
 
 
+def test_loading_a_huge_saved_run_does_not_insert_every_line(console):
+    """Un run historique charge d'un coup (`set_text`) peut compter des
+    centaines de milliers de lignes -- les inserer toutes dans la zone de
+    texte gele l'interface. `set_text()` doit rogner AVANT le rendu, comme
+    `append()` le fait deja au fil de l'eau."""
+    from runner.ui.console_view import MAX_LIGNES
+
+    enorme = "".join(f"ligne {i}\n" for i in range(MAX_LIGNES * 3))
+
+    console.set_text(enorme)
+
+    assert console.view.document().blockCount() <= MAX_LIGNES + 1
+    assert f"of {MAX_LIGNES * 3} lines" in console.counter.text()
+    # La toute derniere ligne source doit rester visible : c'est la fin d'un
+    # run pytest qui porte le resume et, en general, les echecs.
+    assert f"ligne {MAX_LIGNES * 3 - 1}" in console.view.toPlainText()
+
+
+def test_a_normal_sized_run_is_not_truncated(console):
+    console.set_text("a\nb\nc\n")
+    assert console.counter.text() == "3 lines"
+    assert console.view.toPlainText().splitlines() == ["a", "b", "c"]
+
+
 def test_the_counter_says_how_many_lines_are_hidden(console):
     console.append(SORTIE)
     assert "lines" in console.counter.text()
