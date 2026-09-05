@@ -124,6 +124,45 @@ def test_checking_a_box_works_when_qt_passes_a_plain_int(model):
     assert model.data(feuille, Qt.CheckStateRole) == Qt.Checked
 
 
+def test_checking_a_box_defers_the_repaint_signal(model, qapp):
+    """`setData()` s'execute PENDANT que la vue traite elle-meme le clic sur
+    la case (c'est son delegue qui appelle `setData()`). Un `layoutChanged`
+    emis en synchrone, depuis ce point, retombe dans le code C++ de la vue
+    avant qu'il ait fini de traiter ce clic -- plante en usage reel (crash
+    natif dans Qt6Core.dll, capture par l'observateur d'evenements Windows)
+    des qu'une vue reelle est attachee et enveloppee dans un
+    `QSortFilterProxyModel` (le cas d'`AddTestsDialog`) ; reproduit ici meme
+    avec `QTest.mouseClick()` sur une seule feuille tant que le signal part
+    en synchrone (`test_add_tests_tree_can_be_checked_with_a_real_click`).
+    Le signal doit donc attendre le prochain tour de la boucle d'evenements."""
+    recus = []
+    model.layoutChanged.connect(lambda: recus.append(True))
+
+    model.setData(_racine(model), Qt.Unchecked, Qt.CheckStateRole)
+    assert recus == [], "layoutChanged est parti en synchrone depuis setData()"
+
+    qapp.processEvents()
+    assert recus == [True]
+    # La donnee, elle, n'attend jamais la boucle d'evenements.
+    assert model.checked_nodeids() == []
+
+
+def test_a_deferred_repaint_after_the_model_is_gone_does_not_raise(qapp):
+    """La boite de dialogue (et donc ce modele) peut fermer avant que le
+    `layoutChanged` differe n'arrive : PySide6 leve alors un `RuntimeError`
+    pour l'objet C++ deja detruit -- `_emit_layout_changed_if_alive()` doit
+    l'avaler plutot que le laisser remonter."""
+    import shiboken6
+
+    modele = TestTreeModel()
+    modele.set_tree(build_tree(NODEIDS))
+    modele.setData(_racine(modele), Qt.Unchecked, Qt.CheckStateRole)
+
+    shiboken6.delete(modele)  # simule la fermeture de la boite de dialogue
+
+    qapp.processEvents()  # laisse le `layoutChanged` differe se presenter
+
+
 def test_a_partly_checked_folder_says_so(model):
     """Ni coche ni decoche : l'etat intermediaire evite de croire que tout le
     dossier part au run."""
