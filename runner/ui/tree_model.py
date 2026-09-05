@@ -327,16 +327,36 @@ class TestTreeModel(QAbstractItemModel):
         pour regarder ce signal.
         """
         try:
-            self.layoutChanged.emit()
+            self._emit_layout_changed()
         except RuntimeError:
             pass
+
+    def _emit_layout_changed(self) -> None:
+        """Emet la paire complete -- jamais `layoutChanged` tout seul.
+
+        `layoutChanged` sans le `layoutAboutToBeChanged` qui doit le precéder
+        casse un vrai contrat Qt, pas juste une negligence de style : un
+        `QSortFilterProxyModel` (le cas d'`AddTestsDialog`) s'appuie sur les
+        DEUX signaux pour reconstruire sa table de tri/filtrage -- il capture
+        son etat "avant" sur le premier, puis remappe ses index persistants
+        sur le second a partir de CET instantane. Sans le premier signal, le
+        second remappe a partir d'un instantane jamais pris : c'est resté un
+        crash natif dans Qt6Core.dll (access violation), confirme par
+        l'observateur d'evenements Windows, meme apres avoir reporte
+        l'emission au tour de boucle suivant -- reporter QUAND on l'emet ne
+        corrige pas le fait qu'on emettait le mauvais signal.
+        Rien d'autre a faire entre les deux : aucun `internalPointer()` ne
+        change ici, seul `.checked` bouge sur des `_Row` deja en place.
+        """
+        self.layoutAboutToBeChanged.emit()
+        self.layoutChanged.emit()
 
     def set_all_checked(self, coche: bool) -> None:
         for racine in self._roots:
             racine.checked = coche
             for ligne in racine.descendants():
                 ligne.checked = coche
-        self.layoutChanged.emit()
+        self._emit_layout_changed()
         self._emit_selection()
 
     def set_checked_nodeids(self, nodeids) -> None:
@@ -370,7 +390,7 @@ class TestTreeModel(QAbstractItemModel):
             ligne = self._by_nodeid.get(nodeid)
             if ligne is not None:
                 ligne.checked = True
-        self.layoutChanged.emit()
+        self._emit_layout_changed()
         self._emit_selection()
 
     def checked_nodeids(self) -> list[str]:

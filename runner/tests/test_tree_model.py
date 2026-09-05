@@ -147,6 +147,32 @@ def test_checking_a_box_defers_the_repaint_signal(model, qapp):
     assert model.checked_nodeids() == []
 
 
+def test_checking_a_box_always_pairs_the_two_layout_signals(model, qapp):
+    """`layoutChanged` sans le `layoutAboutToBeChanged` qui doit le precéder
+    casse un vrai contrat Qt : un `QSortFilterProxyModel` (le cas
+    d'`AddTestsDialog`) capture son etat "avant" sur le premier signal, puis
+    remappe ses index persistants sur le second a partir de CET instantane.
+    Sans le premier, ce remappage part d'un instantane jamais pris -- reste
+    un crash natif dans Qt6Core.dll meme apres avoir differe l'emission au
+    tour de boucle suivant, car reporter QUAND on emet ne corrige pas le fait
+    d'emettre le mauvais signal."""
+    ordre = []
+    model.layoutAboutToBeChanged.connect(lambda: ordre.append("about_to"))
+    model.layoutChanged.connect(lambda: ordre.append("changed"))
+
+    model.set_all_checked(False)
+    assert ordre == ["about_to", "changed"]
+
+    ordre.clear()
+    model.set_checked_nodeids([NODEIDS[0]])
+    assert ordre == ["about_to", "changed"]
+
+    ordre.clear()
+    model.setData(_racine(model), Qt.Checked, Qt.CheckStateRole)
+    qapp.processEvents()
+    assert ordre == ["about_to", "changed"]
+
+
 def test_a_deferred_repaint_after_the_model_is_gone_does_not_raise(qapp):
     """La boite de dialogue (et donc ce modele) peut fermer avant que le
     `layoutChanged` differe n'arrive : PySide6 leve alors un `RuntimeError`
