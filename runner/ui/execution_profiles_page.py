@@ -39,7 +39,8 @@ from runner.domain.execution_profile import (
     export_profile,
     inspect_profile,
 )
-from runner.domain.tree import build_tree, group_consecutive_parameters, parameter_base
+from runner.domain.models import Kind
+from runner.domain.tree import SequenceGroup, build_tree, group_hierarchically
 from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
@@ -60,6 +61,29 @@ def _encode_group(groupe) -> str:
 
 def _decode_group(encoded: str) -> tuple[str, ...]:
     return tuple(encoded.split(_SEPARATEUR_GROUPE))
+
+
+# Second role on the same item: the precomputed label text. Re-deriving it
+# from the nodeids alone (via `group_hierarchically()` again) would collapse
+# a class/module/folder chain of single children all the way back to its
+# outermost link -- correct as a group, but not necessarily the same label
+# the batch it came from originally chose (e.g. a class picked on its own
+# amid other steps, whose file and folder happen to hold nothing else).
+_LABEL_ROLE = Qt.UserRole + 1
+
+_NOM_COMPTE = {
+    Kind.TEST: "parameter cases",
+    Kind.CLASS: "tests",
+    Kind.MODULE: "tests",
+    Kind.FOLDER: "tests",
+}
+
+
+def _label_for_group(groupe: SequenceGroup) -> str:
+    if len(groupe.nodeids) == 1:
+        return groupe.nodeids[0]
+    quoi = _NOM_COMPTE.get(groupe.kind, "tests")
+    return f"{groupe.name}   ({len(groupe.nodeids)} {quoi})"
 
 
 class AddTestsDialog(QDialog):
@@ -374,7 +398,7 @@ class ExecutionProfilesPage(QWidget):
         self.description_edit.setPlainText(profile.description)
         self.config_edit.setText(profile.configuration_name)
         self.sequence_list.clear()
-        for index, groupe in enumerate(group_consecutive_parameters(profile.sequence), 1):
+        for index, groupe in enumerate(group_hierarchically(profile.sequence), 1):
             self.sequence_list.addItem(self._step_item(index, groupe))
         self.repetitions.setValue(profile.execution.repetitions)
         self.rerun_failures.setValue(profile.execution.rerun_failures)
@@ -489,20 +513,15 @@ class ExecutionProfilesPage(QWidget):
         dialog.exec()
 
     @staticmethod
-    def _step_label(encoded: str) -> str:
-        groupe = _decode_group(encoded)
-        if len(groupe) == 1:
-            return groupe[0]
-        return f"{parameter_base(groupe[0])}   ({len(groupe)} parameter cases)"
-
-    def _step_item(self, numero: int, groupe) -> QListWidgetItem:
-        encoded = _encode_group(groupe)
-        item = QListWidgetItem(f"{numero:>3}   {self._step_label(encoded)}")
-        item.setData(Qt.UserRole, encoded)
+    def _step_item(numero: int, groupe: SequenceGroup) -> QListWidgetItem:
+        label = _label_for_group(groupe)
+        item = QListWidgetItem(f"{numero:>3}   {label}")
+        item.setData(Qt.UserRole, _encode_group(groupe.nodeids))
+        item.setData(_LABEL_ROLE, label)
         return item
 
     def _append_tests(self, nodeids: list[str]) -> None:
-        for groupe in group_consecutive_parameters(nodeids):
+        for groupe in group_hierarchically(nodeids):
             index = self.sequence_list.count() + 1
             self.sequence_list.addItem(self._step_item(index, groupe))
         self._mark_dirty()
@@ -511,8 +530,11 @@ class ExecutionProfilesPage(QWidget):
         rows = sorted(self.sequence_list.row(item)
                       for item in self.sequence_list.selectedItems())
         for row in rows:
-            groupe = _decode_group(self.sequence_list.item(row).data(Qt.UserRole))
-            self.sequence_list.insertItem(row + 1, self._step_item(0, groupe))
+            original = self.sequence_list.item(row)
+            copie = QListWidgetItem(original.text())
+            copie.setData(Qt.UserRole, original.data(Qt.UserRole))
+            copie.setData(_LABEL_ROLE, original.data(_LABEL_ROLE))
+            self.sequence_list.insertItem(row + 1, copie)
         self._renumber()
         self._mark_dirty()
 
@@ -525,7 +547,7 @@ class ExecutionProfilesPage(QWidget):
     def _renumber(self) -> None:
         for index in range(self.sequence_list.count()):
             item = self.sequence_list.item(index)
-            item.setText(f"{index + 1:>3}   {self._step_label(item.data(Qt.UserRole))}")
+            item.setText(f"{index + 1:>3}   {item.data(_LABEL_ROLE)}")
 
     def _options_changed(self) -> None:
         self._mark_dirty()
