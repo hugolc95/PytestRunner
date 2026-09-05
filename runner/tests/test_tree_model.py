@@ -124,6 +124,71 @@ def test_checking_a_box_works_when_qt_passes_a_plain_int(model):
     assert model.data(feuille, Qt.CheckStateRole) == Qt.Checked
 
 
+def test_checking_a_box_defers_the_repaint_signal(model, qapp):
+    """`setData()` s'execute PENDANT que la vue traite elle-meme le clic sur
+    la case (c'est son delegue qui appelle `setData()`). Un `layoutChanged`
+    emis en synchrone, depuis ce point, retombe dans le code C++ de la vue
+    avant qu'il ait fini de traiter ce clic -- plante en usage reel (crash
+    natif dans Qt6Core.dll, capture par l'observateur d'evenements Windows)
+    des qu'une vue reelle est attachee et enveloppee dans un
+    `QSortFilterProxyModel` (le cas d'`AddTestsDialog`) ; reproduit ici meme
+    avec `QTest.mouseClick()` sur une seule feuille tant que le signal part
+    en synchrone (`test_add_tests_tree_can_be_checked_with_a_real_click`).
+    Le signal doit donc attendre le prochain tour de la boucle d'evenements."""
+    recus = []
+    model.layoutChanged.connect(lambda: recus.append(True))
+
+    model.setData(_racine(model), Qt.Unchecked, Qt.CheckStateRole)
+    assert recus == [], "layoutChanged est parti en synchrone depuis setData()"
+
+    qapp.processEvents()
+    assert recus == [True]
+    # La donnee, elle, n'attend jamais la boucle d'evenements.
+    assert model.checked_nodeids() == []
+
+
+def test_checking_a_box_always_pairs_the_two_layout_signals(model, qapp):
+    """`layoutChanged` sans le `layoutAboutToBeChanged` qui doit le precéder
+    casse un vrai contrat Qt : un `QSortFilterProxyModel` (le cas
+    d'`AddTestsDialog`) capture son etat "avant" sur le premier signal, puis
+    remappe ses index persistants sur le second a partir de CET instantane.
+    Sans le premier, ce remappage part d'un instantane jamais pris -- reste
+    un crash natif dans Qt6Core.dll meme apres avoir differe l'emission au
+    tour de boucle suivant, car reporter QUAND on emet ne corrige pas le fait
+    d'emettre le mauvais signal."""
+    ordre = []
+    model.layoutAboutToBeChanged.connect(lambda: ordre.append("about_to"))
+    model.layoutChanged.connect(lambda: ordre.append("changed"))
+
+    model.set_all_checked(False)
+    assert ordre == ["about_to", "changed"]
+
+    ordre.clear()
+    model.set_checked_nodeids([NODEIDS[0]])
+    assert ordre == ["about_to", "changed"]
+
+    ordre.clear()
+    model.setData(_racine(model), Qt.Checked, Qt.CheckStateRole)
+    qapp.processEvents()
+    assert ordre == ["about_to", "changed"]
+
+
+def test_a_deferred_repaint_after_the_model_is_gone_does_not_raise(qapp):
+    """La boite de dialogue (et donc ce modele) peut fermer avant que le
+    `layoutChanged` differe n'arrive : PySide6 leve alors un `RuntimeError`
+    pour l'objet C++ deja detruit -- `_emit_layout_changed_if_alive()` doit
+    l'avaler plutot que le laisser remonter."""
+    import shiboken6
+
+    modele = TestTreeModel()
+    modele.set_tree(build_tree(NODEIDS))
+    modele.setData(_racine(modele), Qt.Unchecked, Qt.CheckStateRole)
+
+    shiboken6.delete(modele)  # simule la fermeture de la boite de dialogue
+
+    qapp.processEvents()  # laisse le `layoutChanged` differe se presenter
+
+
 def test_a_partly_checked_folder_says_so(model):
     """Ni coche ni decoche : l'etat intermediaire evite de croire que tout le
     dossier part au run."""

@@ -8,7 +8,7 @@ dessine que la partie visible.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, Signal
+from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 
 from runner.domain.models import Kind, Reader, Status, TestNode, worst
@@ -293,41 +293,70 @@ class TestTreeModel(QAbstractItemModel):
         return Qt.PartiallyChecked
 
     def _set_checked(self, ligne: _Row, coche: bool) -> None:
-        """Coche le noeud et toute sa descendance, puis rafraichit ses parents.
+        """Coche le noeud et toute sa descendance, puis rafraichit l'affichage.
 
         Cocher un dossier coche ce qu'il contient : l'utilisateur pense en
         blocs, pas en feuilles.
+
+        `setData()` -- donc `_set_checked()` -- s'execute PENDANT que la vue
+        Qt traite elle-meme le clic sur la case (c'est son delegue qui a
+        appele `setData()`). Emettre un signal structurel (`layoutChanged`,
+        ou -- ancienne version -- une rafale de `dataChanged` imbriques via
+        `_rafraichir_branche`) DEPUIS ce point retombe donc dans le code C++
+        de la vue avant qu'il ait fini de traiter ce clic. Enveloppe dans un
+        `QSortFilterProxyModel` a filtrage recursif (le cas d'`AddTestsDialog`),
+        cette reentrance a plante l'appli en usage reel -- crash natif dans
+        Qt6Core.dll, capture par l'observateur d'evenements Windows -- et
+        reproduit ici meme sur UNE seule feuille des que le signal part en
+        synchrone : `QTest.mouseClick()` puis `layoutChanged.emit()` immediat
+        segfault right away (`test_add_tests_tree_can_be_checked_with_a_real_click`).
+        Le reporter au prochain tour de boucle d'evenements laisse la vue
+        terminer son propre clic avant que le modele ne bouge sous elle.
         """
         ligne.checked = coche
         for descendant in ligne.descendants():
             descendant.checked = coche
+        QTimer.singleShot(0, self._emit_layout_changed_if_alive)
 
-        haut = self.createIndex(ligne.row, 0, ligne)
-        self.dataChanged.emit(haut, self.createIndex(ligne.row, 0, ligne),
-                              [Qt.CheckStateRole])
-        self._rafraichir_branche(ligne)
+    def _emit_layout_changed_if_alive(self) -> None:
+        """Callback de l'emission differee de `_set_checked()`.
 
-        parent = ligne.parent
-        while parent is not None:
-            index_parent = self.createIndex(parent.row, 0, parent)
-            self.dataChanged.emit(index_parent, index_parent, [Qt.CheckStateRole])
-            parent = parent.parent
+        La boite de dialogue (et donc ce modele) peut avoir ete fermee avant
+        que ce tour de boucle n'arrive : PySide6 leve alors un `RuntimeError`
+        plutot que de planter -- mais il n'y a de toute facon plus personne
+        pour regarder ce signal.
+        """
+        try:
+            self._emit_layout_changed()
+        except RuntimeError:
+            pass
 
-    def _rafraichir_branche(self, ligne: _Row) -> None:
-        if not ligne.children:
-            return
-        premier = self.createIndex(0, 0, ligne.children[0])
-        dernier = self.createIndex(len(ligne.children) - 1, 0, ligne.children[-1])
-        self.dataChanged.emit(premier, dernier, [Qt.CheckStateRole])
-        for enfant in ligne.children:
-            self._rafraichir_branche(enfant)
+    def _emit_layout_changed(self) -> None:
+        """Emet la paire complete -- jamais `layoutChanged` tout seul.
+
+        `layoutChanged` sans le `layoutAboutToBeChanged` qui doit le precéder
+        casse un vrai contrat Qt, pas juste une negligence de style : un
+        `QSortFilterProxyModel` (le cas d'`AddTestsDialog`) s'appuie sur les
+        DEUX signaux pour reconstruire sa table de tri/filtrage -- il capture
+        son etat "avant" sur le premier, puis remappe ses index persistants
+        sur le second a partir de CET instantane. Sans le premier signal, le
+        second remappe a partir d'un instantane jamais pris : c'est resté un
+        crash natif dans Qt6Core.dll (access violation), confirme par
+        l'observateur d'evenements Windows, meme apres avoir reporte
+        l'emission au tour de boucle suivant -- reporter QUAND on l'emet ne
+        corrige pas le fait qu'on emettait le mauvais signal.
+        Rien d'autre a faire entre les deux : aucun `internalPointer()` ne
+        change ici, seul `.checked` bouge sur des `_Row` deja en place.
+        """
+        self.layoutAboutToBeChanged.emit()
+        self.layoutChanged.emit()
 
     def set_all_checked(self, coche: bool) -> None:
         for racine in self._roots:
             racine.checked = coche
             for ligne in racine.descendants():
                 ligne.checked = coche
-        self.layoutChanged.emit()
+        self._emit_layout_changed()
         self._emit_selection()
 
     def set_checked_nodeids(self, nodeids) -> None:
@@ -361,21 +390,8 @@ class TestTreeModel(QAbstractItemModel):
             ligne = self._by_nodeid.get(nodeid)
             if ligne is not None:
                 ligne.checked = True
-        self.layoutChanged.emit()
+        self._emit_layout_changed()
         self._emit_selection()
-
-    def _refresh_checkbox_display(self) -> None:
-        """Invalide l'affichage des cases a cocher de tout l'arbre, une fois.
-
-        Reutilise `_rafraichir_branche`, deja correct pour un noeud -- mais
-        elle ne redessine que la DESCENDANCE de ce qu'on lui donne, jamais le
-        noeud lui-meme. Chaque racine a donc besoin de son propre `dataChanged`
-        en plus, sinon SA case ne se met jamais a jour.
-        """
-        for racine in self._roots:
-            index = self.createIndex(racine.row, 0, racine)
-            self.dataChanged.emit(index, index, [Qt.CheckStateRole])
-            self._rafraichir_branche(racine)
 
     def checked_nodeids(self) -> list[str]:
         """Nodeids coches, dans l'ordre de l'arbre."""
