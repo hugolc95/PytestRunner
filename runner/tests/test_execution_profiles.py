@@ -17,6 +17,7 @@ from runner.domain.execution_profile import (
     validate_profile,
 )
 from runner.ui.execution_profiles_page import AddTestsDialog, ExecutionProfilesPage
+from runner.ui.tree_model import NODEID_ROLE
 from runner.ui.widgets import ErrorDialog
 
 
@@ -192,10 +193,207 @@ def test_profile_page_can_add_the_same_test_more_than_once(qapp, tmp_path):
             "tests/test_api.py::test_login[admin]",
         ])
 
-        assert page.sequence_list.count() == 2
-        assert page.sequence_list.item(0).data(Qt.UserRole) == \
-            page.sequence_list.item(1).data(Qt.UserRole)
+        assert page.sequence_list.topLevelItemCount() == 2
+        assert page.sequence_list.topLevelItem(0).data(0, NODEID_ROLE) == \
+            page.sequence_list.topLevelItem(1).data(0, NODEID_ROLE)
         assert "2 sequence steps" in page.summary.text()
+    finally:
+        page.close()
+
+
+def test_profile_page_collapses_parameter_cases_into_one_row_and_back(qapp, tmp_path):
+    """Le regroupement n'est qu'un rendu du widget -- ce test verifie
+    l'aller-retour reel via l'arbre, pas seulement la fonction de
+    regroupement du domaine (deja couverte a part)."""
+    nodeids = [
+        "tests/test_api.py::test_login[admin]",
+        "tests/test_api.py::test_login[user]",
+        "tests/test_api.py::test_login[guest]",
+    ]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        page._append_tests(nodeids)
+
+        assert page.sequence_list.topLevelItemCount() == 1
+        groupe = page.sequence_list.topLevelItem(0)
+        assert "3 parameter cases" in groupe.text(0)
+        assert groupe.childCount() == 3
+
+        page.new_profile()
+        page._append_tests(nodeids)
+        profile = page._profile_from_editor()
+        assert list(profile.sequence) == nodeids
+    finally:
+        page.close()
+
+
+def test_profile_page_sequence_group_is_collapsed_by_default(qapp, tmp_path):
+    """La demande explicite du produit : deplier un groupe doit etre un
+    geste volontaire, jamais l'etat de depart."""
+    nodeids = [f"tests/test_api.py::test_login[{i}]" for i in range(5)]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        page._append_tests(nodeids)
+
+        groupe = page.sequence_list.topLevelItem(0)
+        assert groupe.childCount() == 5
+        assert groupe.isExpanded() is False
+    finally:
+        page.close()
+
+
+def test_profile_page_can_pull_one_member_out_of_a_group(qapp, tmp_path):
+    """Extraire une ligne d'un groupe et la deposer ailleurs doit se
+    retrouver dans l'ordre final sauvegarde -- exactement la manipulation
+    demandee (deplier, puis deplacer n'importe quelle ligne)."""
+    nodeids = [
+        "tests/test_api.py::test_login[admin]",
+        "tests/test_api.py::test_login[user]",
+        "tests/test_api.py::test_login[guest]",
+        "tests/test_card.py::test_reset",
+    ]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        page._append_tests(nodeids)
+
+        # Simule l'extraction de "guest" hors de son groupe, deplace tout au
+        # debut de la sequence -- ce que le drag-and-drop ferait dans l'UI.
+        reordonne = [
+            "tests/test_api.py::test_login[guest]",
+            "tests/test_api.py::test_login[admin]",
+            "tests/test_api.py::test_login[user]",
+            "tests/test_card.py::test_reset",
+        ]
+        page._rebuild_sequence(reordonne)
+
+        assert page._flatten_sequence() == reordonne
+        profile = page._profile_from_editor()
+        assert list(profile.sequence) == reordonne
+    finally:
+        page.close()
+
+
+def test_profile_page_duplicate_steps_can_duplicate_a_whole_group(qapp, tmp_path):
+    # Deux dossiers sans rapport : aucun ancetre commun ne les fusionne, donc
+    # deux groupes distincts (voir `test_two_unrelated_selections_never_merge`
+    # dans le domaine) -- necessaire ici pour isoler "le premier groupe" de
+    # "l'autre step" sans qu'un dossier partage ne les recolle en un seul.
+    nodeids = [
+        "suite_a/test_api.py::test_login[admin]",
+        "suite_a/test_api.py::test_login[user]",
+        "suite_b/test_card.py::test_reset",
+    ]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        page._append_tests(nodeids)
+
+        page.sequence_list.topLevelItem(0).setSelected(True)
+        page.duplicate_steps()
+
+        assert page._flatten_sequence() == [
+            "suite_a/test_api.py::test_login[admin]",
+            "suite_a/test_api.py::test_login[user]",
+            "suite_a/test_api.py::test_login[admin]",
+            "suite_a/test_api.py::test_login[user]",
+            "suite_b/test_card.py::test_reset",
+        ]
+    finally:
+        page.close()
+
+
+def test_profile_page_duplicate_steps_can_duplicate_one_member_of_a_group(qapp, tmp_path):
+    """La ligne dupliquee ne l'est qu'une fois, meme repliee dans son groupe --
+    exactement le geste que le depliage est cense permettre."""
+    nodeids = [
+        "tests/test_api.py::test_login[admin]",
+        "tests/test_api.py::test_login[user]",
+        "tests/test_api.py::test_login[guest]",
+    ]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        page._append_tests(nodeids)
+
+        groupe = page.sequence_list.topLevelItem(0)
+        groupe.child(1).setSelected(True)  # "user"
+        page.duplicate_steps()
+
+        assert page._flatten_sequence() == [
+            "tests/test_api.py::test_login[admin]",
+            "tests/test_api.py::test_login[user]",
+            "tests/test_api.py::test_login[user]",
+            "tests/test_api.py::test_login[guest]",
+        ]
+    finally:
+        page.close()
+
+
+def test_profile_page_remove_steps_can_remove_one_member_without_the_group(qapp, tmp_path):
+    nodeids = [
+        "tests/test_api.py::test_login[admin]",
+        "tests/test_api.py::test_login[user]",
+        "tests/test_api.py::test_login[guest]",
+    ]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        page._append_tests(nodeids)
+
+        groupe = page.sequence_list.topLevelItem(0)
+        groupe.child(1).setSelected(True)  # "user"
+        page.remove_steps()
+
+        assert page._flatten_sequence() == [
+            "tests/test_api.py::test_login[admin]",
+            "tests/test_api.py::test_login[guest]",
+        ]
+    finally:
+        page.close()
+
+
+def test_profile_page_remove_steps_can_remove_a_whole_group(qapp, tmp_path):
+    nodeids = [
+        "suite_a/test_api.py::test_login[admin]",
+        "suite_a/test_api.py::test_login[user]",
+        "suite_b/test_card.py::test_reset",
+    ]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        page._append_tests(nodeids)
+
+        page.sequence_list.topLevelItem(0).setSelected(True)
+        page.remove_steps()
+
+        assert page._flatten_sequence() == ["suite_b/test_card.py::test_reset"]
+    finally:
+        page.close()
+
+
+def test_profile_page_remove_steps_ignores_a_member_whose_group_is_also_selected(
+        qapp, tmp_path):
+    """Selectionner un groupe entier et l'un de ses membres a la fois ne doit
+    pas retirer ce membre deux fois."""
+    nodeids = [
+        "suite_a/test_api.py::test_login[admin]",
+        "suite_a/test_api.py::test_login[user]",
+        "suite_b/test_card.py::test_reset",
+    ]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        page._append_tests(nodeids)
+
+        groupe = page.sequence_list.topLevelItem(0)
+        groupe.setSelected(True)
+        groupe.child(0).setSelected(True)
+        page.remove_steps()
+
+        assert page._flatten_sequence() == ["suite_b/test_card.py::test_reset"]
     finally:
         page.close()
 
