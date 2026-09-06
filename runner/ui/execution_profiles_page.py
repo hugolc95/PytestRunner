@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, Signal
+from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -25,6 +25,8 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTextEdit,
     QTreeView,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -46,29 +48,15 @@ from runner.ui import tokens as t
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import ErrorDialog
 
-# Separates the nodeids of one grouped sequence step in the data a
-# `QListWidgetItem` carries. `sequence_list` allows internal drag-and-drop
-# reordering, which asks Qt to move item data around on its own -- a plain
-# `str` is exactly the kind of value that machinery already handled correctly
-# before this grouping existed, unlike a Python tuple/list, which is opaque
-# to it. \x1f (ASCII "unit separator") never occurs in a real nodeid.
-_SEPARATEUR_GROUPE = "\x1f"
-
-
-def _encode_group(groupe) -> str:
-    return _SEPARATEUR_GROUPE.join(groupe)
-
-
-def _decode_group(encoded: str) -> tuple[str, ...]:
-    return tuple(encoded.split(_SEPARATEUR_GROUPE))
-
-
-# Second role on the same item: the precomputed label text. Re-deriving it
-# from the nodeids alone (via `group_hierarchically()` again) would collapse
-# a class/module/folder chain of single children all the way back to its
-# outermost link -- correct as a group, but not necessarily the same label
-# the batch it came from originally chose (e.g. a class picked on its own
-# amid other steps, whose file and folder happen to hold nothing else).
+# `sequence_list` is a tree: a group occupies one collapsed row by default,
+# and expanding it reveals one child row per nodeid it collapsed -- each
+# child can then be dragged out to any position, before or after any other
+# row, just like a top-level one. NODEID_ROLE (shared with the source tree
+# in `AddTestsDialog`) holds a leaf's own nodeid; only leaves carry it --
+# a row with children gets its members from those children instead.
+#
+# `_LABEL_ROLE` holds a top-level row's label with no step number, so
+# `_renumber()` can prefix the current position without recomputing it.
 _LABEL_ROLE = Qt.UserRole + 1
 
 _NOM_COMPTE = {
@@ -84,6 +72,18 @@ def _label_for_group(groupe: SequenceGroup) -> str:
         return groupe.nodeids[0]
     quoi = _NOM_COMPTE.get(groupe.kind, "tests")
     return f"{groupe.name}   ({len(groupe.nodeids)} {quoi})"
+
+
+def _group_item(groupe: SequenceGroup) -> QTreeWidgetItem:
+    label = _label_for_group(groupe)
+    item = QTreeWidgetItem([label])
+    item.setData(0, _LABEL_ROLE, label)
+    if len(groupe.nodeids) == 1:
+        item.setData(0, NODEID_ROLE, groupe.nodeids[0])
+    else:
+        for nodeid in groupe.nodeids:
+            QTreeWidgetItem(item, [nodeid]).setData(0, NODEID_ROLE, nodeid)
+    return item
 
 
 class AddTestsDialog(QDialog):
@@ -287,8 +287,12 @@ class ExecutionProfilesPage(QWidget):
 
     def _build_sequence(self) -> QWidget:
         frame, layout = self._surface("Test sequence")
-        self.sequence_list = QListWidget()
+        self.sequence_list = QTreeWidget()
         self.sequence_list.setObjectName("ProfileSequence")
+        self.sequence_list.setHeaderHidden(True)
+        # Collapsed by default (a `QTreeWidgetItem` starts collapsed unless
+        # told otherwise) -- expanding a group reveals its member rows so any
+        # one of them can be dragged out to its own spot in the run order.
         self.sequence_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.sequence_list.setDefaultDropAction(Qt.MoveAction)
         self.sequence_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -307,7 +311,7 @@ class ExecutionProfilesPage(QWidget):
         self.add_tests_button.clicked.connect(self.add_tests)
         self.duplicate_button.clicked.connect(self.duplicate_steps)
         self.remove_button.clicked.connect(self.remove_steps)
-        self.sequence_list.model().rowsMoved.connect(self._mark_dirty)
+        self.sequence_list.model().rowsMoved.connect(self._on_sequence_reordered)
         return frame
 
     def _build_options(self) -> QWidget:
@@ -397,9 +401,7 @@ class ExecutionProfilesPage(QWidget):
         self.name_edit.setText(profile.name)
         self.description_edit.setPlainText(profile.description)
         self.config_edit.setText(profile.configuration_name)
-        self.sequence_list.clear()
-        for index, groupe in enumerate(group_hierarchically(profile.sequence), 1):
-            self.sequence_list.addItem(self._step_item(index, groupe))
+        self._rebuild_sequence(profile.sequence)
         self.repetitions.setValue(profile.execution.repetitions)
         self.rerun_failures.setValue(profile.execution.rerun_failures)
         self.stop_after_failure.setChecked(profile.execution.stop_after_failure)
@@ -438,10 +440,7 @@ class ExecutionProfilesPage(QWidget):
         if chosen and Path(chosen).is_file():
             config_name = Path(chosen).name
             config_text = Path(chosen).read_text(encoding="utf-8")
-        sequence = [nodeid
-                    for index in range(self.sequence_list.count())
-                    for nodeid in _decode_group(
-                        self.sequence_list.item(index).data(Qt.UserRole))]
+        sequence = self._flatten_sequence()
         return ExecutionProfile(
             profile_id=str(uuid.uuid4()) if new_id or current is None else current.profile_id,
             name=self.name_edit.text().strip(),
@@ -512,42 +511,110 @@ class ExecutionProfilesPage(QWidget):
         dialog.tests_added.connect(self._append_tests)
         dialog.exec()
 
-    @staticmethod
-    def _step_item(numero: int, groupe: SequenceGroup) -> QListWidgetItem:
-        label = _label_for_group(groupe)
-        item = QListWidgetItem(f"{numero:>3}   {label}")
-        item.setData(Qt.UserRole, _encode_group(groupe.nodeids))
-        item.setData(_LABEL_ROLE, label)
-        return item
-
     def _append_tests(self, nodeids: list[str]) -> None:
-        for groupe in group_hierarchically(nodeids):
-            index = self.sequence_list.count() + 1
-            self.sequence_list.addItem(self._step_item(index, groupe))
+        self._rebuild_sequence(self._flatten_sequence() + nodeids)
         self._mark_dirty()
 
-    def duplicate_steps(self) -> None:
-        rows = sorted(self.sequence_list.row(item)
-                      for item in self.sequence_list.selectedItems())
-        for row in rows:
-            original = self.sequence_list.item(row)
-            copie = QListWidgetItem(original.text())
-            copie.setData(Qt.UserRole, original.data(Qt.UserRole))
-            copie.setData(_LABEL_ROLE, original.data(_LABEL_ROLE))
-            self.sequence_list.insertItem(row + 1, copie)
+    def _rebuild_sequence(self, nodeids: list[str]) -> None:
+        self.sequence_list.clear()
+        for groupe in group_hierarchically(nodeids):
+            self.sequence_list.addTopLevelItem(_group_item(groupe))
         self._renumber()
+
+    def _flatten_sequence(self) -> list[str]:
+        """The sequence in its current visual order, tree depth notwithstanding.
+
+        `sequence_list` only ever shows a fresh `group_hierarchically()` render
+        of this same list -- the grouping is a display convenience, never the
+        stored truth -- so reading it back just walks every row down to its
+        leaves (a row with no children IS a leaf, in or out of a group) in the
+        order they appear."""
+        nodeids: list[str] = []
+
+        def visiter(item: QTreeWidgetItem) -> None:
+            if item.childCount() == 0:
+                nodeids.append(item.data(0, NODEID_ROLE))
+            else:
+                for i in range(item.childCount()):
+                    visiter(item.child(i))
+
+        for i in range(self.sequence_list.topLevelItemCount()):
+            visiter(self.sequence_list.topLevelItem(i))
+        return nodeids
+
+    def _sequence_ranges(self):
+        """Same walk as `_flatten_sequence()`, but keeping each item's own
+        (start, end) slice of the flattened list alongside it -- lets
+        `duplicate_steps()`/`remove_steps()` act on whatever the user selected
+        (a whole group or one of its members) without caring which it was."""
+        nodeids: list[str] = []
+        plages: list[tuple[QTreeWidgetItem, int, int]] = []
+
+        def visiter(item: QTreeWidgetItem) -> None:
+            debut = len(nodeids)
+            if item.childCount() == 0:
+                nodeids.append(item.data(0, NODEID_ROLE))
+            else:
+                for i in range(item.childCount()):
+                    visiter(item.child(i))
+            plages.append((item, debut, len(nodeids)))
+
+        for i in range(self.sequence_list.topLevelItemCount()):
+            visiter(self.sequence_list.topLevelItem(i))
+        return nodeids, plages
+
+    @staticmethod
+    def _a_un_ancetre_selectionne(item: QTreeWidgetItem, selection: set) -> bool:
+        parent = item.parent()
+        while parent is not None:
+            if parent in selection:
+                return True
+            parent = parent.parent()
+        return False
+
+    def _selected_ranges(self):
+        """The (start, end) slice for each selected row, dropping any whose
+        ancestor is also selected -- selecting a group and one of its own
+        members should duplicate/remove that member once, not twice."""
+        nodeids, plages = self._sequence_ranges()
+        selection = set(self.sequence_list.selectedItems())
+        return nodeids, [plage for plage in plages
+                        if plage[0] in selection
+                        and not self._a_un_ancetre_selectionne(plage[0], selection)]
+
+    def duplicate_steps(self) -> None:
+        nodeids, choisies = self._selected_ranges()
+        for _, debut, fin in sorted(choisies, key=lambda p: p[1], reverse=True):
+            nodeids[fin:fin] = nodeids[debut:fin]
+        self._rebuild_sequence(nodeids)
         self._mark_dirty()
 
     def remove_steps(self) -> None:
-        for item in self.sequence_list.selectedItems():
-            self.sequence_list.takeItem(self.sequence_list.row(item))
-        self._renumber()
+        nodeids, choisies = self._selected_ranges()
+        a_retirer = {i for _, debut, fin in choisies for i in range(debut, fin)}
+        self._rebuild_sequence(
+            [nodeid for i, nodeid in enumerate(nodeids) if i not in a_retirer])
+        self._mark_dirty()
+
+    def _on_sequence_reordered(self, *_args) -> None:
+        # Deferred for the same reason the tree-view checkbox fix defers its
+        # own model signal: this slot runs synchronously from inside Qt's own
+        # internal-move drop handling, and rebuilding the tree in there would
+        # re-enter that native code before it finishes unwinding. Waiting for
+        # the next event-loop turn lets the drop finish first.
+        QTimer.singleShot(0, self._settle_sequence_order)
+
+    def _settle_sequence_order(self) -> None:
+        try:
+            self._rebuild_sequence(self._flatten_sequence())
+        except RuntimeError:
+            return
         self._mark_dirty()
 
     def _renumber(self) -> None:
-        for index in range(self.sequence_list.count()):
-            item = self.sequence_list.item(index)
-            item.setText(f"{index + 1:>3}   {item.data(_LABEL_ROLE)}")
+        for index in range(self.sequence_list.topLevelItemCount()):
+            item = self.sequence_list.topLevelItem(index)
+            item.setText(0, f"{index + 1:>3}   {item.data(0, _LABEL_ROLE)}")
 
     def _options_changed(self) -> None:
         self._mark_dirty()
@@ -561,7 +628,7 @@ class ExecutionProfilesPage(QWidget):
         self._update_summary()
 
     def _update_summary(self) -> None:
-        count = self.sequence_list.count()
+        count = self.sequence_list.topLevelItemCount()
         total = count * self.repetitions.value()
         dirty = " · Unsaved changes" if self._dirty else ""
         self.summary.setText(
