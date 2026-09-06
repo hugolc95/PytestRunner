@@ -107,6 +107,7 @@ class RunService(QObject):
         self._profile_active = False
         self._profile_cancelled = False
         self._profile_queue: list[str] = []
+        self._current_batch: list[str] = []
         self._profile_request: RunRequest | None = None
         self._profile_env: dict = {}
         self._profile_attempt = 0
@@ -209,13 +210,42 @@ class RunService(QObject):
         self._start_profile_step()
         return True
 
+    def _next_batch(self) -> list[str]:
+        """Which upcoming queue entries run together as ONE pytest invocation.
+
+        A retry needs to react to its own step's verdict, and stopping after a
+        failure must not let anything after it start -- both keep the strict
+        one-nodeid-per-invocation behaviour. Without either, grouping several
+        upcoming steps into a single pytest call saves pytest's own startup
+        and collection cost, which is otherwise paid again for every single
+        step: a profile is a sequence, so that cost is normally the dominant
+        one, not the tests themselves.
+
+        pytest collapses a nodeid repeated on its command line into a single
+        run (verified: `pytest a::t a::t` collects and runs `t` once) -- so a
+        batch can never contain the same nodeid twice, which is also exactly
+        what keeps two occurrences of the same step in the sequence as two
+        genuinely distinct executions.
+        """
+        if self._profile_reruns or self._profile_stop_after_failure:
+            return self._profile_queue[:1]
+        vus: set[str] = set()
+        batch: list[str] = []
+        for nodeid in self._profile_queue:
+            if nodeid in vus:
+                break
+            vus.add(nodeid)
+            batch.append(nodeid)
+        return batch
+
     def _start_profile_step(self) -> None:
         if not self._profile_queue or self._profile_cancelled:
             self._finish_profile()
             return
+        self._current_batch = self._next_batch()
         request = replace(
             self._profile_request,
-            nodeids=(self._profile_queue[0],),
+            nodeids=tuple(self._current_batch),
             # Per-step JUnit files would overwrite one another. The aggregate
             # history remains available through ReaderReport.
             junit_dir="",
@@ -224,11 +254,12 @@ class RunService(QObject):
 
     def _finish_profile_step(self) -> None:
         failed = any(not report.ok for report in self._reports)
+        label = ", ".join(self._current_batch)
         for report in self._reports:
             aggregate = self._profile_reports[report.reader.index]
             attempt_label = self._profile_attempt + 1
             aggregate.output += (
-                f"\n--- {self._profile_queue[0]} - attempt {attempt_label} ---\n"
+                f"\n--- {label} - attempt {attempt_label} ---\n"
                 + report.output)
             aggregate.duration += report.duration
             aggregate.cancelled = aggregate.cancelled or report.cancelled
@@ -247,9 +278,9 @@ class RunService(QObject):
             aggregate.durations.update(report.durations)
 
         reader_count = max(1, len(self._profile_request.readers))
-        self._profile_completed += reader_count
+        self._profile_completed += reader_count * len(self._current_batch)
         self.progress.emit(self._profile_completed, self._profile_total)
-        self._profile_queue.pop(0)
+        del self._profile_queue[:len(self._current_batch)]
         self._profile_attempt = 0
         if failed and self._profile_stop_after_failure:
             self._profile_queue.clear()

@@ -238,6 +238,70 @@ def test_profile_sequence_preserves_duplicate_steps(qapp, tmp_path):
     assert reports[0].output.count("attempt 1") == 2
 
 
+def test_profile_batches_distinct_steps_into_one_pytest_call(qapp, tmp_path):
+    """Sans retry ni stop-after-failure, une sequence de N pas distincts ne
+    doit payer le demarrage/collecte de pytest qu'UNE fois -- pas N fois.
+
+    `--- <nodeids> - attempt 1 ---` reste ecrit une seule fois par LOT (pas
+    par test) : c'est le signe direct qu'un seul pytest a couvert les trois.
+    """
+    (tmp_path / "test_batch.py").write_text(textwrap.dedent('''
+        def test_un():
+            assert True
+        def test_deux():
+            assert True
+        def test_trois():
+            assert True
+    '''), encoding="utf-8")
+    sequence = [f"test_batch.py::{nom}" for nom in ("test_un", "test_deux", "test_trois")]
+    request = RunRequest(
+        workspace=str(tmp_path), interpreter=sys.executable,
+        nodeids=tuple(sequence), readers=())
+    service = RunService()
+    outcomes, reports = [], []
+    service.outcome.connect(outcomes.append)
+    service.finished.connect(reports.extend)
+
+    assert service.start_profile(request, dict(os.environ), sequence)
+    assert _attendre(lambda: bool(reports))
+    service.wait(5000)
+
+    assert [outcome.nodeid for outcome in outcomes] == sequence
+    assert reports[0].counts == {Status.PASSED: 3}
+    assert reports[0].output.count("test session starts") == 1
+    assert reports[0].output.count(f"--- {', '.join(sequence)} - attempt 1 ---") == 1
+
+
+def test_profile_starts_a_new_batch_when_a_step_repeats(qapp, tmp_path):
+    """[A, B, A] ne peut pas etre un seul appel pytest -- il collapserait le
+    second A avec le premier (verifie separement en ligne de commande).
+    La sequence doit donc redevenir [A, B] puis [A], deux appels."""
+    (tmp_path / "test_repeat.py").write_text(textwrap.dedent('''
+        def test_a():
+            assert True
+        def test_b():
+            assert True
+    '''), encoding="utf-8")
+    a, b = "test_repeat.py::test_a", "test_repeat.py::test_b"
+    request = RunRequest(
+        workspace=str(tmp_path), interpreter=sys.executable,
+        nodeids=(a, b), readers=())
+    service = RunService()
+    outcomes, reports = [], []
+    service.outcome.connect(outcomes.append)
+    service.finished.connect(reports.extend)
+
+    assert service.start_profile(request, dict(os.environ), [a, b, a])
+    assert _attendre(lambda: bool(reports))
+    service.wait(5000)
+
+    assert [outcome.nodeid for outcome in outcomes] == [a, b, a]
+    assert reports[0].counts == {Status.PASSED: 3}
+    assert reports[0].output.count("test session starts") == 2
+    assert reports[0].output.count(f"--- {a}, {b} - attempt 1 ---") == 1
+    assert reports[0].output.count(f"--- {a} - attempt 1 ---") == 1
+
+
 def test_profile_reruns_a_failed_step_and_keeps_its_final_verdict(qapp, tmp_path):
     (tmp_path / "test_flaky.py").write_text(textwrap.dedent('''
         from pathlib import Path
