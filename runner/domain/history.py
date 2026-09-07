@@ -76,6 +76,9 @@ class RunEntry:
     # Protege ce run d'un "Clear history" global -- pas d'une suppression
     # explicite au coup par coup, toujours possible meme verrouille.
     locked: bool = False
+    run_kind: str = "unknown"
+    profile_name: str = ""
+    run_name: str = ""
 
     @property
     def total(self) -> int:
@@ -120,6 +123,8 @@ class RunEntry:
             "failed_nodeids": list(self.failed_nodeids),
             "output_file": self.output_file, "junit_path": self.junit_path,
             "locked": self.locked,
+            "run_kind": self.run_kind, "profile_name": self.profile_name,
+            "run_name": self.run_name,
         }
 
     @classmethod
@@ -148,6 +153,9 @@ class RunEntry:
                 output_file=str(donnees.get("output_file", "")),
                 junit_path=str(donnees.get("junit_path", "")),
                 locked=bool(donnees.get("locked", False)),
+                run_kind=str(donnees.get("run_kind", "unknown")),
+                profile_name=str(donnees.get("profile_name", "")),
+                run_name=str(donnees.get("run_name", "")),
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             # `AttributeError` compte autant que les autres : un `counts`
@@ -364,6 +372,12 @@ class History:
             self._entrees = nouvelles
             self._enregistrer()
         return touchees
+
+    def rename_run(self, identifiant: str, name: str) -> None:
+        name = name.strip()[:100]
+        self._entrees = [replace(e, run_name=name) if e.id == identifiant else e
+                        for e in self._entrees]
+        self._enregistrer()
 
     def remove_run(self, identifiant: str) -> int:
         """Efface un lancement complet, donc toutes ses entrees Reader.

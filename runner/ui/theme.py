@@ -353,6 +353,22 @@ QPushButton#IconSm:checked {{
     background-color: {t.rgba(t.ACCENT, 0.16)};
 }}
 
+/* Suppression compacte : meme gabarit que les autres icones, mais le risque
+   devient explicite avant le clic sans charger visuellement chaque carte. */
+QPushButton#IconDanger {{
+    background-color: transparent;
+    border-color: transparent;
+    padding: 0;
+    min-width: {t.CONTROL_SM}px;
+    max-width: {t.CONTROL_SM}px;
+    min-height: {t.CONTROL_SM}px;
+    max-height: {t.CONTROL_SM}px;
+}}
+QPushButton#IconDanger:hover {{
+    background-color: {t.rgba(t.status_color(Status.FAILED), 0.12)};
+    border-color: {t.status_color(Status.FAILED)};
+}}
+
 /* Selecteur segmente : plusieurs vues d'UNE meme chose, pas plusieurs actions.
    Les segments se touchent et ne partagent qu'un seul trait ; separes, ils
    auraient ete lus comme trois boutons independants. */

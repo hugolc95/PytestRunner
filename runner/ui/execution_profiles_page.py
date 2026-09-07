@@ -74,15 +74,26 @@ def _label_for_group(groupe: SequenceGroup) -> str:
     return f"{groupe.name}   ({len(groupe.nodeids)} {quoi})"
 
 
+def _short_nodeid(nodeid: str) -> str:
+    """Garde la partie utile a l'ecran; le nodeid complet reste en tooltip."""
+    parts = nodeid.replace("\\", "/").split("::")
+    if len(parts) > 2:
+        return "::".join(parts[-2:])
+    return parts[-1]
+
+
 def _group_item(groupe: SequenceGroup) -> QTreeWidgetItem:
     label = _label_for_group(groupe)
     item = QTreeWidgetItem([label])
     item.setData(0, _LABEL_ROLE, label)
     if len(groupe.nodeids) == 1:
         item.setData(0, NODEID_ROLE, groupe.nodeids[0])
+        item.setToolTip(0, groupe.nodeids[0])
     else:
         for nodeid in groupe.nodeids:
-            QTreeWidgetItem(item, [nodeid]).setData(0, NODEID_ROLE, nodeid)
+            child = QTreeWidgetItem(item, [_short_nodeid(nodeid)])
+            child.setData(0, NODEID_ROLE, nodeid)
+            child.setToolTip(0, nodeid)
     return item
 
 
@@ -194,7 +205,7 @@ class ExecutionProfilesPage(QWidget):
 
     def _build_ui(self) -> None:
         root = QVBoxLayout(self)
-        root.setContentsMargins(t.SPACE_6, t.SPACE_6, t.SPACE_6, t.SPACE_6)
+        root.setContentsMargins(t.SPACE_4, t.SPACE_4, t.SPACE_4, t.SPACE_4)
         root.setSpacing(t.SPACE_3)
 
         heading = QHBoxLayout()
@@ -237,7 +248,7 @@ class ExecutionProfilesPage(QWidget):
         splitter.setStretchFactor(0, 20)
         splitter.setStretchFactor(1, 48)
         splitter.setStretchFactor(2, 32)
-        splitter.setSizes([220, 500, 320])
+        splitter.setSizes([190, 440, 270])
         root.addWidget(splitter, 1)
 
         footer = QHBoxLayout()
@@ -296,6 +307,11 @@ class ExecutionProfilesPage(QWidget):
         self.sequence_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.sequence_list.setDefaultDropAction(Qt.MoveAction)
         self.sequence_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.sequence_list.setAccessibleName("Ordered test sequence")
+        self.sequence_list.setAccessibleDescription(
+            "Expand a group, then drag a row to reorder it.")
+        self.sequence_list.setToolTip(
+            "Expand a group to see its tests. Drag a row to change the order.")
         layout.addWidget(self.sequence_list, 1)
         actions = QHBoxLayout()
         self.add_tests_button = QPushButton("Add tests")
@@ -323,7 +339,12 @@ class ExecutionProfilesPage(QWidget):
         self.description_edit.setMaximumHeight(78)
         self.config_edit = QLineEdit()
         self.config_edit.setReadOnly(True)
+        self.config_edit.setPlaceholderText("Use local Run Tests configuration")
         self.config_button = QPushButton("Choose YAML file…")
+        self.local_config_button = QPushButton("Use local configuration")
+        self.local_config_button.setToolTip(
+            "Do not embed YAML. Use the configuration selected in Run Tests when launching.")
+        self.local_config_button.clicked.connect(self.use_local_configuration)
         layout.addWidget(QLabel("Name"))
         layout.addWidget(self.name_edit)
         layout.addWidget(QLabel("Description"))
@@ -331,6 +352,7 @@ class ExecutionProfilesPage(QWidget):
         layout.addWidget(QLabel("Configuration YAML"))
         layout.addWidget(self.config_edit)
         layout.addWidget(self.config_button)
+        layout.addWidget(self.local_config_button)
 
         layout.addWidget(QLabel("Execution"))
         self.repetitions = QSpinBox()
@@ -375,7 +397,9 @@ class ExecutionProfilesPage(QWidget):
         self.profile_list.clear()
         selected = -1
         for index, profile in enumerate(self._profiles):
-            item = QListWidgetItem(f"{profile.name}\n{len(profile.sequence)} steps")
+            item = QListWidgetItem(
+                f"{profile.name}\n{len(profile.sequence)} test"
+                f"{'s' if len(profile.sequence) != 1 else ''}")
             item.setData(Qt.UserRole, profile.profile_id)
             self.profile_list.addItem(item)
             if profile.profile_id == current_id:
@@ -412,17 +436,9 @@ class ExecutionProfilesPage(QWidget):
         self._update_summary()
 
     def new_profile(self) -> None:
-        config_name, config_text = "", ""
-        if self._workspace_config and Path(self._workspace_config).is_file():
-            config_path = Path(self._workspace_config)
-            config_name = config_path.name
-            try:
-                config_text = config_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeError):
-                config_name, config_text = "", ""
         profile = ExecutionProfile(
             name="New execution profile", sequence=[],
-            configuration_name=config_name, configuration_text=config_text)
+            configuration_name="", configuration_text="")
         self._profiles.append(profile)
         item = QListWidgetItem(f"{profile.name}\n0 steps · Unsaved")
         item.setData(Qt.UserRole, profile.profile_id)
@@ -432,10 +448,15 @@ class ExecutionProfilesPage(QWidget):
         self.name_edit.selectAll()
         self.name_edit.setFocus()
 
+    def use_local_configuration(self) -> None:
+        self.config_edit.clear()
+        self.config_edit.setProperty("fullPath", "")
+        self._mark_dirty()
+
     def _profile_from_editor(self, new_id: bool = False) -> ExecutionProfile:
         current = self.current_profile()
         config_name = self.config_edit.text().strip()
-        config_text = current.configuration_text if current else ""
+        config_text = current.configuration_text if current and config_name else ""
         chosen = self.config_edit.property("fullPath") or ""
         if chosen and Path(chosen).is_file():
             config_name = Path(chosen).name
@@ -612,9 +633,18 @@ class ExecutionProfilesPage(QWidget):
         self._mark_dirty()
 
     def _renumber(self) -> None:
+        position = 1
         for index in range(self.sequence_list.topLevelItemCount()):
             item = self.sequence_list.topLevelItem(index)
-            item.setText(0, f"{index + 1:>3}   {item.data(0, _LABEL_ROLE)}")
+            count = max(1, item.childCount())
+            numero = str(position) if count == 1 else f"{position}-{position + count - 1}"
+            item.setText(0, f"{numero:>5}   ↕  {item.data(0, _LABEL_ROLE)}")
+            for child_index in range(item.childCount()):
+                child = item.child(child_index)
+                child.setText(
+                    0, f"{position + child_index:>5}   ↕  "
+                       f"{_short_nodeid(child.data(0, NODEID_ROLE))}")
+            position += count
 
     def _options_changed(self) -> None:
         self._mark_dirty()
@@ -628,13 +658,18 @@ class ExecutionProfilesPage(QWidget):
         self._update_summary()
 
     def _update_summary(self) -> None:
-        count = self.sequence_list.topLevelItemCount()
+        count = len(self._flatten_sequence())
+        groups = self.sequence_list.topLevelItemCount()
         total = count * self.repetitions.value()
         dirty = " · Unsaved changes" if self._dirty else ""
+        grouped = (f" in {groups} group{'s' if groups != 1 else ''}"
+                   if groups < count else "")
         self.summary.setText(
-            f"{count} sequence steps × {self.repetitions.value()} repetitions "
-            f"= {total} executions{dirty}")
-        enabled = bool(count and self.config_edit.text().strip())
+            f"{count} test{'s' if count != 1 else ''}{grouped} × "
+            f"{self.repetitions.value()} repetition"
+            f"{'s' if self.repetitions.value() != 1 else ''} = "
+            f"{total} execution{'s' if total != 1 else ''}{dirty}")
+        enabled = bool(count)
         self.run_button.setEnabled(enabled)
         self.export_button.setEnabled(enabled)
 

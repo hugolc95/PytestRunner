@@ -90,6 +90,24 @@ class RunGroup:
         return tuple(entry.reader for entry in self.entries if entry.reader)
 
     @property
+    def origin_label(self) -> str:
+        entry = self.entries[0] if self.entries else None
+        if entry and entry.run_kind == "profile":
+            return f"Profile: {entry.profile_name}" if entry.profile_name else "Profile"
+        if entry and entry.run_kind == "classic":
+            return "Selected run"
+        return "Origin unknown (older run)"
+
+    @property
+    def display_name(self) -> str:
+        entry = self.entries[0] if self.entries else None
+        if entry and entry.run_name:
+            return entry.run_name
+        if entry and entry.run_kind == "profile":
+            return entry.profile_name or "Execution profile"
+        return f"Run #{self.build_number:04d}" if self.build_number is not None else f"Run {self.id}"
+
+    @property
     def nodeids(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys(
             nodeid for entry in self.entries for nodeid in entry.nodeids))
@@ -163,6 +181,26 @@ def _history_tabs() -> QTabWidget:
     return tabs
 
 
+class DeleteRunButton(QPushButton):
+    """An icon's pixels must change explicitly; QSS color cannot tint it."""
+
+    def restyle(self, hovered=False):
+        color = t.status_color(Status.FAILED) if hovered else t.TEXT_MUTED
+        self.setIcon(icons.icon("mdi.trash-can-outline", color))
+        self.setStyleSheet(
+            f"QPushButton {{background:transparent;border:1px solid transparent;}}"
+            f"QPushButton:hover {{background:{t.rgba(t.status_color(Status.FAILED), 0.12)};"
+            f"border-color:{t.status_color(Status.FAILED)};}}")
+
+    def enterEvent(self, event):
+        self.restyle(True)
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        self.restyle(False)
+        super().leaveEvent(event)
+
+
 class RunCard(QFrame):
     """Resume compact place dans la liste de gauche.
 
@@ -182,7 +220,7 @@ class RunCard(QFrame):
         super().__init__(parent)
         self.group = group
         self.setObjectName("HistoryCard")
-        self.setFixedHeight(102)
+        self.setFixedHeight(142)
         self._selected = False
         self._repeints: list[callable] = []
 
@@ -192,18 +230,61 @@ class RunCard(QFrame):
         self._paint(self.dot,
                     lambda: f"color:{t.status_color(Status.PASSED if group.ok else Status.FAILED)};"
                             "background:transparent;")
-        top.addWidget(self.dot)
-        top.addWidget(self._label(_when(group.timestamp, False), 13, 700))
+        self.dot.hide()
+        entry = group.entries[0] if group.entries else None
+        is_profile = bool(entry and entry.run_kind == "profile")
+        is_selected = bool(entry and entry.run_kind == "classic")
+
+        def origin_color():
+            light = t.current_theme() == "light"
+            if is_profile:
+                return "#6d35cf" if light else "#bd9aff"
+            if is_selected:
+                return "#2463b8" if light else "#91bfff"
+            return t.TEXT_MUTED
+
+        def origin_background():
+            light = t.current_theme() == "light"
+            if is_profile:
+                return "#f0e9ff" if light else "#302343"
+            if is_selected:
+                return "#e8f0ff" if light else "#203249"
+            return t.BG_RAISED
+        kind = "PROFILE" if is_profile else (
+            "SELECTED RUN" if entry and entry.run_kind == "classic" else "ORIGIN UNKNOWN")
+        self.origin_label = self._label(kind, t.TEXT_XS, 700, origin_color)
+        self.origin_label.setToolTip(group.origin_label)
+        top.addWidget(self.origin_label)
+        top.addStretch(1)
         if group.build_number is not None:
             top.addWidget(self._label(f"#{group.build_number:04d}", t.TEXT_XS, 700,
-                                      lambda: t.ACCENT))
-        top.addWidget(self._label(Path(group.workspace).name or group.workspace,
-                                  t.TEXT_SM, 600))
-        top.addStretch(1)
-        top.addWidget(self._label(f"{group.duration:.1f}s", t.TEXT_XS, 500,
+                                      lambda: t.TEXT_MUTED))
+        top.addWidget(self._label(_when(group.timestamp, False), t.TEXT_XS, 500,
                                   lambda: t.TEXT_MUTED))
-        top.addWidget(self._lock_button(group))
-        top.addWidget(self._delete_button())
+        self.origin_banner = QFrame()
+        self.origin_banner.setObjectName("HistoryOriginBanner")
+        self.origin_banner.setFixedHeight(34)
+        top.setContentsMargins(14, 0, 14, 0)
+        self.origin_banner.setLayout(top)
+        self._paint(self.origin_banner, lambda:
+                    f"QFrame#HistoryOriginBanner {{background:{origin_background()};"
+                    f"border:none;border-top-left-radius:{t.RADIUS_MD}px;"
+                    f"border-top-right-radius:{t.RADIUS_MD}px;}}")
+        title_row = QHBoxLayout()
+        title = group.display_name
+        self.run_title = self._label(title, 17, 600)
+        self.run_title.setToolTip(title)
+        self.run_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        title_row.addWidget(self.run_title, 1)
+        self.protected_badge = self._label(
+            "PROTECTED", t.TEXT_XS, 700, lambda: t.ACCENT)
+        self.protected_badge.setVisible(group.locked)
+        self.protected_badge.setToolTip(
+            "This run is kept when clearing history")
+        title_row.addWidget(self.protected_badge)
+        title_row.addWidget(self._lock_button(group))
+        title_row.addSpacing(t.SPACE_1)
+        title_row.addWidget(self._delete_button())
 
         counts = QHBoxLayout()
         counts.setSpacing(t.SPACE_3)
@@ -218,10 +299,9 @@ class RunCard(QFrame):
             counts.addWidget(self._label(f"{group.count(Status.ERROR)} error",
                                          t.TEXT_XS, 600,
                                          lambda: t.status_color(Status.ERROR)))
-        if group.ok:
-            counts.addWidget(self._label("No issues", t.TEXT_XS, 500,
-                                         lambda: t.TEXT_MUTED))
         counts.addStretch(1)
+        counts.addWidget(self._label(f"{group.duration:.1f}s", t.TEXT_XS, 500,
+                                    lambda: t.TEXT_MUTED))
 
         readers = QHBoxLayout()
         readers.setSpacing(t.SPACE_1)
@@ -233,11 +313,25 @@ class RunCard(QFrame):
         readers.addStretch(1)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
-        layout.setSpacing(t.SPACE_1)
-        layout.addLayout(top)
-        layout.addLayout(counts)
-        layout.addLayout(readers)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
+        layout.addWidget(self.origin_banner)
+        body = QVBoxLayout()
+        body.setContentsMargins(15, 8, 15, 12)
+        body.setSpacing(5)
+        body.addLayout(title_row)
+        workspace_label = self._label(Path(group.workspace).name or group.workspace,
+                                     t.TEXT_XS, 400, lambda: t.TEXT_MUTED)
+        workspace_label.setToolTip(group.workspace)
+        workspace_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        body.addWidget(workspace_label)
+        body.addLayout(counts)
+        # Reader details remain in the detail pane; the compact card matches
+        # the approved mockup's title / metadata / results hierarchy.
+        reader_container = QWidget(self)
+        reader_container.setLayout(readers)
+        reader_container.hide()
+        layout.addLayout(body)
         self.set_selected(False)
 
     def _paint(self, widget: QWidget, style_of) -> None:
@@ -247,7 +341,8 @@ class RunCard(QFrame):
 
     def _label(self, text, size, weight, color=None) -> QLabel:
         label = QLabel(str(text))
-        base = f"font-size:{size}px;font-weight:{weight};background:transparent;border:none;"
+        base = (f"font-family:'Segoe UI';font-size:{size}px;font-weight:{weight};"
+                "background:transparent;border:none;")
         if color is None:
             # Pas de couleur a soi : elle vient de `QWidget{{color:...}}`, deja
             # dans la feuille globale et deja rejouee a chaque bascule -- rien
@@ -276,14 +371,20 @@ class RunCard(QFrame):
         bouton.setCheckable(True)
         bouton.setChecked(group.locked)
         bouton.setCursor(Qt.PointingHandCursor)
+        bouton.setAccessibleName(
+            "Unprotect this run" if group.locked else "Protect this run")
+        bouton.setAccessibleDescription(
+            "Protected runs are kept when clearing history.")
         bouton.clicked.connect(lambda: self.lock_toggled.emit(self.group))
         self.lock_button = bouton
 
         def style() -> None:
             verrouille = bouton.isChecked()
             bouton.setToolTip(
-                "Unprotect this run (Clear history will remove it)"
+                "Unprotect this run"
                 if verrouille else "Protect this run from Clear history")
+            bouton.setAccessibleName(
+                "Unprotect this run" if verrouille else "Protect this run")
             couleur = t.ACCENT if verrouille else t.TEXT_MUTED
             glyphe = "mdi.lock" if verrouille else "mdi.lock-open-variant-outline"
             bouton.setIcon(icons.icon(glyphe, couleur))
@@ -293,15 +394,18 @@ class RunCard(QFrame):
         return bouton
 
     def _delete_button(self) -> QPushButton:
-        bouton = QPushButton()
-        bouton.setObjectName("IconSm")
+        bouton = DeleteRunButton()
+        bouton.setObjectName("IconDanger")
         bouton.setCursor(Qt.PointingHandCursor)
         bouton.setToolTip("Delete this run")
+        bouton.setAccessibleName("Delete this run")
+        bouton.setAccessibleDescription(
+            "Delete this run and the saved output for every reader.")
         bouton.clicked.connect(lambda: self.delete_requested.emit(self.group))
         self.delete_button = bouton
 
         def style() -> None:
-            bouton.setIcon(icons.icon("mdi.trash-can-outline", t.TEXT_MUTED))
+            bouton.restyle(bouton.underMouse())
 
         self._repeints.append(style)
         style()
@@ -309,16 +413,16 @@ class RunCard(QFrame):
 
     def set_selected(self, selected: bool) -> None:
         self._selected = selected
-        border = t.ACCENT if selected else t.BORDER
-        background = t.rgba(t.ACCENT, 0.08) if selected else t.BG_SURFACE
+        border = ("#6d35cf" if t.current_theme() == "light" else "#bd9aff") if selected else t.BORDER
+        background = t.BG_SURFACE
         # Une regle qualifiee par selecteur (`QFrame#HistoryCard{...}`) force
         # Qt a faire correspondre le selecteur avant d'appliquer quoi que ce
         # soit ; en forme directe (sans selecteur), les proprietes visent
         # `self` sans ce detour -- mesure a l'appui, plus de trois fois moins
         # cher a l'echelle d'une liste bien remplie.
         self.setStyleSheet(
-            f"background:{background};border:1px solid {border};"
-            f"border-radius:{t.RADIUS_MD}px;")
+            f"QFrame#HistoryCard {{background:{background};border:1px solid {border};"
+            f"border-radius:10px;}}")
 
     def restyle(self) -> None:
         for repeindre in self._repeints:
@@ -462,12 +566,13 @@ class HistoryWindow(QDialog):
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search runs, tests, or readers…")
-        self.search.setMinimumWidth(240)
+        self.search.setMinimumWidth(180)
         self.search.setMaximumWidth(360)
         self.search.textChanged.connect(self._apply_filters)
 
         self.workspace_filter = QComboBox()
-        self.workspace_filter.setFixedWidth(190)
+        self.workspace_filter.setMinimumWidth(140)
+        self.workspace_filter.setMaximumWidth(190)
         self.workspace_filter.currentIndexChanged.connect(self._apply_filters)
 
         self.filter_button = QToolButton()
@@ -544,8 +649,8 @@ class HistoryWindow(QDialog):
         left = QFrame()
         self.history_list_panel = left
         left.setObjectName("Surface")
-        left.setMinimumWidth(360)
-        left.setMaximumWidth(520)
+        left.setMinimumWidth(300)
+        left.setMaximumWidth(500)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.addLayout(list_tools)
@@ -592,6 +697,17 @@ class HistoryWindow(QDialog):
         names.setSpacing(0)
         names.addWidget(self.detail_title)
         names.addWidget(self.detail_subtitle)
+        self.rename_button = QPushButton("Rename")
+        self.rename_button.setObjectName("Ghost")
+        self.rename_button.clicked.connect(self._begin_rename)
+        names.addWidget(self.rename_button)
+        self.rename_edit = QLineEdit()
+        self.rename_edit.setMaxLength(100)
+        self.rename_edit.setPlaceholderText("Run name (optional)")
+        self.rename_edit.setAccessibleName("Rename run")
+        self.rename_edit.returnPressed.connect(self._save_rename)
+        self.rename_edit.hide()
+        names.addWidget(self.rename_edit)
 
         self.rerun_button = QPushButton("Re-run")
         self.rerun_button.setObjectName("Run")
@@ -704,7 +820,8 @@ class HistoryWindow(QDialog):
 
         self.reader_box = QFrame()
         self.reader_box.setObjectName("HistoryAside")
-        self.reader_box.setFixedWidth(290)
+        self.reader_box.setMinimumWidth(180)
+        self.reader_box.setMaximumWidth(290)
         self.reader_layout = QVBoxLayout(self.reader_box)
         self.reader_layout.setContentsMargins(t.SPACE_3, t.SPACE_3,
                                               t.SPACE_3, t.SPACE_3)
@@ -871,7 +988,7 @@ class HistoryWindow(QDialog):
                     previous_day = day
                 item = QListWidgetItem()
                 item.setData(Qt.UserRole, group)
-                item.setSizeHint(QSize(0, 106))
+                item.setSizeHint(QSize(0, 146))
                 self._items_by_id[group.id] = item
             self._listed_groups = list(self._groups)
 
@@ -1028,9 +1145,11 @@ class HistoryWindow(QDialog):
 
     def _show_group(self, group: RunGroup) -> None:
         self.detail_stack.setCurrentWidget(self.detail)
-        self.detail_title.setText(Path(group.workspace).name or group.workspace)
+        entry = group.entries[0] if group.entries else None
+        self.detail_title.setText(group.display_name)
+        self.rename_edit.hide()
         self.detail_subtitle.setText(
-            f"{_when(group.timestamp)}  ·  {group.workspace}")
+            f"{_when(group.timestamp)}  ·  {group.origin_label}  ·  {group.workspace}")
         self.passed_value.setText(str(group.count(Status.PASSED)))
         self.failed_value.setText(f"{group.count(Status.FAILED)} failed")
         self.error_value.setText(f"{group.count(Status.ERROR)} error")
@@ -1208,6 +1327,23 @@ class HistoryWindow(QDialog):
     def _first_entry(self) -> RunEntry | None:
         group = self._current_group()
         return group.entries[0] if group and group.entries else None
+
+    def _begin_rename(self) -> None:
+        group = self._current_group()
+        if group is None:
+            return
+        self._renaming_run_id = group.id
+        self.rename_edit.setText(group.display_name)
+        self.rename_edit.show()
+        self.rename_edit.setFocus()
+        self.rename_edit.selectAll()
+        self.rename_edit.setToolTip("Press Enter to save. Empty restores the automatic name.")
+
+    def _save_rename(self) -> None:
+        self.history.rename_run(self._renaming_run_id, self.rename_edit.text())
+        self.rename_edit.hide()
+        self.refresh()
+        self._say("Run renamed.")
 
     def delete_run(self, group: RunGroup | None = None) -> None:
         # `group` peut arriver d'un signal Qt sans rapport (le bouton "Delete

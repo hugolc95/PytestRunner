@@ -40,6 +40,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -47,6 +48,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSplitter,
+    QSizePolicy,
     QStackedWidget,
     QSystemTrayIcon,
     QTreeView,
@@ -76,6 +78,7 @@ from runner.ui import tokens as t
 from runner.ui.execution_profiles_page import ExecutionProfilesPage
 from runner.ui.interpreter_dialog import InterpreterDialog
 from runner.ui.marker_bar import MarkerFilter
+from runner.ui.profile_progress import ProfileProgressLabel
 from runner.ui.results_panel import (
     ONGLET_DETAIL,
     ONGLET_LOGS,
@@ -234,6 +237,7 @@ class MainWindow(QMainWindow):
         self.model.selection_changed.connect(self._on_selection_changed)
 
         self._build_ui()
+        self.service.profile_detail.connect(self._show_profile_detail)
         self._build_menus()
         self._connect_service()
         self._restore()
@@ -541,12 +545,16 @@ class MainWindow(QMainWindow):
     def _load_execution_profile(self, profile: ExecutionProfile) -> None:
         """Load a validated profile without changing local reader selection."""
         self._active_execution_profile = profile
+        self.run_name_stack.setCurrentWidget(self.run_name_button)
+        self.run_name_button.setText(profile.name)
+        self.run_name_button.setEnabled(False)
         self._show_page("workspace")
         self.status_label.setText(
             f'Profile loaded: {profile.name} · {len(profile.sequence)} steps × '
             f'{profile.execution.repetitions} repetitions')
         self.profile_chip_label.setText(
-            f'{profile.name} · {len(profile.sequence)} steps')
+            f'{profile.name} · {len(profile.sequence)} steps × '
+            f'{profile.execution.repetitions} repetitions')
         self.profile_chip.show()
         self.run_button.setText("Run profile")
         self.run_button.setToolTip(
@@ -722,12 +730,41 @@ class MainWindow(QMainWindow):
 
         # Cette barre ne parle que du WORKSPACE : ou il est, et ce qui le
         # decrit. Les actions de run ont leur propre rangee, juste en dessous.
-        ligne.addWidget(self.workspace_combo)
-        ligne.addWidget(self.browse_button)
-        ligne.addWidget(self.load_button)
-        ligne.addWidget(self.config_button)
-        ligne.addWidget(self.history_button)
-        ligne.addWidget(self.allure_button)
+        workspace_box = QVBoxLayout()
+        workspace_box.setSpacing(2)
+        workspace_controls = QHBoxLayout()
+        workspace_controls.setContentsMargins(0, 0, 0, 0)
+        workspace_controls.setSpacing(t.SPACE_2)
+        workspace_controls.addWidget(self.workspace_combo)
+        for control in (self.browse_button, self.load_button, self.config_button,
+                        self.history_button, self.allure_button):
+            workspace_controls.addWidget(control)
+        workspace_controls.addStretch(1)
+        workspace_box.addLayout(workspace_controls)
+        self._pending_run_name = ""
+        self.run_name_stack = QStackedWidget()
+        self.run_name_stack.setFixedSize(260, 24)
+        self.run_name_button = QPushButton("Run name (optional)")
+        self.run_name_button.setObjectName("Ghost")
+        self.run_name_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
+        self.run_name_button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.run_name_button.setStyleSheet(
+            "text-align:left; min-height:24px; max-height:24px; padding:0; border:none;")
+        self.run_name_button.setToolTip("Name this run. Leave empty for an automatic run number.")
+        self.run_name_edit = QLineEdit()
+        self.run_name_edit.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.run_name_edit.setStyleSheet(
+            "min-width:0; min-height:22px; max-height:22px; padding:0 4px; font-size:12px;")
+        self.run_name_edit.setFixedHeight(24)
+        self.run_name_edit.setMaxLength(100)
+        self.run_name_edit.setPlaceholderText("Run name (optional)")
+        self.run_name_edit.setAccessibleName("Run name (optional)")
+        self.run_name_stack.addWidget(self.run_name_button)
+        self.run_name_stack.addWidget(self.run_name_edit)
+        self.run_name_button.clicked.connect(self._edit_run_name)
+        self.run_name_edit.editingFinished.connect(self._save_run_name)
+        workspace_box.addWidget(self.run_name_stack)
+        ligne.addLayout(workspace_box)
         ligne.addStretch(1)
         ligne.addWidget(self.compass_ring)
         ligne.addWidget(self.compass_pct)
@@ -801,6 +838,11 @@ class MainWindow(QMainWindow):
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.profile_chip)
         ligne.addWidget(self.rerun_button)
+        self.view_failures_button = QPushButton("View failures")
+        self.view_failures_button.setObjectName("Primary")
+        self.view_failures_button.clicked.connect(self._view_run_failures)
+        self.view_failures_button.hide()
+        ligne.addWidget(self.view_failures_button)
         # Separe visuellement les actions de leur cible materielle, tout en
         # gardant l'ensemble sur une seule rangee compacte.
         from PySide6.QtWidgets import QSpacerItem
@@ -991,6 +1033,9 @@ class MainWindow(QMainWindow):
 
         barre.addWidget(self.live_chip)
         barre.addWidget(self.progress)
+        self.profile_progress_label = ProfileProgressLabel()
+        self.profile_progress_label.hide()
+        barre.addWidget(self.profile_progress_label, 1)
         barre.addWidget(self.elapsed_label)
         barre.addPermanentWidget(QLabel(""))
         barre.addPermanentWidget(self.remaining_pill)
@@ -1560,7 +1605,11 @@ class MainWindow(QMainWindow):
 
         self._clear_status_filter()
         self.remaining_pill.setVisible(False)
+        same_workspace = getattr(self, "_tree_workspace", None) == (
+            self.workspace.path if self.workspace else "")
+        expanded = self._expanded_tree_paths() if same_workspace else None
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
+        self._tree_workspace = self.workspace.path if self.workspace else ""
         lecteurs = self.workspace.readers if self.workspace else ()
         # Les colonnes montrent TOUS les lecteurs declares, y compris ceux
         # qu'on vient de decocher : les faire disparaitre effacerait de l'ecran
@@ -1583,7 +1632,10 @@ class MainWindow(QMainWindow):
             self.left_stack.setCurrentWidget(self.tree_empty)
         else:
             self.left_stack.setCurrentWidget(self.tree)
-            self.tree.expandToDepth(1)
+            if expanded is None:
+                self.tree.expandToDepth(1)
+            else:
+                self._restore_tree_paths(expanded)
         self.tree_toolbar.setVisible(bool(nodeids))
 
         nom = Path(self.workspace.path).name if self.workspace else ""
@@ -1595,6 +1647,21 @@ class MainWindow(QMainWindow):
         self._update_actions()
         if self._pending_history_run is not None:
             QTimer.singleShot(0, self._launch_pending_history_run)
+
+    def _tree_paths(self, parent=QModelIndex(), path=()):
+        model = self.tree.model()
+        for row in range(model.rowCount(parent)):
+            index = model.index(row, 0, parent)
+            key = path + (str(index.data(Qt.DisplayRole)),)
+            yield index, key
+            yield from self._tree_paths(index, key)
+
+    def _expanded_tree_paths(self):
+        return {path for index, path in self._tree_paths() if self.tree.isExpanded(index)}
+
+    def _restore_tree_paths(self, expanded):
+        for index, path in self._tree_paths():
+            self.tree.setExpanded(index, path in expanded)
 
     @Slot(str)
     def _on_collect_failed(self, message: str) -> None:
@@ -1685,21 +1752,29 @@ class MainWindow(QMainWindow):
 
     def _clear_execution_profile(self) -> None:
         self._active_execution_profile = None
+        self.run_name_button.setText(self._pending_run_name or "Run name (optional)")
+        self.run_name_button.setEnabled(True)
         self.profile_chip.hide()
         self.run_button.setText("Run tests")
         self.run_button.setToolTip("Run the selected tests  (F5)")
         self.status_label.setText("Execution profile unloaded")
         self._update_actions()
 
-    def _profile_configuration_path(self, profile: ExecutionProfile) -> str:
-        """Chemin du YAML embarque, ou "" si le profil n'en a pas.
+    def _edit_run_name(self) -> None:
+        self.run_name_edit.setText(self._pending_run_name)
+        self.run_name_stack.setCurrentWidget(self.run_name_edit)
+        self.run_name_edit.setFocus()
+        self.run_name_edit.selectAll()
 
-        Un profil sans configuration doit tourner exactement comme "Run
-        tests" sans YAML -- pas avec un fichier vide qui, lui, ferait croire
-        a un reglage explicite ou serait relu comme une config invalide.
-        """
+    def _save_run_name(self) -> None:
+        self._pending_run_name = self.run_name_edit.text().strip()
+        self.run_name_button.setText(self._pending_run_name or "Run name (optional)")
+        self.run_name_stack.setCurrentWidget(self.run_name_button)
+
+    def _profile_configuration_path(self, profile: ExecutionProfile) -> str:
+        """Use embedded YAML when present, otherwise the current Run Tests YAML."""
         if not profile.configuration_name and not profile.configuration_text:
-            return ""
+            return self.workspace.config_path if self.workspace is not None else ""
         root = Path(QStandardPaths.writableLocation(
             QStandardPaths.AppDataLocation)) / "profile-configurations"
         root.mkdir(parents=True, exist_ok=True)
@@ -1882,6 +1957,10 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_run_started(self, request: RunRequest) -> None:
+        self._profile_detail_by_reader = {}
+        self.profile_progress_label.hide()
+        self.view_failures_button.hide()
+        self._profile_progress_done = 0 if self._running_execution_profile else None
         self.model.clear_statuses()
         self.model.clear_stress_annotation()
         self.results.begin_run()
@@ -1935,7 +2014,7 @@ class MainWindow(QMainWindow):
         passed = rendus.get(Status.PASSED, 0)
         self.compass_pct.setText(f"{round(100 * passed / total)}%" if total else "—")
 
-        faits = self.model.done()
+        faits = self._completed_executions()
         self.progress.setValue(faits)
         # Pas de `max(0, ...)` ici : la pastille borne deja, et c'est chez elle
         # que la regle a sa place -- « je n'affiche pas un reste negatif » est
@@ -1944,13 +2023,45 @@ class MainWindow(QMainWindow):
 
     @Slot(int, int)
     def _on_progress(self, faits: int, total: int) -> None:
+        if self._running_execution_profile is not None:
+            self._profile_progress_done = faits
+            self.progress.setMaximum(max(1, total))
         # Les nombres viennent de l'arbre, pas du compte de signaux porte par
         # le service : c'est la meme raison que pour les pastilles.
         self._rafraichir_compteurs()
         self._set_status_live(f"Running… {self.remaining_pill.value()} left")
 
+    def _show_profile_detail(self, reader_index: int, detail: str) -> None:
+        if reader_index == -1:
+            self._profile_detail_by_reader = {}
+        if reader_index >= 0:
+            self._profile_detail_by_reader.pop(-1, None)
+        self._profile_detail_by_reader[reader_index] = detail
+        text = "\n".join((f"Reader {i + 1}: " if i >= 0 and len(self._profile_detail_by_reader) > 1 else "") + d
+                         for i, d in sorted(self._profile_detail_by_reader.items()))
+        # Keep the current reader visible; all readers remain in the tooltip.
+        prefix = f"Reader {reader_index + 1}: " if len(self._profile_detail_by_reader) > 1 else ""
+        self.profile_progress_label.setText(prefix + detail)
+        self.profile_progress_label.setToolTip(text)
+        self.profile_progress_label.show()
+
+    def _view_run_failures(self) -> None:
+        failed = self.model.failed_nodeids()
+        if failed:
+            self._goto_test(failed[0])
+            self.results.tabs.setCurrentIndex(ONGLET_DETAIL)
+
+    def _show_failure_actions(self, reports) -> None:
+        self.view_failures_button.setVisible(any(r.failed for r in reports))
+        self.profile_progress_label.hide()
+
+    def _completed_executions(self) -> int:
+        value = getattr(self, "_profile_progress_done", None)
+        return self.model.done() if value is None else value
+
     @Slot(list)
     def _on_run_finished(self, rapports: list) -> None:
+        self._show_failure_actions(rapports)
         self._elapsed.stop()
         self.progress.setVisible(False)
 
@@ -2036,6 +2147,8 @@ class MainWindow(QMainWindow):
                 failed_nodeids=tuple(
                     self.model.failed_nodeids_for(rapport.reader.index)),
                 junit_path=rapport.junit_path,
+                run_kind="profile" if profile is not None else "classic",
+                profile_name=profile.name if profile is not None else "",
             )
             output = (rapport.output if profile is None
                       or profile.reports.save_complete_logs else "")

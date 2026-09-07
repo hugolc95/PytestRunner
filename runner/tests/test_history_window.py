@@ -166,8 +166,8 @@ def test_active_filters_are_visible_and_can_be_cleared(fenetre):
 
 
 def test_history_list_resizes_with_the_embedded_page(fenetre):
-    assert fenetre.history_list_panel.minimumWidth() == 360
-    assert fenetre.history_list_panel.maximumWidth() == 520
+    assert fenetre.history_list_panel.minimumWidth() == 300
+    assert fenetre.history_list_panel.maximumWidth() == 500
 
 
 def test_issue_filter_keeps_only_runs_with_problems(qapp, tmp_path):
@@ -392,10 +392,39 @@ def test_run_card_lock_button_reflects_and_toggles_the_lock_state(fenetre):
     group = fenetre._groups[0]
     card = _card_for(fenetre, group.id)
     assert card.lock_button.isChecked() is False
+    assert card.lock_button.accessibleName() == "Protect this run"
+    assert card.delete_button.objectName() == "IconDanger"
+    assert card.delete_button.accessibleName() == "Delete this run"
+    assert card.protected_badge.isHidden()
 
     card.lock_button.click()
 
     assert _group_by_id(fenetre, group.id).locked is True
+    locked_card = _card_for(fenetre, group.id)
+    assert not locked_card.protected_badge.isHidden()
+    assert locked_card.lock_button.accessibleName() == "Unprotect this run"
+
+
+def test_delete_icon_changes_color_on_hover(fenetre):
+    from PySide6.QtCore import QEvent, QPointF
+    from PySide6.QtGui import QEnterEvent
+    button = _card_for(fenetre, fenetre._groups[0].id).delete_button
+    normal = button.icon().pixmap(24, 24).toImage()
+    button.enterEvent(QEnterEvent(QPointF(), QPointF(), QPointF()))
+    hovered = button.icon().pixmap(24, 24).toImage()
+    assert normal != hovered
+    button.leaveEvent(QEvent(QEvent.Leave))
+    assert button.icon().pixmap(24, 24).toImage() == normal
+
+
+def test_history_origin_labels():
+    from dataclasses import replace
+    from runner.ui.history_dashboard import RunGroup
+    entry = RunEntry(id="test", timestamp=0, workspace="/w")
+    assert "unknown" in RunGroup("test", (entry,)).origin_label
+    assert RunGroup("test", (replace(entry, run_kind="classic"),)).origin_label == "Selected run"
+    profile = replace(entry, run_kind="profile", profile_name="Smoke")
+    assert RunGroup("test", (profile,)).origin_label == "Profile: Smoke"
 
 
 def test_run_card_delete_button_removes_that_specific_run(fenetre, monkeypatch):

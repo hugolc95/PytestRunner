@@ -228,14 +228,16 @@ def test_profile_sequence_preserves_duplicate_steps(qapp, tmp_path):
     service.progress.connect(lambda done, total: progress.append((done, total)))
     service.finished.connect(reports.extend)
 
-    assert service.start_profile(request, dict(os.environ), [nodeid, nodeid])
+    assert service.start_profile(request, dict(os.environ), [nodeid, nodeid], repetitions=3)
     assert _attendre(lambda: bool(reports))
     service.wait(5000)
 
-    assert [outcome.nodeid for outcome in outcomes] == [nodeid, nodeid]
-    assert progress[-1] == (2, 2)
-    assert reports[0].counts == {Status.PASSED: 2}
-    assert reports[0].output.count("attempt 1") == 2
+    assert [outcome.nodeid for outcome in outcomes] == [nodeid] * 6
+    assert progress[-1] == (6, 6)
+    assert {done for done, total in progress} >= set(range(1, 7))
+    assert all(total == 6 for done, total in progress)
+    assert reports[0].counts == {Status.PASSED: 6}
+    assert reports[0].output.count("attempt 1") == 6
 
 
 def test_profile_batches_distinct_steps_into_one_pytest_call(qapp, tmp_path):

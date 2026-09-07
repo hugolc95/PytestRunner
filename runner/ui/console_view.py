@@ -14,8 +14,10 @@ qu'on cherche, et un suivi automatique qui se coupe des qu'on remonte lire.
 
 from __future__ import annotations
 
+import re
+
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextFormat
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextFormat, QSyntaxHighlighter
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -46,6 +48,25 @@ _PLACEHOLDERS = {
     Lens.PROBLEMS: "No failure in this output.",
     Lens.OUTLINE: "Nothing to outline yet.",
 }
+
+
+LOG_LEVEL = re.compile(r"(?:^|\s[-|:]\s|\[|\blogger\.)\s*(ERROR|ERRO|CRITICAL|WARNING|WARN|DEBUG|INFO)\b", re.I)
+
+
+class LogLevelHighlighter(QSyntaxHighlighter):
+    def highlightBlock(self, text):
+        match = LOG_LEVEL.search(text)
+        if not match:
+            return
+        level = match.group(1).upper()
+        if level == "INFO":
+            return
+        color = (t.status_color(Status.FAILED) if level in ("ERROR", "ERRO", "CRITICAL")
+                 else t.status_color(Status.SKIPPED) if level in ("WARN", "WARNING")
+                 else t.ACCENT)
+        fmt = QTextCharFormat()
+        fmt.setForeground(QColor(color))
+        self.setFormat(0, len(text), fmt)
 
 
 class ConsoleView(QWidget):
@@ -81,6 +102,16 @@ class ConsoleView(QWidget):
         colonne.setSpacing(t.SPACE_1)
         colonne.addWidget(self._build_toolbar(show_lens))
         colonne.addWidget(self.view, 1)
+        self.log_highlighter = LogLevelHighlighter(self.view.document()) if not show_lens else None
+        if not show_lens:
+            self.previous_error = QPushButton("↑ Error")
+            self.next_error = QPushButton("↓ Error")
+            self.previous_error.setToolTip("Previous error in this log")
+            self.next_error.setToolTip("Next error in this log")
+            self.previous_error.clicked.connect(lambda: self.navigate_error(-1))
+            self.next_error.clicked.connect(lambda: self.navigate_error(1))
+            self.add_tool(self.previous_error)
+            self.add_tool(self.next_error)
 
         self._update_counter()
 
@@ -160,6 +191,28 @@ class ConsoleView(QWidget):
         """
         self._tools.addWidget(bouton)
 
+    def navigate_error(self, direction: int) -> None:
+        document = self.view.document()
+        errors = []
+        block = document.firstBlock()
+        while block.isValid():
+            match = LOG_LEVEL.search(block.text())
+            if match and match.group(1).upper() in ("ERROR", "ERRO", "CRITICAL"):
+                errors.append(block.blockNumber())
+            block = block.next()
+        if not errors:
+            self.counter.setText("No errors in displayed log")
+            return
+        current = self.view.textCursor().blockNumber()
+        target = (next((n for n in errors if n > current), errors[0]) if direction > 0
+                  else next((n for n in reversed(errors) if n < current), errors[-1]))
+        self.follow_button.setChecked(False)
+        cursor = QTextCursor(document.findBlockByNumber(target))
+        cursor.select(QTextCursor.LineUnderCursor)
+        self.view.setTextCursor(cursor)
+        self.view.centerCursor()
+        self.counter.setText(f"Error {errors.index(target) + 1} / {len(errors)}")
+
     def _icon_toggle(self, glyph: str, infobulle: str, slot,
                      coche: bool = False) -> QPushButton:
         bouton = QPushButton()
@@ -179,6 +232,8 @@ class ConsoleView(QWidget):
         bascule de theme en gardant l'ancienne teinte.
         """
         self._formats.clear()
+        if self.log_highlighter is not None:
+            self.log_highlighter.rehighlight()
         self.copy_button.setIcon(icons.icon("mdi.content-copy", t.TEXT_MUTED))
         self.wrap_button.setIcon(icons.icon("mdi.wrap", t.TEXT_MUTED))
         self.follow_button.setIcon(

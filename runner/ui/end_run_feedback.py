@@ -24,6 +24,11 @@ def install() -> None:
         # the end was both wrong for partial selections and expensive on very
         # large suites.
         self._archive_run_nodeids = tuple(request.nodeids)
+        self._archive_run_name = getattr(self, "_pending_run_name", "")
+        profile = self._running_execution_profile
+        self._archive_profile_name = profile.name if profile else ""
+        self._archive_run_kind = "profile" if profile else "classic"
+        self._archive_save_logs = profile.reports.save_complete_logs if profile else True
         self._archive_failed_by_reader = {
             reader.index: set() for reader in request.readers
         }
@@ -73,11 +78,15 @@ def install() -> None:
                 failed_nodeids=tuple(sorted(
                     failed_by_reader.get(report.reader.index, ()))),
                 junit_path=report.junit_path,
+                run_kind=getattr(self, "_archive_run_kind", "unknown"),
+                profile_name=getattr(self, "_archive_profile_name", ""),
+                run_name=getattr(self, "_archive_run_name", "") if getattr(self, "_archive_run_kind", "") != "profile" else "",
             )
-            entries.append((entry, report.output))
+            entries.append((entry, report.output if getattr(self, "_archive_save_logs", True) else ""))
         return tuple(entries)
 
     def finish_with_background_archive(self, rapports: list) -> None:
+        self._show_failure_actions(rapports)
         self._elapsed.stop()
         self.progress.setVisible(False)
         self.remaining_pill.setVisible(False)
@@ -97,6 +106,7 @@ def install() -> None:
             self._notifier_fin_de_run(summary)
 
         entries = _archive_entries(self, rapports)
+        self._running_execution_profile = None
         self._run_id = None
         self._build_number = None
         self._archive_run_nodeids = ()

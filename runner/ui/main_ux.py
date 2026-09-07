@@ -78,7 +78,7 @@ def install() -> None:
         original_refresh_counts(self)
         total = int(getattr(self, "_main_run_total", 0) or 0)
         if total > 0:
-            done = min(total, max(0, int(self.model.done())))
+            done = min(total, max(0, int(self._completed_executions())))
             self.compass_pct.setText(f"{done} / {total}")
             self.compass_pct.setToolTip(
                 f"{done} of {total} expected test/reader executions completed")

@@ -31,6 +31,17 @@ def entree(identifiant="a", decalage=0.0, reader="", passed=8, failed=2,
         nodeids=tuple(nodeids), failed_nodeids=tuple(echecs), **extra)
 
 
+def test_run_origin_survives_json_and_legacy_is_unknown():
+    entry = entree(run_kind="profile", profile_name="Smoke")
+    restored = RunEntry.from_json(entry.to_json())
+    assert restored.run_kind == "profile"
+    assert restored.profile_name == "Smoke"
+    legacy = entry.to_json()
+    del legacy["run_kind"]
+    del legacy["profile_name"]
+    assert RunEntry.from_json(legacy).run_kind == "unknown"
+
+
 @pytest.fixture
 def historique(tmp_path):
     return History(tmp_path)

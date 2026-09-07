@@ -196,7 +196,8 @@ def test_profile_page_can_add_the_same_test_more_than_once(qapp, tmp_path):
         assert page.sequence_list.topLevelItemCount() == 2
         assert page.sequence_list.topLevelItem(0).data(0, NODEID_ROLE) == \
             page.sequence_list.topLevelItem(1).data(0, NODEID_ROLE)
-        assert "2 sequence steps" in page.summary.text()
+        assert "2 tests" in page.summary.text()
+        assert "2 executions" in page.summary.text()
     finally:
         page.close()
 
@@ -219,6 +220,11 @@ def test_profile_page_collapses_parameter_cases_into_one_row_and_back(qapp, tmp_
         groupe = page.sequence_list.topLevelItem(0)
         assert "3 parameter cases" in groupe.text(0)
         assert groupe.childCount() == 3
+        assert groupe.text(0).lstrip().startswith("1-3")
+        assert groupe.child(1).text(0).lstrip().startswith("2")
+        assert groupe.child(1).toolTip(0) == nodeids[1]
+        assert "tests/test_api.py" not in groupe.child(1).text(0)
+        assert "3 tests in 1 group" in page.summary.text()
 
         page.new_profile()
         page._append_tests(nodeids)
@@ -240,6 +246,43 @@ def test_profile_page_sequence_group_is_collapsed_by_default(qapp, tmp_path):
         groupe = page.sequence_list.topLevelItem(0)
         assert groupe.childCount() == 5
         assert groupe.isExpanded() is False
+    finally:
+        page.close()
+
+
+def test_profile_summary_counts_real_tests_not_collapsed_rows(qapp, tmp_path):
+    nodeids = [f"tests/test_api.py::test_login[{i}]" for i in range(4)]
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page._append_tests(nodeids)
+        page.repetitions.setValue(3)
+
+        assert page.sequence_list.topLevelItemCount() == 1
+        assert "4 tests in 1 group" in page.summary.text()
+        assert "12 executions" in page.summary.text()
+        assert page.sequence_list.accessibleName() == "Ordered test sequence"
+    finally:
+        page.close()
+
+
+def test_editor_can_save_and_open_profile_using_local_yaml(qapp, tmp_path):
+    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
+    try:
+        page._append_tests(["tests/test_a.py::test_a"])
+        page.config_edit.setText("embedded.yaml")
+        page.current_profile().configuration_text = "setting: true"
+        page.use_local_configuration()
+        assert page.run_button.isEnabled()
+        assert page.export_button.isEnabled()
+        assert page.save_current()
+        stored = page.store.list()[0]
+        assert stored.configuration_name == ""
+        assert stored.configuration_text == ""
+        opened = []
+        page.run_requested.connect(opened.append)
+        page.open_in_run_tests()
+        assert len(opened) == 1
+        assert opened[0].configuration_text == ""
     finally:
         page.close()
 

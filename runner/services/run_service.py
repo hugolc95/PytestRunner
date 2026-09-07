@@ -91,6 +91,7 @@ class RunService(QObject):
     line = Signal(int, str)           # index du lecteur, ligne brute
     outcome = Signal(object)          # Outcome
     progress = Signal(int, int)       # termines, total
+    profile_detail = Signal(int, str)
     reader_finished = Signal(object)  # ReaderReport
     finished = Signal(list)           # list[ReaderReport]
 
@@ -157,7 +158,7 @@ class RunService(QObject):
 
         for lecteur in lecteurs:
             worker = _ReaderWorker(request, lecteur, env, parent=self)
-            worker.line.connect(self.line)
+            worker.line.connect(self._on_live_line)
             worker.outcome.connect(self._on_outcome)
             worker.done.connect(self._on_reader_done)
             self._workers.append(worker)
@@ -190,6 +191,9 @@ class RunService(QObject):
         if self.busy or not sequence:
             return False
         expanded = list(sequence) * max(1, int(repetitions))
+        self._profile_sequence_length = len(sequence)
+        self._profile_repetitions = max(1, int(repetitions))
+        self._profile_expanded_length = len(expanded)
         logical = replace(request, nodeids=tuple(expanded))
         self._profile_active = True
         self._profile_cancelled = False
@@ -243,6 +247,7 @@ class RunService(QObject):
             self._finish_profile()
             return
         self._current_batch = self._next_batch()
+        self._emit_profile_detail(-1, self._current_batch[0], preparing=True)
         request = replace(
             self._profile_request,
             nodeids=tuple(self._current_batch),
@@ -251,6 +256,23 @@ class RunService(QObject):
             junit_dir="",
         )
         self._start_request(request, self._profile_env, emit_started=False)
+
+    def _on_live_line(self, reader_index: int, text: str) -> None:
+        prefix = "PYTESTRUNNER_START\t"
+        if self._profile_active and text.strip().startswith(prefix):
+            self._emit_profile_detail(reader_index, text.strip()[len(prefix):])
+        self.line.emit(reader_index, text)
+
+    def _emit_profile_detail(self, reader_index, nodeid, preparing=False):
+        if nodeid not in self._current_batch:
+            return
+        position = self._profile_expanded_length - len(self._profile_queue) + self._current_batch.index(nodeid)
+        size = self._profile_sequence_length
+        retry = f" · Retry {self._profile_attempt}/{self._profile_reruns}" if self._profile_attempt else ""
+        self.profile_detail.emit(reader_index,
+            f"Repetition {position // size + 1}/{self._profile_repetitions} · "
+            f"Step {position % size + 1}/{size}{retry} · "
+            f"{'Preparing: ' if preparing else ''}{nodeid}")
 
     def _finish_profile_step(self) -> None:
         failed = any(not report.ok for report in self._reports)
@@ -277,8 +299,7 @@ class RunService(QObject):
             aggregate.exit_code = max(aggregate.exit_code, report.exit_code)
             aggregate.durations.update(report.durations)
 
-        reader_count = max(1, len(self._profile_request.readers))
-        self._profile_completed += reader_count * len(self._current_batch)
+        self._profile_completed += len(self._seen_outcomes)
         self.progress.emit(self._profile_completed, self._profile_total)
         del self._profile_queue[:len(self._current_batch)]
         self._profile_attempt = 0
@@ -315,7 +336,11 @@ class RunService(QObject):
 
     def _on_outcome(self, outcome: Outcome) -> None:
         if self._profile_active:
+            key = (outcome.reader_index, outcome.nodeid)
+            self._seen_outcomes.add(key)
             self.outcome.emit(outcome)
+            self.progress.emit(
+                self._profile_completed + len(self._seen_outcomes), self._profile_total)
             return
         cle = (outcome.reader_index, outcome.nodeid)
         if cle not in self._seen_outcomes:
