@@ -176,11 +176,10 @@ def install() -> None:
     def build_ui_polished(self) -> None:
         original_build_ui(self)
 
-        # Move only the splitter outline while dragging. The expensive tree and
-        # output panels repaint once when the handle is released.
+        # Follow the pointer: deferred rubber-band resizing jumps on release.
         if hasattr(self, "split"):
-            self.split.setOpaqueResize(False)
-            self.split.setHandleWidth(max(5, t.SPACE_1 + 2))
+            self.split.setOpaqueResize(True)
+            self.split.setHandleWidth(8)
 
         # Reduce geometry work and make scrolling feel continuous on large
         # parameterized suites.

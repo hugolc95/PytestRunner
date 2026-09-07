@@ -142,6 +142,13 @@ class DetailPanel(QWidget):
         ligne_nodeid.setSpacing(t.SPACE_1)
 
         self.nodeid_label = QLabel()
+        self.nodeid_label.setMinimumWidth(0)
+        from PySide6.QtWidgets import QSizePolicy
+        self.nodeid_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.path_label.setMinimumWidth(0)
+        self.path_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.name_label.setMinimumWidth(0)
+        self.name_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.nodeid_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
         self.nodeid_label.setStyleSheet(
             f"font-family: {t.FONT_MONO}; font-size: {t.TEXT_XS}px;"

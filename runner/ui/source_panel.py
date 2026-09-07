@@ -83,6 +83,9 @@ class SourcePanel(QWidget):
         barre.setSpacing(t.SPACE_2)
 
         self.path_label = QLabel()
+        from PySide6.QtWidgets import QSizePolicy
+        self.path_label.setMinimumWidth(0)
+        self.path_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.path_label.setObjectName("Faint")
         self.path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
