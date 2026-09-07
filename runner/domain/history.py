@@ -79,6 +79,7 @@ class RunEntry:
     run_kind: str = "unknown"
     profile_name: str = ""
     run_name: str = ""
+    test_statuses: dict[str, str] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
@@ -125,6 +126,7 @@ class RunEntry:
             "locked": self.locked,
             "run_kind": self.run_kind, "profile_name": self.profile_name,
             "run_name": self.run_name,
+            "test_statuses": dict(self.test_statuses),
         }
 
     @classmethod
@@ -156,6 +158,7 @@ class RunEntry:
                 run_kind=str(donnees.get("run_kind", "unknown")),
                 profile_name=str(donnees.get("profile_name", "")),
                 run_name=str(donnees.get("run_name", "")),
+                test_statuses=dict(donnees.get("test_statuses") or {}),
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             # `AttributeError` compte autant que les autres : un `counts`
@@ -305,6 +308,26 @@ class History:
             if nodeid in entree.nodeids:
                 return entree.timestamp
         return None
+
+    def recent_statuses(self, nodeid: str, reader: str = "", limite: int = 10) -> list[Status]:
+        results = []
+        for entry in self._entrees:
+            if entry.reader != reader or nodeid not in entry.nodeids:
+                continue
+            status = Status.__members__.get(entry.test_statuses.get(nodeid, ""))
+            if status is None:
+                # Old archives lack per-test verdicts. Only infer an outcome
+                # when the aggregate makes it unambiguous; otherwise neutral.
+                possible = [s for s in Status if s.is_final and entry.count(s)]
+                if nodeid in entry.failed_nodeids:
+                    possible = [s for s in possible if s.is_bad]
+                else:
+                    possible = [s for s in possible if not s.is_bad]
+                status = possible[0] if len(possible) == 1 else Status.PENDING
+            results.append(status)
+            if len(results) >= limite:
+                break
+        return list(reversed(results))
 
     # ------------------------------------------------------------ ecriture
 

@@ -2151,6 +2151,7 @@ class MainWindow(QMainWindow):
                 exit_code=rapport.exit_code,
                 counts={s.name: n for s, n in rapport.counts.items()},
                 nodeids=tuple(joues),
+                test_statuses={nodeid: self.model.statuses_for_nodeid(nodeid).get(rapport.reader.index, Status.PENDING).name for nodeid in joues},
                 failed_nodeids=tuple(
                     self.model.failed_nodeids_for(rapport.reader.index)),
                 junit_path=rapport.junit_path,
@@ -2206,13 +2207,13 @@ class MainWindow(QMainWindow):
         self.results.show_group(chemin, nom, self.model.readers,
                                 compteurs, echecs, source, saut, nodeids)
 
-    def _recent_runs_for(self, nodeid: str) -> dict[int, list[bool]]:
+    def _recent_runs_for(self, nodeid: str) -> dict[int, list[Status]]:
         """Mini-tendance de ce test, par lecteur -- absente des lecteurs qui
         n'ont encore aucun run enregistre pour lui."""
         lecteurs = self.model.readers or (Reader("", 0),)
         resultat = {}
         for lecteur in lecteurs:
-            runs = self.history.recent_runs(nodeid, lecteur.name)
+            runs = self.history.recent_statuses(nodeid, lecteur.name)
             if runs:
                 resultat[lecteur.index] = runs
         return resultat

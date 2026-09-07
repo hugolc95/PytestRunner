@@ -472,7 +472,7 @@ class RecentRunsSparkline(QWidget):
         self.setFixedHeight(14)
 
     def set_runs(self, runs: list[bool]) -> None:
-        self._runs = tuple(runs)
+        self._runs = tuple(Status.PASSED if run is True else Status.FAILED if run is False else run for run in runs)
         self._repeindre()
 
     def _repeindre(self) -> None:
@@ -486,20 +486,23 @@ class RecentRunsSparkline(QWidget):
             self.setToolTip("No recorded history for this test yet.")
             return
 
-        for ok in self._runs:
+        for status in self._runs:
             barre = QFrame()
             barre.setFixedWidth(4)
-            couleur = t.status_color(Status.PASSED if ok else Status.FAILED)
+            couleur = t.status_color(status)
+            barre.setToolTip(status.label if status is not Status.PENDING else "Unknown (older run)")
             barre.setStyleSheet(
                 f"background-color: {couleur}; border-radius: 1px;")
             self._ligne.addWidget(barre)
 
-        echecs = sum(1 for ok in self._runs if not ok)
+        echecs = sum(1 for status in self._runs if status.is_bad)
         if echecs:
             self.setToolTip(
                 f"Failed {echecs} of the last {len(self._runs)} runs.")
-        else:
+        elif all(status is Status.PASSED for status in self._runs):
             self.setToolTip(f"Passed every one of the last {len(self._runs)} runs.")
+        else:
+            self.setToolTip(" · ".join(status.label if status is not Status.PENDING else "Unknown" for status in self._runs))
 
 
 SCOPE_TESTS = "tests"

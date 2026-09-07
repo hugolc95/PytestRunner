@@ -24,6 +24,7 @@ def install() -> None:
         # the end was both wrong for partial selections and expensive on very
         # large suites.
         self._archive_run_nodeids = tuple(request.nodeids)
+        self._archive_statuses_by_reader = {}
         self._archive_run_name = getattr(self, "_pending_run_name", "")
         profile = self._running_execution_profile
         self._archive_profile_name = profile.name if profile else ""
@@ -36,6 +37,7 @@ def install() -> None:
 
     def remember_outcome_for_archive(self, outcome) -> None:
         original_outcome(self, outcome)
+        self._archive_statuses_by_reader.setdefault(outcome.reader_index, {})[outcome.nodeid] = outcome.status.name
         failures = getattr(self, "_archive_failed_by_reader", None)
         if failures is None:
             return
@@ -75,6 +77,7 @@ def install() -> None:
                 exit_code=report.exit_code,
                 counts={status.name: count for status, count in report.counts.items()},
                 nodeids=played,
+                test_statuses=dict(getattr(self, '_archive_statuses_by_reader', {}).get(report.reader.index, {})),
                 failed_nodeids=tuple(sorted(
                     failed_by_reader.get(report.reader.index, ()))),
                 junit_path=report.junit_path,

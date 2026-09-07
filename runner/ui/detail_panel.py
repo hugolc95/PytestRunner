@@ -788,7 +788,7 @@ class DetailPanel(QWidget):
             sous_ligne = f"Last run: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_seen))}"
 
         runs = [ok for liste in (recent_runs or {}).values() for ok in liste]
-        echecs = sum(1 for ok in runs if not ok)
+        echecs = sum(1 for result in runs if result is False or (isinstance(result, Status) and result.is_bad))
         if runs and echecs:
             fragment = f"flaky {echecs} time{'s' if echecs > 1 else ''} in the last {len(runs)} runs"
             sous_ligne = f"{sous_ligne} · {fragment}" if sous_ligne else fragment[0].upper() + fragment[1:]

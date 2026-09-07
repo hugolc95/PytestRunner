@@ -71,7 +71,7 @@ def test_a_reader_with_history_gets_a_sparkline(qapp):
                       recent_runs={0: [True, True, False]})
 
     assert 0 in panneau._sparklines
-    assert panneau._sparklines[0]._runs == (True, True, False)
+    assert panneau._sparklines[0]._runs == (Status.PASSED, Status.PASSED, Status.FAILED)
 
 
 def test_a_reader_without_history_gets_no_sparkline(qapp):
