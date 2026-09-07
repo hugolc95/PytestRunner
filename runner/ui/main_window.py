@@ -1993,9 +1993,16 @@ class MainWindow(QMainWindow):
             # que l'arbre ne connait pas. Le signaler vaut mieux que le perdre.
             self.status_label.setText(f"Unexpected test id: {outcome.nodeid}")
 
-        self._rafraichir_compteurs()
+        self._refresh_live_counts()
         self.results.update_statuses(outcome.nodeid,
                                      self.model.statuses_for_nodeid(outcome.nodeid))
+
+    def _refresh_live_counts(self) -> None:
+        now = time.monotonic()
+        if now - getattr(self, '_last_live_refresh', 0.0) < 0.05:
+            return
+        self._last_live_refresh = now
+        self._rafraichir_compteurs()
 
     def _rafraichir_compteurs(self) -> None:
         """Aligne les pastilles et l'avancement sur l'etat reel de l'arbre.
@@ -2028,8 +2035,7 @@ class MainWindow(QMainWindow):
             self.progress.setMaximum(max(1, total))
         # Les nombres viennent de l'arbre, pas du compte de signaux porte par
         # le service : c'est la meme raison que pour les pastilles.
-        self._rafraichir_compteurs()
-        self._set_status_live(f"Running… {self.remaining_pill.value()} left")
+        self._refresh_live_counts()
 
     def _show_profile_detail(self, reader_index: int, detail: str) -> None:
         if reader_index == -1:
@@ -2052,6 +2058,7 @@ class MainWindow(QMainWindow):
             self.results.tabs.setCurrentIndex(ONGLET_DETAIL)
 
     def _show_failure_actions(self, reports) -> None:
+        self._rafraichir_compteurs()
         self.view_failures_button.setVisible(any(r.failed for r in reports))
         self.profile_progress_label.hide()
 

@@ -254,6 +254,24 @@ def pytest_runtest_logstart(nodeid, location):
     TestTreeModel._data_colonne_nom = name_data_with_running_branch
 
     def connect_service_with_running_branch(self) -> None:
+        from PySide6.QtCore import QTimer
+
+        pending_output = {}
+        pending_running = {}
+        timer = QTimer(self)
+        timer.setInterval(50)
+
+        def flush_live():
+            timer.stop()
+            for reader, nodeid in pending_running.items():
+                self.model.set_running_test(reader, nodeid)
+            pending_running.clear()
+            for reader, chunks in pending_output.items():
+                self.results.append_output(reader, ''.join(chunks))
+            pending_output.clear()
+
+        timer.timeout.connect(flush_live)
+        self._live_output_timer = timer
         self.service.started.connect(self._on_run_started)
 
         def live_line(reader_index: int, texte: str) -> None:
@@ -261,15 +279,19 @@ def pytest_runtest_logstart(nodeid, location):
             if brut.startswith(_START_PREFIX):
                 nodeid = brut[len(_START_PREFIX):].strip()
                 if nodeid:
-                    self.model.set_running_test(reader_index, nodeid)
-                return
-            self.results.append_output(reader_index, texte)
+                    pending_running[reader_index] = nodeid
+            else:
+                pending_output.setdefault(reader_index, []).append(texte)
+            if not timer.isActive():
+                timer.start()
 
         def reader_finished(rapport) -> None:
+            flush_live()
             self.model.clear_running_reader(rapport.reader.index)
             self.results.set_report(rapport)
 
         def run_finished(rapports) -> None:
+            flush_live()
             self.model.clear_running_tests()
             self._on_run_finished(rapports)
 

@@ -28,13 +28,14 @@ class _Row:
     balayage complet par appel.
     """
 
-    __slots__ = ("node", "parent", "children", "row", "checked", "statuses", "agg")
+    __slots__ = ("node", "parent", "children", "row", "checked", "statuses", "agg", "check_cache")
 
     def __init__(self, node: TestNode, parent: "_Row | None", row: int):
         self.node = node
         self.parent = parent
         self.row = row
         self.checked = True
+        self.check_cache = Qt.Checked
         # Statut par index de lecteur, pour les feuilles seulement : celui d'un
         # regroupement se deduit de ses enfants (voir status_for).
         self.statuses: dict[int, Status] = {}
@@ -97,6 +98,7 @@ class TestTreeModel(QAbstractItemModel):
 
     def set_tree(self, roots: list[TestNode]) -> None:
         self.beginResetModel()
+        self._tally.clear()
         self._roots = [_Row(n, None, i) for i, n in enumerate(roots)]
         self._by_nodeid = {}
         for racine in self._roots:
@@ -285,12 +287,16 @@ class TestTreeModel(QAbstractItemModel):
     def _check_state(self, ligne: _Row):
         if ligne.is_leaf:
             return Qt.Checked if ligne.checked else Qt.Unchecked
+        if ligne.check_cache is not None:
+            return ligne.check_cache
         etats = {self._check_state(e) for e in ligne.children}
         if etats == {Qt.Checked}:
-            return Qt.Checked
-        if etats == {Qt.Unchecked}:
-            return Qt.Unchecked
-        return Qt.PartiallyChecked
+            ligne.check_cache = Qt.Checked
+        elif etats == {Qt.Unchecked}:
+            ligne.check_cache = Qt.Unchecked
+        else:
+            ligne.check_cache = Qt.PartiallyChecked
+        return ligne.check_cache
 
     def _set_checked(self, ligne: _Row, coche: bool) -> None:
         """Coche le noeud et toute sa descendance, puis rafraichit l'affichage.
@@ -314,8 +320,14 @@ class TestTreeModel(QAbstractItemModel):
         terminer son propre clic avant que le modele ne bouge sous elle.
         """
         ligne.checked = coche
+        ligne.check_cache = Qt.Checked if coche else Qt.Unchecked
         for descendant in ligne.descendants():
             descendant.checked = coche
+            descendant.check_cache = ligne.check_cache
+        parent = ligne.parent
+        while parent is not None:
+            parent.check_cache = None
+            parent = parent.parent
         QTimer.singleShot(0, self._emit_layout_changed_if_alive)
 
     def _emit_layout_changed_if_alive(self) -> None:
@@ -408,6 +420,11 @@ class TestTreeModel(QAbstractItemModel):
         return coches, total
 
     def _emit_selection(self) -> None:
+        # Selection changes are rare; paint must never scan the whole tree.
+        for root in self._roots:
+            root.check_cache = None
+            for row in root.descendants():
+                row.check_cache = None
         coches, total = self.counts()
         self.selection_changed.emit(coches, total)
 
@@ -476,8 +493,9 @@ class TestTreeModel(QAbstractItemModel):
             connu = parent.agg.get(reader_index)
             parent.agg[reader_index] = (status if connu is None
                                         else worst((connu, status)))
-            index_parent = self.createIndex(parent.row, colonne, parent)
-            self.dataChanged.emit(index_parent, index_parent, [Qt.DecorationRole])
+            if parent.agg[reader_index] != connu:
+                index_parent = self.createIndex(parent.row, colonne, parent)
+                self.dataChanged.emit(index_parent, index_parent, [Qt.DecorationRole])
             parent = parent.parent
         return True
 
@@ -509,7 +527,7 @@ class TestTreeModel(QAbstractItemModel):
                 # garder ferait afficher en rouge des dossiers remis a zero.
                 ligne.agg.clear()
 
-        self.layoutChanged.emit()
+        self._emit_layout_changed()
 
     def subtree_summary(self, index: QModelIndex) -> tuple[dict, list]:
         """Bilan de ce que contient ce noeud : compteurs et echecs.
