@@ -154,7 +154,7 @@ def _grouper_run(nodeids: list[str]) -> list[SequenceGroup]:
         return []
     groupes: list[SequenceGroup] = []
     pos = 0
-    for racine in build_tree(nodeids):
+    for racine in build_sequence_tree(nodeids):
         resultat = _consommer(racine, nodeids, pos, ())
         if resultat is None:
             # Ne devrait pas arriver sur une sequence bien formee --
@@ -172,6 +172,29 @@ def _grouper_run(nodeids: list[str]) -> list[SequenceGroup]:
         groupes.extend(sous_groupes)
     groupes.extend(SequenceGroup(Kind.CASE, nodeid, (nodeid,)) for nodeid in nodeids[pos:])
     return groupes
+
+
+def build_sequence_tree(nodeids) -> list[TestNode]:
+    """An ordered tree: only adjacent occurrences share their ancestors.
+
+    Returning to folder A after folder B creates a new A occurrence, never
+    moves its tests ahead of B. Repeated leaves are retained independently.
+    """
+    roots = []
+    for nodeid in nodeids:
+        children = roots
+        segments = _decouper(nodeid)
+        for position, (name, kind) in enumerate(segments):
+            leaf = position == len(segments) - 1
+            if not leaf and children and children[-1].name == name and children[-1].kind == kind and not children[-1].nodeid:
+                node = children[-1]
+            else:
+                node = TestNode(name=name, kind=kind)
+                children.append(node)
+            if leaf:
+                node.nodeid = nodeid
+            children = node.children
+    return roots
 
 
 def _descendre(node: TestNode, segments: tuple[tuple[str, Kind], ...]):

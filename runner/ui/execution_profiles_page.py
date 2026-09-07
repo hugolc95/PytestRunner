@@ -42,7 +42,7 @@ from runner.domain.execution_profile import (
     inspect_profile,
 )
 from runner.domain.models import Kind
-from runner.domain.tree import SequenceGroup, build_tree, group_hierarchically
+from runner.domain.tree import SequenceGroup, build_tree, build_sequence_tree, group_hierarchically
 from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
@@ -90,10 +90,21 @@ def _group_item(groupe: SequenceGroup) -> QTreeWidgetItem:
         item.setData(0, NODEID_ROLE, groupe.nodeids[0])
         item.setToolTip(0, groupe.nodeids[0])
     else:
-        for nodeid in groupe.nodeids:
-            child = QTreeWidgetItem(item, [_short_nodeid(nodeid)])
-            child.setData(0, NODEID_ROLE, nodeid)
-            child.setToolTip(0, nodeid)
+        roots = build_sequence_tree(groupe.nodeids)
+        while len(roots) == 1 and roots[0].children:
+            roots = roots[0].children
+
+        def add_node(parent, node):
+            child = QTreeWidgetItem(parent, [node.name])
+            child.setData(0, _LABEL_ROLE, node.name)
+            if node.nodeid:
+                child.setData(0, NODEID_ROLE, node.nodeid)
+                child.setToolTip(0, node.nodeid)
+            for descendant in node.children:
+                add_node(child, descendant)
+
+        for node in roots:
+            add_node(item, node)
     return item
 
 
@@ -125,6 +136,8 @@ class AddTestsDialog(QDialog):
         self.model = TestTreeModel(self)
         self.model.set_tree(build_tree(nodeids))
         self.model.set_all_checked(False)
+        self._selection_order = []
+        self.model.selection_changed.connect(self._remember_selection_order)
         self.proxy = QSortFilterProxyModel(self)
         self.proxy.setSourceModel(self.model)
         self.proxy.setFilterCaseSensitivity(Qt.CaseInsensitive)
@@ -175,10 +188,17 @@ class AddTestsDialog(QDialog):
             self.tree.expandAll()
 
     def _add(self) -> None:
-        selected = self.model.checked_nodeids()
+        selected = list(self._selection_order)
         if selected:
             self.tests_added.emit(selected)
             self.model.set_all_checked(False)
+
+    def _remember_selection_order(self, *_):
+        selected = self.model.checked_nodeids()
+        current = set(selected)
+        self._selection_order = [nodeid for nodeid in self._selection_order if nodeid in current]
+        previous = set(self._selection_order)
+        self._selection_order.extend(nodeid for nodeid in selected if nodeid not in previous)
 
     def _add_clicked_test(self, proxy_index) -> None:
         source_index = self.proxy.mapToSource(proxy_index).siblingAtColumn(0)
@@ -533,7 +553,10 @@ class ExecutionProfilesPage(QWidget):
         dialog.exec()
 
     def _append_tests(self, nodeids: list[str]) -> None:
-        self._rebuild_sequence(self._flatten_sequence() + nodeids)
+        # Append this selection without merging it into earlier selections.
+        for group in group_hierarchically(nodeids):
+            self.sequence_list.addTopLevelItem(_group_item(group))
+        self._renumber()
         self._mark_dirty()
 
     def _rebuild_sequence(self, nodeids: list[str]) -> None:
@@ -633,18 +656,11 @@ class ExecutionProfilesPage(QWidget):
         self._mark_dirty()
 
     def _renumber(self) -> None:
-        position = 1
-        for index in range(self.sequence_list.topLevelItemCount()):
-            item = self.sequence_list.topLevelItem(index)
-            count = max(1, item.childCount())
-            numero = str(position) if count == 1 else f"{position}-{position + count - 1}"
-            item.setText(0, f"{numero:>5}   ↕  {item.data(0, _LABEL_ROLE)}")
-            for child_index in range(item.childCount()):
-                child = item.child(child_index)
-                child.setText(
-                    0, f"{position + child_index:>5}   ↕  "
-                       f"{_short_nodeid(child.data(0, NODEID_ROLE))}")
-            position += count
+        _, ranges = self._sequence_ranges()
+        for item, start, end in ranges:
+            number = str(start + 1) if end - start == 1 else f"{start + 1}-{end}"
+            label = item.data(0, _LABEL_ROLE) or _short_nodeid(item.data(0, NODEID_ROLE))
+            item.setText(0, f"{number:>5}   ↕  {label}")
 
     def _options_changed(self) -> None:
         self._mark_dirty()
