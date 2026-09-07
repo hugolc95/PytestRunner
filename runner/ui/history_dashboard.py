@@ -16,6 +16,7 @@ from PySide6.QtCore import QPoint, QSize, Qt, QUrl, Signal
 from PySide6.QtGui import QActionGroup, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QButtonGroup,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
+    QTreeView,
     QVBoxLayout,
     QWidget,
 )
@@ -46,6 +48,7 @@ from runner.domain.models import Reader, Status
 from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.history_window import FlakyDialog
+from runner.ui.history_execution_tree import HistoryExecutionModel
 from runner.ui.results_panel import ReaderViews
 from runner.ui.widgets import EmptyState, StatusRibbon
 
@@ -765,8 +768,9 @@ class HistoryWindow(QDialog):
         summary_layout.addWidget(self.detail_meta)
 
         self.tabs = _history_tabs()
-        self.overview = self._build_overview()
         self.issues_table = self._issue_table()
+        self.issue_preview = self.issues_table
+        self.overview = self._build_overview()
         self.output = ReaderViews(Qt.Vertical)
         self.details_table = QTableWidget(0, 8)
         self.details_table.setHorizontalHeaderLabels(
@@ -776,7 +780,7 @@ class HistoryWindow(QDialog):
         self.details_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.details_table.horizontalHeader().setStretchLastSection(True)
         self.tabs.addTab(self.overview, "Overview")
-        self.tabs.addTab(self.issues_table, "Issues (0)")
+        self.tabs.addTab(self.issues_table, "Failed (0)")
         self.tabs.addTab(self.output, "Output")
         self.tabs.addTab(self.details_table, "Details")
 
@@ -806,17 +810,22 @@ class HistoryWindow(QDialog):
 
     def _build_overview(self) -> QWidget:
         widget = QWidget()
-        self.issue_preview = self._issue_table()
-        self.issue_preview.setMaximumHeight(190)
-
-        issues_title = QLabel("Issues requiring attention")
-        issues_title.setStyleSheet(
-            f"font-size:{t.TEXT_MD}px;font-weight:700;background:transparent;")
+        # The issue table lives in Failed; Overview shows the actual sequence.
+        self.execution_title = QLabel("Executed tests")
+        self.execution_tree = QTreeView()
+        self.execution_model = HistoryExecutionModel(self)
+        self.execution_tree.setModel(self.execution_model)
+        self.execution_tree.setUniformRowHeights(True)
+        self.execution_tree.setAnimated(False)
+        self.execution_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.execution_tree.header().setStretchLastSection(False)
+        self.execution_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.execution_tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.execution_tree.setColumnWidth(1, 175)
         left = QVBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
-        left.addWidget(issues_title)
-        left.addWidget(self.issue_preview)
-        left.addStretch(1)
+        left.addWidget(self.execution_title)
+        left.addWidget(self.execution_tree, 1)
 
         self.reader_box = QFrame()
         self.reader_box.setObjectName("HistoryAside")
@@ -1164,11 +1173,11 @@ class HistoryWindow(QDialog):
             + (f"Build #{group.build_number:04d}    "
                if group.build_number is not None else "")
             + f"Run ID {group.id}")
-        self.tabs.setTabText(1, f"Issues ({len(group.failed_nodeids)})")
-        self._fill_issues(self.issue_preview, group)
+        self.tabs.setTabText(1, f"Failed ({len(group.failed_nodeids)})")
         self._fill_issues(self.issues_table, group)
         self._fill_readers(group)
         self._fill_output(group)
+        self._select_execution_reader(0)
         self._fill_details(group)
         self._fill_export_menu(group)
         self.rerun_button.setEnabled(bool(group.nodeids))
@@ -1195,10 +1204,15 @@ class HistoryWindow(QDialog):
             table.setItem(row, 0, test)
             table.setItem(row, 1, QTableWidgetItem(", ".join(mapping[nodeid])))
         table.setVisible(bool(nodeids))
-        if table is self.issue_preview:
-            table.setMaximumHeight(min(190, 42 + 34 * max(1, len(nodeids))))
 
     def _fill_readers(self, group: RunGroup) -> None:
+        self._execution_group = group
+        old = getattr(self, '_execution_reader_buttons', None)
+        if old is not None:
+            old.deleteLater()
+        self._execution_reader_buttons = QButtonGroup(self)
+        self._execution_reader_buttons.setExclusive(True)
+        self._execution_reader_buttons.idClicked.connect(self._select_execution_reader)
         # Le titre et le stretch restent ; seules les cartes intermediaires
         # sont recreees pour le run courant.
         while self.reader_layout.count() > 2:
@@ -1207,12 +1221,17 @@ class HistoryWindow(QDialog):
             if widget is not None:
                 widget.deleteLater()
         for index, entry in reversed(list(enumerate(group.entries))):
-            card = QFrame()
+            card = QPushButton()
+            card.setCheckable(True)
+            card.setMinimumHeight(80)
+            card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+            self._execution_reader_buttons.addButton(card, index)
             card.setObjectName("HistoryReaderCard")
             layout = QVBoxLayout(card)
             layout.setContentsMargins(t.SPACE_2, t.SPACE_2,
                                       t.SPACE_2, t.SPACE_2)
             name = QLabel(f"●  {_short_reader(entry.reader)}")
+            name.setAttribute(Qt.WA_TransparentForMouseEvents)
             name.setStyleSheet(
                 f"color:{t.reader_color(index)};font-weight:700;"
                 "background:transparent;")
@@ -1220,9 +1239,35 @@ class HistoryWindow(QDialog):
                 f"{entry.count(Status.PASSED)} passed    "
                 f"{entry.count(Status.FAILED) + entry.count(Status.ERROR)} issues")
             result.setObjectName("Muted")
+            result.setWordWrap(True)
+            result.setAttribute(Qt.WA_TransparentForMouseEvents)
             layout.addWidget(name)
             layout.addWidget(result)
             self.reader_layout.insertWidget(1, card)
+
+    def _select_execution_reader(self, index: int) -> None:
+        group = getattr(self, '_execution_group', None)
+        if group is None or not 0 <= index < len(group.entries):
+            return
+        entry = group.entries[index]
+        self._selected_execution_reader = index
+        button = self._execution_reader_buttons.button(index)
+        if button is not None:
+            button.setChecked(True)
+        for item in self._execution_reader_buttons.buttons():
+            selected = item is button
+            item.setStyleSheet(
+                f"QPushButton {{text-align:left;min-height:72px;padding:0;border:1px solid {t.ACCENT if selected else t.BORDER_STRONG};"
+                f"background:{t.rgba(t.ACCENT, 0.12) if selected else t.BG_SURFACE};border-radius:6px;}}")
+        name = f"Profile: {entry.profile_name}" if entry.run_kind == 'profile' else 'Executed tests'
+        self.execution_title.setText(f"{name} · {_short_reader(entry.reader)}")
+        self.execution_tree.setUpdatesEnabled(False)
+        try:
+            self.execution_model.set_entry(entry)
+            self.execution_tree.expandToDepth(1)
+        finally:
+            self.execution_tree.setUpdatesEnabled(True)
+        self.output.select_silently(index)
 
     def _fill_output(self, group: RunGroup) -> None:
         readers = tuple(Reader(entry.reader or "No reader", index)

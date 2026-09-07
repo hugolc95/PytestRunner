@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 from runner.domain.execution_profile import ExecutionProfile
 from runner.domain.history import History
-from runner.domain.models import Reader, ReaderReport, RunRequest, Status
+from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest, Status
 from runner.ui import end_run_feedback
 from runner.ui.main_window import MainWindow
 
@@ -30,6 +30,8 @@ def test_background_archive_keeps_profile_name_then_classic_origin(qtbot, tmp_pa
         window._running_execution_profile = active
         window._run_id = run_id
         window._on_run_started(request)
+        window._on_outcome(Outcome(nodeid='test_a', status=Status.PASSED, reader_index=0))
+        window._on_outcome(Outcome(nodeid='test_a', status=Status.PASSED, reader_index=0))
         window._on_run_finished([ReaderReport(reader=reader, counts={Status.PASSED: 2})])
         qtbot.waitUntil(lambda: window._archive_worker is None)
         assert window._running_execution_profile is None
@@ -40,6 +42,7 @@ def test_background_archive_keeps_profile_name_then_classic_origin(qtbot, tmp_pa
     assert saved.find("classic-run").profile_name == ""
     assert saved.find("classic-run").run_name == "Firmware validation"
     assert saved.find("profile-run").run_name == ""
+    assert saved.find('profile-run').executions == (('test_a', 'PASSED'), ('test_a', 'PASSED'))
     saved.rename_run("classic-run", "Renamed run")
     assert History(tmp_path / "history").find("classic-run").run_name == "Renamed run"
 

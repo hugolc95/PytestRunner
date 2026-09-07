@@ -208,7 +208,7 @@ def test_selected_run_combines_reader_results(fenetre):
 
     assert fenetre.passed_value.text() == "4"
     assert fenetre.failed_value.text() == "1 failed"
-    assert fenetre.tabs.tabText(1) == "Issues (1)"
+    assert fenetre.tabs.tabText(1) == "Failed (1)"
     assert fenetre.details_table.rowCount() == 2
     assert fenetre.issue_preview.item(0, 0).text() == "t2"
 

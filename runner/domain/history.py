@@ -80,6 +80,7 @@ class RunEntry:
     profile_name: str = ""
     run_name: str = ""
     test_statuses: dict[str, str] = field(default_factory=dict)
+    executions: tuple[tuple[str, str], ...] = ()
 
     @property
     def total(self) -> int:
@@ -127,6 +128,7 @@ class RunEntry:
             "run_kind": self.run_kind, "profile_name": self.profile_name,
             "run_name": self.run_name,
             "test_statuses": dict(self.test_statuses),
+            "executions": [list(result) for result in self.executions],
         }
 
     @classmethod
@@ -159,6 +161,9 @@ class RunEntry:
                 profile_name=str(donnees.get("profile_name", "")),
                 run_name=str(donnees.get("run_name", "")),
                 test_statuses=dict(donnees.get("test_statuses") or {}),
+                executions=tuple((str(result[0]), str(result[1]))
+                                 for result in (donnees.get("executions") or ())
+                                 if isinstance(result, (list, tuple)) and len(result) == 2),
             )
         except (AttributeError, KeyError, TypeError, ValueError):
             # `AttributeError` compte autant que les autres : un `counts`
