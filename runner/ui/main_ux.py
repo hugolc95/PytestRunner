@@ -77,6 +77,8 @@ def install() -> None:
     def refresh_counts_as_progress(self) -> None:
         original_refresh_counts(self)
         total = int(getattr(self, "_main_run_total", 0) or 0)
+        if getattr(self, '_profile_count_statuses', None) is not None:
+            total = self._profile_execution_total
         if total > 0:
             done = min(total, max(0, int(self._completed_executions())))
             self.compass_pct.setText(f"{done} / {total}")

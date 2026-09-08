@@ -760,8 +760,13 @@ class DetailPanel(QWidget):
         vus = [statuses.get(l.index, Status.PENDING) for l in cibles]
         if all(s is Status.PENDING for s in vus):
             return self._html_note("This test has not run yet.")
+        if any(s is Status.RUNNING for s in vus):
+            return self._html_note("This execution is still running.")
+        if any(s is Status.PENDING for s in vus):
+            return self._html_note("Waiting for results from the remaining readers.")
         if all(s is Status.SKIPPED for s in vus):
-            return self._html_note("Skipped everywhere in the last run.")
+            return self._html_note("This execution was skipped on every reader." if getattr(self, 'execution_view', False)
+                                   else "Skipped everywhere in the last run.")
 
         # Le vide d'un test qui passe etait le coeur du reproche : une seule
         # phrase grise, perdue dans un grand cadre vide, ne disait rien de
@@ -783,6 +788,8 @@ class DetailPanel(QWidget):
         else:
             pluriel = "every reader" if len(cibles) > 1 else "the last run"
             verdict = f"Passed on {pluriel}."
+            if getattr(self, 'execution_view', False):
+                verdict = 'This execution passed on every reader.' if len(cibles) > 1 else 'This execution passed.'
         sous_ligne = ""
         if last_seen is not None:
             sous_ligne = f"Last run: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(last_seen))}"

@@ -92,6 +92,9 @@ class RunService(QObject):
     outcome = Signal(object)          # Outcome
     progress = Signal(int, int)       # termines, total
     profile_detail = Signal(int, str)
+    profile_execution = Signal(int, int, int, str, object)  # position, retry, reader, nodeid, status
+    profile_batch_report = Signal(int, int, int, object)  # first position, count, retry, report
+    profile_output = Signal(int, int, int, int, str)
     reader_finished = Signal(object)  # ReaderReport
     finished = Signal(list)           # list[ReaderReport]
 
@@ -247,6 +250,7 @@ class RunService(QObject):
             self._finish_profile()
             return
         self._current_batch = self._next_batch()
+        self._current_batch_positions = {nodeid: i for i, nodeid in enumerate(self._current_batch)}
         self._emit_profile_detail(-1, self._current_batch[0], preparing=True)
         request = replace(
             self._profile_request,
@@ -260,13 +264,22 @@ class RunService(QObject):
     def _on_live_line(self, reader_index: int, text: str) -> None:
         prefix = "PYTESTRUNNER_START\t"
         if self._profile_active and text.strip().startswith(prefix):
-            self._emit_profile_detail(reader_index, text.strip()[len(prefix):])
+            nodeid = text.strip()[len(prefix):]
+            self._emit_profile_detail(reader_index, nodeid)
+            self._emit_profile_execution(reader_index, nodeid, Status.RUNNING)
+        elif self._profile_active:
+            self.profile_output.emit(self._profile_expanded_length - len(self._profile_queue),
+                                     len(self._current_batch), self._profile_attempt, reader_index, text)
         self.line.emit(reader_index, text)
 
     def _emit_profile_detail(self, reader_index, nodeid, preparing=False):
-        if nodeid not in self._current_batch:
+        positions = getattr(self, '_current_batch_positions', None)
+        if positions is None:
+            positions = {value: index for index, value in enumerate(self._current_batch)}
+        offset = positions.get(nodeid)
+        if offset is None:
             return
-        position = self._profile_expanded_length - len(self._profile_queue) + self._current_batch.index(nodeid)
+        position = self._profile_expanded_length - len(self._profile_queue) + offset
         size = self._profile_sequence_length
         retry = f" · Retry {self._profile_attempt}/{self._profile_reruns}" if self._profile_attempt else ""
         self.profile_detail.emit(reader_index,
@@ -274,10 +287,18 @@ class RunService(QObject):
             f"Step {position % size + 1}/{size}{retry} · "
             f"{'Preparing: ' if preparing else ''}{nodeid}")
 
+    def _emit_profile_execution(self, reader, nodeid, status):
+        offset = self._current_batch_positions.get(nodeid)
+        if offset is not None:
+            position = self._profile_expanded_length - len(self._profile_queue) + offset
+            self.profile_execution.emit(position, self._profile_attempt, reader, nodeid, status)
+
     def _finish_profile_step(self) -> None:
         failed = any(not report.ok for report in self._reports)
         label = ", ".join(self._current_batch)
         for report in self._reports:
+            self.profile_batch_report.emit(self._profile_expanded_length - len(self._profile_queue),
+                                           len(self._current_batch), self._profile_attempt, report)
             aggregate = self._profile_reports[report.reader.index]
             attempt_label = self._profile_attempt + 1
             aggregate.output += (
@@ -337,6 +358,7 @@ class RunService(QObject):
     def _on_outcome(self, outcome: Outcome) -> None:
         if self._profile_active:
             key = (outcome.reader_index, outcome.nodeid)
+            self._emit_profile_execution(outcome.reader_index, outcome.nodeid, outcome.status)
             self._seen_outcomes.add(key)
             self.outcome.emit(outcome)
             self.progress.emit(

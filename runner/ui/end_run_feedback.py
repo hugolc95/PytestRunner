@@ -86,7 +86,7 @@ def install() -> None:
                 junit_path=report.junit_path,
                 run_kind=getattr(self, "_archive_run_kind", "unknown"),
                 profile_name=getattr(self, "_archive_profile_name", ""),
-                run_name=getattr(self, "_archive_run_name", "") if getattr(self, "_archive_run_kind", "") != "profile" else "",
+                run_name=getattr(self, "_archive_run_name", ""),
             )
             entries.append((entry, report.output if getattr(self, "_archive_save_logs", True) else ""))
         return tuple(entries)

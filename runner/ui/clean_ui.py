@@ -102,6 +102,9 @@ def install() -> None:
 
     def progress_with_compass_remaining(self, done: int, total: int) -> None:
         original_progress(self, done, total)
+        if getattr(self, '_profile_count_statuses', None) is not None:
+            done = self._completed_executions()
+            total = self._profile_execution_total
         self.compass_ring.set_remaining(total - done)
 
     MainWindow._on_run_started = run_started_with_compass_remaining

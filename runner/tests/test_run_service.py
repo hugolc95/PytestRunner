@@ -223,6 +223,8 @@ def test_profile_sequence_preserves_duplicate_steps(qapp, tmp_path):
         workspace=str(tmp_path), interpreter=sys.executable,
         nodeids=(nodeid,), readers=())
     service = RunService()
+    executions = []
+    service.profile_execution.connect(lambda *event: executions.append(event))
     outcomes, progress, reports = [], [], []
     service.outcome.connect(outcomes.append)
     service.progress.connect(lambda done, total: progress.append((done, total)))
@@ -230,6 +232,7 @@ def test_profile_sequence_preserves_duplicate_steps(qapp, tmp_path):
 
     assert service.start_profile(request, dict(os.environ), [nodeid, nodeid], repetitions=3)
     assert _attendre(lambda: bool(reports))
+    assert [(event[0], event[1]) for event in executions if event[-1] is Status.PASSED] == [(i, 0) for i in range(6)]
     service.wait(5000)
 
     assert [outcome.nodeid for outcome in outcomes] == [nodeid] * 6
@@ -319,6 +322,9 @@ def test_profile_reruns_a_failed_step_and_keeps_its_final_verdict(qapp, tmp_path
         workspace=str(tmp_path), interpreter=sys.executable,
         nodeids=(nodeid,), readers=())
     service = RunService()
+    execution_events, batch_reports = [], []
+    service.profile_execution.connect(lambda *event: execution_events.append(event))
+    service.profile_batch_report.connect(lambda *event: batch_reports.append(event))
     reports = []
     service.finished.connect(reports.extend)
 
@@ -329,6 +335,9 @@ def test_profile_reruns_a_failed_step_and_keeps_its_final_verdict(qapp, tmp_path
 
     assert reports[0].counts == {Status.PASSED: 1}
     assert reports[0].output.count(f"--- {nodeid} - attempt") == 2
+    assert [(event[0], event[1], event[-1]) for event in execution_events if event[-1].is_final] == [
+        (0, 0, Status.FAILED), (0, 1, Status.PASSED)]
+    assert [(event[0], event[1], event[2]) for event in batch_reports] == [(0, 1, 0), (0, 1, 1)]
 
 
 def test_profile_stop_after_failure_skips_following_steps(qapp, tmp_path):

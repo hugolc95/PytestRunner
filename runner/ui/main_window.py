@@ -14,6 +14,7 @@ import socketserver
 import subprocess
 import threading
 import time
+from collections import Counter
 from functools import partial
 from pathlib import Path
 
@@ -57,7 +58,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_icon import APP_ICON_RELATIVE_PATH, resource_path
-from runner.domain import history
+from runner.domain import history, failures as failures_mod
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.execution_profile import ExecutionProfile, ProfileStore
 from runner.domain.models import Kind, Reader, RunRequest, Status
@@ -79,6 +80,8 @@ from runner.ui.execution_profiles_page import ExecutionProfilesPage
 from runner.ui.interpreter_dialog import InterpreterDialog
 from runner.ui.marker_bar import MarkerFilter
 from runner.ui.profile_progress import ProfileProgressLabel
+from runner.ui.live_profile_model import LiveProfileModel
+from runner.ui.tree_mode_header import TreeModeHeader, ProfilePicker
 from runner.ui.results_panel import (
     ONGLET_DETAIL,
     ONGLET_LOGS,
@@ -238,6 +241,9 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self.service.profile_detail.connect(self._show_profile_detail)
+        self.service.profile_execution.connect(self._on_profile_execution)
+        self.service.profile_batch_report.connect(self._on_profile_batch_report)
+        self.service.profile_output.connect(self._on_profile_output)
         self._build_menus()
         self._connect_service()
         self._restore()
@@ -544,10 +550,21 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _load_execution_profile(self, profile: ExecutionProfile) -> None:
         """Load a validated profile without changing local reader selection."""
+        if self.service.busy or self._stress_worker is not None:
+            self.status_label.setText('Stop the current run before choosing another profile.')
+            return
+        missing = sum(nodeid not in self.model._by_nodeid for nodeid in profile.sequence)
+        if missing or not profile.sequence:
+            self.status_label.setText(f'Profile unavailable: {missing} step(s) missing from this workspace.')
+            return
+        # Opening a profile is a new inspection context: a previous verdict
+        # filter would hide every pending row in the sequence preview.
+        self._clear_status_filter()
+        changed = getattr(self, '_displayed_profile', None) != profile
         self._active_execution_profile = profile
         self.run_name_stack.setCurrentWidget(self.run_name_button)
-        self.run_name_button.setText(profile.name)
-        self.run_name_button.setEnabled(False)
+        self.run_name_button.setText(self._pending_run_name or 'Run name (optional)')
+        self.run_name_button.setEnabled(True)
         self._show_page("workspace")
         self.status_label.setText(
             f'Profile loaded: {profile.name} · {len(profile.sequence)} steps × '
@@ -555,7 +572,20 @@ class MainWindow(QMainWindow):
         self.profile_chip_label.setText(
             f'{profile.name} · {len(profile.sequence)} steps × '
             f'{profile.execution.repetitions} repetitions')
-        self.profile_chip.show()
+        self.profile_chip.hide()
+        if changed:
+            self._profile_selection_timer.stop()
+            self._profile_selected_key = None
+            self._profile_reports.clear()
+            self._profile_batch_output.clear()
+            self._profile_pending_console.clear()
+            self.profile_model.prepare(profile, self._readers_to_run())
+            self._displayed_profile = profile
+            self.profile_tree.expandToDepth(1)
+            self._size_reader_columns(self.profile_tree, self.profile_model)
+        self._refresh_profile_picker()
+        self._set_profile_tree_visible(True)
+        self._reveal_search_match(self.profile_model.key(0))
         self.run_button.setText("Run profile")
         self.run_button.setToolTip(
             f'Run the ordered sequence from "{profile.name}"')
@@ -857,6 +887,31 @@ class MainWindow(QMainWindow):
         colonne.setContentsMargins(0, 0, 0, 0)
         colonne.setSpacing(t.SPACE_2)
 
+        self.tree_view_switch = TreeModeHeader()
+        switch_layout = QHBoxLayout(self.tree_view_switch)
+        switch_layout.setContentsMargins(0, 0, 0, 0)
+        self.profile_tree_button = QPushButton('Profiles')
+        self.classic_tree_button = QPushButton('All tests')
+        for button in (self.classic_tree_button, self.profile_tree_button):
+            button.setCheckable(True)
+            switch_layout.addWidget(button)
+        self.classic_tree_button.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.profile_tree_button.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        self.profile_picker = ProfilePicker()
+        self.profile_picker.setMinimumWidth(0)
+        self.profile_picker.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        picker_policy = self.profile_picker.sizePolicy()
+        picker_policy.setRetainSizeWhenHidden(True)
+        self.profile_picker.setSizePolicy(picker_policy)
+        self.profile_picker.setPlaceholderText('Choose profile…')
+        self.profile_picker.opening.connect(self._refresh_profile_picker)
+        self.profile_picker.activated.connect(self._choose_header_profile)
+        switch_layout.addWidget(self.profile_picker, 1)
+        self.profile_picker.hide()
+        self.profile_tree_button.clicked.connect(self._open_profile_view)
+        self.classic_tree_button.clicked.connect(lambda: self._set_profile_tree_visible(False))
+        self.tree_view_switch.hide()
+
         outils = QHBoxLayout()
         outils.setSpacing(t.SPACE_2)
 
@@ -873,9 +928,9 @@ class MainWindow(QMainWindow):
                                               "Clear selection  (Ctrl+Shift+A)",
                                               lambda: self.model.set_all_checked(False))
         self.expand_button = self._quiet("mdi.unfold-more-horizontal", "Expand all",
-                                         lambda: self.tree.expandAll())
+                                         lambda: self._visible_test_tree().expandAll())
         self.collapse_button = self._quiet("mdi.unfold-less-horizontal", "Collapse all",
-                                           lambda: self.tree.collapseAll())
+                                           lambda: self._visible_test_tree().collapseAll())
 
         self.markers = MarkerFilter()
         self.markers.filter_changed.connect(self._on_marker_filter)
@@ -900,6 +955,9 @@ class MainWindow(QMainWindow):
         # des controles actifs sur du vide laissent croire a une panne.
         self.tree_toolbar = QWidget()
         self.tree_toolbar.setLayout(outils)
+        toolbar_policy = self.tree_toolbar.sizePolicy()
+        toolbar_policy.setRetainSizeWhenHidden(True)
+        self.tree_toolbar.setSizePolicy(toolbar_policy)
         self.tree_toolbar.setVisible(False)
         colonne.addWidget(self.tree_toolbar)
 
@@ -945,6 +1003,18 @@ class MainWindow(QMainWindow):
         self.left_stack = QStackedWidget()
         self.left_stack.addWidget(self.tree_empty)
         self.left_stack.addWidget(self.tree)
+        self.profile_model = LiveProfileModel(self)
+        self.profile_tree = QTreeView()
+        self.profile_tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.profile_tree))
+        self.profile_tree.setModel(self.profile_model)
+        self.profile_tree.setUniformRowHeights(True)
+        self.profile_tree.setAnimated(False)
+        self.profile_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.profile_tree.header().setStretchLastSection(False)
+        self.profile_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.profile_tree.selectionModel().currentChanged.connect(self._select_profile_execution)
+        self.left_stack.addWidget(self.profile_tree)
+        self.tree_view_switch.attach(self.tree.header())
         colonne.addWidget(self.left_stack, 1)
 
         # Le compte de selection et le filtre qui l'explique, sur la meme
@@ -972,7 +1042,12 @@ class MainWindow(QMainWindow):
         pied.addStretch(1)
         pied.addWidget(self.filter_label)
         pied.addWidget(self.filter_clear)
-        colonne.addLayout(pied)
+        self.selection_footer = QWidget()
+        self.selection_footer.setLayout(pied)
+        footer_policy = self.selection_footer.sizePolicy()
+        footer_policy.setRetainSizeWhenHidden(True)
+        self.selection_footer.setSizePolicy(footer_policy)
+        colonne.addWidget(self.selection_footer)
         return panneau
 
     def _quiet(self, glyph: str, infobulle: str, slot) -> QPushButton:
@@ -987,7 +1062,213 @@ class MainWindow(QMainWindow):
         self.results = ResultsPanel()
         self.results.reader_selected.connect(self._on_reader_selected)
         self.results.test_chosen.connect(self._goto_test)
-        return self.results
+        self.results_stack = QStackedWidget()
+        self.results_stack.addWidget(self.results)
+        self.profile_result_page = QWidget()
+        layout = QVBoxLayout(self.profile_result_page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        self.profile_selection_label = QLabel('Select an execution to inspect its result.')
+        self.profile_selection_label.setWordWrap(False)
+        self.profile_selection_label.setFixedHeight(self.profile_selection_label.fontMetrics().height() + 4)
+        self.profile_selection_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        context_policy = self.profile_selection_label.sizePolicy()
+        context_policy.setRetainSizeWhenHidden(True)
+        self.profile_selection_label.setSizePolicy(context_policy)
+        self.profile_results = ResultsPanel()
+        self.profile_results.detail.execution_view = True
+        self.profile_results.tabs.setTabEnabled(ONGLET_LOGS, False)
+        self.profile_results.tabs.setTabToolTip(ONGLET_LOGS, 'Per-execution log files are not available. Console contains the pytest batch for this attempt.')
+        layout.addWidget(self.profile_results, 1)
+        self.results_stack.addWidget(self.profile_result_page)
+        self._profile_reports = {}
+        self._profile_selected_key = None
+        self._profile_selection_timer = QTimer(self)
+        self._profile_selection_timer.setSingleShot(True)
+        self._profile_selection_timer.setInterval(50)
+        self._profile_selection_timer.timeout.connect(self._refresh_profile_selection)
+        self._profile_batch_output = {}
+        self._profile_pending_console = {}
+        self._profile_console_timer = QTimer(self)
+        self._profile_console_timer.setSingleShot(True)
+        self._profile_console_timer.setInterval(50)
+        self._profile_console_timer.timeout.connect(self._flush_profile_console)
+        self._profile_counts_timer = QTimer(self)
+        self._profile_counts_timer.setSingleShot(True)
+        self._profile_counts_timer.setInterval(50)
+        self._profile_counts_timer.timeout.connect(self._rafraichir_compteurs)
+        panel = QWidget()
+        panel_layout = QVBoxLayout(panel)
+        panel_layout.setContentsMargins(0, 0, 0, 0)
+        panel_layout.addWidget(self.profile_selection_label)
+        panel_layout.addWidget(self.results_stack, 1)
+        self.profile_selection_label.hide()
+        return panel
+
+    def _on_profile_output(self, position, count, attempt, reader, text):
+        active = self._profile_batch_output.get(reader)
+        if active is None or active[:3] != (position, count, attempt):
+            active = (position, count, attempt, [])
+            self._profile_batch_output[reader] = active
+        active[3].append(text)
+        selected = self.profile_model.locations.get(self._profile_selected_key)
+        if selected and selected[1] == attempt and position <= selected[0] < position + count:
+            self._profile_pending_console.setdefault(reader, []).append(text)
+            if not self._profile_console_timer.isActive():
+                self._profile_console_timer.start()
+
+    def _flush_profile_console(self):
+        for reader, chunks in self._profile_pending_console.items():
+            self.profile_results.append_output(reader, ''.join(chunks))
+        self._profile_pending_console.clear()
+
+    def _set_profile_tree_visible(self, visible: bool) -> None:
+        self.profile_tree_button.setChecked(visible)
+        self.classic_tree_button.setChecked(not visible)
+        self.left_stack.setCurrentWidget(self.profile_tree if visible else self.tree)
+        self.results_stack.setCurrentWidget(self.profile_result_page if visible else self.results)
+        self.profile_selection_label.setVisible(visible)
+        self.tree_toolbar.setVisible(bool(self.model._by_nodeid))
+        for control in (self.select_all_button, self.select_none_button, self.markers):
+            control.setEnabled(not visible)
+        self.selection_footer.setVisible(not visible)
+        self.failure_results.hide()
+        self.tree_view_switch.attach(self.profile_tree.header() if visible else self.tree.header())
+        self.tree_view_switch.setVisible(self.workspace is not None or bool(self.model._by_nodeid))
+        self.profile_picker.setVisible(visible)
+        self.profile_chip.hide()
+        self.run_button.setText('Run profile' if visible else 'Run tests')
+        # Both labels share the same slot; switching modes must not move Stop.
+        self.run_button.setFixedWidth(max(self.run_button.sizeHint().width(),
+                                         self.run_button.fontMetrics().horizontalAdvance('Run profile') + 48))
+        self.run_name_button.setText(self._pending_run_name or 'Run name (optional)')
+        self.run_name_button.setEnabled(not self.service.busy and self._stress_worker is None)
+        name_policy = self.run_name_stack.sizePolicy()
+        name_policy.setRetainSizeWhenHidden(True)
+        self.run_name_stack.setSizePolicy(name_policy)
+        self.run_name_stack.setVisible(True)
+        # Consume pending typing in the destination view without a delayed jump.
+        self.search._typing_timer.stop()
+        self._on_search(self.search.field.text(), reveal=False)
+        self._apply_status_filter()
+        if hasattr(self, 'act_run'):
+            self._update_actions()
+
+    def _refresh_profile_picker(self):
+        if not hasattr(self, 'profiles_page') or self.service.busy:
+            return
+        profiles = self.profiles_page.store.list()
+        active = self._active_execution_profile
+        if active and all(p.profile_id != active.profile_id for p in profiles):
+            profiles.insert(0, active)
+        self.profile_picker.blockSignals(True)
+        self.profile_picker.clear()
+        chosen = -1
+        for profile in profiles:
+            missing = sum(nodeid not in self.model._by_nodeid for nodeid in profile.sequence)
+            available = bool(profile.sequence) and missing == 0
+            self.profile_picker.addItem(profile.name + ('' if available else ' — Incompatible'), profile)
+            row = self.profile_picker.count() - 1
+            item = self.profile_picker.model().item(row)
+            item.setEnabled(available)
+            item.setToolTip(f'{missing} missing step(s)' if not available else
+                            f'{len(profile.sequence)} steps × {profile.execution.repetitions} repetitions')
+            if active and active.profile_id == profile.profile_id:
+                chosen = row
+        self.profile_picker.setCurrentIndex(chosen)
+        self.profile_picker.blockSignals(False)
+
+    def _choose_header_profile(self, index):
+        profile = self.profile_picker.itemData(index)
+        if profile is not None:
+            self._load_execution_profile(profile)
+
+    def _open_profile_view(self):
+        self._refresh_profile_picker()
+        if (self._active_execution_profile is not None
+                and getattr(self, '_displayed_profile', None) is None
+                and not self.service.busy):
+            self._load_execution_profile(self._active_execution_profile)
+            return
+        if self._active_execution_profile is None and not self.service.busy:
+            for index in range(self.profile_picker.count()):
+                if self.profile_picker.model().item(index).isEnabled():
+                    self._choose_header_profile(index)
+                    return
+            self.profile_selection_label.setText('No compatible profile. Create or edit one in Execution Profiles.')
+        self._set_profile_tree_visible(True)
+
+    def _on_profile_execution(self, position, attempt, reader, nodeid, status) -> None:
+        states = getattr(self, '_profile_count_statuses', None)
+        if states is not None:
+            key = (position, attempt, reader)
+            previous = states.get(key)
+            terminal = (Status.PASSED, Status.FAILED, Status.ERROR, Status.SKIPPED)
+            if key not in states and attempt > 0:
+                self._profile_execution_total += 1
+            if previous in terminal:
+                self._profile_verdict_counts[previous] -= 1
+            if status in terminal:
+                self._profile_verdict_counts[status] += 1
+            states[key] = status
+        self.profile_model.apply_execution(position, attempt, reader, nodeid, status)
+        self._update_profile_status_filter(self.profile_model.key(position, attempt))
+        self._refresh_live_counts()
+        if states is not None and not self._profile_counts_timer.isActive():
+            self._profile_counts_timer.start()
+        if self._profile_selected_key == self.profile_model.key(position, attempt):
+            self._profile_selection_timer.start()
+
+    def _on_profile_batch_report(self, position, count, attempt, report) -> None:
+        for current in range(position, position + count):
+            self._profile_reports[(self.profile_model.key(current, attempt), report.reader.index)] = report
+        if self._profile_selected_key:
+            selected_position, selected_attempt, _ = self.profile_model.locations[self._profile_selected_key]
+            if selected_attempt == attempt and position <= selected_position < position + count:
+                self._profile_selection_timer.start()
+        self._profile_batch_output.pop(report.reader.index, None)
+
+    def _select_profile_execution(self, index, previous=None) -> None:
+        if not index.isValid():
+            return
+        key = index.internalPointer().node.nodeid
+        if key not in self.profile_model.locations:
+            self._profile_selected_key = None
+            self.profile_selection_label.setText(str(index.siblingAtColumn(0).data()))
+            self.profile_results.set_readers(self.profile_model.readers)
+            self.profile_results.output.clear()
+            return
+        self._profile_selected_key = key
+        self._refresh_profile_selection()
+
+    def _refresh_profile_selection(self) -> None:
+        key = self._profile_selected_key
+        if key not in self.profile_model.locations:
+            return
+        self._profile_console_timer.stop()
+        self._profile_pending_console.clear()
+        position, attempt, nodeid = self.profile_model.locations[key]
+        size = self.profile_model.sequence_length
+        suffix = f' · Retry {attempt}' if attempt else ''
+        self.profile_selection_label.setText(
+            f'Repetition {position // size + 1}/{self.profile_model.repetitions} · '
+            f'Step {position % size + 1}/{size} · Execution {position + 1}{suffix}')
+        self.profile_results.set_readers(self.profile_model.readers)
+        self.profile_results.output.clear()
+        self.profile_results.show_test(nodeid, self.profile_model.statuses_for_nodeid(key),
+                                       self.workspace.path if self.workspace else '')
+        self.profile_results.source.edit_button.setEnabled(False)
+        self.profile_results.source.edit_button.setToolTip('Switch to All tests to edit the source.')
+        readers = self.profile_model.readers or (Reader('', 0),)
+        for reader in readers:
+            report = self._profile_reports.get((key, reader.index))
+            if report is not None:
+                self.profile_results.set_report(report)
+                self.profile_results.output.set_text(reader.index, report.output,
+                                                     'Pytest batch for this attempt')
+            else:
+                active = self._profile_batch_output.get(reader.index)
+                text = ''.join(active[3]) if active and active[2] == attempt and active[0] <= position < active[0] + active[1] else ''
+                self.profile_results.output.set_text(reader.index, text, 'Live pytest batch for this attempt')
 
     def _build_status_bar(self) -> None:
         """L'avancement vit en bas, pas en haut.
@@ -1594,6 +1875,11 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_collected(self, collection) -> None:
+        self._active_execution_profile = None
+        self._displayed_profile = None
+        self._profile_selected_key = None
+        self.profile_model.set_tree([])
+        self._set_profile_tree_visible(False)
         self.progress.setVisible(False)
         self.progress.setRange(0, 100)
         self.load_button.setEnabled(True)
@@ -1609,6 +1895,8 @@ class MainWindow(QMainWindow):
             self.workspace.path if self.workspace else "")
         expanded = self._expanded_tree_paths() if same_workspace else None
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
+        self._refresh_profile_picker()
+        self.tree_view_switch.setVisible(self.workspace is not None)
         self._tree_workspace = self.workspace.path if self.workspace else ""
         lecteurs = self.workspace.readers if self.workspace else ()
         # Les colonnes montrent TOUS les lecteurs declares, y compris ceux
@@ -1676,7 +1964,7 @@ class MainWindow(QMainWindow):
         ErrorDialog.show_error(self, "Could not collect the tests", premiere, message)
         self._update_actions()
 
-    def _size_reader_columns(self) -> None:
+    def _size_reader_columns(self, tree=None, model=None) -> None:
         """Chaque colonne de lecteur prend la largeur de son titre, UNE fois.
 
         La largeur est calculee ici et figee, au lieu d'etre confiee a
@@ -1690,11 +1978,13 @@ class MainWindow(QMainWindow):
         Le titre reste la reference pour ne pas retomber sur des noms tronques
         (`smo11Secur`) : ce sont eux qui distinguent une colonne de l'autre.
         """
-        entete = self.tree.header()
+        tree = tree if tree is not None else self.tree
+        model = model if model is not None else self.model
+        entete = tree.header()
         metriques = entete.fontMetrics()
 
-        for colonne in range(1, self.model.columnCount()):
-            titre = self.model.headerData(colonne, Qt.Horizontal, Qt.DisplayRole) or ""
+        for colonne in range(1, model.columnCount()):
+            titre = model.headerData(colonne, Qt.Horizontal, Qt.DisplayRole) or ""
             # De quoi loger le titre, sa marge de section, et l'icone de statut.
             largeur = metriques.horizontalAdvance(str(titre)) + t.SPACE_8
             entete.setSectionResizeMode(colonne, QHeaderView.Fixed)
@@ -1745,9 +2035,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def run_selected(self) -> None:
-        if self._active_execution_profile is not None:
+        if self.profile_tree_button.isChecked() and self._active_execution_profile is not None:
             self._start_profile(self._active_execution_profile)
-        else:
+        elif not self.profile_tree_button.isChecked():
             self._start(self.model.checked_nodeids())
 
     def _clear_execution_profile(self) -> None:
@@ -1758,6 +2048,7 @@ class MainWindow(QMainWindow):
         self.run_button.setText("Run tests")
         self.run_button.setToolTip("Run the selected tests  (F5)")
         self.status_label.setText("Execution profile unloaded")
+        self._set_profile_tree_visible(False)
         self._update_actions()
 
     def _edit_run_name(self) -> None:
@@ -1957,6 +2248,28 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_run_started(self, request: RunRequest) -> None:
+        self._profile_selection_timer.stop()
+        self._profile_console_timer.stop()
+        self._profile_pending_console.clear()
+        self._profile_batch_output.clear()
+        self._profile_selected_key = None
+        self._profile_reports = {}
+        profile = self._running_execution_profile
+        self._profile_count_statuses = {} if profile is not None else None
+        self._profile_verdict_counts = Counter()
+        self._profile_execution_total = request.total_tests
+        self.tree_view_switch.setVisible(profile is not None)
+        if profile is not None:
+            self._displayed_profile = profile
+            self.profile_model.prepare(profile, request.readers)
+            self._size_reader_columns(self.profile_tree, self.profile_model)
+            self.profile_tree.expandToDepth(1)
+            self._set_profile_tree_visible(True)
+            first = self.profile_model.index_for_nodeid(self.profile_model.key(0))
+            self.profile_tree.setCurrentIndex(first)
+        else:
+            self._displayed_profile = None
+            self._set_profile_tree_visible(False)
         self._profile_detail_by_reader = {}
         self.profile_progress_label.hide()
         self.view_failures_button.hide()
@@ -2013,7 +2326,7 @@ class MainWindow(QMainWindow):
         le total affiche depassait alors le nombre de tests, et rien ne le
         remettait d'aplomb avant le run suivant.
         """
-        rendus = self.model.status_counts()
+        rendus = self._run_status_counts()
         for statut, pastille in self.pills.items():
             pastille.set_value(rendus.get(statut, 0))
         self.compass_ring.set_counts(rendus)
@@ -2022,6 +2335,10 @@ class MainWindow(QMainWindow):
         self.compass_pct.setText(f"{round(100 * passed / total)}%" if total else "—")
 
         faits = self._completed_executions()
+        if getattr(self, '_profile_count_statuses', None) is not None:
+            self.progress.setMaximum(max(1, self._profile_execution_total))
+            if hasattr(self.compass_ring, 'set_remaining'):
+                self.compass_ring.set_remaining(self._profile_execution_total - faits)
         self.progress.setValue(faits)
         # Pas de `max(0, ...)` ici : la pastille borne deja, et c'est chez elle
         # que la regle a sa place -- « je n'affiche pas un reste negatif » est
@@ -2032,7 +2349,8 @@ class MainWindow(QMainWindow):
     def _on_progress(self, faits: int, total: int) -> None:
         if self._running_execution_profile is not None:
             self._profile_progress_done = faits
-            self.progress.setMaximum(max(1, total))
+            self.progress.setMaximum(max(1, self._profile_execution_total
+                                         if getattr(self, '_profile_count_statuses', None) is not None else total))
         # Les nombres viennent de l'arbre, pas du compte de signaux porte par
         # le service : c'est la meme raison que pour les pastilles.
         self._refresh_live_counts()
@@ -2052,19 +2370,41 @@ class MainWindow(QMainWindow):
         self.profile_progress_label.show()
 
     def _view_run_failures(self) -> None:
+        if self.tree_view_switch.isVisible():
+            for key, row in self.profile_model._by_nodeid.items():
+                if any(status.is_bad for status in row.statuses.values()):
+                    self._set_profile_tree_visible(True)
+                    index = self.profile_model.index_for_nodeid(key)
+                    self.profile_tree.setCurrentIndex(index)
+                    self.profile_tree.scrollTo(index)
+                    self.profile_results.tabs.setCurrentIndex(ONGLET_DETAIL)
+                    return
         failed = self.model.failed_nodeids()
         if failed:
+            self._set_profile_tree_visible(False)
             self._goto_test(failed[0])
             self.results.tabs.setCurrentIndex(ONGLET_DETAIL)
 
     def _show_failure_actions(self, reports) -> None:
+        self.profile_model.finish()
+        self.profile_tree.viewport().update()
+        if self._profile_selected_key:
+            self._profile_selection_timer.start()
         self._rafraichir_compteurs()
         self.view_failures_button.setVisible(any(r.failed for r in reports))
         self.profile_progress_label.hide()
 
     def _completed_executions(self) -> int:
+        if getattr(self, '_profile_count_statuses', None) is not None:
+            return sum(self._profile_verdict_counts.values())
         value = getattr(self, "_profile_progress_done", None)
         return self.model.done() if value is None else value
+
+    def _run_status_counts(self) -> dict:
+        """Shared snapshot for the result counters and completion notification."""
+        if getattr(self, '_profile_count_statuses', None) is not None:
+            return dict(self._profile_verdict_counts)
+        return self.model.status_counts()
 
     @Slot(list)
     def _on_run_finished(self, rapports: list) -> None:
@@ -2107,7 +2447,11 @@ class MainWindow(QMainWindow):
         """
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
-        rendus = self.model.status_counts()
+        rendus = self._run_status_counts()
+        if getattr(self, '_profile_count_statuses', None) is not None:
+            # Aggregate reports keep only the final retry verdict; the visible
+            # counters include every attempt, so do not reuse their success title.
+            resume = 'Profile run finished'
         detail = (
             f"{rendus.get(Status.PASSED, 0)} passed · "
             f"{rendus.get(Status.FAILED, 0)} failed · "
@@ -2508,6 +2852,11 @@ class MainWindow(QMainWindow):
     def _on_readers_changed(self) -> None:
         """Le prochain run ne parcourra plus les memes lecteurs : le dire."""
         retenus = self._readers_to_run()
+        if self._active_execution_profile is not None and not self.service.busy:
+            self.profile_model.set_readers(retenus)
+            self._size_reader_columns(self.profile_tree, self.profile_model)
+            self._refresh_profile_selection()
+            self._apply_status_filter()
         declares = self.workspace.readers if self.workspace else ()
         if len(retenus) == len(declares):
             self.status_label.setText(f"Running on all {len(declares)} readers")
@@ -2616,22 +2965,28 @@ class MainWindow(QMainWindow):
         de racine a montrer.
         """
         statut = self._status_filter
+        tree = self._visible_test_tree()
+        model = self.profile_model if tree is self.profile_tree else self.model
+        if statut is None and not tree.property('statusFilterApplied'):
+            return
+        tree.setProperty('statusFilterApplied', statut is not None)
+        readers = {reader.index for reader in model.readers} or {0}
 
         def garder(parent: QModelIndex) -> bool:
             visible_ici = False
-            for ligne in range(self.model.rowCount(parent)):
-                index = self.model.index(ligne, 0, parent)
+            for ligne in range(model.rowCount(parent)):
+                index = model.index(ligne, 0, parent)
                 objet = index.internalPointer()
 
                 if statut is None:
                     retenu = True
                     garder(index)
                 elif objet.is_leaf:
-                    retenu = any(s is statut for s in objet.statuses.values())
+                    retenu = any(objet.statuses.get(reader) is statut for reader in readers)
                 else:
                     retenu = garder(index)
 
-                self.tree.setRowHidden(ligne, parent, not retenu)
+                tree.setRowHidden(ligne, parent, not retenu)
                 visible_ici = visible_ici or retenu
             return visible_ici
 
@@ -2640,7 +2995,26 @@ class MainWindow(QMainWindow):
         # Ce qui est masque doit rester atteignable : on ouvre les branches qui
         # menent aux tests retenus, sinon le filtre ne montre qu'une racine.
         if statut is not None:
-            self.tree.expandAll()
+            tree.expandAll()
+
+    def _update_profile_status_filter(self, key: str) -> None:
+        """Refresh only the changed occurrence and ancestors during a live run."""
+        status = self._status_filter
+        if status is None or not self.profile_tree_button.isChecked():
+            return
+        readers = {reader.index for reader in self.profile_model.readers} or {0}
+        index = self.profile_model.index_for_nodeid(key)
+        while index.isValid():
+            row = index.internalPointer()
+            if row.is_leaf:
+                visible = any(row.statuses.get(reader) is status for reader in readers)
+            else:
+                visible = any(self.profile_model._group_counts.get((row, reader), {}).get(status, 0)
+                              for reader in readers)
+            self.profile_tree.setRowHidden(index.row(), index.parent(), not visible)
+            if visible and not row.is_leaf:
+                self.profile_tree.expand(index)
+            index = index.parent()
 
     @Slot()
     def select_divergent(self) -> None:
@@ -2664,8 +3038,31 @@ class MainWindow(QMainWindow):
     # ----------------------------------------------------------- recherche
 
     @Slot(str)
-    def _on_search(self, texte: str) -> None:
-        if self.search.scope == SCOPE_FAILURES:
+    def _on_search(self, texte: str, reveal: bool = True) -> None:
+        if self.profile_tree_button.isChecked():
+            needle = texte.strip().lower()
+            self._matches = []
+            indexes = {}
+            if needle:
+                for key, (_, _, nodeid) in self.profile_model.locations.items():
+                    if self.search.scope != SCOPE_FAILURES:
+                        matches = needle in nodeid.lower()
+                    else:
+                        matches = False
+                        for reader in self.profile_model.readers or (Reader('', 0),):
+                            report = self._profile_reports.get((key, reader.index))
+                            if report is None:
+                                continue
+                            if id(report) not in indexes:
+                                indexes[id(report)] = failures_mod.index_failures(report.output)
+                            failure = failures_mod.failure_for(indexes[id(report)], nodeid)
+                            if failure is not None and needle in failure.body.lower():
+                                matches = True
+                                break
+                    if matches:
+                        self._matches.append(key)
+            self.failure_results.hide()
+        elif self.search.scope == SCOPE_FAILURES:
             trouvailles = self._matching_failures(texte)
             self._matches = [nodeid for nodeid, _ in trouvailles]
             self._remplir_resultats_echecs(trouvailles, texte)
@@ -2674,8 +3071,8 @@ class MainWindow(QMainWindow):
             self.failure_results.setVisible(False)
 
         self._match_index = 0 if self._matches else -1
-        if self._matches:
-            self._reveal(self._matches[0])
+        if self._matches and reveal:
+            self._reveal_search_match(self._matches[0])
         self.search.set_matches(self._match_index + 1, len(self._matches))
 
     def _on_search_scope_changed(self, scope: str) -> None:
@@ -2754,8 +3151,25 @@ class MainWindow(QMainWindow):
         if not self._matches:
             return
         self._match_index = (self._match_index + pas) % len(self._matches)
-        self._reveal(self._matches[self._match_index])
+        self._reveal_search_match(self._matches[self._match_index])
         self.search.set_matches(self._match_index + 1, len(self._matches))
+
+    def _visible_test_tree(self):
+        return self.profile_tree if self.profile_tree_button.isChecked() else self.tree
+
+    def _reveal_search_match(self, key: str) -> None:
+        if not self.profile_tree_button.isChecked():
+            self._reveal(key)
+            return
+        index = self.profile_model.index_for_nodeid(key)
+        if not index.isValid():
+            return
+        parent = index.parent()
+        while parent.isValid():
+            self.profile_tree.expand(parent)
+            parent = parent.parent()
+        self.profile_tree.setCurrentIndex(index)
+        self.profile_tree.scrollTo(index, QAbstractItemView.PositionAtCenter)
 
     def _reveal(self, nodeid: str) -> None:
         index = self.model.index_for_nodeid(nodeid)
@@ -2779,6 +3193,8 @@ class MainWindow(QMainWindow):
         # deux processus pytest qui se marchent dessus. Stop les couvre tous
         # les deux desormais -- `stop_run()` sait lequel des deux arreter.
         occupe = self.service.busy or self._stress_worker is not None
+        self.run_name_button.setEnabled(not occupe)
+        self.run_name_edit.setEnabled(not occupe)
         coches, _ = self.model.counts()
 
         # Tout decocher dans la barre des lecteurs ne laisse rien a parcourir.
@@ -2791,7 +3207,10 @@ class MainWindow(QMainWindow):
         # regarder que `coches` laissait "Run profile" grise des qu'on
         # chargeait un profil sans AUSSI cocher a la main les memes tests
         # dans l'arbre : le profil s'affichait, rien ne pouvait le lancer.
-        a_lancer = coches > 0 or self._active_execution_profile is not None
+        a_lancer = self._active_execution_profile is not None if self.profile_tree_button.isChecked() else coches > 0
+        self.profile_picker.setEnabled(not occupe)
+        self.profile_tree_button.setEnabled(not occupe or self._running_execution_profile is not None)
+        self.profile_picker.setToolTip('Profile selection is locked while a run is active.' if occupe else 'Choose a saved execution profile')
         self.run_button.setEnabled(charge and a_lancer and not occupe and cible)
         self.stop_button.setEnabled(occupe)
         self.act_run.setEnabled(self.run_button.isEnabled())
