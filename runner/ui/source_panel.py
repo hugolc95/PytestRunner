@@ -43,12 +43,15 @@ class SourcePanel(QWidget):
     """Fichier source du test selectionne, en lecture puis en edition."""
 
     saved = Signal(str)  # chemin ecrit
+    debug_requested = Signal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._file = SourceFile()
         self._dirty = False
         self._loading = False
+        self._nodeid = ''
+        self.breakpoints = {}
 
         self.empty = EmptyState(
             "mdi.file-code-outline",
@@ -101,11 +104,16 @@ class SourcePanel(QWidget):
 
         barre.addWidget(self.path_label, 1)
         barre.addWidget(self.status_label)
+        self.debug_button = QPushButton('Debug test')
+        self.debug_button.setEnabled(False)
+        self.debug_button.clicked.connect(lambda: self.debug_requested.emit(self._nodeid))
+        barre.addWidget(self.debug_button)
         barre.addWidget(self.edit_button)
         colonne.addLayout(barre)
 
         self.editor = CodeEditor()
         self.editor.textChanged.connect(self._on_edited)
+        self.editor.breakpoints_changed.connect(self._remember_breakpoints)
         colonne.addWidget(self.editor, 1)
         return contenu
 
@@ -118,6 +126,8 @@ class SourcePanel(QWidget):
         doit jamais disparaitre parce qu'on a clique ailleurs.
         """
         self.save()
+        self._nodeid = nodeid
+        self.debug_button.setEnabled(bool(chemin and '::' in nodeid))
 
         if chemin is None:
             self.clear()
@@ -125,12 +135,14 @@ class SourcePanel(QWidget):
 
         fichier = read_source(chemin)
         if not fichier.loaded:
+            self.debug_button.setEnabled(False)
             self.empty.update_text("Could not open this file", fichier.warning)
             self.stack.setCurrentWidget(self.empty)
             self._file = SourceFile()
             return
 
         self._file = fichier
+        self.editor.breakpoints = set(self.breakpoints.get(str(chemin.resolve()), ()))
         self._dirty = False
         self.stack.setCurrentWidget(self.stack.widget(1))
 
@@ -154,6 +166,8 @@ class SourcePanel(QWidget):
         self.editor.goto_line(function_line(fichier.text, nodeid))
 
     def clear(self) -> None:
+        self._nodeid = ''
+        self.debug_button.setEnabled(False)
         self._file = SourceFile()
         self._dirty = False
         self.empty.update_text(
@@ -164,6 +178,10 @@ class SourcePanel(QWidget):
 
     def path(self) -> Path | None:
         return self._file.path
+
+    def _remember_breakpoints(self):
+        if self.path() is not None:
+            self.breakpoints[str(self.path().resolve())] = set(self.editor.breakpoints)
 
     # --------------------------------------------------------------- edition
 

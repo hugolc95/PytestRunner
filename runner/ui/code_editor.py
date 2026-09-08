@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import QRect, QSize, Qt
+from PySide6.QtCore import QRect, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -125,12 +125,21 @@ class _Gutter(QWidget):
     def paintEvent(self, event) -> None:
         self.editeur.paint_gutter(event)
 
+    def mousePressEvent(self, event) -> None:
+        if event.button() == Qt.LeftButton:
+            line = self.editeur.cursorForPosition(event.position().toPoint()).blockNumber() + 1
+            self.editeur.toggle_breakpoint(line)
+
 
 class CodeEditor(QPlainTextEdit):
     """Zone de code, en lecture seule ou non selon ce que l'appelant decide."""
 
+    breakpoints_changed = Signal()
+
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.breakpoints = set()
+        self.execution_line = 0
         self.setReadOnly(True)
         self.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.setTabStopDistance(4 * self.fontMetrics().horizontalAdvance(" "))
@@ -149,7 +158,21 @@ class CodeEditor(QPlainTextEdit):
 
     def gutter_width(self) -> int:
         chiffres = max(2, len(str(max(1, self.blockCount()))))
-        return t.SPACE_3 + self.fontMetrics().horizontalAdvance("9") * chiffres
+        return 18 + t.SPACE_3 + self.fontMetrics().horizontalAdvance("9") * chiffres
+
+    def toggle_breakpoint(self, line):
+        if line in self.breakpoints:
+            self.breakpoints.remove(line)
+        else:
+            self.breakpoints.add(line)
+        self._gutter.update()
+        self.breakpoints_changed.emit()
+
+    def set_execution_line(self, line=0):
+        self.execution_line = line
+        if line:
+            self.goto_line(line - 1)
+        self.highlight_current_line()
 
     def _update_width(self, _=0) -> None:
         self.setViewportMargins(self.gutter_width(), 0, 0, 0)
@@ -187,6 +210,10 @@ class CodeEditor(QPlainTextEdit):
 
         while bloc.isValid() and haut <= event.rect().bottom():
             if bloc.isVisible() and bas >= event.rect().top():
+                if numero + 1 in self.breakpoints:
+                    peintre.setPen(Qt.NoPen)
+                    peintre.setBrush(QColor("#e05252"))
+                    peintre.drawEllipse(3, haut + 4, 10, 10)
                 courante = numero == ligne_courante
                 peintre.setPen(accent if courante else normal)
                 police.setBold(courante)
@@ -207,7 +234,16 @@ class CodeEditor(QPlainTextEdit):
         selection.format.setProperty(QTextFormat.FullWidthSelection, True)
         selection.cursor = self.textCursor()
         selection.cursor.clearSelection()
-        self.setExtraSelections([selection])
+        selections = [selection]
+        if self.execution_line:
+            active = QTextEdit.ExtraSelection()
+            active.format.setBackground(QColor("#806520"))
+            active.format.setProperty(QTextFormat.FullWidthSelection, True)
+            active.cursor = self.textCursor()
+            active.cursor.setPosition(self.document().findBlockByNumber(self.execution_line - 1).position())
+            active.cursor.clearSelection()
+            selections.append(active)
+        self.setExtraSelections(selections)
         self._gutter.update()
 
     def restyle(self) -> None:

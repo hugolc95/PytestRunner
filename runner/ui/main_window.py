@@ -1060,6 +1060,7 @@ class MainWindow(QMainWindow):
 
     def _build_right(self) -> QWidget:
         self.results = ResultsPanel()
+        self.results.source.debug_requested.connect(self.debug_test)
         self.results.reader_selected.connect(self._on_reader_selected)
         self.results.test_chosen.connect(self._goto_test)
         self.results_stack = QStackedWidget()
@@ -1075,6 +1076,7 @@ class MainWindow(QMainWindow):
         context_policy.setRetainSizeWhenHidden(True)
         self.profile_selection_label.setSizePolicy(context_policy)
         self.profile_results = ResultsPanel()
+        self.profile_results.source.debug_button.hide()
         self.profile_results.detail.execution_view = True
         self.profile_results.tabs.setTabEnabled(ONGLET_LOGS, False)
         self.profile_results.tabs.setTabToolTip(ONGLET_LOGS, 'Per-execution log files are not available. Console contains the pytest batch for this attempt.')
@@ -2033,6 +2035,34 @@ class MainWindow(QMainWindow):
     # Run
     # =====================================================================
 
+    @Slot(str)
+    def debug_test(self, nodeid: str) -> None:
+        if self.workspace is None or self.service.busy or self._stress_worker is not None:
+            self.status_label.setText('Stop the current execution before debugging.')
+            return
+        readers = self._readers_to_run()
+        if len(readers) > 1 or (self.workspace.readers and not readers):
+            self.status_label.setText('Select a single reader before debugging.')
+            return
+        if not self.results.source.save():
+            return
+        python = self._require_interpreter()
+        if not python:
+            return
+        from runner.ui.debug_dialog import DebugDialog
+        request = RunRequest(workspace=self.workspace.path, interpreter=python,
+            nodeids=(nodeid,), readers=readers, config_path=self.workspace.config_path)
+        dialog = DebugDialog(request, readers[0] if readers else Reader('', 0),
+            self.workspace.env, self.results.source.breakpoints, self)
+        dialog.exec()
+        self.results.source.breakpoints = dialog.breakpoints
+        source_path = self.results.source.path()
+        if source_path:
+            self.results.source.editor.breakpoints = set(dialog.breakpoints.get(str(source_path.resolve()), ()))
+            self.results.source.editor.viewport().update()
+            self.results.source.editor._gutter.update()
+        dialog.deleteLater()
+
     @Slot()
     def run_selected(self) -> None:
         if self.profile_tree_button.isChecked() and self._active_execution_profile is not None:
@@ -2550,6 +2580,7 @@ class MainWindow(QMainWindow):
         nodeids = self.model.leaf_nodeids_under(premiere)
         self.results.show_group(chemin, nom, self.model.readers,
                                 compteurs, echecs, source, saut, nodeids)
+        self.results.source.debug_button.setEnabled(False)
 
     def _recent_runs_for(self, nodeid: str) -> dict[int, list[Status]]:
         """Mini-tendance de ce test, par lecteur -- absente des lecteurs qui

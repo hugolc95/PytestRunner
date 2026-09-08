@@ -350,6 +350,17 @@ def test_run_and_stop_do_not_share_a_colour(fenetre):
     assert fenetre.stop_button.objectName() == "Danger"
 
 
+def test_debug_button_launches_the_visible_test(fenetre, tmp_path, monkeypatch):
+    from runner.ui.debug_dialog import DebugDialog
+    launched = []
+    monkeypatch.setattr(DebugDialog, 'exec', lambda dialog: launched.append(dialog.request))
+    monkeypatch.setattr(fenetre, '_require_interpreter', lambda: 'python')
+    fenetre.results.source.show_file(tmp_path / 'test_demo.py', 'test_demo.py::test_atr')
+    fenetre.results.source.debug_button.click()
+    assert len(launched) == 1
+    assert launched[0].nodeids == ('test_demo.py::test_atr',)
+
+
 def test_rerun_failed_is_a_button_not_only_a_menu_entry(fenetre):
     """Apres un run rouge, relancer les seuls echecs est l'action suivante une
     fois sur deux."""

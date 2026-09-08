@@ -1,5 +1,8 @@
 # Pytest Runner GUI
 
+Le nouveau runner propose un premier mode de débogage intégré : points d’arrêt,
+pas à pas et variables. Voir [le guide de débogage](DEBUGGING.md).
+
 Application de bureau **PyQt5** permettant de charger un workspace, découvrir ses tests pytest, sélectionner des tests complets ou un seul cas paramétré, lancer/arrêter l'exécution, consulter les résultats et exécuter des campagnes YAML.
 
 ## Deux Python indépendants

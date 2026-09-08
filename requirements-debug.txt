@@ -1,0 +1,2 @@
+# Optional: install with the Python interpreter configured for tests.
+debugpy>=1.8.21,<2
