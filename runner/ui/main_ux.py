@@ -105,24 +105,6 @@ def install() -> None:
 
     MainWindow._build_command_bar = build_command_bar_selected
 
-    original_restyle = MainWindow._restyle
-
-    def restyle_selected(self) -> None:
-        original_restyle(self)
-        self.browse_button.setIcon(icons.icon("mdi.folder-open-outline", t.TEXT_MUTED))
-        self.load_button.setIcon(icons.icon("mdi.refresh", t.TEXT_MUTED))
-
-        if hasattr(self, "colorblind_theme_button"):
-            active = t.current_theme() == "colorblind"
-            self.colorblind_theme_button.setChecked(active)
-            self.colorblind_theme_button.setIcon(icons.icon(
-                "mdi.eye-outline", t.ACCENT if active else t.TEXT_MUTED))
-            self.colorblind_theme_button.setToolTip(
-                "Colorblind-friendly colors enabled"
-                if active else "Use colorblind-friendly colors")
-
-    MainWindow._restyle = restyle_selected
-
     # The History summary labels had their PASSED color frozen when the page
     # was constructed. Startup constructs the page in dark mode and restores
     # the saved theme afterwards, so these two labels could stay green even
@@ -141,6 +123,30 @@ def install() -> None:
             "background:transparent;")
 
     HistoryWindow.restyle = history_restyle_selected
+
+    original_restyle = MainWindow._restyle
+
+    def restyle_selected(self) -> None:
+        original_restyle(self)
+        self.browse_button.setIcon(icons.icon("mdi.folder-open-outline", t.TEXT_MUTED))
+        self.load_button.setIcon(icons.icon("mdi.refresh", t.TEXT_MUTED))
+
+        # The integrated History dashboard is a child of history_page rather
+        # than history_page itself, so the base MainWindow restyle does not
+        # automatically repaint its per-widget styles.
+        if hasattr(self, "history_dashboard"):
+            self.history_dashboard.restyle()
+
+        if hasattr(self, "colorblind_theme_button"):
+            active = t.current_theme() == "colorblind"
+            self.colorblind_theme_button.setChecked(active)
+            self.colorblind_theme_button.setIcon(icons.icon(
+                "mdi.eye-outline", t.ACCENT if active else t.TEXT_MUTED))
+            self.colorblind_theme_button.setToolTip(
+                "Colorblind-friendly colors enabled"
+                if active else "Use colorblind-friendly colors")
+
+    MainWindow._restyle = restyle_selected
 
     # ------------------------------------------------------ compass progress
     original_refresh_counts = MainWindow._rafraichir_compteurs
