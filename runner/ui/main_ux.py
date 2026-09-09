@@ -9,7 +9,8 @@ from runner.version import COPYRIGHT, __version__
 
 def install() -> None:
     from runner.ui.main_window import MainWindow
-    from runner.ui.history_dashboard import HistoryWindow
+    from runner.ui.history_dashboard import HistoryWindow, RunCard
+    from runner.ui.interpreter_dialog import InterpreterDialog
 
     original_build_navigation = MainWindow._build_navigation
     def build_navigation_with_colorblind_theme(self):
@@ -51,6 +52,33 @@ def install() -> None:
         return bar
     MainWindow._build_command_bar=build_command_bar_selected
 
+    # History cards used an exact `current_theme() == "light"` test.  With
+    # light_colorblind that selected the dark banner, leaving dark metadata on
+    # a dark background (the invisible run number/time visible in field tests).
+    original_card_restyle=RunCard.restyle
+    def card_restyle_accessible(self):
+        original_card_restyle(self)
+        entry=self.group.entries[0] if self.group.entries else None
+        is_profile=bool(entry and entry.run_kind=="profile")
+        is_selected=bool(entry and entry.run_kind=="classic")
+        light=t.base_theme()=="light"
+        if is_profile:
+            foreground="#5b21b6" if light else "#bd9aff"
+            background="#eee5ff" if light else "#302343"
+        elif is_selected:
+            foreground="#004f91" if light else "#91bfff"
+            background="#dcecff" if light else "#203249"
+        else:
+            foreground=t.TEXT_MUTED; background=t.BG_RAISED
+        self.origin_label.setStyleSheet(
+            f"font-family:'Segoe UI';font-size:{t.TEXT_XS}px;font-weight:700;"
+            f"background:transparent;border:none;color:{foreground};")
+        self.origin_banner.setStyleSheet(
+            f"QFrame#HistoryOriginBanner {{background:{background};border:none;"
+            f"border-top-left-radius:{t.RADIUS_MD}px;"
+            f"border-top-right-radius:{t.RADIUS_MD}px;}}")
+    RunCard.restyle=card_restyle_accessible
+
     original_history_restyle=HistoryWindow.restyle
     def history_restyle_selected(self):
         original_history_restyle(self); passed=t.status_color(Status.PASSED)
@@ -58,18 +86,37 @@ def install() -> None:
         self.success_value.setStyleSheet(f"font-size:14px;font-weight:700;color:{passed};background:transparent;")
     HistoryWindow.restyle=history_restyle_selected
 
+    # The embedded Python page is built before the persisted theme is restored.
+    # Its per-widget styles therefore kept dark-theme text after switching to
+    # light. Repaint every explicit label from the active tokens on each theme
+    # change instead of relying on the construction-time values.
+    def interpreter_restyle(self):
+        labels=self.findChildren(QLabel)
+        for label in labels:
+            if label is self.status_label or label is self.override_label:
+                continue
+            label.setStyleSheet(f"color:{t.TEXT};background:transparent;")
+        status_text=self.status_label.text()
+        if status_text:
+            # Probe errors are already identifiable by their content/state in
+            # normal use; use the normal readable text colour for neutral info.
+            self.status_label.setStyleSheet(f"color:{t.TEXT_MUTED};background:transparent;")
+        else:
+            self.status_label.setStyleSheet(f"color:{t.TEXT_MUTED};background:transparent;")
+        if self.override_label.isVisible():
+            self.override_label.setStyleSheet(
+                f"color:{t.status_color(Status.SKIPPED)};background:transparent;")
+    InterpreterDialog.restyle=interpreter_restyle
+
     original_restyle=MainWindow._restyle
     def restyle_selected(self):
         original_restyle(self)
         self.browse_button.setIcon(icons.icon("mdi.folder-open-outline",t.TEXT_MUTED)); self.load_button.setIcon(icons.icon("mdi.refresh",t.TEXT_MUTED))
-        # Make hierarchy/status glyphs easier to identify in every embedded
-        # tree (Run Tests, Execution Profiles, YAML/History pages, etc.).
-        # 20 px is a small increase over Qt's usual 16 px default and keeps
-        # the existing compact row density intact.
         tree_icon_size=QSize(t.TREE_ICON_SIZE,t.TREE_ICON_SIZE)
         for tree in self.findChildren(QTreeView): tree.setIconSize(tree_icon_size)
         for tree in self.findChildren(QTreeWidget): tree.setIconSize(tree_icon_size)
         if hasattr(self,"history_dashboard"): self.history_dashboard.restyle()
+        for interpreter in self.findChildren(InterpreterDialog): interpreter.restyle()
         if hasattr(self,"colorblind_theme_button"):
             active=t.is_colorblind(); self.colorblind_theme_button.setChecked(active)
             self.colorblind_theme_button.setIcon(icons.icon("mdi.eye-outline",t.ACCENT if active else t.TEXT_MUTED))
