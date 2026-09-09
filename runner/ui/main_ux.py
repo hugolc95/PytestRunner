@@ -5,13 +5,14 @@ Only the changes explicitly retained for main live here:
 - an explicit RESULTS label and progress-style compass counter;
 - keep Config / History / Allure and Stop exactly as normal text actions;
 - remove the redundant bottom-right remaining counter;
-- show version and copyright in its place.
+- show version and copyright in its place;
+- expose a dedicated colorblind-friendly theme toggle in the navigation.
 """
 
 from __future__ import annotations
 
-from PySide6.QtCore import QSize
-from PySide6.QtWidgets import QLabel
+from PySide6.QtCore import QSize, Qt
+from PySide6.QtWidgets import QLabel, QPushButton
 
 from runner.ui import icons
 from runner.ui import tokens as t
@@ -20,6 +21,46 @@ from runner.version import COPYRIGHT, __version__
 
 def install() -> None:
     from runner.ui.main_window import MainWindow
+
+    # --------------------------------------------------------- accessibility
+    original_build_navigation = MainWindow._build_navigation
+
+    def build_navigation_with_colorblind_theme(self):
+        navigation = original_build_navigation(self)
+
+        self.colorblind_theme_button = QPushButton()
+        self.colorblind_theme_button.setObjectName("NavigationUtilityIcon")
+        self.colorblind_theme_button.setFixedSize(t.ICON_BUTTON, t.ICON_BUTTON)
+        self.colorblind_theme_button.setCheckable(True)
+        self.colorblind_theme_button.setCursor(Qt.PointingHandCursor)
+
+        def toggle_colorblind_theme(checked=False) -> None:
+            if t.current_theme() == "colorblind":
+                self.apply_theme(getattr(self, "_theme_before_colorblind", "dark"))
+            else:
+                self._theme_before_colorblind = t.current_theme()
+                self.apply_theme("colorblind")
+
+        self.colorblind_theme_button.clicked.connect(toggle_colorblind_theme)
+
+        # The two utility buttons from the base UI live in a nested layout.
+        # Find that layout rather than relying on its numeric position: this
+        # keeps the accessibility button stable if another navigation row is
+        # inserted later.
+        root_layout = navigation.layout()
+        utility_layout = None
+        if root_layout is not None:
+            for index in range(root_layout.count()):
+                nested = root_layout.itemAt(index).layout()
+                if nested is not None and nested.indexOf(self.page_theme_button) >= 0:
+                    utility_layout = nested
+                    break
+        if utility_layout is not None:
+            utility_layout.addWidget(self.colorblind_theme_button)
+
+        return navigation
+
+    MainWindow._build_navigation = build_navigation_with_colorblind_theme
 
     # -------------------------------------------------------------- top bar
     original_build_command_bar = MainWindow._build_command_bar
@@ -68,6 +109,15 @@ def install() -> None:
         original_restyle(self)
         self.browse_button.setIcon(icons.icon("mdi.folder-open-outline", t.TEXT_MUTED))
         self.load_button.setIcon(icons.icon("mdi.refresh", t.TEXT_MUTED))
+
+        if hasattr(self, "colorblind_theme_button"):
+            active = t.current_theme() == "colorblind"
+            self.colorblind_theme_button.setChecked(active)
+            self.colorblind_theme_button.setIcon(icons.icon(
+                "mdi.eye-outline", t.ACCENT if active else t.TEXT_MUTED))
+            self.colorblind_theme_button.setToolTip(
+                "Colorblind-friendly colors enabled"
+                if active else "Use colorblind-friendly colors")
 
     MainWindow._restyle = restyle_selected
 
