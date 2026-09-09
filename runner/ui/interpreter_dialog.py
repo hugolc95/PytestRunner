@@ -42,17 +42,17 @@ class InterpreterDialog(QDialog):
         self.setWindowTitle("Test Python interpreter")
         self.resize(640, 260)
         self._probe: ProbeWorker | None = None
+        self._status_is_error = False
 
-        explication = QLabel(
+        self.explanation = QLabel(
             "The interface and the tests run in two separate processes: pytest "
             "is started as a subprocess. You can therefore use a different "
             "Python here than the interface's — for example a 64-bit Python "
             "for tests that load native DLLs."
             "<br><br>"
             "This interpreter must have <b>pytest</b> installed.")
-        explication.setWordWrap(True)
-        explication.setTextFormat(Qt.RichText)
-        explication.setStyleSheet(f"color: {t.TEXT}; background: transparent;")
+        self.explanation.setWordWrap(True)
+        self.explanation.setTextFormat(Qt.RichText)
 
         self.path_field = QLineEdit(current)
         self.path_field.setPlaceholderText(
@@ -76,22 +76,16 @@ class InterpreterDialog(QDialog):
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
         self.status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.status_label.setStyleSheet(theme.muted())
 
         self.override_label = QLabel("")
         self.override_label.setWordWrap(True)
         self.override_label.setVisible(False)
         if declared_by_workspace:
-            from runner.domain.models import Status
-
             self.override_label.setText(
                 f"This workspace's configuration already forces an interpreter "
                 f"({declared_by_workspace}). It takes priority over the setting "
                 f"above while this workspace is loaded.")
             self.override_label.setVisible(True)
-            self.override_label.setStyleSheet(
-                f"color: {t.status_color(Status.SKIPPED)};"
-                "background: transparent;")
 
         self.save_button = QPushButton("Save")
         self.save_button.setObjectName("Primary")
@@ -109,15 +103,26 @@ class InterpreterDialog(QDialog):
 
         colonne = QVBoxLayout(self)
         colonne.setSpacing(t.SPACE_3)
-        colonne.addWidget(explication)
+        colonne.addWidget(self.explanation)
         colonne.addLayout(ligne_chemin)
         colonne.addWidget(self.status_label)
         colonne.addWidget(self.override_label)
         colonne.addStretch(1)
         colonne.addLayout(ligne_boutons)
+        self.restyle()
 
         if not embedded:
             self.test_now()
+
+    def restyle(self) -> None:
+        """Repaint labels whose inline colors otherwise survive a theme switch."""
+        from runner.domain.models import Status
+        self.explanation.setStyleSheet(f"color:{t.TEXT};background:transparent;")
+        self.status_label.setStyleSheet(
+            f"color:{t.status_color(Status.FAILED)};background:transparent;"
+            if self._status_is_error else theme.muted())
+        self.override_label.setStyleSheet(
+            f"color:{t.status_color(Status.SKIPPED)};background:transparent;")
 
     def _save(self) -> None:
         self.saved.emit(self.interpreter_path())
@@ -157,12 +162,6 @@ class InterpreterDialog(QDialog):
                   erreur=not info.ok or not info.pytest_version)
 
     def wait_for_probe(self, timeout_ms: int = 3000) -> None:
-        """Attend un probe en cours, s'il y en a un.
-
-        Fermer la fenetre pendant qu'un processus d'interrogation tourne
-        encore detruirait le QThread avant qu'il ait fini -- Qt met fin au
-        programme dans ce cas plutot que de laisser un thread orphelin.
-        """
         if self._probe is not None:
             self._probe.wait(timeout_ms)
 
@@ -171,9 +170,6 @@ class InterpreterDialog(QDialog):
         super().done(result)
 
     def _say(self, texte: str, erreur: bool = False) -> None:
-        from runner.domain.models import Status
-
+        self._status_is_error = erreur
         self.status_label.setText(texte)
-        self.status_label.setStyleSheet(
-            f"color: {t.status_color(Status.FAILED)}; background: transparent;"
-            if erreur else theme.muted())
+        self.restyle()
