@@ -14,6 +14,7 @@ from __future__ import annotations
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtWidgets import QLabel, QPushButton
 
+from runner.domain.models import Status
 from runner.ui import icons
 from runner.ui import tokens as t
 from runner.version import COPYRIGHT, __version__
@@ -21,6 +22,7 @@ from runner.version import COPYRIGHT, __version__
 
 def install() -> None:
     from runner.ui.main_window import MainWindow
+    from runner.ui.history_dashboard import HistoryWindow
 
     # --------------------------------------------------------- accessibility
     original_build_navigation = MainWindow._build_navigation
@@ -120,6 +122,25 @@ def install() -> None:
                 if active else "Use colorblind-friendly colors")
 
     MainWindow._restyle = restyle_selected
+
+    # The History summary labels had their PASSED color frozen when the page
+    # was constructed. Startup constructs the page in dark mode and restores
+    # the saved theme afterwards, so these two labels could stay green even
+    # after switching to the colorblind palette. Repaint them on every theme
+    # change just like the History cards already do.
+    original_history_restyle = HistoryWindow.restyle
+
+    def history_restyle_selected(self) -> None:
+        original_history_restyle(self)
+        passed = t.status_color(Status.PASSED)
+        self.passed_value.setStyleSheet(
+            f"font-size:22px;font-weight:700;color:{passed};"
+            "background:transparent;")
+        self.success_value.setStyleSheet(
+            f"font-size:14px;font-weight:700;color:{passed};"
+            "background:transparent;")
+
+    HistoryWindow.restyle = history_restyle_selected
 
     # ------------------------------------------------------ compass progress
     original_refresh_counts = MainWindow._rafraichir_compteurs
