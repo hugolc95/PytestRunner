@@ -113,7 +113,59 @@ LIGHT: dict = {
     "CURRENT_LINE": "#eaf1fb",
 }
 
-_THEMES = {"dark": DARK, "light": LIGHT}
+# Colorblind-friendly theme. Status meaning must not rely on the traditional
+# green/red pair: pass is sky blue, failure is vermilion/orange, skip is
+# yellow and error is magenta. The remaining UI stays close to the dark theme
+# so enabling accessibility does not also force a light/dark preference.
+COLORBLIND: dict = {
+    "BG_APP": "#171a21",
+    "BG_SURFACE": "#20242d",
+    "BG_RAISED": "#292e38",
+    "BG_HOVER": "#343b47",
+    "BG_INPUT": "#14171d",
+    "BORDER": "#303744",
+    "BORDER_STRONG": "#46505f",
+    "TEXT": "#e4e7ec",
+    "TEXT_MUTED": "#9aa3b2",
+    "TEXT_FAINT": "#7d8794",
+    "ACCENT": "#56b4e9",
+    "ACCENT_HOVER": "#70c4ef",
+    "ACCENT_PRESSED": "#3698ce",
+    "ACCENT_SOFT": "#243d4c",
+    "ON_ACCENT": "#06101f",
+    "RUN": "#0072b2",
+    "RUN_HOVER": "#1386c8",
+    "RUN_PRESSED": "#005f96",
+    "ON_RUN": "#ffffff",
+    "STATUS_COLORS": {
+        Status.PASSED: "#56b4e9", Status.FAILED: "#d55e00",
+        Status.SKIPPED: "#f0e442", Status.ERROR: "#cc79a7",
+        Status.RUNNING: "#0072b2", Status.PENDING: "#7d8794",
+    },
+    "READER_COLORS": ("#56b4e9", "#e69f00", "#009e73", "#cc79a7", "#f0e442"),
+    "ANSI_COLORS": {
+        "black": "#7d8794", "red": "#d55e00", "green": "#009e73",
+        "yellow": "#e69f00", "blue": "#56b4e9", "magenta": "#cc79a7",
+        "cyan": "#39c5bb", "white": "#e4e7ec",
+    },
+    "ANSI_BRIGHT": {
+        "black": "#9aa3b2", "red": "#f07c2b", "green": "#20bd91",
+        "yellow": "#f0c347", "magenta": "#e39bc3", "blue": "#7bc9ef",
+        "cyan": "#5adbd1", "white": "#ffffff",
+    },
+    "SYNTAX": {
+        "keyword": "#cc79a7", "builtin": "#56b4e9", "string": "#f0e442",
+        "docstring": "#9aa3b2", "comment": "#7d8794", "number": "#e69f00",
+        "decorator": "#009e73", "function": "#56b4e9", "classname": "#009e73",
+        "self": "#d55e00",
+    },
+    "GUTTER_BG": "#171a21",
+    "GUTTER_TEXT": "#7d8794",
+    "GUTTER_CURRENT": "#b8c0cb",
+    "CURRENT_LINE": "#26313a",
+}
+
+_THEMES = {"dark": DARK, "light": LIGHT, "colorblind": COLORBLIND}
 _ACTIF = "dark"
 
 
