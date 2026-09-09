@@ -29,6 +29,12 @@ def test_colorblind_statuses_remain_visible(name):
     t.set_theme(name)
     for status in (Status.PASSED,Status.FAILED,Status.SKIPPED,Status.ERROR,Status.RUNNING): assert _contrast(t.status_color(status),t.BG_SURFACE)>=3.0,status
     assert _contrast(t.ON_RUN,t.RUN)>=4.0; assert _contrast(t.ON_ACCENT,t.ACCENT)>=4.0
+def test_light_colorblind_statuses_have_strong_contrast():
+    t.set_theme("light_colorblind")
+    for status in (Status.PASSED,Status.FAILED,Status.SKIPPED,Status.ERROR,Status.RUNNING,Status.PENDING):
+        assert _contrast(t.status_color(status),t.BG_SURFACE)>=6.0,status
 @pytest.mark.parametrize("name",["dark_colorblind","light_colorblind"])
 def test_reader_colors_are_distinct(name):
     t.set_theme(name); colors={t.reader_color(i) for i in range(len(t.READER_COLORS))}; assert len(colors)==len(t.READER_COLORS)>=5
+def test_tree_icons_are_slightly_larger_than_qt_default():
+    assert 18 <= t.TREE_ICON_SIZE <= 22
