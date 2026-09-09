@@ -1,7 +1,7 @@
 """Selected UX refinements promoted from the recent UX experiment."""
 from __future__ import annotations
 from PySide6.QtCore import QSize, Qt
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton, QTreeView, QTreeWidget
 from runner.domain.models import Status
 from runner.ui import icons
 from runner.ui import tokens as t
@@ -33,7 +33,6 @@ def install() -> None:
         return navigation
     MainWindow._build_navigation=build_navigation_with_colorblind_theme
 
-    # Keep light/dark and accessibility as two independent switches.
     def toggle_theme_independent(self):
         target="light" if t.is_dark() else "dark"
         if t.is_colorblind(): target += "_colorblind"
@@ -63,6 +62,13 @@ def install() -> None:
     def restyle_selected(self):
         original_restyle(self)
         self.browse_button.setIcon(icons.icon("mdi.folder-open-outline",t.TEXT_MUTED)); self.load_button.setIcon(icons.icon("mdi.refresh",t.TEXT_MUTED))
+        # Make hierarchy/status glyphs easier to identify in every embedded
+        # tree (Run Tests, Execution Profiles, YAML/History pages, etc.).
+        # 20 px is a small increase over Qt's usual 16 px default and keeps
+        # the existing compact row density intact.
+        tree_icon_size=QSize(t.TREE_ICON_SIZE,t.TREE_ICON_SIZE)
+        for tree in self.findChildren(QTreeView): tree.setIconSize(tree_icon_size)
+        for tree in self.findChildren(QTreeWidget): tree.setIconSize(tree_icon_size)
         if hasattr(self,"history_dashboard"): self.history_dashboard.restyle()
         if hasattr(self,"colorblind_theme_button"):
             active=t.is_colorblind(); self.colorblind_theme_button.setChecked(active)
