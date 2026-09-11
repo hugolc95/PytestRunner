@@ -9,13 +9,8 @@ from runner.domain.models import Status
 
 OUTCOME_PREFIX = "PYTESTRUNNER_OUTCOME\t"
 
-# `chemin/test_x.py::TestC::test_f[cas] PASSED [ 42%]`, et la forme de
-# pytest-xdist `[gw0] [ 42%] PASSED chemin/test_x.py::test_f`.
 _STATUTS = "PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS"
 
-# Le nodeid peut contenir des espaces dans les IDs de parametres, et meme un
-# mot qui ressemble a un statut. On le capture donc jusqu'au DERNIER statut
-# suivi d'une vraie fin de ligne pytest : raison optionnelle, puis pourcentage.
 _LIGNE = re.compile(
     rf"^(?P<nodeid>.+::.+)\s+(?P<statut>{_STATUTS})\b"
     rf"(?:\s+\(.*\))?(?:\s+\[\s*\d+%\])?\s*$"
@@ -27,8 +22,6 @@ _LIGNE_XDIST = re.compile(
 
 _COLLECTE = re.compile(r"collected\s+(\d+)\s+item")
 
-# XFAIL et XPASS ne sont pas des echecs : un test attendu en echec qui echoue
-# est un succes. Les compter en rouge ferait paniquer pour rien.
 _TRADUCTION = {
     "PASSED": Status.PASSED,
     "XPASS": Status.PASSED,
@@ -43,9 +36,6 @@ def parse_status_line(ligne: str) -> tuple[str, Status] | None:
     """(nodeid, statut) si cette ligne cloture un test, sinon None."""
     nue = strip_ansi(ligne).strip()
 
-    # Le plugin interne emet ce format independant de l'apparence choisie par
-    # pytest (couleurs, plugins de terminal, pourcentage, xdist...). C'est la
-    # source la plus fiable : le nodeid vient directement de l'objet pytest.
     if nue.startswith(OUTCOME_PREFIX):
         morceaux = nue.split("\t", 2)
         if len(morceaux) == 3:
@@ -70,20 +60,12 @@ def is_outcome_protocol_line(ligne: str) -> bool:
 class NodeidResolver:
     """Rapproche les nodeids du run de ceux conserves pendant la collecte.
 
-    Pytest peut presenter le meme fichier relativement a deux ``rootdir``
-    differents entre la collecte et l'execution. Sous Windows, un plugin peut
-    en plus rendre le chemin absolu, changer la casse du lecteur ou employer
-    des antislashs. L'ancien code exigeait une egalite caractere par caractere :
-    le verdict arrivait bien, mais l'arbre le rejetait et tous les compteurs
-    restaient a zero.
-
-    La partie Python du nodeid (classe, fonction et parametre) reste comparee
-    exactement. Seul le chemin est normalise, et un suffixe n'est accepte que
-    s'il designe un UNIQUE test collecte. En cas d'ambiguite on rend la valeur
-    recue : l'interface pourra la signaler au lieu d'affecter le mauvais test.
-    L'index est construit une seule fois par lecteur. Sur une suite de 10 000
-    tests, reparcourir toute la collecte pour chacun des 10 000 verdicts
-    recreerait exactement le gel que cette classe doit corriger.
+    Le chemin est normalise, tandis que la partie classe/fonction/parametre est
+    comparee exactement. Dans certains workspaces historiques, pytest peut
+    toutefois rapporter le nom de la mauvaise TestSuite tout en conservant
+    exactement la bonne partie Python. Quand cette partie designe UN SEUL test
+    parmi ceux demandes au run, elle suffit pour rattacher le verdict a la bonne
+    ligne. En cas d'ambiguite, aucune correction n'est faite.
     """
 
     @staticmethod
@@ -91,8 +73,6 @@ class NodeidResolver:
         chemin, separateur, reste = nodeid.partition("::")
         if not separateur:
             return (), ""
-        # Le chemin seul est insensible a la casse : c'est necessaire sur
-        # Windows, sans rendre les noms de tests/IDs de parametres permissifs.
         chemin = re.sub(r"/+", "/", chemin.replace("\\", "/"))
         parties = tuple(
             partie.casefold() for partie in chemin.split("/")
@@ -119,13 +99,28 @@ class NodeidResolver:
         if not chemin_recu or not reste_recu:
             return reported
 
+        memes_tests = self._par_reste.get(reste_recu, ())
+
+        # Chemin normal : meme suffixe de chemin + meme partie Python.
         candidats: list[str] = []
-        for chemin_connu, connu in self._par_reste.get(reste_recu, ()):
+        for chemin_connu, connu in memes_tests:
             commun = min(len(chemin_recu), len(chemin_connu))
             if chemin_recu[-commun:] == chemin_connu[-commun:]:
                 candidats.append(connu)
+        if len(candidats) == 1:
+            return candidats[0]
 
-        return candidats[0] if len(candidats) == 1 else reported
+        # Cas vu en environnement reel : pytest rapporte
+        #   .../BioLockTestSuite::Test_Class::test_body[...]
+        # alors que le run a demande
+        #   .../CVCertificateV3::Test_Class::test_body[...]
+        # Si classe/fonction/parametre ne correspond qu'a UNE feuille demandee,
+        # on peut la retrouver sans risque. S'il y en a plusieurs, on conserve
+        # le nodeid recu pour ne jamais colorer le mauvais test.
+        if len(memes_tests) == 1:
+            return memes_tests[0][1]
+
+        return reported
 
 
 def resolve_collected_nodeid(reported: str, collected) -> str:
@@ -140,12 +135,7 @@ def parse_collected(ligne: str) -> int | None:
 
 
 def parse_collect_only(sortie: str) -> list[str]:
-    """Nodeids d'un `pytest --collect-only -q`.
-
-    La sortie se termine par un resume (`12 tests collected in 0.4s`) et peut
-    contenir des avertissements : seules les lignes qui ressemblent a un nodeid
-    sont retenues.
-    """
+    """Nodeids d'un `pytest --collect-only -q`."""
     nodeids: list[str] = []
     vus: set[str] = set()
 
@@ -155,7 +145,7 @@ def parse_collect_only(sortie: str) -> list[str]:
             continue
         if candidat.startswith(("<", "=", "-", "[", "warning", "WARNING")):
             continue
-        if " " in candidat:  # un vrai nodeid n'a pas d'espace avant les crochets
+        if " " in candidat:
             avant_crochet = candidat.split("[", 1)[0]
             if " " in avant_crochet:
                 continue
@@ -166,25 +156,13 @@ def parse_collect_only(sortie: str) -> list[str]:
     return nodeids
 
 
-# `0.05s call     tests/test_x.py::test_f`. `--durations=0` (pose sur chaque
-# run) demande a pytest LUI-MEME de chronometrer chaque test -- rien ici ne
-# mesure quoi que ce soit, on relit juste son calcul.
 _DUREE = re.compile(
     r"^(?P<duree>\d+\.\d+)s\s+(?:setup|call|teardown)\s+(?P<nodeid>.+?)\s*$"
 )
 
 
 def parse_durations(sortie: str) -> dict[str, float]:
-    """Duree totale de chaque test, sommee sur ses phases setup/call/teardown.
-
-    Sommer les trois plutot que ne garder que `call` : un test dont la
-    fixture met une seconde a se preparer est tout aussi lent a l'usage, meme
-    si son corps est instantane.
-
-    `--durations-min` (0.005s par defaut) cache les tests les plus rapides de
-    ce releve : ils n'apparaissent simplement pas ici, plutot que d'y figurer
-    a zero.
-    """
+    """Duree totale de chaque test, sommee sur ses phases setup/call/teardown."""
     durees: dict[str, float] = {}
     for ligne in (sortie or "").splitlines():
         m = _DUREE.match(strip_ansi(ligne).strip())
