@@ -48,7 +48,7 @@ _LIGNE = re.compile(
     r"(?P<valeur>[^\\n#]*)(?P<fin>#.*)?$"
 )
 _CLES = ("reader", "lecteur")
-_A_CITER = set(":#{}[],&*?|<>=!%@`\\"'\\\\")
+_A_CITER = set(":#{}[],&*?|<>=!%@`\\\"'\\\\")
 
 _texte = None
 _cible = None
@@ -159,6 +159,53 @@ if _texte is not None:
     builtins.open = _open_virtuel
     pathlib.Path.read_text = _read_text_virtuel
     pathlib.Path.read_bytes = _read_bytes_virtuel
+
+
+def _module_simple_a_oublier(module_path):
+    """Retire un ancien module de test homonyme avant la collecte du suivant.
+
+    Avec le mode d'import pytest par defaut (prepend), deux suites differentes
+    peuvent contenir le meme nom de fichier, par exemple
+    ``BioLockTestSuite/Tests/test_nominal.py`` et
+    ``CVCertificateV3/Tests/test_nominal.py``. Python les enregistre alors tous
+    les deux sous le nom court ``test_nominal``. Sans nettoyage, le premier
+    reste dans ``sys.modules`` et pytest associe le second fichier au module de
+    la premiere suite ("import file mismatch"). C'est exactement le cas ou les
+    resultats portent le chemin de la mauvaise TestSuite et ne peuvent plus etre
+    rattaches a l'arbre.
+
+    On ne change PAS globalement pytest en ``--import-mode=importlib`` : plusieurs
+    environnements existants dependent encore du comportement prepend pour leurs
+    imports locaux. On retire uniquement le module court quand il pointe vers un
+    AUTRE fichier. Les objets de tests deja collectes gardent leurs references et
+    continuent donc de s'executer normalement.
+    """
+    try:
+        chemin = os.path.normcase(os.path.abspath(os.fspath(module_path)))
+    except Exception:
+        return
+
+    nom = pathlib.Path(os.fspath(module_path)).stem
+    ancien = sys.modules.get(nom)
+    if ancien is None:
+        return
+    ancien_fichier = getattr(ancien, "__file__", None)
+    if not ancien_fichier:
+        return
+    try:
+        ancien_chemin = os.path.normcase(os.path.abspath(ancien_fichier))
+    except Exception:
+        return
+    if ancien_chemin != chemin:
+        sys.modules.pop(nom, None)
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_pycollect_makemodule(module_path, parent):
+    """Evite qu'une TestSuite reutilise le module homonyme collecte juste avant."""
+    _module_simple_a_oublier(module_path)
+    # None laisse pytest creer son collecteur Module standard.
+    return None
 
 
 @pytest.hookimpl(tryfirst=True)
