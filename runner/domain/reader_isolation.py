@@ -161,24 +161,29 @@ if _texte is not None:
     pathlib.Path.read_bytes = _read_bytes_virtuel
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_configure(config):
+    """Isole les modules de tests portant le meme nom dans des TestSuites differentes.
+
+    Le premier correctif essayait de retirer un module homonyme de sys.modules
+    pendant la collecte. La photo terrain montre que c'est trop tard dans ce
+    workspace : pytest a deja choisi le module a importer. Le mode ``importlib``
+    est le mecanisme natif pytest prevu pour permettre plusieurs fichiers de
+    tests homonymes sans reutiliser le module de la suite precedente.
+
+    On le force uniquement dans le processus lance par Pytest Runner. Le cwd
+    reste le workspace et donc les imports absolus du projet continuent de voir
+    la racine du workspace.
+    """
+    config.option.importmode = "importlib"
+
+
 def _module_simple_a_oublier(module_path):
-    """Retire un ancien module de test homonyme avant la collecte du suivant.
+    """Filet de securite pour les plugins/workspaces qui importent eux-memes un test.
 
-    Avec le mode d'import pytest par defaut (prepend), deux suites differentes
-    peuvent contenir le meme nom de fichier, par exemple
-    ``BioLockTestSuite/Tests/test_nominal.py`` et
-    ``CVCertificateV3/Tests/test_nominal.py``. Python les enregistre alors tous
-    les deux sous le nom court ``test_nominal``. Sans nettoyage, le premier
-    reste dans ``sys.modules`` et pytest associe le second fichier au module de
-    la premiere suite ("import file mismatch"). C'est exactement le cas ou les
-    resultats portent le chemin de la mauvaise TestSuite et ne peuvent plus etre
-    rattaches a l'arbre.
-
-    On ne change PAS globalement pytest en ``--import-mode=importlib`` : plusieurs
-    environnements existants dependent encore du comportement prepend pour leurs
-    imports locaux. On retire uniquement le module court quand il pointe vers un
-    AUTRE fichier. Les objets de tests deja collectes gardent leurs references et
-    continuent donc de s'executer normalement.
+    ``importlib`` regle le chemin normal de pytest. Ce nettoyage reste utile si
+    un conftest ou un plugin importe explicitement un module de test sous son nom
+    court avant que pytest ne le collecte.
     """
     try:
         chemin = os.path.normcase(os.path.abspath(os.fspath(module_path)))
@@ -204,7 +209,6 @@ def _module_simple_a_oublier(module_path):
 def pytest_pycollect_makemodule(module_path, parent):
     """Evite qu'une TestSuite reutilise le module homonyme collecte juste avant."""
     _module_simple_a_oublier(module_path)
-    # None laisse pytest creer son collecteur Module standard.
     return None
 
 
@@ -217,11 +221,6 @@ def pytest_runtest_setup(item):
             "with nothing to signal it." % (_READER, _erreur)
         )
     if _READER:
-        # Un seul rapport Allure pour tous les lecteurs d'un run : sans ce
-        # parametre, deux lecteurs qui jouent le meme test s'y verraient
-        # fondus en un seul historique, l'un cachant l'autre derriere un
-        # simple "retry". allure-pytest n'est pas toujours installe -- le
-        # cas ordinaire, silencieux, ne doit rien y perdre.
         try:
             import allure
             allure.dynamic.parameter("Reader", _READER)
@@ -258,14 +257,7 @@ def pytest_runtest_logreport(report):
 def pytest_runtest_logfinish(nodeid, location):
     """Emet exactement un verdict apres setup, call et teardown."""
     status = _OUTCOMES.pop(nodeid, None)
-    # Avec xdist, seul le controleur doit ecrire dans le pipe de l'application.
-    # Ecrire dans stdout depuis un worker pourrait perturber son transport.
     if status is not None and "PYTEST_XDIST_WORKER" not in os.environ:
-        # sys.__stdout__ contourne la capture pytest, tout en restant branche
-        # sur le pipe lu par l'application.
-        # Le terminal pytest n'a pas encore toujours termine sa propre ligne.
-        # Le saut initial garantit que le protocole commence au premier
-        # caractere d'une nouvelle ligne et reste donc reconnaissable.
         sys.__stdout__.write("\\n%s\t%s\t%s\\n" % (_OUTCOME_PREFIX, status, nodeid))
         sys.__stdout__.flush()
 '''
