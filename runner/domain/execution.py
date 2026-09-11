@@ -26,6 +26,14 @@ from runner.domain.reader_isolation import ENV_CONFIG, ENV_READER, reader_plugin
 MAX_NODEIDS_EN_LIGNE = 40
 ENV_BUILD_NUMBER = "PYTEST_RUNNER_BUILD_NUMBER"
 
+# Un workspace peut contenir plusieurs TestSuites avec des noms de modules,
+# classes et fichiers identiques. Le mode pytest historique ``prepend`` ajoute
+# les dossiers de tests dans sys.path et peut alors reutiliser le premier module
+# importe pour la suite suivante. Le symptome est typique : les nodeids demandes
+# pointent vers CVCertificateV3 mais pytest execute/affiche BioLockTestSuite.
+# ``importlib`` isole chaque module par son chemin reel sans modifier sys.path.
+PYTEST_IMPORT_MODE = "--import-mode=importlib"
+
 
 def creation_flags() -> int:
     """Empeche l'ouverture d'une console noire derriere chaque run, sous Windows."""
@@ -87,7 +95,7 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
     """
     with marker_probe() as (args_plugin, dossier_plugin, fichier_markers):
         commande = [interpreter, "-m", "pytest", "--collect-only", "-q",
-                    *args_plugin]
+                    PYTEST_IMPORT_MODE, *args_plugin]
         environnement = markers.environment(env, fichier_markers)
         ancien = environnement.get("PYTHONPATH", "")
         environnement["PYTHONPATH"] = dossier_plugin + (
@@ -224,7 +232,8 @@ class ReaderRun:
             junit = self._junit_path()
             commande = [
                 self.request.interpreter, "-u", "-m", "pytest",
-                *args_nodeids, *args_plugin, "-v", "--tb=short",
+                *args_nodeids, *args_plugin, PYTEST_IMPORT_MODE,
+                "-v", "--tb=short",
                 # Pytest chronometre deja chaque test pour son propre resume ;
                 # `=0` (illimite) le fait imprimer pour TOUS, pas seulement les
                 # plus lents -- inutile de re-mesurer nous-memes.
