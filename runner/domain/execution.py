@@ -26,18 +26,68 @@ from runner.domain.reader_isolation import ENV_CONFIG, ENV_READER, reader_plugin
 MAX_NODEIDS_EN_LIGNE = 40
 ENV_BUILD_NUMBER = "PYTEST_RUNNER_BUILD_NUMBER"
 
-# Un workspace peut contenir plusieurs TestSuites avec des noms de modules,
-# classes et fichiers identiques. Le mode pytest historique ``prepend`` ajoute
-# les dossiers de tests dans sys.path et peut alors reutiliser le premier module
-# importe pour la suite suivante. Le symptome est typique : les nodeids demandes
-# pointent vers CVCertificateV3 mais pytest execute/affiche BioLockTestSuite.
-# ``importlib`` isole chaque module par son chemin reel sans modifier sys.path.
+# Plusieurs TestSuites du meme workspace peuvent contenir les memes noms de
+# modules/classes. ``importlib`` empeche pytest de reutiliser le module importe
+# pour la premiere suite quand il passe a la suivante.
 PYTEST_IMPORT_MODE = "--import-mode=importlib"
+
+# Dossiers techniques a ne jamais parcourir pour chercher des conftest.py.
+# Le workspace reel peut contenir un environnement Python complet : l'explorer
+# a chaque collecte/run serait inutilement couteux.
+_CONFTEXT_IGNORES = {
+    ".git", ".hg", ".svn", ".idea", ".pytest_cache", "__pycache__",
+    ".venv", "venv", "env", "node_modules", "site-packages",
+}
 
 
 def creation_flags() -> int:
     """Empeche l'ouverture d'une console noire derriere chaque run, sous Windows."""
     return getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0
+
+
+def _suite_import_paths(workspace: str) -> list[str]:
+    """Dossiers des conftest du workspace, dans un ordre stable.
+
+    Les TestSuites historiques ont souvent, juste a cote de leur ``conftest.py``,
+    un fichier ``imports_<TestSuite>.py`` importe par un nom court :
+    ``import imports_CVcertificateV3``. Le mode pytest ``importlib`` n'ajoute
+    volontairement plus le dossier du conftest a ``sys.path`` ; sans ce pont,
+    ces imports locaux cassent pendant la collecte.
+
+    On ne modifie aucun test : on remet uniquement les dossiers qui sont des
+    racines pytest reelles (ceux qui portent un conftest) dans PYTHONPATH. Les
+    fichiers ``imports_<suite>.py`` peuvent ensuite faire exactement les memes
+    ajustements de sys.path qu'en lancement unitaire/IDE.
+    """
+    racine = Path(workspace)
+    if not racine.is_dir():
+        return []
+
+    trouves: list[str] = []
+    try:
+        for dossier, sous_dossiers, fichiers in os.walk(racine):
+            sous_dossiers[:] = sorted(
+                (nom for nom in sous_dossiers if nom.lower() not in _CONFTEXT_IGNORES),
+                key=str.lower,
+            )
+            if "conftest.py" in fichiers:
+                trouves.append(str(Path(dossier).resolve()))
+    except OSError:
+        return []
+    return trouves
+
+
+def _prepend_pythonpath(env: dict, paths) -> None:
+    """Ajoute ``paths`` devant PYTHONPATH sans doublon, sans perdre l'existant."""
+    existant = [p for p in str(env.get("PYTHONPATH", "")).split(os.pathsep) if p]
+    resultat: list[str] = []
+    vus: set[str] = set()
+    for path in [*paths, *existant]:
+        cle = os.path.normcase(os.path.abspath(path))
+        if cle not in vus:
+            vus.add(cle)
+            resultat.append(path)
+    env["PYTHONPATH"] = os.pathsep.join(resultat)
 
 
 @contextmanager
@@ -97,9 +147,10 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
         commande = [interpreter, "-m", "pytest", "--collect-only", "-q",
                     PYTEST_IMPORT_MODE, *args_plugin]
         environnement = markers.environment(env, fichier_markers)
-        ancien = environnement.get("PYTHONPATH", "")
-        environnement["PYTHONPATH"] = dossier_plugin + (
-            os.pathsep + ancien if ancien else "")
+        _prepend_pythonpath(
+            environnement,
+            [dossier_plugin, *_suite_import_paths(workspace)],
+        )
 
         try:
             process = subprocess.run(
@@ -208,9 +259,10 @@ class ReaderRun:
             env[ENV_READER] = self.reader.name
             if self.request.config_path:
                 env[ENV_CONFIG] = self.request.config_path
-        if dossier_plugin:
-            ancien = env.get("PYTHONPATH", "")
-            env["PYTHONPATH"] = dossier_plugin + (os.pathsep + ancien if ancien else "")
+        _prepend_pythonpath(
+            env,
+            [dossier_plugin, *_suite_import_paths(self.request.workspace)],
+        )
         return env
 
     def run(self, on_line: Callable[[str], None],
