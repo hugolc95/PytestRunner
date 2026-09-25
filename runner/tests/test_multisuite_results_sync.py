@@ -1,6 +1,6 @@
 import sys
 
-from runner.domain.execution import ReaderRun, collect
+from runner.domain.execution import ReaderRun, _group_nodeids_by_suite, collect
 from runner.domain.models import Reader, RunRequest, Status
 from runner.domain.tree import build_tree
 from runner.ui.tree_model import TestTreeModel
@@ -59,6 +59,7 @@ def test_same_test_module_name_in_two_suites_keeps_results_on_the_right_suite(tm
     assert report.exit_code == 0, report.output
     assert "ModuleNotFoundError" not in report.output
     assert "import file mismatch" not in report.output
+    assert report.output.count("test session starts") == 2
     assert [(outcome.nodeid, outcome.status) for outcome in outcomes] == [
         (nodeids[0], Status.PASSED),
         (nodeids[1], Status.PASSED),
@@ -75,3 +76,27 @@ def test_same_test_module_name_in_two_suites_keeps_results_on_the_right_suite(tm
     assert model.status_counts() == {Status.PASSED: 2}
     assert model.statuses_for_nodeid(nodeids[0])[0] is Status.PASSED
     assert model.statuses_for_nodeid(nodeids[1])[0] is Status.PASSED
+
+
+
+def test_nodeids_are_grouped_at_testsuite_boundary(tmp_path):
+    _make_suite(
+        tmp_path, "BioLockTestSuite", "imports_BiolockTestSuite", "test_biolock")
+    tests = _make_suite(
+        tmp_path, "CVCertificateV3", "imports_CVcertificateV3", "test_certificate")
+    (tests / "test_second.py").write_text(
+        "def test_second():\n    assert True\n", encoding="utf-8")
+
+    nodeids = (
+        "TSu/JC_API/Int/BioLockTestSuite/Tests/test_nominal.py::test_biolock",
+        "TSu/JC_API/Int/CVCertificateV3/Tests/test_nominal.py::test_certificate",
+        "TSu/JC_API/Int/CVCertificateV3/Tests/test_second.py::test_second",
+    )
+
+    groups = _group_nodeids_by_suite(str(tmp_path), nodeids)
+
+    assert [root.name for root, _ in groups] == [
+        "BioLockTestSuite", "CVCertificateV3",
+    ]
+    assert groups[0][1] == (nodeids[0],)
+    assert groups[1][1] == nodeids[1:]
