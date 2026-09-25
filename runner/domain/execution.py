@@ -11,6 +11,7 @@ import os
 import subprocess
 import tempfile
 import time
+import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -75,6 +76,84 @@ def _suite_import_paths(workspace: str) -> list[str]:
     except OSError:
         return []
     return trouves
+
+
+
+def _nodeid_file(nodeid: str) -> str:
+    """Return the file part of a pytest nodeid."""
+    return str(nodeid).partition("::")[0].replace("\\", "/")
+
+
+def _suite_root(workspace: str, nodeid: str) -> Path:
+    """Find the TestSuite boundary without assuming a fixed tree depth.
+
+    A conftest.py living next to imports_*.py is the strongest signature used
+    by the historical TestSuites. If it is absent, the nearest conftest is a
+    safe pytest boundary. This keeps the runner generic.
+    """
+    workspace_path = Path(workspace).resolve()
+    test_file = Path(workspace, _nodeid_file(nodeid)).resolve()
+    folder = test_file.parent
+    conftest_candidates: list[Path] = []
+
+    while True:
+        try:
+            folder.relative_to(workspace_path)
+        except ValueError:
+            break
+        if (folder / "conftest.py").is_file():
+            conftest_candidates.append(folder)
+            if any(folder.glob("imports_*.py")):
+                return folder
+        if folder == workspace_path:
+            break
+        folder = folder.parent
+
+    return conftest_candidates[0] if conftest_candidates else test_file.parent
+
+
+def _group_nodeids_by_suite(
+        workspace: str, nodeids: tuple[str, ...]) -> list[tuple[Path, tuple[str, ...]]]:
+    """Group selected nodeids by TestSuite while preserving selection order."""
+    groups: list[tuple[Path, list[str]]] = []
+    positions: dict[str, int] = {}
+    for nodeid in nodeids:
+        root = _suite_root(workspace, nodeid)
+        key = os.path.normcase(str(root))
+        position = positions.get(key)
+        if position is None:
+            positions[key] = len(groups)
+            groups.append((root, [nodeid]))
+        else:
+            groups[position][1].append(nodeid)
+    return [(root, tuple(ids)) for root, ids in groups]
+
+
+def _merge_junit_files(sources: list[str], destination: str) -> None:
+    """Merge per-TestSuite JUnit files into the single logical run report."""
+    suites = []
+    for source in sources:
+        try:
+            root = ET.parse(source).getroot()
+        except (OSError, ET.ParseError):
+            continue
+        if root.tag == "testsuite":
+            suites.append(root)
+        else:
+            suites.extend(child for child in root if child.tag == "testsuite")
+    if not suites:
+        return
+
+    merged = ET.Element("testsuites")
+    for attr in ("tests", "failures", "errors", "skipped"):
+        merged.set(attr, str(sum(int(s.get(attr, "0") or 0) for s in suites)))
+    merged.set("time", f"{sum(float(s.get('time', '0') or 0) for s in suites):.6f}")
+    for suite in suites:
+        merged.append(suite)
+
+    Path(destination).parent.mkdir(parents=True, exist_ok=True)
+    ET.ElementTree(merged).write(destination, encoding="utf-8", xml_declaration=True)
+
 
 
 def _prepend_pythonpath(env: dict, paths) -> None:
@@ -246,7 +325,7 @@ class ReaderRun:
         dossier.mkdir(parents=True, exist_ok=True)
         return str(dossier)
 
-    def _environnement(self, dossier_plugin: str) -> dict:
+    def _environnement(self, dossier_plugin: str, suite_root: Path | None = None) -> dict:
         # Sous Windows, creer un processus avec un environnement partiel peut
         # retirer SYSTEMROOT et les variables dont Python a besoin pour
         # initialiser ses codecs et charger les DLL. `env` est une surcouche,
@@ -259,111 +338,138 @@ class ReaderRun:
             env[ENV_READER] = self.reader.name
             if self.request.config_path:
                 env[ENV_CONFIG] = self.request.config_path
-        _prepend_pythonpath(
-            env,
-            [dossier_plugin, *_suite_import_paths(self.request.workspace)],
-        )
+        paths = [dossier_plugin]
+        if suite_root is not None:
+            paths.append(str(suite_root))
+        else:
+            paths.extend(_suite_import_paths(self.request.workspace))
+        _prepend_pythonpath(env, paths)
         return env
 
     def run(self, on_line: Callable[[str], None],
             on_outcome: Callable[[Outcome], None]) -> ReaderReport:
-        """Execute le run et rend son bilan. Bloquant : a appeler hors du fil UI."""
-        debut = time.monotonic()
-        rapport = ReaderReport(reader=self.reader, counts={})
-        lignes: list[str] = []
+        """Run one logical reader run, isolating each TestSuite in its own pytest."""
+        start = time.monotonic()
+        report = ReaderReport(reader=self.reader, counts={})
+        output: list[str] = []
         verdicts: dict[str, Status] = {}
-        saut_apres_protocole = False
-        nodeids = parsing.NodeidResolver(self.request.nodeids)
+        resolver = parsing.NodeidResolver(self.request.nodeids)
+        groups = _group_nodeids_by_suite(self.request.workspace, self.request.nodeids)
+        final_junit = self._junit_path()
+        partial_junits: list[str] = []
 
-        # Le fichier d'arguments et le plugin doivent survivre au processus :
-        # tout le run se deroule donc a l'interieur des deux contextes.
         with reader_plugin(self.request.config_path if self.reader.name else "") as (
-                args_plugin, dossier_plugin), \
-                _fichier_arguments(self.request.nodeids) as args_nodeids:
-
-            junit = self._junit_path()
-            commande = [
-                self.request.interpreter, "-u", "-m", "pytest",
-                *args_nodeids, *args_plugin, PYTEST_IMPORT_MODE,
-                "-v", "--tb=short",
-                # Pytest chronometre deja chaque test pour son propre resume ;
-                # `=0` (illimite) le fait imprimer pour TOUS, pas seulement les
-                # plus lents -- inutile de re-mesurer nous-memes.
-                "--durations=0",
-            ]
-            if junit:
-                # Option native de pytest : le XML est ecrit par lui, pas
-                # reconstruit a partir des compteurs. Aucune dependance, et un
-                # fichier que les serveurs d'integration savent deja lire.
-                commande.append(f"--junitxml={junit}")
-            allure_dir = self._allure_dir_path()
-            if allure_dir:
-                commande.append(f"--alluredir={allure_dir}")
-
-            try:
-                self._process = subprocess.Popen(
-                    commande, cwd=self.request.workspace,
-                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, bufsize=1, env=self._environnement(dossier_plugin),
-                    creationflags=creation_flags(),
-                )
-            except OSError as exc:
-                message = f"Could not start the test interpreter:\n  {self.request.interpreter}\n{exc}"
-                on_line(message + "\n")
-                rapport.exit_code = -1
-                rapport.output = message
-                return rapport
-
-            for ligne in iter(self._process.stdout.readline, ""):
+                plugin_args, plugin_dir):
+            for group_index, (suite_root, suite_nodeids) in enumerate(groups):
                 if self._cancelled:
                     break
-                resultat = parsing.parse_status_line(ligne)
 
-                # Le protocole alimente l'arbre mais ne pollue ni la console,
-                # ni l'onglet Output, ni l'historique conserve.
-                protocole = parsing.is_outcome_protocol_line(ligne)
-                if protocole:
-                    saut_apres_protocole = True
-                elif saut_apres_protocole and not ligne.strip():
-                    # pytest termine ensuite la ligne de son terminal. Le saut
-                    # initial du protocole l'a deja fait : masquer ce doublon.
-                    saut_apres_protocole = False
-                else:
-                    saut_apres_protocole = False
-                    lignes.append(ligne)
-                    on_line(ligne)
+                with _fichier_arguments(suite_nodeids) as nodeid_args:
+                    command = [
+                        self.request.interpreter, "-u", "-m", "pytest",
+                        *nodeid_args, *plugin_args,
+                        "-v", "--tb=short", "--durations=0",
+                    ]
 
-                if resultat is not None:
-                    nodeid, statut = resultat
-                    # Le tree conserve les nodeids de la collecte. Pytest et
-                    # certains plugins peuvent rendre le meme test avec un
-                    # chemin absolu, un autre rootdir ou des antislashs :
-                    # remettre ici l'identifiant collecte garde toute la
-                    # chaine (tree, Detail, compteurs, progression) coherente.
-                    nodeid = nodeids.resolve(nodeid)
-                    precedent = verdicts.get(nodeid)
-                    if precedent is statut:
-                        continue
-                    if precedent is not None:
-                        restant = rapport.counts.get(precedent, 0) - 1
-                        if restant > 0:
-                            rapport.counts[precedent] = restant
+                    partial_junit = ""
+                    if final_junit:
+                        Path(self.request.junit_dir).mkdir(parents=True, exist_ok=True)
+                        handle, partial_junit = tempfile.mkstemp(
+                            prefix=f"{self.request.run_id}_suite_{group_index}_",
+                            suffix=".xml", dir=self.request.junit_dir)
+                        os.close(handle)
+                        try:
+                            os.unlink(partial_junit)
+                        except OSError:
+                            pass
+                        command.append(f"--junitxml={partial_junit}")
+
+                    allure_dir = self._allure_dir_path()
+                    if allure_dir:
+                        command.append(f"--alluredir={allure_dir}")
+
+                    try:
+                        self._process = subprocess.Popen(
+                            command, cwd=self.request.workspace,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                            text=True, bufsize=1,
+                            env=self._environnement(plugin_dir, suite_root),
+                            creationflags=creation_flags(),
+                        )
+                    except OSError as exc:
+                        message = (
+                            "Could not start the test interpreter:\n"
+                            f"  {self.request.interpreter}\n{exc}"
+                        )
+                        on_line(message + "\n")
+                        output.append(message + "\n")
+                        report.exit_code = -1
+                        break
+
+                    skip_blank_after_protocol = False
+                    for line in iter(self._process.stdout.readline, ""):
+                        if self._cancelled:
+                            break
+                        result = parsing.parse_status_line(line)
+                        protocol = parsing.is_outcome_protocol_line(line)
+                        if protocol:
+                            skip_blank_after_protocol = True
+                        elif skip_blank_after_protocol and not line.strip():
+                            skip_blank_after_protocol = False
                         else:
-                            rapport.counts.pop(precedent, None)
-                    verdicts[nodeid] = statut
-                    rapport.counts[statut] = rapport.counts.get(statut, 0) + 1
-                    on_outcome(Outcome(nodeid, statut, self.reader.index))
+                            skip_blank_after_protocol = False
+                            output.append(line)
+                            on_line(line)
 
-            self._process.wait()
+                        if result is not None:
+                            nodeid, status = result
+                            nodeid = resolver.resolve(nodeid)
+                            previous = verdicts.get(nodeid)
+                            if previous is status:
+                                continue
+                            if previous is not None:
+                                remaining = report.counts.get(previous, 0) - 1
+                                if remaining > 0:
+                                    report.counts[previous] = remaining
+                                else:
+                                    report.counts.pop(previous, None)
+                            verdicts[nodeid] = status
+                            report.counts[status] = report.counts.get(status, 0) + 1
+                            on_outcome(Outcome(nodeid, status, self.reader.index))
 
-        rapport.duration = time.monotonic() - debut
-        rapport.exit_code = -1 if self._cancelled else (self._process.returncode or 0)
-        rapport.cancelled = self._cancelled
-        rapport.output = "".join(lignes)
-        rapport.durations = parsing.parse_durations(rapport.output)
-        # Le chemin n'est retenu que si pytest a VRAIMENT ecrit le fichier :
-        # un run annule avant la fin n'en laisse pas, et l'historique
-        # proposerait alors un export qui echouerait au moment du clic.
-        if junit and Path(junit).is_file():
-            rapport.junit_path = junit
-        return rapport
+                    if self._cancelled and self._process.poll() is None:
+                        try:
+                            self._process.terminate()
+                        except OSError:
+                            pass
+                    self._process.wait()
+
+                    if partial_junit and Path(partial_junit).is_file():
+                        partial_junits.append(partial_junit)
+
+                    code = self._process.returncode or 0
+                    if code != 0 and report.exit_code == 0:
+                        report.exit_code = code
+                    # A failing TestSuite must not hide results from later
+                    # selected suites in the same logical run.
+
+        report.duration = time.monotonic() - start
+        if self._cancelled:
+            report.exit_code = -1
+        report.cancelled = self._cancelled
+        report.output = "".join(output)
+        report.durations = {
+            resolver.resolve(nodeid): duration
+            for nodeid, duration in parsing.parse_durations(report.output).items()
+        }
+
+        if final_junit and partial_junits:
+            _merge_junit_files(partial_junits, final_junit)
+            for path in partial_junits:
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
+            if Path(final_junit).is_file():
+                report.junit_path = final_junit
+        return report
