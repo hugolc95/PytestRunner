@@ -754,11 +754,6 @@ class MainWindow(QMainWindow):
         # A cote de History plutot que dans un menu : c'est le meme geste,
         # juste sur un rapport different -- regarder ce qu'a donne un run deja
         # termine.
-        self.allure_button = QPushButton("Allure")
-        self.allure_button.setObjectName("Ghost")
-        self.allure_button.setIcon(icons.icon("mdi.file-chart-outline", t.TEXT_MUTED))
-        self.allure_button.setToolTip("Open the Allure report of the last run")
-        self.allure_button.clicked.connect(self.open_allure_report)
 
         # Les verdicts, dans l'espace vide a droite de cette rangee -- un
         # anneau qui dit la proportion d'un coup d'oeil, le detail par statut
@@ -784,7 +779,7 @@ class MainWindow(QMainWindow):
         workspace_controls.setSpacing(t.SPACE_2)
         workspace_controls.addWidget(self.workspace_combo)
         for control in (self.browse_button, self.load_button, self.config_button,
-                        self.history_button, self.allure_button):
+                        self.history_button):
             workspace_controls.addWidget(control)
         workspace_controls.addStretch(1)
         workspace_box.addLayout(workspace_controls)
