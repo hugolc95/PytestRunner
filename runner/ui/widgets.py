@@ -827,9 +827,12 @@ class ReaderBar(QWidget):
         # Le mode vient du workspace et ne se change pas d'ici : c'est une
         # contrainte du materiel ou du code de test, pas une preference. Il est
         # affiche parce qu'il explique la duree du run.
+        self.set_sequential(sequential)
+        self.setVisible(len(readers) > 1)
+
+    def set_sequential(self, sequential: bool) -> None:
         self._mode.setText("one reader at a time" if sequential else "")
         self._mode.setVisible(sequential)
-        self.setVisible(len(readers) > 1)
 
     def selected_indexes(self) -> tuple[int, ...]:
         return tuple(b.reader_index() for b in self._toggles if b.isChecked())

@@ -5,5 +5,5 @@ Patch releases are the default for small fixes/UX changes; use minor/major
 increments when the scope justifies it.
 """
 
-__version__ = "1.0.7"
+__version__ = "1.0.8"
 COPYRIGHT = "© 2026 Pytest Runner"

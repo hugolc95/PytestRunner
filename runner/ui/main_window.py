@@ -1875,11 +1875,29 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_collected(self, collection) -> None:
-        self._active_execution_profile = None
-        self._displayed_profile = None
-        self._profile_selected_key = None
-        self.profile_model.set_tree([])
-        self._set_profile_tree_visible(False)
+        same_workspace = getattr(self, "_tree_workspace", None) == (
+            self.workspace.path if self.workspace else "")
+        lecteurs = self.workspace.readers if self.workspace else ()
+        same_readers = same_workspace and tuple(lecteurs) == self.model.readers
+        current = self.tree.currentIndex().siblingAtColumn(0)
+        current_nodeid = current.data(NODEID_ROLE) if current.isValid() else ""
+        profile_visible = same_workspace and self.profile_tree_button.isChecked()
+        current_path = next((path for index, path in self._tree_paths()
+                             if index == current), None) if same_workspace else None
+        checked = self.model.checked_nodeids() if same_workspace else None
+        statuses = {nodeid: dict(row.statuses) for nodeid, row in
+                    self.model._by_nodeid.items()} if same_readers else {}
+        expanded = self._expanded_tree_paths() if same_workspace else None
+        scroll = (self.tree.horizontalScrollBar().value(),
+                  self.tree.verticalScrollBar().value())
+        selection = self.tree.selectionModel()
+        signals_blocked = selection.blockSignals(True)
+        if not same_workspace:
+            self._active_execution_profile = None
+            self._displayed_profile = None
+            self._profile_selected_key = None
+            self.profile_model.set_tree([])
+            self._set_profile_tree_visible(False)
         self.progress.setVisible(False)
         self.progress.setRange(0, 100)
         self.load_button.setEnabled(True)
@@ -1889,11 +1907,9 @@ class MainWindow(QMainWindow):
         self.markers.set_markers(collection.marker_list())
         self._show_active_filter()
 
-        self._clear_status_filter()
-        self.remaining_pill.setVisible(False)
-        same_workspace = getattr(self, "_tree_workspace", None) == (
-            self.workspace.path if self.workspace else "")
-        expanded = self._expanded_tree_paths() if same_workspace else None
+        if not same_workspace:
+            self._clear_status_filter()
+            self.remaining_pill.setVisible(False)
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
         self._refresh_profile_picker()
         self.tree_view_switch.setVisible(self.workspace is not None)
@@ -1904,13 +1920,26 @@ class MainWindow(QMainWindow):
         # les resultats qu'ils portaient au run precedent. Decocher restreint
         # le prochain run, cela ne cache rien.
         self.model.set_readers(lecteurs)
-        self.results.set_readers(lecteurs)
-        self.readers_bar.set_readers(
-            lecteurs,
-            sequential=bool(self.workspace)
-            and self.workspace.reader_mode == MODE_SEQUENTIEL)
+        if not same_readers:
+            self.results.set_readers(lecteurs)
+            self.readers_bar.set_readers(
+                lecteurs,
+                sequential=bool(self.workspace)
+                and self.workspace.reader_mode == MODE_SEQUENTIEL)
+        else:
+            self.readers_bar.set_sequential(
+                bool(self.workspace) and self.workspace.reader_mode == MODE_SEQUENTIEL)
         self.results.set_log_root(self.workspace.log_root if self.workspace else None)
-        self._size_reader_columns()
+        if not same_readers:
+            self._size_reader_columns()
+        if checked is not None:
+            self.model.set_checked_nodeids(checked)
+        for nodeid, reader_statuses in statuses.items():
+            for reader_index, status in reader_statuses.items():
+                self.model.apply_outcome(nodeid, status, reader_index)
+        if same_workspace and not profile_visible:
+            self._on_search(self.search.field.text(), reveal=False)
+            self._apply_status_filter()
 
         if not nodeids:
             self.tree_empty.update_text(
@@ -1925,6 +1954,28 @@ class MainWindow(QMainWindow):
             else:
                 self._restore_tree_paths(expanded)
         self.tree_toolbar.setVisible(bool(nodeids))
+        if profile_visible:
+            self.left_stack.setCurrentWidget(self.profile_tree)
+        restored = QModelIndex()
+        if current_path is not None:
+            restored = (self.model.index_for_nodeid(current_nodeid) if current_nodeid else
+                        next((index for index, path in self._tree_paths()
+                              if path == current_path), QModelIndex()))
+            self.tree.setCurrentIndex(restored)
+        selection.blockSignals(signals_blocked)
+        if current_path is not None and not self.profile_tree_button.isChecked():
+            if not restored.isValid():
+                self.results._nodeid = ""
+                self.results.detail.clear()
+                self.results.source.save()
+                self.results.source.clear()
+                self.results.logs.clear()
+            elif not same_readers:
+                self._select_test(restored)
+        if same_workspace:
+            self.tree.doItemsLayout()
+            self.tree.horizontalScrollBar().setValue(scroll[0])
+            self.tree.verticalScrollBar().setValue(scroll[1])
 
         nom = Path(self.workspace.path).name if self.workspace else ""
         details = f"{len(nodeids)} tests"

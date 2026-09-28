@@ -78,3 +78,75 @@ def test_profile_progress_lives_in_status_bar_without_wrapping(qtbot, monkeypatc
     assert 'test_a' in label.toolTip() and 'test_b' in label.toolTip()
     window._show_failure_actions([])
     assert label.isHidden()
+
+
+def test_recollect_keeps_checks_current_result_and_open_tab(qtbot, monkeypatch):
+    from runner.domain.models import Status
+    monkeypatch.setattr(MainWindow, '_restore', lambda self: None)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    a, b, c = ('folder/test_a.py::test_one', 'folder/test_b.py::test_two',
+               'folder/test_c.py::test_new')
+    def collect(ids):
+        window._on_collected(SimpleNamespace(nodeids=ids, markers={}, marker_list=lambda: []))
+    collect([a, b])
+    window.model.set_checked_nodeids([b])
+    window.model.apply_outcome(b, Status.SKIPPED, 0)
+    window.tree.setCurrentIndex(window.model.index_for_nodeid(b))
+    window.results.tabs.setCurrentIndex(2)
+    before = window.results.detail.body.toPlainText()
+    collect([a, b, c])
+    assert window.model.checked_nodeids() == [b]
+    assert window.tree.currentIndex() == window.model.index_for_nodeid(b)
+    assert window.model.statuses_for_nodeid(b)[0] is Status.SKIPPED
+    assert window.results.detail.body.toPlainText() == before
+    assert window.results.tabs.currentIndex() == 2
+    collect([a, c])
+    assert not window.tree.currentIndex().isValid()
+    assert window.model.checked_nodeids() == []
+    assert window.results._nodeid == ''
+
+
+def test_recollect_keeps_profile_view_open(qtbot, monkeypatch):
+    monkeypatch.setattr(MainWindow, '_restore', lambda self: None)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    collection = SimpleNamespace(nodeids=['test_a.py::test_one'], markers={}, marker_list=lambda: [])
+    window._on_collected(collection)
+    window._set_profile_tree_visible(True)
+    window._on_collected(collection)
+    assert window.profile_tree_button.isChecked()
+    assert window.left_stack.currentWidget() is window.profile_tree
+    assert window.results_stack.currentWidget() is window.profile_result_page
+
+
+def test_recollect_keeps_scroll_and_group_but_new_workspace_resets(qtbot, monkeypatch, tmp_path):
+    from runner.domain.workspace import Workspace
+    monkeypatch.setattr(MainWindow, '_restore', lambda self: None)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.workspace = Workspace.load(str(tmp_path))
+    collection = SimpleNamespace(
+        nodeids=[f'folder/test_a.py::test_{i:03}' for i in range(100)],
+        markers={}, marker_list=lambda: [])
+    window._on_collected(collection)
+    window.show()
+    window.tree.expandAll()
+    group = window.model.index(0, 0)
+    window.tree.setCurrentIndex(group)
+    window.tree.doItemsLayout()
+    window.tree.verticalScrollBar().setValue(30)
+    scroll = window.tree.verticalScrollBar().value()
+    assert scroll > 0
+    window.model.set_all_checked(False)
+    group_name = group.data()
+    window._on_collected(collection)
+    assert window.tree.verticalScrollBar().value() == scroll
+    assert window.tree.currentIndex().data() == group_name
+    assert window.model.checked_nodeids() == []
+    other = tmp_path / 'other'
+    other.mkdir()
+    window.workspace = Workspace.load(str(other))
+    window._on_collected(collection)
+    assert len(window.model.checked_nodeids()) == 100
+    assert not window.tree.currentIndex().isValid()
