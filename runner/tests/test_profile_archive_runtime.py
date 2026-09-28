@@ -43,6 +43,8 @@ def test_background_archive_keeps_profile_name_then_classic_origin(qtbot, tmp_pa
     assert saved.find("classic-run").run_name == "Firmware validation"
     assert saved.find("profile-run").run_name == "Firmware validation"
     assert saved.find('profile-run').executions == (('test_a', 'PASSED'), ('test_a', 'PASSED'))
+    assert saved.find('profile-run').replay_profile['sequence'] == ['test_a']
+    assert saved.find('classic-run').replay_profile['sequence'] == ['test_a', 'test_a']
     saved.rename_run("classic-run", "Renamed run")
     assert History(tmp_path / "history").find("classic-run").run_name == "Renamed run"
 

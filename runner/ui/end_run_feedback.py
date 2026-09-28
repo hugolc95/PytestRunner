@@ -87,6 +87,7 @@ def install() -> None:
                 run_kind=getattr(self, "_archive_run_kind", "unknown"),
                 profile_name=getattr(self, "_archive_profile_name", ""),
                 run_name=getattr(self, "_archive_run_name", ""),
+                replay_profile=getattr(self, "_archive_replay_profile", None),
             )
             entries.append((entry, report.output if getattr(self, "_archive_save_logs", True) else ""))
         return tuple(entries)

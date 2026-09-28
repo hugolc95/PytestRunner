@@ -2299,6 +2299,11 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_run_started(self, request: RunRequest) -> None:
+        from runner.domain.history_profile import capture_profile
+        self._archive_replay_profile = capture_profile(
+            request, self._running_execution_profile,
+            getattr(self, "_pending_run_name", ""))
+        self._archive_run_nodeids = tuple(request.nodeids)
         self._profile_selection_timer.stop()
         self._profile_console_timer.stop()
         self._profile_pending_console.clear()
@@ -2531,7 +2536,7 @@ class MainWindow(QMainWindow):
         profile = self._running_execution_profile
         joues = (
             list(profile.sequence) * profile.execution.repetitions
-            if profile is not None else list(self.model.nodeids()))
+            if profile is not None else list(getattr(self, "_archive_run_nodeids", self.model.nodeids())))
         for rapport in rapports:
             if rapport.cancelled:
                 continue
@@ -2552,6 +2557,7 @@ class MainWindow(QMainWindow):
                 junit_path=rapport.junit_path,
                 run_kind="profile" if profile is not None else "classic",
                 profile_name=profile.name if profile is not None else "",
+                replay_profile=getattr(self, "_archive_replay_profile", None),
             )
             output = (rapport.output if profile is None
                       or profile.reports.save_complete_logs else "")

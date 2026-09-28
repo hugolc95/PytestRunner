@@ -81,6 +81,7 @@ class RunEntry:
     run_name: str = ""
     test_statuses: dict[str, str] = field(default_factory=dict)
     executions: tuple[tuple[str, str], ...] = ()
+    replay_profile: dict | None = None
 
     @property
     def total(self) -> int:
@@ -129,6 +130,7 @@ class RunEntry:
             "run_name": self.run_name,
             "test_statuses": dict(self.test_statuses),
             "executions": [list(result) for result in self.executions],
+            "replay_profile": self.replay_profile,
         }
 
     @classmethod
@@ -161,6 +163,8 @@ class RunEntry:
                 profile_name=str(donnees.get("profile_name", "")),
                 run_name=str(donnees.get("run_name", "")),
                 test_statuses=dict(donnees.get("test_statuses") or {}),
+                replay_profile=(dict(donnees["replay_profile"])
+                                if isinstance(donnees.get("replay_profile"), dict) else None),
                 executions=tuple((str(result[0]), str(result[1]))
                                  for result in (donnees.get("executions") or ())
                                  if isinstance(result, (list, tuple)) and len(result) == 2),

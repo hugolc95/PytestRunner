@@ -1314,6 +1314,10 @@ class HistoryWindow(QDialog):
     def _fill_export_menu(self, group: RunGroup) -> None:
         self.export_menu.clear()
         self._export_submenus.clear()
+        profile_action = self.export_menu.addAction("Export as execution profile…")
+        profile_action.setEnabled(bool(group.nodeids))
+        profile_action.triggered.connect(lambda checked=False: self.export_execution_profile())
+        self.export_menu.addSeparator()
         for entry in group.entries:
             if len(group.entries) > 1:
                 # Un parent explicite est necessaire avec PySide 6.8 : les
@@ -1333,6 +1337,45 @@ class HistoryWindow(QDialog):
                 lambda checked=False, value=entry: self.export_junit(value))
 
     # -------------------------------------------------------------- actions
+
+    def export_execution_profile(self) -> None:
+        from runner.domain.execution_profile import EXTENSION, ProfileValidationError, export_profile
+        from runner.domain.history_profile import profile_from_entry
+
+        group = self._current_group()
+        if group is None or not group.entries:
+            return
+        entry = group.entries[0]
+        configuration = None
+        if entry.replay_profile is None:
+            choice = QMessageBox.question(
+                self, "Configuration not archived",
+                "This older run has no saved configuration or execution options. "
+                "The recorded sequence can still be exported.\n\n"
+                "Choose a YAML configuration to include?\n"
+                "Yes: choose a file. No: export the sequence only (local settings on import).",
+                QMessageBox.Yes | QMessageBox.No | QMessageBox.Cancel,
+                QMessageBox.Cancel)
+            if choice == QMessageBox.Cancel:
+                return
+            if choice == QMessageBox.Yes:
+                configuration, _ = QFileDialog.getOpenFileName(
+                    self, "Choose configuration for the exported profile", entry.workspace,
+                    "YAML (*.yaml *.yml)")
+                if not configuration:
+                    return
+        try:
+            profile = profile_from_entry(entry, group.display_name[:120], configuration)
+            path, _ = QFileDialog.getSaveFileName(
+                self, "Export run as execution profile", f"run_{entry.id}{EXTENSION}",
+                f"Pytest Runner profiles (*{EXTENSION})")
+            if not path:
+                return
+            target = export_profile(profile, path)
+        except (OSError, UnicodeError, ProfileValidationError) as exc:
+            self._say(f"Could not export profile: {exc}", True)
+            return
+        self._say(f"Profile exported to {target}. Import it from Execution Profiles on the other computer.")
 
     def view_output(self) -> None:
         if self._current_group() is not None:
