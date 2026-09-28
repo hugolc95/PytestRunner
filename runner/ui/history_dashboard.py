@@ -302,6 +302,10 @@ class RunCard(QFrame):
             counts.addWidget(self._label(f"{group.count(Status.ERROR)} error",
                                          t.TEXT_XS, 600,
                                          lambda: t.status_color(Status.ERROR)))
+        if group.count(Status.SKIPPED):
+            counts.addWidget(self._label(f"{group.count(Status.SKIPPED)} skipped",
+                                         t.TEXT_XS, 600,
+                                         lambda: t.status_color(Status.SKIPPED)))
         counts.addStretch(1)
         counts.addWidget(self._label(f"{group.duration:.1f}s", t.TEXT_XS, 500,
                                     lambda: t.TEXT_MUTED))
@@ -743,6 +747,8 @@ class HistoryWindow(QDialog):
         self.failed_value.setObjectName("Muted")
         self.error_value = QLabel()
         self.error_value.setObjectName("Muted")
+        self.skipped_value = QLabel()
+        self._style_result_counts()
         self.success_value = QLabel()
         self.success_value.setStyleSheet(
             f"font-size:14px;font-weight:700;color:{t.status_color(Status.PASSED)};"
@@ -752,6 +758,7 @@ class HistoryWindow(QDialog):
         summary_top.addWidget(self.passed_value)
         summary_top.addWidget(self.failed_value)
         summary_top.addWidget(self.error_value)
+        summary_top.addWidget(self.skipped_value)
         summary_top.addStretch(1)
         summary_top.addWidget(self.success_value)
 
@@ -860,6 +867,14 @@ class HistoryWindow(QDialog):
         table.setColumnWidth(1, 220)
         return table
 
+    def _style_result_counts(self) -> None:
+        for label, status in ((self.failed_value, Status.FAILED),
+                              (self.error_value, Status.ERROR),
+                              (self.skipped_value, Status.SKIPPED)):
+            label.setStyleSheet(
+                f"font-size:{t.TEXT_XS}px;font-weight:600;"
+                f"color:{t.status_color(status)};background:transparent;")
+
     def restyle(self) -> None:
         """Rejoue les couleurs figees a la construction de chaque carte.
 
@@ -870,6 +885,7 @@ class HistoryWindow(QDialog):
         les reconstruire toutes -- l'ancienne approche -- couterait bien plus
         cher qu'un simple repeint.
         """
+        self._style_result_counts()
         for _item, card in self._cards:
             card.restyle()
 
@@ -1162,6 +1178,7 @@ class HistoryWindow(QDialog):
         self.passed_value.setText(str(group.count(Status.PASSED)))
         self.failed_value.setText(f"{group.count(Status.FAILED)} failed")
         self.error_value.setText(f"{group.count(Status.ERROR)} error")
+        self.skipped_value.setText(f"{group.count(Status.SKIPPED)} skipped")
         success = 100 * group.count(Status.PASSED) / group.total if group.total else 0
         self.success_value.setText(f"{success:.0f}% success")
         counts = {status: group.count(status) for status in Status}
