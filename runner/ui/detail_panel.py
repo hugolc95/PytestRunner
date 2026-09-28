@@ -689,15 +689,27 @@ class DetailPanel(QWidget):
 
         for lecteur in cibles:
             statut = statuses.get(lecteur.index, Status.PENDING)
+            echec = failures.get(lecteur.index)
+            if statut is Status.SKIPPED and echec is not None and echec.kind == "skip":
+                label = f"{lecteur.short_name}: " if lecteur.name else ""
+                texte = escape(label + "Skip reason: " + echec.body).replace("\n", "<br/>")
+                blocs.append(
+                    f'<p style="margin:0 0 {t.SPACE_2}px 0;'
+                    f' color:{t.status_color(Status.SKIPPED)}; font-size:{t.TEXT_MD}px;'
+                    f' font-weight:600;">{texte}</p>')
+                brut.append(label + echec.body)
+                continue
             if not statut.is_bad:
                 continue
-            echec = failures.get(lecteur.index)
             blocs.append(self._html_bloc(lecteur, statut, echec))
             entete = f"--- {lecteur.name or 'run'} ---" if len(cibles) > 1 else ""
             brut.append("\n".join(x for x in (entete, echec.body if echec else "") if x))
 
-        if not blocs:
-            blocs.append(self._html_sans_echec(cibles, statuses, last_seen, recent_runs or {}))
+        if not any(statuses.get(reader.index, Status.PENDING).is_bad for reader in cibles):
+            blocs.insert(0, self._html_sans_echec(cibles, statuses, last_seen, recent_runs or {}))
+        self.copy_button.setText("Copy details" if any(
+            statuses.get(reader.index) is Status.SKIPPED for reader in cibles
+        ) else "Copy traceback")
 
         self.body.setHtml(
             f'<body style="background:transparent;">{"".join(blocs)}</body>')

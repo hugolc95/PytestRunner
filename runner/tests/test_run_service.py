@@ -509,3 +509,13 @@ def test_a_plugin_reporting_absolute_windows_paths_still_updates_results(
     assert [outcome.nodeid for outcome in outcomes] == list(nodeids)
     assert progress[-1] == (2, 2)
     assert reports[0].counts == {Status.PASSED: 2}
+
+
+def test_skip_reason_survives_real_pytest_execution(lance):
+    from runner.domain.failures import index_failures, failure_for
+    _, _, reports = lance
+    for report in reports:
+        detail = failure_for(index_failures(report.output), "test_suite.py::test_ignore")
+        assert detail is not None, report.output
+        assert detail.kind == "skip"
+        assert "pas encore supporte" in detail.body

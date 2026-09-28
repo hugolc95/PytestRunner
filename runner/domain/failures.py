@@ -14,6 +14,7 @@ tire.
 from __future__ import annotations
 
 import re
+import json
 from dataclasses import dataclass, replace
 
 from runner.domain.ansi import strip_ansi
@@ -175,12 +176,24 @@ def index_failures(sortie: str) -> dict[str, Failure]:
                 ancien, body=f"{ancien.body}\n\n{bloc.body}")
         else:
             index[bloc.title] = replace(ancien, ambiguous=True)
+    # Structured skip reports retain the full nodeid, including parameters.
+    for line in (sortie or "").splitlines():
+        line = strip_ansi(line).strip()
+        if not line.startswith("PYTESTRUNNER_SKIP\t"):
+            continue
+        try:
+            detail = json.loads(line.split("\t", 1)[1])
+            nodeid, reason = detail["nodeid"], detail["reason"]
+            if isinstance(nodeid, str) and isinstance(reason, str):
+                index[nodeid] = Failure(nodeid, kind="skip", body=reason)
+        except (ValueError, KeyError, TypeError):
+            continue
     return index
 
 
 def failure_for(index: dict[str, Failure], nodeid: str) -> Failure | None:
     """Bloc d'echec de ce nodeid, s'il y en a un."""
-    return index.get(title_for_nodeid(nodeid))
+    return index.get(nodeid) or index.get(title_for_nodeid(nodeid))
 
 
 # Une trace pytest melange quatre natures de lignes. Les distinguer est ce qui

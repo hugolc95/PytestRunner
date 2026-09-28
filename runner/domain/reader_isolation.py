@@ -33,6 +33,7 @@ _SOURCE = '''\
 """Genere automatiquement. Recree et supprime a chaque lancement."""
 import builtins
 import io
+import json
 import os
 import pathlib
 import re
@@ -234,9 +235,17 @@ def _record_outcome(nodeid, status):
         _OUTCOMES[nodeid] = status
 
 
-@pytest.hookimpl(tryfirst=True)
+@pytest.hookimpl(trylast=True)
 def pytest_runtest_logreport(report):
     """Retient le verdict final sans dependre du rendu du terminal pytest."""
+    if report.skipped and "PYTEST_XDIST_WORKER" not in os.environ:
+        detail = report.longrepr
+        reason = getattr(report, "wasxfail", None)
+        if reason is None:
+            reason = str(detail[2]) if isinstance(detail, tuple) else str(detail)
+        payload = json.dumps({"nodeid": report.nodeid, "reason": reason}, ensure_ascii=True)
+        sys.__stdout__.write("\\nPYTESTRUNNER_SKIP\t%s\\n" % payload)
+        sys.__stdout__.flush()
     if report.when in ("setup", "teardown"):
         if report.failed:
             _record_outcome(report.nodeid, "ERROR")

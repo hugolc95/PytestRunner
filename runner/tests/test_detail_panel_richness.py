@@ -146,3 +146,21 @@ def test_restyle_keeps_the_nodeid_markers_and_sparkline(qapp):
     assert panneau.nodeid_label.text() == NODEID
     assert not panneau.markers_row.isHidden()
     assert 0 in panneau._sparklines
+
+
+def test_skip_reason_is_shown_per_reader_and_can_be_copied(qapp):
+    import json
+    from runner.domain.failures import index_failures, failure_for
+    reason = "Skipped: carte <absente>\nBrancher le lecteur"
+    output = "PYTESTRUNNER_SKIP\t" + json.dumps({"nodeid": NODEID, "reason": reason})
+    detail = failure_for(index_failures(output), NODEID)
+    panel = DetailPanel()
+    panel.show_test(NODEID, (Reader("Reader A", 0), Reader("Reader B", 1)),
+                    {0: Status.PASSED, 1: Status.SKIPPED}, {0: None, 1: detail})
+    assert "carte <absente>" in panel.body.toPlainText()
+    assert "Reader B: Skip reason:" in panel.body.toPlainText()
+    assert "Passed on 1 reader, skipped on 1." in panel.body.toPlainText()
+    panel.copy_button.click()
+    assert reason in qapp.clipboard().text()
+    panel.restyle()
+    assert "carte <absente>" in panel.body.toPlainText()

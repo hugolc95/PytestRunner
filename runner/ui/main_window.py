@@ -2686,7 +2686,7 @@ class MainWindow(QMainWindow):
         """
         for lecteur in (self.model.readers or (Reader("", 0),)):
             echec = self.results.failure_for(nodeid, lecteur.index)
-            if echec is not None:
+            if echec is not None and echec.kind != "skip":
                 return echec
         return None
 

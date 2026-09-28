@@ -8,6 +8,7 @@ utilisable depuis un script ou un test.
 from __future__ import annotations
 
 import os
+import json
 import subprocess
 import tempfile
 import time
@@ -410,6 +411,13 @@ class ReaderRun:
                     for line in iter(self._process.stdout.readline, ""):
                         if self._cancelled:
                             break
+                        if line.strip().startswith("PYTESTRUNNER_SKIP\t"):
+                            try:
+                                detail = json.loads(line.strip().split("\t", 1)[1])
+                                detail["nodeid"] = resolver.resolve(detail["nodeid"])
+                                line = "PYTESTRUNNER_SKIP\t" + json.dumps(detail) + "\n"
+                            except (ValueError, KeyError, TypeError):
+                                pass
                         result = parsing.parse_status_line(line)
                         protocol = parsing.is_outcome_protocol_line(line)
                         if protocol:
