@@ -177,6 +177,7 @@ class MainWindow(QMainWindow):
         self._run_id: str | None = None
         self._build_number: int | None = None
         self._collector: CollectWorker | None = None
+        self._pending_execution_profile: ExecutionProfile | None = None
         self._allure_prober: ProbeWorker | None = None
         # Dossier des resultats allure-pytest du dernier run demarre, ou ""
         # si son interpreteur ne connait pas le plugin. Le bouton Allure lit
@@ -551,11 +552,27 @@ class MainWindow(QMainWindow):
     def _load_execution_profile(self, profile: ExecutionProfile) -> None:
         """Load a validated profile without changing local reader selection."""
         if self.service.busy or self._stress_worker is not None:
-            self.status_label.setText('Stop the current run before choosing another profile.')
+            ErrorDialog.show_error(self, "Could not open profile",
+                                   "Stop the current run before choosing another profile.")
             return
+        collecting = self._collector is not None and self._collector.isRunning()
+        if collecting or self.workspace is None or getattr(self, "_tree_workspace", None) != self.workspace.path:
+            self._pending_execution_profile = profile
+            self._show_page("workspace")
+            if not collecting:
+                self.load_workspace()
+                if self._collector is None or not self._collector.isRunning():
+                    self._pending_execution_profile = None
+            return
+        self._open_collected_profile(profile)
+
+    def _open_collected_profile(self, profile: ExecutionProfile) -> None:
+        """Open only after collection has supplied the compatibility information."""
         missing = sum(nodeid not in self.model._by_nodeid for nodeid in profile.sequence)
         if missing or not profile.sequence:
-            self.status_label.setText(f'Profile unavailable: {missing} step(s) missing from this workspace.')
+            ErrorDialog.show_error(
+                self, "Profile is not compatible",
+                f"{missing} sequence step(s) are missing from this workspace.")
             return
         # Opening a profile is a new inspection context: a previous verdict
         # filter would hide every pending row in the sequence preview.
@@ -1984,6 +2001,12 @@ class MainWindow(QMainWindow):
         self.status_label.setText(f"{nom} — {details}")
         self.setWindowTitle(f"{WINDOW_TITLE} — {nom}" if nom else WINDOW_TITLE)
         self._update_actions()
+        pending_profile = getattr(self, "_pending_execution_profile", None)
+        if pending_profile is not None:
+            self._pending_execution_profile = None
+            # The collection signal can arrive just before its worker exits.
+            # Open against the completed model without starting a second collection.
+            QTimer.singleShot(0, lambda: self._open_collected_profile(pending_profile))
         if self._pending_history_run is not None:
             QTimer.singleShot(0, self._launch_pending_history_run)
 
@@ -2005,6 +2028,7 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_collect_failed(self, message: str) -> None:
         self._pending_history_run = None
+        self._pending_execution_profile = None
         self.progress.setVisible(False)
         self.progress.setRange(0, 100)
         self.load_button.setEnabled(True)
