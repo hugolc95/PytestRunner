@@ -597,7 +597,9 @@ class HistoryWindow(QDialog):
 
         self.compare_button = QPushButton("Compare")
         self.compare_button.setObjectName("Primary")
-        self.compare_button.setFixedWidth(108)
+        # Let Qt include the text, stylesheet padding and display scaling.
+        self.compare_button.setMinimumWidth(108)
+        self.compare_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         self.compare_button.clicked.connect(self._compare_clicked)
         self.cancel_compare = QPushButton("Cancel")
         self.cancel_compare.setObjectName("Ghost")
@@ -642,7 +644,7 @@ class HistoryWindow(QDialog):
         self.run_list = QListWidget()
         self.run_list.setFrameShape(QFrame.NoFrame)
         self.run_list.setSpacing(t.SPACE_1)
-        self.run_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.run_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.run_list.itemSelectionChanged.connect(self._on_selection_changed)
         self.run_list.itemDoubleClicked.connect(lambda _item: self.view_output())
         self.run_list.verticalScrollBar().valueChanged.connect(
@@ -1569,10 +1571,10 @@ class HistoryWindow(QDialog):
     # ------------------------------------------------------------ comparaison
 
     def _compare_clicked(self) -> None:
-        if not self._compare_mode:
+        groups = self._selected_groups()
+        if len(groups) < 2 and not self._compare_mode:
             self._enter_compare_mode()
             return
-        groups = self._selected_groups()
         if len(groups) < 2:
             return
         if any(not self._compatible(groups[0], group) for group in groups[1:]):
@@ -1585,15 +1587,14 @@ class HistoryWindow(QDialog):
         if len(self._visible_groups) < 2:
             return
         self._compare_mode = True
-        self.run_list.clearSelection()
-        self.run_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.run_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.cancel_compare.setVisible(True)
-        self._say("Select two or more runs from the same workspace.")
+        self._say("Ctrl+click to select runs, Shift+click to select a range. Choose the same workspace.")
         self._update_compare_action()
 
     def _leave_compare_mode(self) -> None:
         self._compare_mode = False
-        self.run_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.run_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.cancel_compare.setVisible(False)
         self.status.clear()
         first = self._first_run_item()
