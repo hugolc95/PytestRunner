@@ -694,7 +694,7 @@ class MainWindow(QMainWindow):
             self.yaml_editor_host,
             candidats=[str(path) for path in fichiers_config(self.workspace.path)],
             workspace_path=self.workspace.path,
-            embedded=True)
+            embedded=True, interpreter=self._effective_interpreter())
         self.yaml_editor.setWindowFlags(Qt.Widget)
         self.yaml_editor.saved.connect(self._on_yaml_page_saved)
         self.yaml_editor_layout.addWidget(self.yaml_editor, 1)
@@ -1732,7 +1732,7 @@ class MainWindow(QMainWindow):
             self.workspace.config_path,
             [r.name for r in self.workspace.readers], self,
             candidats=[str(c) for c in fichiers_config(racine)],
-            workspace_path=racine)
+            workspace_path=racine, interpreter=self._effective_interpreter())
         dialogue.exec()
 
         # Le fichier qu'on vient d'editer devient CELUI du workspace : avoir

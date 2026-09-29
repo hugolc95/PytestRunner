@@ -13,9 +13,10 @@ fichier tel qu'il est. Ce qu'on y tape fait alors foi, commentaires compris.
 from __future__ import annotations
 
 import re
+import json
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QProcess, QProcessEnvironment, QTimer
 from PySide6.QtGui import QTextCursor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -37,6 +38,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QVBoxLayout,
     QWidget,
+    QStyledItemDelegate,
 )
 
 from runner.domain import config_file
@@ -96,6 +98,7 @@ class ReaderList(QWidget):
 
         self.list = QListWidget()
         self.list.setObjectName("Readers")
+        self.list.setItemDelegate(ReaderDelegate(self))
         # Trois lignes visibles : au-dela la fenetre se remplit d'une liste
         # qui, la plupart du temps, en compte une ou deux.
         self.list.setFixedHeight(t.CONTROL_MD * 3)
@@ -164,6 +167,20 @@ class ReaderList(QWidget):
         self.remove_button.setEnabled(bool(self.list.selectedItems()))
 
 
+class ReaderDelegate(QStyledItemDelegate):
+    def createEditor(self, parent, option, index):
+        editor = QComboBox(parent)
+        editor.setEditable(True)
+        editor.addItems(list(dict.fromkeys([index.data() or '', *self.parent()._connus])))
+        return editor
+
+    def setEditorData(self, editor, index):
+        editor.setCurrentText(index.data() or '')
+
+    def setModelData(self, editor, model, index):
+        model.setData(index, editor.currentText(), Qt.EditRole)
+
+
 class _Champ:
     """Un reglage a l'ecran : son chemin, son widget, et sa valeur de depart."""
 
@@ -186,13 +203,14 @@ class ConfigDialog(QDialog):
     saved = Signal(str)
 
     def __init__(self, config_path: str, readers_connus=(), parent=None,
-                 candidats=(), workspace_path: str = "", embedded: bool = False):
+                 candidats=(), workspace_path: str = "", embedded: bool = False, interpreter: str = ''):
         super().__init__(parent)
         self.path = Path(config_path)
         self._embedded = embedded
         self._workspace_path = (Path(workspace_path) if workspace_path
                                 else self.path.parent)
         self._readers_connus = tuple(readers_connus)
+        self._reader_interpreter = interpreter
         self._candidats = [Path(c) for c in candidats]
         if self.path not in self._candidats:
             self._candidats.insert(0, self.path)
@@ -309,6 +327,14 @@ class ConfigDialog(QDialog):
         colonne.addWidget(self.file_row)
         colonne.addWidget(self.chemin_label)
         colonne.addWidget(self.settings_search)
+        reader_row = QHBoxLayout()
+        self.discover_readers_button = QPushButton('Refresh available readers')
+        self.discover_readers_button.clicked.connect(self.discover_readers)
+        self.reader_discovery_status = QLabel()
+        self.reader_discovery_status.setWordWrap(True)
+        reader_row.addWidget(self.discover_readers_button)
+        reader_row.addWidget(self.reader_discovery_status, 1)
+        colonne.addLayout(reader_row)
         colonne.addWidget(self.tabs, 1)
         colonne.addLayout(actions)
 
@@ -316,6 +342,79 @@ class ConfigDialog(QDialog):
         # les QPlainTextEdit, en police a chasse fixe et aux couleurs du theme.
         # Une feuille locale ne suivrait pas la bascule clair / sombre.
         self.reload()
+        self._reader_process = QProcess(self)
+        self._reader_process.finished.connect(self._readers_discovered)
+        self._reader_process.errorOccurred.connect(self._reader_discovery_error)
+        self._reader_timeout = QTimer(self)
+        self._reader_timeout.setSingleShot(True)
+        self._reader_timeout.timeout.connect(self._reader_discovery_timeout)
+        self._reader_timed_out = False
+        if self._reader_interpreter:
+            QTimer.singleShot(0, self.discover_readers)
+
+    def discover_readers(self):
+        from runner.domain.reader_discovery import PROBE, discovery_environment
+        if self._reader_process.state() != QProcess.NotRunning:
+            return
+        if not self._reader_interpreter:
+            self.reader_discovery_status.setText('Select a test Python interpreter to discover HubReader devices.')
+            return
+        env = QProcessEnvironment()
+        for key, value in discovery_environment().items():
+            env.insert(key, value)
+        self._reader_process.setProcessEnvironment(env)
+        self._reader_process.setWorkingDirectory(str(self._workspace_path))
+        self.discover_readers_button.setEnabled(False)
+        self._reader_timed_out = False
+        self.reader_discovery_status.setText('Looking for HubReader devices…')
+        self._reader_process.start(self._reader_interpreter, ['-u', '-c', PROBE])
+        self._reader_timeout.start(10000)
+
+    def _reader_discovery_timeout(self):
+        self._reader_timed_out = True
+        self._reader_process.kill()
+        self.reader_discovery_status.setText('HubReader discovery timed out. Manual entry is still available.')
+
+    def _reader_discovery_error(self, error):
+        if error == QProcess.FailedToStart:
+            self._reader_timeout.stop()
+            self.discover_readers_button.setEnabled(True)
+            self.reader_discovery_status.setText('Could not start the test Python interpreter.')
+
+    def _readers_discovered(self, code, *_):
+        self._reader_timeout.stop()
+        self.discover_readers_button.setEnabled(True)
+        output = bytes(self._reader_process.readAllStandardOutput()).decode('utf-8', 'replace')
+        errors = bytes(self._reader_process.readAllStandardError()).decode('utf-8', 'replace')
+        if self._reader_timed_out:
+            return
+        try:
+            line = next(line for line in output.splitlines() if line.startswith('HUBREADERS_JSON:'))
+            names = json.loads(line.split(':', 1)[1])
+            if code or not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+                raise ValueError()
+        except (StopIteration, ValueError):
+            message = errors.strip().splitlines()[-1] if errors.strip() else 'No valid response from HubReader.'
+            self.reader_discovery_status.setText(message)
+            self.reader_discovery_status.setToolTip(errors)
+            return
+        self._apply_discovered_readers(names)
+
+    def _apply_discovered_readers(self, names):
+        names = tuple(dict.fromkeys(name.strip() for name in names if name.strip()))
+        self._readers_connus = names
+        for field in self._champs:
+            widget = field.widget
+            if isinstance(widget, ReaderList):
+                widget._connus = names
+            elif isinstance(widget, QComboBox) and str(field.chemin[-1]).lower() in (*CLES_READER, *CLES_READERS):
+                current = widget.currentText()
+                widget.blockSignals(True)
+                widget.clear()
+                widget.addItems(list(dict.fromkeys([current, *names])))
+                widget.setCurrentText(current)
+                widget.blockSignals(False)
+        self.reader_discovery_status.setText(f'{len(names)} available HubReader devices. Manual entry remains available.')
 
     # ------------------------------------------------------------- chargement
 
