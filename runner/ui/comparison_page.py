@@ -70,14 +70,17 @@ class ComparisonPage(QWidget):
         layout.setContentsMargins(t.SPACE_4, t.SPACE_4, t.SPACE_4, t.SPACE_4)
         heading = QLabel('Compare executions')
         heading.setObjectName('Title')
-        top = QHBoxLayout()
-        top.addWidget(heading)
-        top.addStretch()
-        self.choose = QPushButton('Choose runs…')
+        layout.addWidget(heading)
+
+        self.selection_row = QHBoxLayout()
+        self.selection_row.setSpacing(t.SPACE_2)
+        self.choose = QPushButton('+ Add Run')
         self.choose.setObjectName('Primary')
         self.choose.clicked.connect(self.choose_runs)
-        top.addWidget(self.choose)
-        layout.addLayout(top)
+        self.selection_row.addWidget(self.choose)
+        self.selection_row.addStretch(1)
+        layout.addLayout(self.selection_row)
+
         self.selection_label = QLabel('Choose at least two runs from the same workspace.')
         self.selection_label.setWordWrap(True)
         self.selection_label.setObjectName('Muted')
@@ -137,6 +140,25 @@ class ComparisonPage(QWidget):
         self.differences.toggled.connect(self.rebuild)
         self.rebuild()
 
+    def _rebuild_selection_row(self):
+        while self.selection_row.count():
+            item = self.selection_row.takeAt(0)
+            widget = item.widget()
+            if widget is not None and widget is not self.choose:
+                widget.deleteLater()
+
+        for group in self.groups:
+            chip = QPushButton(f'{group.display_name}  ×')
+            chip.setToolTip(f'Remove {group.display_name} from comparison')
+            chip.clicked.connect(lambda _checked=False, run_id=group.id: self._remove_group(run_id))
+            self.selection_row.addWidget(chip)
+
+        self.selection_row.addWidget(self.choose)
+        self.selection_row.addStretch(1)
+
+    def _remove_group(self, run_id):
+        self.set_groups([group for group in self.groups if group.id != run_id])
+
     def choose_runs(self):
         dialog = QDialog(self)
         dialog.setWindowTitle('Choose runs to compare')
@@ -193,8 +215,10 @@ class ComparisonPage(QWidget):
         self.reader.setCurrentIndex(max(0, self.reader.findData(previous_reader)))
         for combo in (self.reference, self.reader):
             combo.blockSignals(False)
-        self.selection_label.setText('  ·  '.join(g.display_name for g in self.groups)
-                                     or 'Choose at least two runs from the same workspace.')
+        self._rebuild_selection_row()
+        self.selection_label.setText(
+            f'{len(self.groups)} runs selected' if self.groups
+            else 'Choose at least two runs from the same workspace.')
         self.rebuild()
 
     def refresh(self):
