@@ -76,12 +76,11 @@ def _attendre_generation(fenetre, qapp, timeout_ms: int = 5000) -> None:
 
 # --------------------------------------------------------------- la barre
 
-def test_the_allure_button_sits_next_to_history(fenetre):
-    barre = fenetre.history_button.parentWidget().layout()
-    dans_la_barre = [barre.itemAt(i).widget() for i in range(barre.count())]
-    assert fenetre.allure_button in dans_la_barre
-    assert (dans_la_barre.index(fenetre.allure_button)
-           == dans_la_barre.index(fenetre.history_button) + 1)
+def test_the_allure_button_is_not_exposed(fenetre):
+    from PySide6.QtWidgets import QPushButton
+    assert not hasattr(fenetre, "allure_button")
+    assert not any("allure" in button.text().lower()
+                   for button in fenetre.findChildren(QPushButton))
 
 
 # ------------------------------------------------- ou ecrire les resultats

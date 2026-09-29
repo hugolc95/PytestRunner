@@ -1,3 +1,4 @@
+import os
 import sys
 
 from runner.domain.execution import ReaderRun, _group_nodeids_by_suite, collect
@@ -40,7 +41,7 @@ def test_same_test_module_name_in_two_suites_keeps_results_on_the_right_suite(tm
 
     # La collecte doit fonctionner meme avec --import-mode=importlib : les
     # dossiers des conftest sont explicitement exposes pour leurs imports_*.py.
-    collection = collect(str(tmp_path), sys.executable, {})
+    collection = collect(str(tmp_path), sys.executable, dict(os.environ))
     assert set(collection.nodeids) == set(nodeids)
 
     request = RunRequest(
@@ -51,7 +52,7 @@ def test_same_test_module_name_in_two_suites_keeps_results_on_the_right_suite(tm
     )
 
     outcomes = []
-    report = ReaderRun(request, Reader("", 0), {}).run(
+    report = ReaderRun(request, Reader("", 0), dict(os.environ)).run(
         on_line=lambda _line: None,
         on_outcome=outcomes.append,
     )

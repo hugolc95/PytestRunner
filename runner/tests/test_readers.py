@@ -344,10 +344,10 @@ def test_the_bar_appears_only_when_there_is_a_choice_to_make(fenetre, tmp_path,
     assert fenetre.readers_bar.isHidden() is (not visible)
 
 
-def test_reader_choices_share_the_run_actions_row(fenetre):
+def test_reader_choices_share_the_run_actions_row(fenetre, tmp_path):
     """Le choix du materiel reste proche du lancement sans se confondre avec
     les trois actions principales."""
-    from runner.ui import tokens as t
+    _charger(fenetre, _workspace(tmp_path, "Reader: A\nReaders:\n  - B\n"))
 
     barre = fenetre.run_button.parentWidget()
     disposition = barre.layout()
@@ -356,10 +356,8 @@ def test_reader_choices_share_the_run_actions_row(fenetre):
     assert disposition.indexOf(fenetre.rerun_button) < disposition.indexOf(
         fenetre.readers_bar)
 
-    separation = disposition.itemAt(
-        disposition.indexOf(fenetre.rerun_button) + 1).spacerItem()
-    assert separation is not None
-    assert separation.sizeHint().width() == t.SPACE_6
+    assert not fenetre.readers_bar.isHidden()
+    assert disposition.indexOf(fenetre.run_button) < disposition.indexOf(fenetre.readers_bar)
 
 
 def test_every_reader_is_included_to_begin_with(fenetre, tmp_path):

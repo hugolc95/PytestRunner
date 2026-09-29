@@ -287,7 +287,7 @@ def _lancer(fenetre, *readers):
         readers=readers))
 
 
-def test_the_remaining_counter_goes_down(fenetre):
+def test_the_remaining_counter_goes_down(fenetre, qtbot):
     """Il suit l'ARBRE, pas le nombre de signaux recus.
 
     Il se deduisait de l'argument du signal d'avancement, lui-meme une somme
@@ -310,7 +310,7 @@ def test_the_remaining_counter_goes_down(fenetre):
 
     fenetre.model.apply_outcome(NODEIDS[1], Status.FAILED, 0)
     fenetre._on_progress(2, 4)
-    assert fenetre.remaining_pill.value() == 2
+    qtbot.waitUntil(lambda: fenetre.remaining_pill.value() == 2)
 
 
 def test_the_same_test_reported_twice_counts_once(fenetre):
@@ -326,7 +326,7 @@ def test_the_same_test_reported_twice_counts_once(fenetre):
     assert fenetre.pills[Status.FAILED].value() == 1
 
 
-def test_a_verdict_that_changes_moves_from_one_pill_to_the_other(fenetre):
+def test_a_verdict_that_changes_moves_from_one_pill_to_the_other(fenetre, qtbot):
     """Une erreur de setup suivie d'un verdict : la case change de statut, elle
     ne s'ajoute pas."""
     _lancer(fenetre, Reader("A", 0))
@@ -338,7 +338,7 @@ def test_a_verdict_that_changes_moves_from_one_pill_to_the_other(fenetre):
     fenetre.model.apply_outcome(NODEIDS[0], Status.PASSED, 0)
     fenetre._on_progress(2, 4)
 
-    assert fenetre.pills[Status.ERROR].value() == 0
+    qtbot.waitUntil(lambda: fenetre.pills[Status.ERROR].value() == 0)
     assert fenetre.pills[Status.PASSED].value() == 1
     assert fenetre.remaining_pill.value() == 3
 

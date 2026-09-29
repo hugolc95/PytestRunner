@@ -122,18 +122,21 @@ def test_the_chip_is_forced_to_paint_its_background_from_the_stylesheet(qapp, mo
         qapp.processEvents()
 
 
-def test_a_run_wraps_the_status_in_a_tinted_chip(fenetre):
-    """Le pouls et le texte vivent DANS un badge -- pas juste cote a cote sur
-    le fond nu de la barre d'etat."""
+def test_a_run_keeps_the_status_flat_and_live(fenetre):
+    """The live dot and label indicate progress without a nested border."""
     fenetre._on_run_started(_requete())
 
-    assert fenetre.live_chip.styleSheet()
+    assert fenetre.live_chip.styleSheet() == ""
+    assert fenetre.status_label.objectName() == "StatusLive"
+    assert not fenetre.live_dot.isHidden()
 
 
 def test_finishing_a_run_clears_the_chip(fenetre):
     fenetre._on_run_started(_requete())
-    assert fenetre.live_chip.styleSheet()
+    assert fenetre.status_label.objectName() == "StatusLive"
 
     fenetre._on_run_finished([])
 
     assert fenetre.live_chip.styleSheet() == ""
+    assert fenetre.status_label.objectName() == "Muted"
+    assert fenetre.live_dot.isHidden()

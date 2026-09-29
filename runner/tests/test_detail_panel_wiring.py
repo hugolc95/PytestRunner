@@ -9,7 +9,7 @@ import pytest
 from PySide6.QtCore import QSettings
 
 from runner.domain.history import History, RunEntry
-from runner.domain.models import Reader
+from runner.domain.models import Reader, Status
 from runner.domain.tree import build_tree
 from runner.domain.workspace import Workspace
 from runner.ui.main_window import APP, ORG, MainWindow
@@ -65,14 +65,14 @@ def test_a_test_never_seen_before_has_no_sparkline(fenetre):
 def test_past_runs_of_this_test_feed_the_sparkline(fenetre):
     fenetre.history.add(RunEntry(
         id="r1", timestamp=1.0, workspace=str(fenetre.workspace.path),
-        nodeids=(NODEID,), failed_nodeids=(NODEID,)))
+        nodeids=(NODEID,), failed_nodeids=(NODEID,), test_statuses={NODEID: "FAILED"}))
     fenetre.history.add(RunEntry(
         id="r2", timestamp=2.0, workspace=str(fenetre.workspace.path),
-        nodeids=(NODEID,), failed_nodeids=()))
+        nodeids=(NODEID,), test_statuses={NODEID: "PASSED"}))
 
     _selectionner(fenetre)
 
-    assert fenetre.results.detail._sparklines[0]._runs == (False, True)
+    assert fenetre.results.detail._sparklines[0]._runs == (Status.FAILED, Status.PASSED)
 
 
 def test_the_last_seen_timestamp_reaches_the_panel(fenetre):

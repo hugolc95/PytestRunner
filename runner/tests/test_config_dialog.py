@@ -351,23 +351,17 @@ def test_the_run_row_sits_between_the_workspace_and_the_tree(fenetre):
 
 
 def test_the_history_button_is_reachable_without_a_menu(fenetre):
-    barre = fenetre.load_button.parentWidget().layout()
-    dans_la_barre = {barre.itemAt(i).widget() for i in range(barre.count())}
-    assert fenetre.history_button in dans_la_barre
+    button = fenetre.nav_buttons["history"]
+    assert not button.isHidden()
+    button.click()
+    assert fenetre.pages.currentWidget() is fenetre.history_page
 
 
-def test_the_config_button_sits_with_the_workspace_controls(fenetre):
-    """La configuration decrit CE dossier -- ses lecteurs, ses logs, son
-    interpreteur. Sa place est dans le groupe qui parle du workspace, pas
-    avec Re-run / Stop / Run qui parlent du prochain run."""
-    barre = fenetre.load_button.parentWidget().layout()
-    positions = {barre.itemAt(i).widget(): i for i in range(barre.count())
-                 if barre.itemAt(i).widget() is not None}
-
-    assert positions[fenetre.config_button] == positions[fenetre.load_button] + 1
-    assert positions[fenetre.config_button] > positions[fenetre.workspace_combo]
-    # Les actions de run ne partagent plus cette barre du tout.
-    assert fenetre.run_button not in positions
+def test_the_config_page_is_reachable_from_navigation(fenetre):
+    button = fenetre.nav_buttons["yaml"]
+    assert not button.isHidden()
+    button.click()
+    assert fenetre.pages.currentWidget() is fenetre.yaml_page
 
 
 def test_the_config_button_is_off_without_a_workspace(fenetre):

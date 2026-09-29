@@ -2315,10 +2315,8 @@ class MainWindow(QMainWindow):
         self.status_label.setText(texte)
         self.live_dot.set_color(couleur)
         self.live_dot.start()
-        self.live_chip.setStyleSheet(
-            f"background-color: {t.rgba(couleur, 0.12)};"
-            f"border: 1px solid {t.rgba(couleur, 0.3)};"
-            f"border-radius: {t.RADIUS_PILL}px;")
+        # Match the flat status bar used by the application's clean UI.
+        self.live_chip.setStyleSheet("")
 
     def _set_status_idle(self, texte: str) -> None:
         self.status_label.setObjectName("Muted")
@@ -2400,6 +2398,9 @@ class MainWindow(QMainWindow):
     def _refresh_live_counts(self) -> None:
         now = time.monotonic()
         if now - getattr(self, '_last_live_refresh', 0.0) < 0.05:
+            # Keep the final update of a burst, even if no more results arrive.
+            if not self._profile_counts_timer.isActive():
+                self._profile_counts_timer.start()
             return
         self._last_live_refresh = now
         self._rafraichir_compteurs()
