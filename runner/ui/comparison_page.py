@@ -9,14 +9,14 @@ from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QCheckBox, QTreeView, QSplitter, QTextBrowser, QTabWidget, QDialog,
-    QListWidget, QListWidgetItem, QDialogButtonBox, QLineEdit, QHeaderView,
+    QListWidget, QListWidgetItem, QDialogButtonBox, QLineEdit, QHeaderView,\n    QFileDialog, QMessageBox,
 )
 from runner.domain.models import Status, worst
 from runner.domain.tree import build_tree
 from runner.domain.failures import index_failures, failure_for
 from runner.ui.history_execution_tree import HistoryExecutionModel
 from runner.ui.history_dashboard import group_entries
-from runner.ui import icons, tokens as t
+from runner.ui import icons, tokens as t\nfrom runner.ui.comparison_export import export_comparison_xlsx
 
 NODE = Qt.UserRole + 31
 
@@ -68,9 +68,22 @@ class ComparisonPage(QWidget):
         self._test = ''
         layout = QVBoxLayout(self)
         layout.setContentsMargins(t.SPACE_4, t.SPACE_4, t.SPACE_4, t.SPACE_4)
-        heading = QLabel('Compare executions')
-        heading.setObjectName('Title')
-        layout.addWidget(heading)
+        heading = QHBoxLayout()
+        copy_box = QVBoxLayout()
+        title = QLabel('Compare executions')
+        title.setObjectName('PageTitle')
+        subtitle = QLabel('Compare results across multiple historical runs.')
+        subtitle.setObjectName('Muted')
+        copy_box.addWidget(title)
+        copy_box.addWidget(subtitle)
+        heading.addLayout(copy_box)
+        heading.addStretch(1)
+        self.export_button = QPushButton('Export Excel')
+        self.export_button.setIcon(icons.icon('mdi.file-excel-outline'))
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_excel)
+        heading.addWidget(self.export_button)
+        layout.addLayout(heading)
 
         self.selection_row = QHBoxLayout()
         self.selection_row.setSpacing(t.SPACE_2)
@@ -216,10 +229,28 @@ class ComparisonPage(QWidget):
         for combo in (self.reference, self.reader):
             combo.blockSignals(False)
         self._rebuild_selection_row()
+        self.export_button.setEnabled(len(self.groups) >= 2)
         self.selection_label.setText(
             f'{len(self.groups)} runs selected' if self.groups
             else 'Choose at least two runs from the same workspace.')
         self.rebuild()
+
+    def export_excel(self):
+        if len(self.groups) < 2:
+            return
+        suggested = 'pytest_comparison.xlsx'
+        path, _ = QFileDialog.getSaveFileName(
+            self, 'Export comparison to Excel', suggested, 'Excel workbook (*.xlsx)')
+        if not path:
+            return
+        if not path.lower().endswith('.xlsx'):
+            path += '.xlsx'
+        try:
+            export_comparison_xlsx(path, self.groups, self._records, verdict)
+        except OSError as exc:
+            QMessageBox.critical(self, 'Export failed', str(exc))
+            return
+        QMessageBox.information(self, 'Export complete', f'Comparison exported to:\n{path}')
 
     def refresh(self):
         available = {g.id: g for g in group_entries(self.history.entries())}
