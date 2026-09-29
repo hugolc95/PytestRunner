@@ -5,8 +5,8 @@ from collections import Counter
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
-from runner.domain.models import Status, worst
-from runner.domain.tree import build_sequence_tree
+from runner.domain.models import Status, worst, TestNode, Kind
+from runner.domain.tree import build_sequence_tree, build_tree
 from runner.ui.tree_model import TestTreeModel, NODEID_ROLE
 from runner.ui import tokens as t
 
@@ -17,7 +17,8 @@ class HistoryExecutionModel(TestTreeModel):
         self._original_ids = {}
         self._unknown_label = 'Unknown (older run)'
 
-    def set_entry(self, entry):
+    @staticmethod
+    def records(entry):
         if entry.executions:
             records = list(entry.executions)
         else:
@@ -33,6 +34,11 @@ class HistoryExecutionModel(TestTreeModel):
                     if len(candidates) == 1:
                         status = candidates[0].name
                 records.append((nodeid, status))
+        return records
+
+    def set_entry(self, entry):
+        self._contexts = {}
+        records = self.records(entry)
         roots = build_sequence_tree(nodeid for nodeid, _ in records)
         original_ids = {}
         statuses = {}
@@ -58,6 +64,59 @@ class HistoryExecutionModel(TestTreeModel):
 
         for root in self._roots:
             aggregate(root)
+
+    def set_entries(self, entries):
+        """One global row per test, then readers and repeated attempts underneath."""
+        per_reader = []
+        order = dict.fromkeys(nodeid for entry in entries for nodeid, _ in self.records(entry))
+        for entry in entries:
+            grouped = {}
+            for nodeid, status in self.records(entry):
+                grouped.setdefault(nodeid, []).append(Status.__members__.get(status, Status.PENDING))
+            per_reader.append(grouped)
+        roots = build_tree(order)
+        tests = {leaf.nodeid: leaf for root in roots for leaf in root.leaves()}
+        original_ids, contexts, values = {}, {}, {}
+        for number, nodeid in enumerate(order, 1):
+            key = str(number)
+            parent = tests[nodeid]
+            parent.nodeid = key
+            original_ids[key] = nodeid
+            contexts[key] = None
+            for reader_index, (entry, records) in enumerate(zip(entries, per_reader)):
+                child_key = f"{key}:r{reader_index}"
+                results = records.get(nodeid, [Status.PENDING])
+                child = TestNode(entry.reader or "No reader", Kind.CASE, child_key)
+                original_ids[child_key] = nodeid
+                contexts[child_key] = reader_index
+                if len(results) > 1:
+                    for attempt, status in enumerate(results, 1):
+                        attempt_key = f"{child_key}:{attempt}"
+                        child.children.append(TestNode(f"Execution {attempt}", Kind.CASE, attempt_key))
+                        original_ids[attempt_key] = nodeid
+                        contexts[attempt_key] = reader_index
+                        values[attempt_key] = status
+                else:
+                    values[child_key] = results[0]
+                parent.children.append(child)
+        self._original_ids, self._contexts = original_ids, contexts
+        self.set_tree(roots)
+        def fill(row):
+            if row.is_leaf:
+                status = values[row.node.nodeid]
+                row.statuses[0] = status
+                return status
+            statuses = [fill(child) for child in row.children]
+            status = worst(statuses)
+            if Status.PENDING in statuses and not status.is_bad:
+                status = Status.PENDING
+            row.agg[0] = status
+            return status
+        for root in self._roots:
+            fill(root)
+
+    def reader_for_index(self, index):
+        return self._contexts.get(index.internalPointer().node.nodeid) if index.isValid() else None
 
     def flags(self, index):
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable if index.isValid() else Qt.NoItemFlags
