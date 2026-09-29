@@ -45,13 +45,13 @@ def export_comparison_xlsx(path, groups, records, status_for_values):
             row.extend((result, 'Not recorded'))
         results = row[1::2]
         # Missing coverage takes precedence over verdict differences.
-        difference = ('Absent d’un run' if 'Not run' in results
-                      else 'Statuts différents' if len(set(results)) > 1
-                      else 'Identique')
+        difference = ('Missing from a run' if 'Not run' in results
+                      else 'Different statuses' if len(set(results)) > 1
+                      else 'Identical')
         row.insert(1, difference)
         rows.append(row)
 
-    headers = ['Test', 'Différences']
+    headers = ['Test', 'Differences']
     for group in groups:
         headers.extend(('Status', 'Duration'))
 
@@ -114,7 +114,7 @@ def export_comparison_xlsx(path, groups, records, status_for_values):
         merges.append(f'A{r}:B{r}')
         sheet_rows.append(f'<row r="{r}" ht="{42 if r in (4, 7, 8) else 28}" customHeight="1">{"".join(cells)}</row>')
     merges.append(f'A9:{last_col}9')
-    sheet_rows.append(f'<row r="9" ht="28" customHeight="1">{cell("A9", "Différences : comparaison des statuts globaux. Un test absent d’un run est signalé en priorité. Ambre = différence ou absence.", 7)}</row>')
+    sheet_rows.append(f'<row r="9" ht="28" customHeight="1">{cell("A9", "Differences compare global statuses. Missing tests take priority. Amber highlights different or missing results.", 7)}</row>')
     header_row = 10
     header_cells = ''.join(cell(f'{_col(i)}{header_row}', value, 2 if i <= 2 else 8+((i-3)//2)%4) for i, value in enumerate(headers, 1))
     sheet_rows.append(f'<row r="{header_row}" ht="28" customHeight="1">{header_cells}</row>')
@@ -123,7 +123,7 @@ def export_comparison_xlsx(path, groups, records, status_for_values):
         for c, value in enumerate(values, 1):
             style = 7
             if c <= 2:
-                style = highlight_style if values[1] != 'Identique' else 7
+                style = highlight_style if values[1] != 'Identical' else 7
             elif c % 2 == 1:
                 low = str(value).casefold()
                 style = 3 if low == 'passed' else 4 if low in ('failed', 'error') else 5 if low == 'skipped' else 6
