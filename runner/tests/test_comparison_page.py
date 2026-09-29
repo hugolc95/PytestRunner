@@ -126,7 +126,7 @@ def test_export_reloads_records_and_ignores_difference_filter(qtbot, tmp_path, m
     ns = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
     cells = {cell.attrib['r']: ''.join(cell.itertext()) for cell in root.findall('.//s:c', ns)}
     assert cells['A11'] == NODEID
-    assert [cells[f'{col}11'] for col in 'BDF'] == ['PASSED', 'FAILED', 'SKIPPED']
+    assert [cells[f'{col}11'] for col in 'CEG'] == ['PASSED', 'FAILED', 'SKIPPED']
 
 
 def test_legacy_status_map_without_nodeids_is_compared(qtbot, tmp_path):

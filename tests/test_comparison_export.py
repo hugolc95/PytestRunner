@@ -47,24 +47,43 @@ class ComparisonExportTests(unittest.TestCase):
 
     def test_three_runs_have_real_results_and_template(self):
         root, cells = self.export()
-        self.assertEqual([cells[f'{c}11'] for c in 'ABCDEFG'],
-                         ['test_auth', 'FAILED', 'Not recorded', 'PASSED', 'Not recorded', 'ERROR', 'Not recorded'])
-        self.assertEqual(cells['D12'], 'Not run')
-        self.assertEqual(cells['D13'], 'Unknown')
-        self.assertEqual(cells['B12'], 'SKIPPED')
-        self.assertEqual(root.find('s:dimension', NS).attrib['ref'], 'A1:G13')
-        self.assertEqual(root.find('s:autoFilter', NS).attrib['ref'], 'A10:G13')
-        self.assertEqual(root.find('.//s:pane', NS).attrib['topLeftCell'], 'B11')
+        self.assertEqual([cells[f'{c}11'] for c in 'ABCDEFGH'],
+                         ['test_auth', 'Statuts différents', 'FAILED', 'Not recorded', 'PASSED', 'Not recorded', 'ERROR', 'Not recorded'])
+        self.assertEqual(cells['E12'], 'Not run')
+        self.assertEqual(cells['E13'], 'Unknown')
+        self.assertEqual(cells['C12'], 'SKIPPED')
+        self.assertEqual(root.find('s:dimension', NS).attrib['ref'], 'A1:H13')
+        self.assertEqual(root.find('s:autoFilter', NS).attrib['ref'], 'A10:H13')
+        self.assertEqual(root.find('.//s:pane', NS).attrib['topLeftCell'], 'C11')
         tags = [element.tag.split('}')[1] for element in root]
         self.assertLess(tags.index('autoFilter'), tags.index('mergeCells'))
-        self.assertEqual(cells['B7'], 'C:/Tests')
-        self.assertEqual(cells['B8'], 'DE620, OMNIKEY')
+        self.assertEqual(cells['C7'], 'C:/Tests')
+        self.assertEqual(cells['C8'], 'DE620, OMNIKEY')
 
     def test_empty_export_does_not_overwrite_existing_file(self):
         self.path.write_bytes(b'existing report')
         with self.assertRaisesRegex(ValueError, 'No recorded tests'):
             export_comparison_xlsx(self.path, self.groups, [{}, {}, {}], verdict)
         self.assertEqual(self.path.read_bytes(), b'existing report')
+
+    def test_difference_labels_and_highlights_preserve_status_colors(self):
+        for record in self.records:
+            record['DE620']['test_same'] = [Status.PASSED]
+            record['DE620']['test_unknown_same'] = [Status.PENDING]
+        root, cells = self.export()
+        by_test = {cells[f'A{r}']: r for r in range(11, 16)}
+        expected = {'test_auth': 'Statuts différents', 'test_dg': 'Absent d’un run',
+                    'test_unknown': 'Absent d’un run', 'test_same': 'Identique',
+                    'test_unknown_same': 'Identique'}
+        for test, label in expected.items():
+            row = by_test[test]
+            self.assertEqual(cells[f'B{row}'], label)
+            style = root.find(f'.//s:c[@r="A{row}"]', NS).attrib['s']
+            self.assertEqual(style, '7' if label == 'Identique' else '12')
+        # Existing verdict colors remain independent from the amber highlight.
+        self.assertEqual(root.find('.//s:c[@r="C11"]', NS).attrib['s'], '4')
+        self.assertEqual(root.find('.//s:c[@r="E11"]', NS).attrib['s'], '3')
+        self.assertEqual(root.find('.//s:pane', NS).attrib['xSplit'], '2')
 
     def test_mismatched_runs_are_rejected(self):
         with self.assertRaises(ValueError):

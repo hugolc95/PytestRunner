@@ -43,9 +43,15 @@ def export_comparison_xlsx(path, groups, records, status_for_values):
             status = status_for_values(values)
             result = 'Not run' if status is None else ('Unknown' if status.name == 'PENDING' else status.label)
             row.extend((result, 'Not recorded'))
+        results = row[1::2]
+        # Missing coverage takes precedence over verdict differences.
+        difference = ('Absent d’un run' if 'Not run' in results
+                      else 'Statuts différents' if len(set(results)) > 1
+                      else 'Identique')
+        row.insert(1, difference)
         rows.append(row)
 
-    headers = ['Test']
+    headers = ['Test', 'Différences']
     for group in groups:
         headers.extend(('Status', 'Duration'))
 
@@ -72,6 +78,9 @@ def export_comparison_xlsx(path, groups, records, status_for_values):
         ET.SubElement(pattern, f'{{{ns}}}fgColor', rgb=color)
         xf = ET.SubElement(xfs, f'{{{ns}}}xf', numFmtId='0', fontId='2', fillId=str(len(fills)-1), borderId='0', xfId='0', applyAlignment='1')
         ET.SubElement(xf, f'{{{ns}}}alignment', horizontal='center', vertical='center', wrapText='1')
+    highlight_style = len(xfs)
+    xf = ET.SubElement(xfs, f'{{{ns}}}xf', numFmtId='0', fontId='0', fillId='6', borderId='0', xfId='0', applyAlignment='1')
+    ET.SubElement(xf, f'{{{ns}}}alignment', horizontal='left', vertical='center', wrapText='1')
     fills.set('count', str(len(fills)))
     xfs.set('count', str(len(xfs)))
     base_styles = ET.Element(f'{{{ns}}}cellStyleXfs', count='1')
@@ -94,7 +103,7 @@ def export_comparison_xlsx(path, groups, records, status_for_values):
                 6: [cell('A6', 'Date', 6)], 7: [cell('A7', 'Workspace', 6)],
                 8: [cell('A8', 'Readers', 6)]}
     for i, group in enumerate(groups):
-        left, right = _col(2 + 2*i), _col(3 + 2*i)
+        left, right = _col(3 + 2*i), _col(4 + 2*i)
         details = [group.display_name, group.id,
                    datetime.fromtimestamp(group.timestamp).strftime('%Y-%m-%d %H:%M'),
                    group.workspace, ', '.join(group.reader_names) or 'No reader']
@@ -102,32 +111,38 @@ def export_comparison_xlsx(path, groups, records, status_for_values):
             metadata[r].append(cell(f'{left}{r}', value, 8+i%4 if r == 4 else 7))
             merges.append(f'{left}{r}:{right}{r}')
     for r, cells in metadata.items():
+        merges.append(f'A{r}:B{r}')
         sheet_rows.append(f'<row r="{r}" ht="{42 if r in (4, 7, 8) else 28}" customHeight="1">{"".join(cells)}</row>')
+    merges.append(f'A9:{last_col}9')
+    sheet_rows.append(f'<row r="9" ht="28" customHeight="1">{cell("A9", "Différences : comparaison des statuts globaux. Un test absent d’un run est signalé en priorité. Ambre = différence ou absence.", 7)}</row>')
     header_row = 10
-    header_cells = ''.join(cell(f'{_col(i)}{header_row}', value, 2 if i == 1 else 8+((i-2)//2)%4) for i, value in enumerate(headers, 1))
+    header_cells = ''.join(cell(f'{_col(i)}{header_row}', value, 2 if i <= 2 else 8+((i-3)//2)%4) for i, value in enumerate(headers, 1))
     sheet_rows.append(f'<row r="{header_row}" ht="28" customHeight="1">{header_cells}</row>')
     for r, values in enumerate(rows, header_row + 1):
         cells = []
         for c, value in enumerate(values, 1):
             style = 7
-            if c > 1 and c % 2 == 0:
+            if c <= 2:
+                style = highlight_style if values[1] != 'Identique' else 7
+            elif c % 2 == 1:
                 low = str(value).casefold()
                 style = 3 if low == 'passed' else 4 if low in ('failed', 'error') else 5 if low == 'skipped' else 6
-            elif c > 1:
+            else:
                 style = 6
             cells.append(cell(f'{_col(c)}{r}', value, style))
         height = min(150, max(32, 16 * (1 + len(str(values[0])) // 65)))
         sheet_rows.append(f'<row r="{r}" ht="{height}" customHeight="1">{"".join(cells)}</row>')
 
-    widths = ['<col min="1" max="1" width="72" customWidth="1"/>']
-    for c in range(2, len(headers) + 1):
+    widths = ['<col min="1" max="1" width="72" customWidth="1"/>',
+              '<col min="2" max="2" width="24" customWidth="1"/>']
+    for c in range(3, len(headers) + 1):
         widths.append(f'<col min="{c}" max="{c}" width="22" customWidth="1"/>')
     last_row = header_row + len(rows)
     merged_cells = ''.join(f'<mergeCell ref="{ref}"/>' for ref in merges)
     # dimension is required by some preview/streaming readers. OOXML requires
     # autoFilter before mergeCells (Excel may repair an out-of-order sheet).
     sheet = f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:{last_col}{last_row}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="10" xSplit="1" topLeftCell="B11" activePane="bottomRight" state="frozen"/><selection pane="bottomRight" activeCell="B11" sqref="B11"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>{''.join(widths)}</cols><sheetData>{''.join(sheet_rows)}</sheetData><autoFilter ref="A10:{last_col}{last_row}"/><mergeCells count="{len(merges)}">{merged_cells}</mergeCells><pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="landscape" paperSize="9"/></worksheet>'''
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><dimension ref="A1:{last_col}{last_row}"/><sheetViews><sheetView workbookViewId="0" showGridLines="0"><pane ySplit="10" xSplit="2" topLeftCell="C11" activePane="bottomRight" state="frozen"/><selection pane="bottomRight" activeCell="C11" sqref="C11"/></sheetView></sheetViews><sheetFormatPr defaultRowHeight="18"/><cols>{''.join(widths)}</cols><sheetData>{''.join(sheet_rows)}</sheetData><autoFilter ref="A10:{last_col}{last_row}"/><mergeCells count="{len(merges)}">{merged_cells}</mergeCells><pageMargins left="0.25" right="0.25" top="0.5" bottom="0.5" header="0.2" footer="0.2"/><pageSetup orientation="landscape" paperSize="9"/></worksheet>'''
 
     content_types = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/></Types>'''
     rels = '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>'''
