@@ -9,14 +9,16 @@ from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QCheckBox, QTreeView, QSplitter, QTextBrowser, QTabWidget, QDialog,
-    QListWidget, QListWidgetItem, QDialogButtonBox, QLineEdit, QHeaderView,\n    QFileDialog, QMessageBox,
+    QListWidget, QListWidgetItem, QDialogButtonBox, QLineEdit, QHeaderView,
+    QFileDialog, QMessageBox,
 )
 from runner.domain.models import Status, worst
 from runner.domain.tree import build_tree
 from runner.domain.failures import index_failures, failure_for
 from runner.ui.history_execution_tree import HistoryExecutionModel
 from runner.ui.history_dashboard import group_entries
-from runner.ui import icons, tokens as t\nfrom runner.ui.comparison_export import export_comparison_xlsx
+from runner.ui import icons, tokens as t
+from runner.ui.comparison_export import export_comparison_xlsx
 
 NODE = Qt.UserRole + 31
 
