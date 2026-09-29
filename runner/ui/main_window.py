@@ -308,10 +308,14 @@ class MainWindow(QMainWindow):
         self.profiles_page = ExecutionProfilesPage(ProfileStore(profiles_root), self)
         self.profiles_page.run_requested.connect(self._load_execution_profile)
         self.history_page = self._build_history_page()
+        from runner.ui.comparison_page import ComparisonPage
+        self.comparison_page = ComparisonPage(self.history, self)
+        self.history_dashboard.compare_requested.connect(self._open_comparison)
         self.python_page = self._build_python_page()
         self.yaml_page = self._build_yaml_page()
         self.pages.addWidget(self.profiles_page)
         self.pages.addWidget(self.history_page)
+        self.pages.addWidget(self.comparison_page)
         self.pages.addWidget(self.python_page)
         self.pages.addWidget(self.yaml_page)
         racine.addWidget(self.pages, 1)
@@ -352,6 +356,7 @@ class MainWindow(QMainWindow):
             ("profiles", "Execution Profiles", "mdi.playlist-edit"),
             ("yaml", "YAML Configuration", "mdi.file-cog-outline"),
             ("history", "History", "mdi.history"),
+            ("comparison", "Comparison", "mdi.table-search"),
             ("python", "Python Environment", "mdi.language-python"),
         )
         for cle, texte, glyph in entrees:
@@ -407,6 +412,7 @@ class MainWindow(QMainWindow):
             "profiles": "Execution Profiles",
             "yaml": "YAML Configuration",
             "history": "History",
+            "comparison": "Comparison",
             "python": "Python Environment",
         }
         self.navigation_title.setVisible(not collapsed)
@@ -526,6 +532,7 @@ class MainWindow(QMainWindow):
             "workspace": self.workspace_page,
             "profiles": self.profiles_page,
             "history": self.history_page,
+            "comparison": self.comparison_page,
             "python": self.python_page,
             "yaml": self.yaml_page,
         }
@@ -533,6 +540,8 @@ class MainWindow(QMainWindow):
         self.pages.setCurrentWidget(cible)
         if page == "history":
             self.history_dashboard.refresh()
+        elif page == "comparison":
+            self.comparison_page.refresh()
         elif page == "profiles":
             self._refresh_profiles_page()
         elif page == "python":
@@ -542,6 +551,10 @@ class MainWindow(QMainWindow):
         for cle, bouton in self.nav_buttons.items():
             bouton.setChecked(cle == page)
         self.statusBar().setVisible(page == "workspace")
+
+    def _open_comparison(self, groups):
+        self.comparison_page.set_groups(groups)
+        self._show_page("comparison")
 
     def _refresh_profiles_page(self) -> None:
         nodeids = list(getattr(self.model, "_by_nodeid", {}))
@@ -1779,6 +1792,7 @@ class MainWindow(QMainWindow):
                 ("workspace", "mdi.play-circle-outline"),
                 ("profiles", "mdi.playlist-edit"),
                 ("history", "mdi.history"),
+                ("comparison", "mdi.table-search"),
                 ("python", "mdi.language-python"),
                 ("yaml", "mdi.file-cog-outline")):
             self.nav_buttons[cle].setIcon(icons.icon(glyph, t.TEXT_MUTED))

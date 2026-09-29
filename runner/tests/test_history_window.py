@@ -207,7 +207,7 @@ def test_selected_run_combines_reader_results(fenetre):
     select_run(fenetre, 0)
 
     assert fenetre.passed_value.text() == "4"
-    assert fenetre.failed_value.text() == "1 failed"
+    assert fenetre.failed_value.text() == "1"
     assert fenetre.tabs.tabText(1) == "Failed (1)"
     assert fenetre.details_table.rowCount() == 2
     assert fenetre.issue_preview.item(0, 0).text() == "t2"
@@ -460,7 +460,7 @@ def test_a_locked_run_can_still_be_deleted_from_its_card(fenetre, monkeypatch):
 
 # -------------------------------------------------------------- comparaison
 
-def test_compare_mode_allows_two_clicks_without_ctrl(fenetre):
+def test_compare_mode_keeps_selected_runs(fenetre):
     fenetre._enter_compare_mode()
     items = run_items(fenetre)
     items[0].setSelected(True)
@@ -471,6 +471,45 @@ def test_compare_mode_allows_two_clicks_without_ctrl(fenetre):
     assert fenetre.compare_button.text() == "Compare selected"
     assert fenetre.cancel_compare.isVisible() is False  # parent not shown
     assert not fenetre.cancel_compare.isHidden()
+
+
+@pytest.mark.parametrize('modifier', [Qt.ControlModifier, Qt.ShiftModifier])
+@pytest.mark.parametrize('compare_mode', [False, True])
+def test_native_mouse_multiselection_and_direct_compare(qtbot, fenetre, modifier, compare_mode):
+    qtbot.addWidget(fenetre)
+    fenetre.show()
+    qtbot.waitUntil(lambda: fenetre.run_list.viewport().isVisible())
+    if compare_mode:
+        fenetre._enter_compare_mode()
+    items = run_items(fenetre)
+
+    def click(item, modifiers=Qt.NoModifier):
+        fenetre.run_list.scrollToItem(item)
+        card = fenetre.run_list.itemWidget(item)
+        # Exercise the real embedded card, rather than calling setSelected().
+        qtbot.mouseClick(card, Qt.LeftButton, modifiers, card.rect().center())
+
+    click(items[0])
+    click(items[1], modifier)
+    assert len(fenetre._selected_groups()) == 2
+    captured = []
+    fenetre.compare_requested.connect(captured.append)
+    fenetre.compare_button.click()
+    assert len(captured) == 1 and len(captured[0]) == 2
+    if modifier == Qt.ControlModifier:
+        click(items[1], modifier)
+        assert len(fenetre._selected_groups()) == 1
+
+
+def test_compare_button_fits_full_label(qtbot, fenetre):
+    qtbot.addWidget(fenetre)
+    fenetre.setStyleSheet(theme_mod.app_stylesheet())
+    fenetre.show()
+    fenetre._enter_compare_mode()
+    for item in run_items(fenetre):
+        item.setSelected(True)
+    qtbot.waitUntil(lambda: fenetre.compare_button.width() >= fenetre.compare_button.sizeHint().width())
+    assert fenetre.compare_button.text() == 'Compare selected'
 
 
 def test_incompatible_runs_are_explained(qapp, tmp_path):

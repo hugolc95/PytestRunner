@@ -81,9 +81,7 @@ def install() -> None:
 
     original_history_restyle=HistoryWindow.restyle
     def history_restyle_selected(self):
-        original_history_restyle(self); passed=t.status_color(Status.PASSED)
-        self.passed_value.setStyleSheet(f"font-size:22px;font-weight:700;color:{passed};background:transparent;")
-        self.success_value.setStyleSheet(f"font-size:14px;font-weight:700;color:{passed};background:transparent;")
+        original_history_restyle(self)
     HistoryWindow.restyle=history_restyle_selected
 
     # The embedded Python page is built before the persisted theme is restored.

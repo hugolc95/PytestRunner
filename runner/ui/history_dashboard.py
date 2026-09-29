@@ -32,12 +32,14 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStackedWidget,
+    QSplitter,
     QTabBar,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
     QToolButton,
     QTreeView,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -49,6 +51,9 @@ from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.history_window import FlakyDialog
 from runner.ui.history_execution_tree import HistoryExecutionModel
+from runner.ui.detail_panel import DetailPanel
+from runner.ui.tree_model import NODEID_ROLE
+from runner.domain.failures import index_failures, failure_for
 from runner.ui.results_panel import ReaderViews
 from runner.ui.widgets import EmptyState, StatusRibbon
 
@@ -525,6 +530,7 @@ class HistoryWindow(QDialog):
     """Tableau de bord des lancements enregistres."""
 
     rerun_requested = Signal(object)
+    compare_requested = Signal(object)
 
     def __init__(self, history: History, parent=None):
         super().__init__(parent)
@@ -591,7 +597,9 @@ class HistoryWindow(QDialog):
 
         self.compare_button = QPushButton("Compare")
         self.compare_button.setObjectName("Primary")
-        self.compare_button.setFixedWidth(108)
+        # Let Qt include the text, stylesheet padding and display scaling.
+        self.compare_button.setMinimumWidth(108)
+        self.compare_button.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
         self.compare_button.clicked.connect(self._compare_clicked)
         self.cancel_compare = QPushButton("Cancel")
         self.cancel_compare.setObjectName("Ghost")
@@ -636,7 +644,7 @@ class HistoryWindow(QDialog):
         self.run_list = QListWidget()
         self.run_list.setFrameShape(QFrame.NoFrame)
         self.run_list.setSpacing(t.SPACE_1)
-        self.run_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.run_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.run_list.itemSelectionChanged.connect(self._on_selection_changed)
         self.run_list.itemDoubleClicked.connect(lambda _item: self.view_output())
         self.run_list.verticalScrollBar().valueChanged.connect(
@@ -739,28 +747,54 @@ class HistoryWindow(QDialog):
         top.addWidget(self.rerun_button)
         top.addWidget(self.export_button)
 
-        self.passed_value = QLabel()
-        self.passed_value.setStyleSheet(
-            f"font-size:22px;font-weight:700;color:{t.status_color(Status.PASSED)};"
-            "background:transparent;")
-        self.failed_value = QLabel()
-        self.failed_value.setObjectName("Muted")
-        self.error_value = QLabel()
-        self.error_value.setObjectName("Muted")
-        self.skipped_value = QLabel()
-        self._style_result_counts()
-        self.success_value = QLabel()
-        self.success_value.setStyleSheet(
-            f"font-size:14px;font-weight:700;color:{t.status_color(Status.PASSED)};"
-            "background:transparent;")
+        self.reader_selector = QComboBox()
+        self.reader_selector.setAccessibleName("History reader")
+        self.reader_selector.currentIndexChanged.connect(
+            lambda _: self._select_execution_reader(self.reader_selector.currentData()))
+        selector_row = QHBoxLayout()
+        selector_row.addWidget(QLabel("Reader"))
+        selector_row.addWidget(self.reader_selector, 1)
+
+        self._result_filter = None
+        self.result_cards = {}
+        self.result_values = {}
+        self.result_icons = {}
         summary_top = QHBoxLayout()
         summary_top.setSpacing(t.SPACE_2)
-        summary_top.addWidget(self.passed_value)
-        summary_top.addWidget(self.failed_value)
-        summary_top.addWidget(self.error_value)
-        summary_top.addWidget(self.skipped_value)
-        summary_top.addStretch(1)
-        summary_top.addWidget(self.success_value)
+        for status in (Status.PASSED, Status.FAILED, Status.ERROR, Status.SKIPPED):
+            card = QPushButton()
+            card.setCheckable(True)
+            card.setMinimumWidth(0)
+            card.setMinimumHeight(88)
+            card.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            card.setAccessibleName(f"Filter {status.label.lower()} results")
+            card.clicked.connect(lambda checked=False, value=status: self._filter_results(value))
+            box = QVBoxLayout(card)
+            box.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
+            value = QLabel("0")
+            label = QLabel(status.value.capitalize())
+            glyph = QLabel()
+            glyph.setFixedSize(16, 16)
+            caption = QHBoxLayout()
+            caption.setSpacing(t.SPACE_1)
+            caption.addWidget(glyph)
+            caption.addWidget(label)
+            caption.addStretch(1)
+            for widget in (value, label, glyph):
+                widget.setAttribute(Qt.WA_TransparentForMouseEvents)
+            box.addWidget(value)
+            box.addLayout(caption)
+            self.result_cards[status] = card
+            self.result_values[status] = value
+            self.result_icons[status] = glyph
+            summary_top.addWidget(card, 1)
+        self.passed_value = self.result_values[Status.PASSED]
+        self.failed_value = self.result_values[Status.FAILED]
+        self.error_value = self.result_values[Status.ERROR]
+        self.skipped_value = self.result_values[Status.SKIPPED]
+        self.success_value = QLabel()
+        self.success_value.setWordWrap(True)
+        self._style_result_counts()
 
         self.ribbon = StatusRibbon()
         self.detail_meta = QLabel()
@@ -772,6 +806,8 @@ class HistoryWindow(QDialog):
                                           t.SPACE_3, t.SPACE_2)
         summary_layout.addLayout(summary_top)
         summary_layout.addWidget(self.ribbon)
+        summary_layout.addWidget(self.success_value)
+        self.detail_meta.setWordWrap(True)
         summary_layout.addWidget(self.detail_meta)
 
         self.tabs = _history_tabs()
@@ -810,6 +846,7 @@ class HistoryWindow(QDialog):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(t.SPACE_3)
         layout.addLayout(top)
+        layout.addLayout(selector_row)
         layout.addWidget(summary)
         layout.addWidget(self.tabs, 1)
         layout.addLayout(bottom)
@@ -828,30 +865,27 @@ class HistoryWindow(QDialog):
         self.execution_tree.header().setStretchLastSection(False)
         self.execution_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.execution_tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
-        self.execution_tree.setColumnWidth(1, 175)
+        self.execution_tree.setColumnWidth(1, 110)
         left = QVBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
         left.addWidget(self.execution_title)
         left.addWidget(self.execution_tree, 1)
 
-        self.reader_box = QFrame()
-        self.reader_box.setObjectName("HistoryAside")
-        self.reader_box.setMinimumWidth(180)
-        self.reader_box.setMaximumWidth(290)
-        self.reader_layout = QVBoxLayout(self.reader_box)
-        self.reader_layout.setContentsMargins(t.SPACE_3, t.SPACE_3,
-                                              t.SPACE_3, t.SPACE_3)
-        title = QLabel("Readers")
-        title.setStyleSheet(
-            f"font-size:{t.TEXT_MD}px;font-weight:700;background:transparent;")
-        self.reader_layout.addWidget(title)
-        self.reader_layout.addStretch(1)
-
-        layout = QHBoxLayout(widget)
+        tree_panel = QWidget()
+        tree_panel.setLayout(left)
+        self.execution_detail = DetailPanel()
+        self.execution_detail.body.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
+        self.execution_detail.open_output.connect(lambda: self.tabs.setCurrentIndex(2))
+        self.execution_tree.selectionModel().currentChanged.connect(self._show_execution_detail)
+        split = QSplitter(Qt.Horizontal)
+        split.addWidget(tree_panel)
+        split.addWidget(self.execution_detail)
+        split.setChildrenCollapsible(False)
+        split.setStretchFactor(0, 1)
+        split.setStretchFactor(1, 1)
+        layout = QVBoxLayout(widget)
         layout.setContentsMargins(0, t.SPACE_2, 0, 0)
-        layout.setSpacing(t.SPACE_3)
-        layout.addLayout(left, 1)
-        layout.addWidget(self.reader_box)
+        layout.addWidget(split)
         return widget
 
     @staticmethod
@@ -868,12 +902,19 @@ class HistoryWindow(QDialog):
         return table
 
     def _style_result_counts(self) -> None:
-        for label, status in ((self.failed_value, Status.FAILED),
-                              (self.error_value, Status.ERROR),
-                              (self.skipped_value, Status.SKIPPED)):
-            label.setStyleSheet(
-                f"font-size:{t.TEXT_XS}px;font-weight:600;"
-                f"color:{t.status_color(status)};background:transparent;")
+        for status, card in self.result_cards.items():
+            color = t.status_color(status)
+            self.result_icons[status].setPixmap(icons.status_icon(status).pixmap(16, 16))
+            selected = self._result_filter is status
+            card.setChecked(selected)
+            card.setStyleSheet(
+                f"QPushButton {{min-height:80px;padding:0;background:{t.BG_RAISED};border:1px solid "
+                f"{color if selected else t.BORDER};border-radius:{t.RADIUS_MD}px;}}"
+                f"QPushButton:hover {{background:{t.BG_HOVER};}}"
+                f"QLabel {{color:{color};background:transparent;}}")
+            self.result_values[status].setStyleSheet(
+                f"color:{color};font-size:24px;font-weight:600;background:transparent;")
+        self.success_value.setStyleSheet(f"color:{t.TEXT_MUTED};background:transparent;")
 
     def restyle(self) -> None:
         """Rejoue les couleurs figees a la construction de chaque carte.
@@ -886,6 +927,7 @@ class HistoryWindow(QDialog):
         cher qu'un simple repeint.
         """
         self._style_result_counts()
+        self.execution_detail.restyle()
         for _item, card in self._cards:
             card.restyle()
 
@@ -1146,17 +1188,6 @@ class HistoryWindow(QDialog):
         if self._adjusting_selection:
             return
         selected = self.run_list.selectedItems()
-        if self._compare_mode and len(selected) > 2:
-            current = self.run_list.currentItem()
-            self._adjusting_selection = True
-            try:
-                for item in selected:
-                    if item is not current:
-                        item.setSelected(False)
-                        break
-            finally:
-                self._adjusting_selection = False
-
         selected_items = self.run_list.selectedItems()
         for item, card in self._cards:
             selected = any(item is candidate for candidate in selected_items)
@@ -1175,26 +1206,11 @@ class HistoryWindow(QDialog):
         self.rename_edit.hide()
         self.detail_subtitle.setText(
             f"{_when(group.timestamp)}  ·  {group.origin_label}  ·  {group.workspace}")
-        self.passed_value.setText(str(group.count(Status.PASSED)))
-        self.failed_value.setText(f"{group.count(Status.FAILED)} failed")
-        self.error_value.setText(f"{group.count(Status.ERROR)} error")
-        self.skipped_value.setText(f"{group.count(Status.SKIPPED)} skipped")
-        success = 100 * group.count(Status.PASSED) / group.total if group.total else 0
-        self.success_value.setText(f"{success:.0f}% success")
-        counts = {status: group.count(status) for status in Status}
-        self.ribbon.set_counts(counts)
-        self.detail_meta.setText(
-            f"{len(group.nodeids)} tests    {group.total} results    "
-            f"{group.duration:.1f}s    "
-            f"{len(group.entries)} reader{'s' if len(group.entries) != 1 else ''}    "
-            + (f"Build #{group.build_number:04d}    "
-               if group.build_number is not None else "")
-            + f"Run ID {group.id}")
         self.tabs.setTabText(1, f"Failed ({len(group.failed_nodeids)})")
         self._fill_issues(self.issues_table, group)
         self._fill_readers(group)
         self._fill_output(group)
-        self._select_execution_reader(0)
+        self._select_execution_reader(-1)
         self._fill_details(group)
         self._fill_export_menu(group)
         self.rerun_button.setEnabled(bool(group.nodeids))
@@ -1224,67 +1240,109 @@ class HistoryWindow(QDialog):
 
     def _fill_readers(self, group: RunGroup) -> None:
         self._execution_group = group
-        old = getattr(self, '_execution_reader_buttons', None)
-        if old is not None:
-            old.deleteLater()
-        self._execution_reader_buttons = QButtonGroup(self)
-        self._execution_reader_buttons.setExclusive(True)
-        self._execution_reader_buttons.idClicked.connect(self._select_execution_reader)
-        # Le titre et le stretch restent ; seules les cartes intermediaires
-        # sont recreees pour le run courant.
-        while self.reader_layout.count() > 2:
-            item = self.reader_layout.takeAt(1)
-            widget = item.widget()
-            if widget is not None:
-                widget.deleteLater()
-        for index, entry in reversed(list(enumerate(group.entries))):
-            card = QPushButton()
-            card.setCheckable(True)
-            card.setMinimumHeight(80)
-            card.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-            self._execution_reader_buttons.addButton(card, index)
-            card.setObjectName("HistoryReaderCard")
-            layout = QVBoxLayout(card)
-            layout.setContentsMargins(t.SPACE_2, t.SPACE_2,
-                                      t.SPACE_2, t.SPACE_2)
-            name = QLabel(f"●  {_short_reader(entry.reader)}")
-            name.setAttribute(Qt.WA_TransparentForMouseEvents)
-            name.setStyleSheet(
-                f"color:{t.reader_color(index)};font-weight:700;"
-                "background:transparent;")
-            result = QLabel(
-                f"{entry.count(Status.PASSED)} passed    "
-                f"{entry.count(Status.FAILED) + entry.count(Status.ERROR)} issues")
-            result.setObjectName("Muted")
-            result.setWordWrap(True)
-            result.setAttribute(Qt.WA_TransparentForMouseEvents)
-            layout.addWidget(name)
-            layout.addWidget(result)
-            self.reader_layout.insertWidget(1, card)
+        self._history_failure_indexes = {}
+        self._result_filter = None
+        self.reader_selector.blockSignals(True)
+        self.reader_selector.clear()
+        self.reader_selector.addItem("All readers — global results", -1)
+        for index, entry in enumerate(group.entries):
+            self.reader_selector.addItem(_short_reader(entry.reader), index)
+        self.reader_selector.setCurrentIndex(0)
+        self.reader_selector.blockSignals(False)
 
     def _select_execution_reader(self, index: int) -> None:
         group = getattr(self, '_execution_group', None)
-        if group is None or not 0 <= index < len(group.entries):
+        if group is None or index is None or not -1 <= index < len(group.entries):
             return
-        entry = group.entries[index]
         self._selected_execution_reader = index
-        button = self._execution_reader_buttons.button(index)
-        if button is not None:
-            button.setChecked(True)
-        for item in self._execution_reader_buttons.buttons():
-            selected = item is button
-            item.setStyleSheet(
-                f"QPushButton {{text-align:left;min-height:72px;padding:0;border:1px solid {t.ACCENT if selected else t.BORDER_STRONG};"
-                f"background:{t.rgba(t.ACCENT, 0.12) if selected else t.BG_SURFACE};border-radius:6px;}}")
-        name = f"Profile: {entry.profile_name}" if entry.run_kind == 'profile' else 'Executed tests'
-        self.execution_title.setText(f"{name} · {_short_reader(entry.reader)}")
+        self.reader_selector.blockSignals(True)
+        self.reader_selector.setCurrentIndex(index + 1)
+        self.reader_selector.blockSignals(False)
+        self._result_filter = None
+        self.execution_detail.clear()
         self.execution_tree.setUpdatesEnabled(False)
         try:
-            self.execution_model.set_entry(entry)
-            self.execution_tree.expandToDepth(1)
+            if index == -1:
+                self.execution_model.set_entries(group.entries)
+                self.execution_tree.expandToDepth(1)
+                # Test verdicts stay visible without opening their reader results.
+                for key in self.execution_model._original_ids:
+                    if ":" not in key:
+                        self.execution_tree.collapse(self.execution_model.index_for_nodeid(key))
+                self.execution_title.setText("All results · global verdict per test")
+            else:
+                entry = group.entries[index]
+                self.execution_model.set_entry(entry)
+                self.execution_tree.expandToDepth(1)
+                self.execution_title.setText(f"Executed tests · {_short_reader(entry.reader)}")
+                self.output.select_silently(index)
         finally:
             self.execution_tree.setUpdatesEnabled(True)
-        self.output.select_silently(index)
+        entries = group.entries if index == -1 else (group.entries[index],)
+        counts = {status: sum(entry.count(status) for entry in entries) for status in Status}
+        for status, value in self.result_values.items():
+            value.setText(str(counts[status]))
+        self.ribbon.set_counts(counts)
+        total = sum(counts.values())
+        executed = counts[Status.PASSED] + counts[Status.FAILED] + counts[Status.ERROR]
+        self.success_value.setText(
+            f"{100 * counts[Status.PASSED] / executed:.0f}% success · "
+            f"{counts[Status.PASSED]} / {executed} excluding skipped"
+            if executed else "No executed results · skipped excluded")
+        self.detail_meta.setText(
+            f"{len(group.nodeids)} tests · {total} results · {group.duration:.1f}s · "
+            f"{len(entries)} reader{'s' if len(entries) != 1 else ''} · "
+            + (f"Build #{group.build_number:04d} · " if group.build_number is not None else "")
+            + f"Run ID {group.id}")
+        self._style_result_counts()
+
+    def _filter_results(self, status):
+        self._result_filter = None if self._result_filter is status else status
+        selected = self._result_filter
+        model = self.execution_model
+        from PySide6.QtCore import QModelIndex
+        def apply(parent=QModelIndex()):
+            any_visible = False
+            for row in range(model.rowCount(parent)):
+                index = model.index(row, 0, parent)
+                if getattr(self, '_selected_execution_reader', -1) == -1 and index.data(NODEID_ROLE):
+                    # Filter the global verdict, keeping all readers accessible underneath.
+                    visible = selected is None or model.status_for(index.internalPointer(), 0) is selected
+                else:
+                    children_visible = apply(index) if model.rowCount(index) else False
+                    visible = selected is None or children_visible or model.status_for(index.internalPointer(), 0) is selected
+                self.execution_tree.setRowHidden(row, parent, not visible)
+                any_visible |= visible
+            return any_visible
+        apply()
+        self.tabs.setCurrentIndex(0)
+        self._style_result_counts()
+
+    def _show_execution_detail(self, index, previous=None):
+        if not index.isValid():
+            return
+        nodeid = index.data(NODEID_ROLE)
+        if not nodeid:
+            self.execution_detail.clear()
+            return
+        group = self._execution_group
+        reader_index = self._selected_execution_reader
+        if reader_index == -1:
+            reader_index = self.execution_model.reader_for_index(index)
+        indexes = range(len(group.entries)) if reader_index is None else (reader_index,)
+        statuses, failures, readers = {}, {}, []
+        for i in indexes:
+            entry = group.entries[i]
+            readers.append(Reader(entry.reader or "No reader", i))
+            if self._selected_execution_reader == -1 and reader_index is None:
+                row = index.internalPointer()
+                statuses[i] = self.execution_model.status_for(row.children[i], 0)
+            else:
+                statuses[i] = self.execution_model.status_for(index.internalPointer(), 0)
+            if i not in self._history_failure_indexes:
+                self._history_failure_indexes[i] = index_failures(entry.output())
+            failures[i] = failure_for(self._history_failure_indexes[i], nodeid)
+        self.execution_detail.show_test(nodeid, tuple(readers), statuses, failures)
 
     def _fill_output(self, group: RunGroup) -> None:
         readers = tuple(Reader(entry.reader or "No reader", index)
@@ -1513,31 +1571,30 @@ class HistoryWindow(QDialog):
     # ------------------------------------------------------------ comparaison
 
     def _compare_clicked(self) -> None:
-        if not self._compare_mode:
+        groups = self._selected_groups()
+        if len(groups) < 2 and not self._compare_mode:
             self._enter_compare_mode()
             return
-        groups = self._selected_groups()
-        if len(groups) != 2:
+        if len(groups) < 2:
             return
-        if not self._compatible(groups[0], groups[1]):
-            self._say("Choose two runs from the same workspace with a common reader.",
+        if any(not self._compatible(groups[0], group) for group in groups[1:]):
+            self._say("Choose runs from the same workspace.",
                       alert=True)
             return
-        GroupComparisonDialog(groups[0], groups[1], self).exec()
+        self.compare_requested.emit(groups)
 
     def _enter_compare_mode(self) -> None:
         if len(self._visible_groups) < 2:
             return
         self._compare_mode = True
-        self.run_list.clearSelection()
-        self.run_list.setSelectionMode(QAbstractItemView.MultiSelection)
+        self.run_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.cancel_compare.setVisible(True)
-        self._say("Select two compatible runs.")
+        self._say("Ctrl+click to select runs, Shift+click to select a range. Choose the same workspace.")
         self._update_compare_action()
 
     def _leave_compare_mode(self) -> None:
         self._compare_mode = False
-        self.run_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.run_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.cancel_compare.setVisible(False)
         self.status.clear()
         first = self._first_run_item()
@@ -1551,9 +1608,7 @@ class HistoryWindow(QDialog):
     def _compatible(first: RunGroup, second: RunGroup) -> bool:
         if first.workspace != second.workspace:
             return False
-        left = set(first.reader_names)
-        right = set(second.reader_names)
-        return bool(left & right) or (not left and not right)
+        return True
 
     def _update_compare_action(self) -> None:
         if not self._compare_mode:
@@ -1561,6 +1616,6 @@ class HistoryWindow(QDialog):
             self.compare_button.setEnabled(len(self._visible_groups) >= 2)
             return
         count = len(self._selected_groups())
-        self.compare_button.setText("Compare selected" if count == 2
-                                    else f"Compare {count} / 2")
-        self.compare_button.setEnabled(count == 2)
+        self.compare_button.setText("Compare selected" if count >= 2
+                                    else f"Compare {count} / 2+")
+        self.compare_button.setEnabled(count >= 2)
