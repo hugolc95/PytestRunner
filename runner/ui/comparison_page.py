@@ -248,8 +248,11 @@ class ComparisonPage(QWidget):
         if not path.lower().endswith('.xlsx'):
             path += '.xlsx'
         try:
+            # Read the archived records again instead of exporting a stale UI cache.
+            self.refresh()
+            self._records = [records_by_reader(group) for group in self.groups]
             export_comparison_xlsx(path, self.groups, self._records, verdict)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
             QMessageBox.critical(self, 'Export failed', str(exc))
             return
         QMessageBox.information(self, 'Export complete', f'Comparison exported to:\n{path}')

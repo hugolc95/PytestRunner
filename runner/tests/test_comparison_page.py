@@ -105,3 +105,38 @@ def test_navigation_preserves_comparison(qtbot, tmp_path, monkeypatch):
     window._show_page('comparison')
     assert len(window.comparison_page.groups) == 3
     assert window.comparison_page.reference.currentIndex() == 1
+
+
+def test_export_reloads_records_and_ignores_difference_filter(qtbot, tmp_path, monkeypatch):
+    from zipfile import ZipFile
+    from xml.etree import ElementTree as ET
+    from runner.ui import comparison_page
+    history = populate(tmp_path / 'history')
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    page._records = [{}, {}, {}]  # A stale UI cache must not create an empty file.
+    destination = tmp_path / 'report.xlsx'
+    monkeypatch.setattr(comparison_page.QFileDialog, 'getSaveFileName',
+                        lambda *args: (str(destination), ''))
+    monkeypatch.setattr(comparison_page.QMessageBox, 'information', lambda *args: None)
+    page.export_excel()
+    with ZipFile(destination) as book:
+        root = ET.fromstring(book.read('xl/worksheets/sheet1.xml'))
+    ns = {'s': 'http://schemas.openxmlformats.org/spreadsheetml/2006/main'}
+    cells = {cell.attrib['r']: ''.join(cell.itertext()) for cell in root.findall('.//s:c', ns)}
+    assert cells['A11'] == NODEID
+    assert [cells[f'{col}11'] for col in 'BDF'] == ['PASSED', 'FAILED', 'SKIPPED']
+
+
+def test_legacy_status_map_without_nodeids_is_compared(qtbot, tmp_path):
+    history = History(tmp_path)
+    for i, status in enumerate(('PASSED', 'FAILED')):
+        history.add(RunEntry(id=str(i), timestamp=i+1, workspace='/tests',
+                             test_statuses={NODEID: status}))
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    index = find_test(page)
+    assert index is not None
+    assert [index.siblingAtColumn(i).data() for i in (1, 2)] == ['PASSED', 'FAILED']

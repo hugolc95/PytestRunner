@@ -22,10 +22,14 @@ class HistoryExecutionModel(TestTreeModel):
         if entry.executions:
             records = list(entry.executions)
         else:
-            occurrences = Counter(entry.nodeids)
+            # Older histories may only contain the per-test result map.
+            nodeids = list(entry.nodeids)
+            selected = set(nodeids)
+            nodeids.extend(nodeid for nodeid in entry.test_statuses if nodeid not in selected)
+            occurrences = Counter(nodeids)
             records = []
             failed = set(entry.failed_nodeids)
-            for nodeid in entry.nodeids:
+            for nodeid in nodeids:
                 # A final per-test verdict cannot describe earlier repetitions.
                 status = entry.test_statuses.get(nodeid, '') if occurrences[nodeid] == 1 else ''
                 if not status and occurrences[nodeid] == 1 and entry.total >= len(entry.nodeids):
