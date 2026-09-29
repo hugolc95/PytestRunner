@@ -7,6 +7,40 @@ from runner.ui.comparison_page import ComparisonPage, NODE
 NODEID = 'suite/test_auth.py::TestAuth::test_login'
 
 
+def test_identical_results_show_explicit_message_and_can_be_revealed(qtbot, tmp_path):
+    history = History(tmp_path)
+    for i in range(2):
+        history.add(RunEntry(id=str(i), timestamp=i+1, workspace='/tests',
+                             reader='A', executions=((NODEID, 'FAILED'),)))
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    assert page.results_stack.currentWidget() is page.empty_results
+    assert page.empty_title.text() == 'No result differences'
+    assert '1 compared tests' in page.empty_message.text()
+    page.show_all_results.click()
+    assert not page.differences.isChecked()
+    assert page.results_stack.currentWidget() is not page.empty_results
+    assert find_test(page) is not None
+    page.differences.setChecked(True)
+    page.reader.setCurrentIndex(page.reader.findData('A'))
+    assert page.empty_scope.text().startswith('A ·')
+    page.set_groups([])
+    assert page.results_stack.currentWidget() is not page.empty_results
+
+
+def test_unknown_results_do_not_claim_runs_are_identical(qtbot, tmp_path):
+    history = History(tmp_path)
+    for i in range(2):
+        history.add(RunEntry(id=str(i), timestamp=i+1, workspace='/tests',
+                             executions=((NODEID, ''),)))
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    assert page.empty_title.text() == 'No differences in available results'
+    assert 'cannot be confirmed' in page.empty_message.text()
+
+
 def populate(path):
     history = History(path)
     for i, status in enumerate(('PASSED', 'FAILED', 'SKIPPED')):
@@ -140,3 +174,36 @@ def test_legacy_status_map_without_nodeids_is_compared(qtbot, tmp_path):
     index = find_test(page)
     assert index is not None
     assert [index.siblingAtColumn(i).data() for i in (1, 2)] == ['PASSED', 'FAILED']
+
+
+def test_detail_changes_follow_reference_and_reader(qtbot, tmp_path):
+    history = populate(tmp_path)
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    page.tree.setCurrentIndex(find_test(page))
+    text = page.detail.toPlainText()
+    assert text.count('Changed') == 2
+    assert 'Reference' in text and '→' in text
+    page.reference.setCurrentIndex(1)
+    assert 'FAILED' in page.detail.toPlainText()
+    assert page.detail.toPlainText().count('Changed') == 2
+
+
+def test_detail_trace_toggle_preserves_skip_reason(qtbot, tmp_path):
+    from PySide6.QtCore import QUrl
+    from runner.domain.failures import Failure
+    history = populate(tmp_path)
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    page._failures[('r1', 'Reader A')] = {NODEID: Failure(NODEID, body='unique trace\nE AssertionError: bad <value>')}
+    page._failures[('r2', 'Reader A')] = {NODEID: Failure(NODEID, kind='skip', body='Condition <demo>')}
+    page.tree.setCurrentIndex(find_test(page))
+    assert 'Condition <demo>' in page.detail.toPlainText()
+    assert 'bad <value>' in page.detail.toPlainText()
+    assert 'unique trace' not in page.detail.toPlainText()
+    page.detail.anchorClicked.emit(QUrl('trace:1:0'))
+    assert 'unique trace' in page.detail.toPlainText()
+    page.detail.anchorClicked.emit(QUrl('trace:1:0'))
+    assert 'unique trace' not in page.detail.toPlainText()
