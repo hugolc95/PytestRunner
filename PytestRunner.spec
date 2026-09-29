@@ -19,7 +19,7 @@ import sys
 
 sys.path.insert(0, SPECPATH)  # noqa: F821 - injecte par PyInstaller
 
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 from build_common import EXCLUDES, EXCLUDES_RUNNER
 
@@ -29,6 +29,14 @@ from build_common import EXCLUDES, EXCLUDES_RUNNER
 QTAWESOME_DATA = collect_data_files("qtawesome")
 APP_ICON_DATA = [("assets/pytest_runner.ico", "assets")]
 
+# Some runner.ui modules are imported lazily by the main window. PyInstaller's
+# static analysis can miss those imports, which previously produced an EXE
+# failing at startup with:
+#   ModuleNotFoundError: runner.ui.comparison_page
+# Collect the complete UI package so every page shipped by the source tree is
+# also present in the standalone build.
+RUNNER_UI_MODULES = collect_submodules("runner.ui")
+
 
 a = Analysis(
     ["main_runner.py"],
@@ -37,7 +45,7 @@ a = Analysis(
     # config.yaml n'est PAS embarque : il est lu dans le workspace de
     # l'utilisateur, pas a cote de l'exe.
     datas=QTAWESOME_DATA + APP_ICON_DATA,
-    hiddenimports=["yaml", "qtawesome"],
+    hiddenimports=["yaml", "qtawesome"] + RUNNER_UI_MODULES,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
