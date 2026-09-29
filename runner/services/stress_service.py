@@ -67,14 +67,19 @@ class StressRunWorker(QThread):
                 def _sur_verdict(outcome, boite=statut_vu):
                     boite["status"] = outcome.status
 
-                rapport = self._current_run.run(on_line=lambda ligne: None,
-                                                on_outcome=_sur_verdict)
+                try:
+                    rapport = self._current_run.run(on_line=lambda ligne: None,
+                                                    on_outcome=_sur_verdict)
+                except Exception as exc:
+                    from runner.domain.models import ReaderReport
+                    rapport = ReaderReport(reader=lecteur, exit_code=-1,
+                                           issues=[f"{type(exc).__name__}: {exc}"])
                 # Rien capte (processus qui n'a pas demarre, crash avant le
                 # premier verdict) : on ne peut pas dire que le test est
                 # passe, mieux vaut le compter comme un echec que de fermer
                 # les yeux dessus.
                 statut = statut_vu.get(
-                    "status", Status.PASSED if not rapport.failed else Status.FAILED)
+                    "status", Status.PASSED if rapport.ok else Status.ERROR)
                 resultats.append(StressReaderResult(lecteur, rapport, statut))
 
             if not resultats:
@@ -89,6 +94,10 @@ class StressRunWorker(QThread):
             else:
                 failed_attempts.append(tentative)
             self.attempt_done.emit(tentative)
+
+            # A global failure prevents reliable repetitions; show it once at completion.
+            if any(r.report.issues for r in resultats):
+                break
 
             if self._mode == MODE_UNTIL_FAIL and not ok:
                 break

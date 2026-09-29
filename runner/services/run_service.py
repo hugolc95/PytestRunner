@@ -37,7 +37,7 @@ class CollectWorker(QThread):
         try:
             collection = execution.collect(self._workspace, self._interpreter,
                                            self._env)
-        except RuntimeError as exc:
+        except Exception as exc:
             self.failed.emit(str(exc))
             return
         self.collected.emit(collection)
@@ -69,10 +69,20 @@ class _ReaderWorker(QThread):
         self._run.cancel()
 
     def run(self) -> None:  # pragma: no cover - execute dans un thread Qt
-        self._report = self._run.run(
-            on_line=lambda texte: self.line.emit(self._reader.index, texte),
-            on_outcome=self.outcome.emit,
-        )
+        try:
+            self._report = self._run.run(
+                on_line=lambda texte: self.line.emit(self._reader.index, texte),
+                on_outcome=self.outcome.emit,
+            )
+        except Exception as exc:
+            # Preparation/IO errors outside pytest must still finish the UI run.
+            import traceback
+            output = traceback.format_exc()
+            self.line.emit(self._reader.index, output)
+            self._report = ReaderReport(
+                reader=self._reader, exit_code=-1, output=output,
+                cancelled=self._run.cancelled,
+                issues=[f"{type(exc).__name__}: {exc}"])
 
     def _emit_done_after_finished(self) -> None:
         """Publie le rapport seulement quand le thread Qt est reellement fini."""
@@ -305,6 +315,7 @@ class RunService(QObject):
                 f"\n--- {label} - attempt {attempt_label} ---\n"
                 + report.output)
             aggregate.duration += report.duration
+            aggregate.issues.extend(report.issues)
             aggregate.cancelled = aggregate.cancelled or report.cancelled
 
         if (failed and not self._profile_cancelled

@@ -164,6 +164,8 @@ class ReaderReport:
     # l'a chronometree (`--durations=0`). Absent d'un nodeid si pytest l'a
     # juge trop rapide pour figurer dans son releve.
     durations: dict[str, float] = field(default_factory=dict)
+    # Global errors have no test owner and are shown once at run completion.
+    issues: list[str] = field(default_factory=list)
 
     @property
     def failed(self) -> int:
@@ -171,4 +173,4 @@ class ReaderReport:
 
     @property
     def ok(self) -> bool:
-        return not self.cancelled and self.failed == 0
+        return not self.cancelled and self.failed == 0 and self.exit_code == 0 and not self.issues

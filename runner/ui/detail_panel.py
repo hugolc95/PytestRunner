@@ -747,7 +747,8 @@ class DetailPanel(QWidget):
             f' color:{t.status_color(statut)}; font-size:{t.TEXT_MD}px;'
             f' font-weight:600;">{escape(echec.headline)}</p>')
 
-        return titre + resume + avertissement + self._html_trace(echec.body)
+        phase = self._html_note(f"Phase: {echec.phase.upper()}") if echec.phase else ""
+        return titre + phase + resume + avertissement + self._html_trace(echec.body)
 
     def _html_trace(self, corps: str) -> str:
         lignes = []

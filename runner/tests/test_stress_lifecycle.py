@@ -216,7 +216,7 @@ def test_a_multi_reader_stress_run_archives_one_entry_per_reader(
 
 
 def test_the_n_times_dialog_feeds_the_chosen_count(fenetre, monkeypatch, qapp):
-    monkeypatch.setattr(RunNTimesDialog, "exec_", lambda self: QDialog.Accepted)
+    monkeypatch.setattr(RunNTimesDialog, "exec", lambda self: QDialog.Accepted)
     monkeypatch.setattr(RunNTimesDialog, "count", lambda self: 7)
     appels = []
     monkeypatch.setattr(fenetre, "_lancer_stress",
@@ -228,7 +228,7 @@ def test_the_n_times_dialog_feeds_the_chosen_count(fenetre, monkeypatch, qapp):
 
 
 def test_cancelling_the_n_times_dialog_launches_nothing(fenetre, monkeypatch, qapp):
-    monkeypatch.setattr(RunNTimesDialog, "exec_", lambda self: QDialog.Rejected)
+    monkeypatch.setattr(RunNTimesDialog, "exec", lambda self: QDialog.Rejected)
     appels = []
     monkeypatch.setattr(fenetre, "_lancer_stress",
                         lambda *a: appels.append(a))

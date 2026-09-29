@@ -18,7 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from runner.domain import markers, parsing
+from runner.domain import diagnostics, markers, parsing
 from runner.domain.markers import Marker, marker_probe, read_probe, summarize
 from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest, Status
 from runner.domain.reader_isolation import ENV_CONFIG, ENV_READER, reader_plugin
@@ -223,13 +223,14 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
     Leve RuntimeError avec un message lisible : c'est ce message que
     l'interface affichera, il ne doit pas etre une stacktrace.
     """
-    with marker_probe() as (args_plugin, dossier_plugin, fichier_markers):
+    with marker_probe() as (args_plugin, dossier_plugin, fichier_markers), diagnostics.diagnostic_probe() as (diagnostic_args, diagnostic_dir, diagnostic_file):
         commande = [interpreter, "-m", "pytest", "--collect-only", "-q",
-                    PYTEST_IMPORT_MODE, *args_plugin]
+                    PYTEST_IMPORT_MODE, *args_plugin, *diagnostic_args]
         environnement = markers.environment(env, fichier_markers)
+        environnement[diagnostics.ENV_OUT] = diagnostic_file
         _prepend_pythonpath(
             environnement,
-            [dossier_plugin, *_suite_import_paths(workspace)],
+            [dossier_plugin, diagnostic_dir, *_suite_import_paths(workspace)],
         )
 
         try:
@@ -250,13 +251,16 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
 
         # 5 = aucun test collecte. Ce n'est pas une erreur, juste un dossier vide.
         if process.returncode not in (0, 5):
-            sortie = process.stderr or process.stdout or ""
+            sortie = "\n".join(filter(None, (process.stdout, process.stderr)))
             if "No module named pytest" in sortie:
                 raise RuntimeError(
                     f"pytest is not installed in the test interpreter:\n  {interpreter}\n\n"
                     f'Install it with:\n  "{interpreter}" -m pip install pytest'
                 )
-            raise RuntimeError(sortie.strip() or "pytest could not collect the tests.")
+            errors = diagnostics.read_diagnostics(diagnostic_file)
+            errors = [d for d in errors if d["kind"] == "collection"] or errors
+            raise RuntimeError(diagnostics.format_errors(errors) if errors else
+                               diagnostics.fallback_error(sortie, process.returncode))
 
         nodeids = parsing.parse_collect_only(process.stdout)
         par_nodeid, descriptions = read_probe(fichier_markers)
@@ -365,10 +369,10 @@ class ReaderRun:
                 if self._cancelled:
                     break
 
-                with _fichier_arguments(suite_nodeids) as nodeid_args:
+                with _fichier_arguments(suite_nodeids) as nodeid_args, diagnostics.diagnostic_probe() as (diagnostic_args, diagnostic_dir, diagnostic_file):
                     command = [
                         self.request.interpreter, "-u", "-m", "pytest",
-                        *nodeid_args, *plugin_args,
+                        *nodeid_args, *plugin_args, *diagnostic_args,
                         "-v", "--tb=short", "--durations=0",
                     ]
 
@@ -389,12 +393,16 @@ class ReaderRun:
                     if allure_dir:
                         command.append(f"--alluredir={allure_dir}")
 
+                    environment = self._environnement(plugin_dir, suite_root)
+                    environment[diagnostics.ENV_OUT] = diagnostic_file
+                    _prepend_pythonpath(environment, [diagnostic_dir])
+                    output_start = len(output)
                     try:
                         self._process = subprocess.Popen(
                             command, cwd=self.request.workspace,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             text=True, bufsize=1,
-                            env=self._environnement(plugin_dir, suite_root),
+                            env=environment,
                             creationflags=creation_flags(),
                         )
                     except OSError as exc:
@@ -405,6 +413,7 @@ class ReaderRun:
                         on_line(message + "\n")
                         output.append(message + "\n")
                         report.exit_code = -1
+                        report.issues.append(message)
                         break
 
                     skip_blank_after_protocol = False
@@ -456,6 +465,21 @@ class ReaderRun:
                         partial_junits.append(partial_junit)
 
                     code = self._process.returncode or 0
+                    details = diagnostics.read_diagnostics(diagnostic_file)
+                    for detail in details:
+                        if detail["kind"] == "test":
+                            detail["nodeid"] = resolver.resolve(detail["nodeid"])
+                            output.append(diagnostics.PREFIX + json.dumps(detail) + "\n")
+                    if not self._cancelled:
+                        global_errors = [detail for detail in details if detail["kind"] != "test"]
+                        global_errors = [d for d in global_errors if d["kind"] == "collection"] or global_errors
+                        if global_errors:
+                            report.issues.append(diagnostics.format_errors(global_errors))
+                        elif code not in (0, 1) or (code == 1 and not any(
+                                d["kind"] == "test" for d in details) and
+                                not any(verdicts.get(n, Status.PENDING).is_bad for n in suite_nodeids)):
+                            report.issues.append(diagnostics.fallback_error(
+                                "".join(output[output_start:]), code))
                     if code != 0 and report.exit_code == 0:
                         report.exit_code = code
                     # A failing TestSuite must not hide results from later

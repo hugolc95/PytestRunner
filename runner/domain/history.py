@@ -92,7 +92,7 @@ class RunEntry:
 
     @property
     def ok(self) -> bool:
-        return self.count(Status.FAILED) == 0 and self.count(Status.ERROR) == 0
+        return self.exit_code == 0 and self.count(Status.FAILED) == 0 and self.count(Status.ERROR) == 0
 
     @property
     def label(self) -> str:
