@@ -2,10 +2,11 @@
 from collections import Counter
 from html import escape
 import json
+from pathlib import Path
 
 import yaml
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QStandardItem, QStandardItemModel
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QColor, QDesktopServices, QStandardItem, QStandardItemModel
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QCheckBox, QTreeView, QSplitter, QTextBrowser, QTabWidget, QDialog,
@@ -255,7 +256,21 @@ class ComparisonPage(QWidget):
         except (OSError, ValueError) as exc:
             QMessageBox.critical(self, 'Export failed', str(exc))
             return
-        QMessageBox.information(self, 'Export complete', f'Comparison exported to:\n{path}')
+        confirmation = QMessageBox(self)
+        confirmation.setIcon(QMessageBox.Information)
+        confirmation.setWindowTitle('Export complete')
+        confirmation.setTextFormat(Qt.PlainText)
+        confirmation.setText(f'Comparison exported to:\n{path}')
+        open_button = confirmation.addButton('Open Excel', QMessageBox.ActionRole)
+        confirmation.addButton(QMessageBox.Close)
+        confirmation.exec()
+        if confirmation.clickedButton() is open_button:
+            url = QUrl.fromLocalFile(str(Path(path).resolve()))
+            if not QDesktopServices.openUrl(url):
+                QMessageBox.warning(
+                    self, 'Unable to open Excel',
+                    f'The report was saved, but could not be opened automatically.\n'
+                    f'Open it manually with Excel or another spreadsheet application:\n{path}')
 
     def refresh(self):
         available = {g.id: g for g in group_entries(self.history.entries())}

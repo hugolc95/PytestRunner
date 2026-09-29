@@ -119,7 +119,7 @@ def test_export_reloads_records_and_ignores_difference_filter(qtbot, tmp_path, m
     destination = tmp_path / 'report.xlsx'
     monkeypatch.setattr(comparison_page.QFileDialog, 'getSaveFileName',
                         lambda *args: (str(destination), ''))
-    monkeypatch.setattr(comparison_page.QMessageBox, 'information', lambda *args: None)
+    monkeypatch.setattr(comparison_page.QMessageBox, 'exec', lambda *args: None)
     page.export_excel()
     with ZipFile(destination) as book:
         root = ET.fromstring(book.read('xl/worksheets/sheet1.xml'))
