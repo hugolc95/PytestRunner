@@ -28,7 +28,7 @@ class StressReaderResult:
 
     @property
     def ok(self) -> bool:
-        return self.status is Status.PASSED
+        return self.status is Status.PASSED and self.report.ok
 
 
 @dataclass

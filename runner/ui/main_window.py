@@ -2043,9 +2043,7 @@ class MainWindow(QMainWindow):
         self.load_button.setEnabled(True)
         self.status_label.setText("Collection failed")
 
-        # Une phrase, et le detail seulement si on le demande.
-        premiere = message.strip().splitlines()[0] if message.strip() else "Unknown error"
-        ErrorDialog.show_error(self, "Could not collect the tests", premiere, message)
+        ErrorDialog.show_diagnostics(self, "Collection failed", message or "Unknown error")
         self._update_actions()
 
     def _size_reader_columns(self, tree=None, model=None) -> None:
@@ -2505,9 +2503,15 @@ class MainWindow(QMainWindow):
         self._archiver(rapports)
 
         annule = any(r.cancelled for r in rapports)
+        global_errors = [
+            f"{r.reader.name or 'Test interpreter'}\n{issue}"
+            for r in rapports if not r.cancelled for issue in r.issues
+        ]
         echecs = sum(r.failed for r in rapports)
         if annule:
             resume = "Run stopped"
+        elif global_errors:
+            resume = "Execution completed with errors"
         elif echecs:
             resume = f"{echecs} failed"
         else:
@@ -2524,6 +2528,10 @@ class MainWindow(QMainWindow):
             self._lancer_generation_allure(ouvrir_apres=False)
         if not annule:
             self._notifier_fin_de_run(resume)
+        if global_errors:
+            ErrorDialog.show_diagnostics(
+                self, "Execution error", "\n\n".join(dict.fromkeys(global_errors)),
+                self.results.show_output)
 
     def _notifier_fin_de_run(self, resume: str) -> None:
         """Notification systeme : le run a souvent fini pendant qu'on faisait
@@ -2928,6 +2936,16 @@ class MainWindow(QMainWindow):
         self.model.set_stress_annotation(nodeid, compact)
         self.results.detail.show_stress_done(nodeid, resume)
         self._update_actions()
+        if not resume.cancelled:
+            errors = [f"{result.reader.name or 'Test interpreter'}\n{issue}"
+                      for attempt in resume.failed_attempts for result in attempt.reports
+                      for issue in result.report.issues]
+            if errors:
+                for attempt in resume.failed_attempts:
+                    for result in attempt.reports:
+                        self.results.append_output(result.reader.index, result.report.output)
+                ErrorDialog.show_diagnostics(self, "Execution error",
+                    "\n\n".join(dict.fromkeys(errors)), self.results.show_output)
 
     def _arreter_stress(self) -> None:
         if self._stress_worker is not None:

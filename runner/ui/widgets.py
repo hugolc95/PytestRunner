@@ -758,6 +758,28 @@ class ErrorDialog(QDialog):
     def show_error(cls, parent, titre: str, message: str, detail: str = "") -> None:
         cls(titre, message, detail, parent).exec()
 
+    @classmethod
+    def show_diagnostics(cls, parent, title: str, errors: str, show_console=None) -> None:
+        """Display all error summaries immediately in a bounded, scrollable view."""
+        dialog = cls(title, title, errors, parent)
+        dialog.resize(680, 420)
+        if dialog.detail_view is not None:
+            dialog.toggle.setChecked(True)
+            dialog.toggle.hide()
+        for button in dialog.findChildren(QPushButton):
+            if button.text() == "Copy":
+                button.setText("Copy errors")
+                button.setToolTip("Copy the errors to the clipboard")
+        if show_console is not None:
+            button = QPushButton("Show console")
+            button.setObjectName("Ghost")
+            def open_console():
+                dialog.accept()
+                show_console()
+            button.clicked.connect(open_console)
+            dialog.layout().itemAt(dialog.layout().count() - 1).layout().insertWidget(0, button)
+        dialog.exec()
+
 
 class ReaderToggle(QPushButton):
     """Un lecteur, dans sa couleur, qu'on inclut ou non dans le prochain run."""

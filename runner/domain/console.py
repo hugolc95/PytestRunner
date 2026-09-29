@@ -16,6 +16,7 @@ import re
 from enum import Enum
 
 from runner.domain.ansi import strip_ansi
+from runner.domain.diagnostics import PREFIX
 from runner.domain.failures import is_failure_section, section_of
 from runner.domain.models import Status
 from runner.domain.parsing import parse_status_line
@@ -87,6 +88,8 @@ class LensFilter:
         self._dans_section = False
 
     def keep(self, ligne: str) -> bool:
+        if strip_ansi(ligne).strip().startswith(PREFIX):
+            return False
         if self.lens is Lens.ALL:
             return True
 

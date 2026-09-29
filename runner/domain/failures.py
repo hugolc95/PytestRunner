@@ -18,6 +18,7 @@ import json
 from dataclasses import dataclass, replace
 
 from runner.domain.ansi import strip_ansi
+from runner.domain.diagnostics import PREFIX
 
 # `======================== FAILURES ========================`, et la ligne de
 # `=` sans titre. Le titre est non gourmand et encadre d'espaces : sans cela un
@@ -47,6 +48,7 @@ class Failure:
     phase: str = ""            # "", "setup", "call", "teardown"
     body: str = ""
     ambiguous: bool = False    # plusieurs tests portent ce titre
+    summary: str = ""
 
     @property
     def message(self) -> str:
@@ -65,6 +67,8 @@ class Failure:
     @property
     def headline(self) -> str:
         """Message de l'echec, ou a defaut sa nature."""
+        if self.summary:
+            return self.summary
         if self.message:
             return self.message
         if self.phase:
@@ -188,6 +192,29 @@ def index_failures(sortie: str) -> dict[str, Failure]:
                 index[nodeid] = Failure(nodeid, kind="skip", body=reason)
         except (ValueError, KeyError, TypeError):
             continue
+    # Exact nodeids from pytest reports take precedence over terminal headers.
+    structured: dict[str, list[Failure]] = {}
+    for line in (sortie or "").splitlines():
+        if not line.startswith(PREFIX):
+            continue
+        try:
+            detail = json.loads(line[len(PREFIX):])
+            if detail.get("kind") != "test" or not all(isinstance(detail.get(k), str)
+                    for k in ("nodeid", "phase", "body", "message")):
+                continue
+            nodeid = detail["nodeid"]
+            structured.setdefault(nodeid, []).append(Failure(
+                nodeid, kind="failure" if detail["phase"] == "call" else "error",
+                phase=detail["phase"], body=detail["body"], summary=detail["message"]))
+        except (ValueError, TypeError, AttributeError):
+            continue
+    for nodeid, blocks in structured.items():
+        if len(blocks) == 1:
+            index[nodeid] = blocks[0]
+        else:
+            index[nodeid] = replace(blocks[-1],
+                phase=" / ".join(dict.fromkeys(b.phase for b in blocks)),
+                body="\n\n".join(f"Phase: {b.phase.upper()}\n{b.body}" for b in blocks))
     return index
 
 

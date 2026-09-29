@@ -313,7 +313,9 @@ class ConsoleView(QWidget):
 
     def text(self) -> str:
         """Le flux complet, lentille ou pas, debarrasse de ses codes ANSI."""
-        return ansi.strip_ansi("\n".join(self._lines))
+        from runner.domain.diagnostics import PREFIX
+        return ansi.strip_ansi("\n".join(line for line in self._lines
+                              if not ansi.strip_ansi(line).strip().startswith(PREFIX)))
 
     def copy_all(self) -> None:
         from PySide6.QtWidgets import QApplication
