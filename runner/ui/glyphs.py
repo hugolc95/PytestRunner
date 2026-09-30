@@ -68,12 +68,12 @@ def chevron_down(couleur: str) -> str:
 
 
 def branch_closed(couleur: str) -> str:
-    trace = (f'<path d="M5.5 3.5 L9 7 L5.5 10.5" fill="none" stroke="{couleur}" '
-             'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>')
-    return _ecrire("branch_closed.svg", _svg(trace), couleur)
+    trace = (f'<path d="M3.5 2.5 L6 5 L3.5 7.5" fill="none" stroke="{couleur}" '
+             'stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>')
+    return _ecrire("branch_closed.svg", _svg(trace, 10), couleur)
 
 
 def branch_open(couleur: str) -> str:
-    trace = (f'<path d="M3.5 5.5 L7 9 L10.5 5.5" fill="none" stroke="{couleur}" '
-             'stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>')
-    return _ecrire("branch_open.svg", _svg(trace), couleur)
+    trace = (f'<path d="M2.5 3.5 L5 6 L7.5 3.5" fill="none" stroke="{couleur}" '
+             'stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>')
+    return _ecrire("branch_open.svg", _svg(trace, 10), couleur)
