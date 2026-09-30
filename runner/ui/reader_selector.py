@@ -3,10 +3,9 @@ import json
 
 from PySide6.QtCore import QProcess, QProcessEnvironment, QSize, QTimer, Signal
 from PySide6.QtGui import QFont, QFontMetrics
-from PySide6.QtWidgets import QComboBox, QLineEdit, QStyle
+from PySide6.QtWidgets import QComboBox, QLineEdit
 
 from runner.domain import reader_discovery
-from runner.ui import icons
 from runner.ui import tokens as t
 
 
@@ -126,12 +125,14 @@ class ReaderAtrField(QLineEdit):
 
     Lu par PROBE_ATR dans l'interpreteur des tests, comme la liste des
     lecteurs : jamais dans le processus de l'interface, qui n'a pas forcement
-    la meme architecture que les DLL du lecteur. Jamais pendant un run non
-    plus -- les tests ont besoin du lecteur -- mais aussitot apres, puisqu'une
-    carte a pu changer entre-temps.
+    la meme architecture que les DLL du lecteur -- et qui ne l'attend donc
+    jamais non plus. Relu tout seul toutes les `INTERVALLE_MS`, pour suivre
+    une carte qu'on insere ou qu'on retire, mais seulement quand le champ est
+    a l'ecran et qu'aucun run ne tient le lecteur : les tests en ont besoin.
     """
 
     NO_CARD = "No card in reader"
+    INTERVALLE_MS = 3000
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -139,10 +140,6 @@ class ReaderAtrField(QLineEdit):
         self.setReadOnly(True)
         self.setAccessibleName("Card ATR")
         self.setPlaceholderText("ATR")
-        self._refresh_action = self.addAction(
-            icons.icon("mdi.refresh", t.TEXT_MUTED), QLineEdit.TrailingPosition)
-        self._refresh_action.setToolTip("Read the card again")
-        self._refresh_action.triggered.connect(self.refresh)
         self._context = None
         self._busy = False
         self._stale = False
@@ -154,11 +151,10 @@ class ReaderAtrField(QLineEdit):
         self._timeout.timeout.connect(self._timed_out)
         self._expired = False
         self.state = ""
-
-    def restyle(self):
-        # Appele par le balayage de `MainWindow._restyle()` a chaque bascule :
-        # l'icone est teintee une fois pour toutes a sa creation.
-        self._refresh_action.setIcon(icons.icon("mdi.refresh", t.TEXT_MUTED))
+        self._ticker = QTimer(self)
+        self._ticker.setInterval(self.INTERVALLE_MS)
+        self._ticker.timeout.connect(self._tick)
+        self._ticker.start()
 
     def set_context(self, workspace, interpreter, reader, busy=False):
         context = (workspace, interpreter, (reader or "").strip())
@@ -168,12 +164,33 @@ class ReaderAtrField(QLineEdit):
             self._stale = True
             return
         if context != self._context:
+            # Une lecture encore en vol concerne l'ancien lecteur : son
+            # resultat ne doit pas s'afficher pour le nouveau.
+            self.stop()
             self._context = context
             self.refresh()
         elif was_busy or self._stale:
-            self.refresh()
+            # Meme lecteur qu'avant le run : son ATR reste affiche jusqu'au
+            # nouveau resultat, sans passer par "Reading card...".
+            self.refresh(quiet=True)
 
-    def refresh(self):
+    def _tick(self):
+        """Relecture automatique : jamais pendant un run, jamais pour un champ
+        qu'on ne voit pas, jamais par-dessus une lecture deja en cours."""
+        if self._busy or not self._context:
+            return
+        # PyHubReader absent ne se reparera pas tout seul d'ici 3 secondes :
+        # inutile de relancer un interpreteur pour rien. Changer de lecteur,
+        # de workspace ou finir un run retente quand meme.
+        if self.state == reader_discovery.ATR_UNAVAILABLE:
+            return
+        if not self.isVisible() or self.window().isMinimized():
+            return
+        if self._process.state() != QProcess.NotRunning:
+            return
+        self.refresh(quiet=True)
+
+    def refresh(self, quiet=False):
         self._stale = False
         if not self._context or self._busy:
             return
@@ -183,29 +200,40 @@ class ReaderAtrField(QLineEdit):
             return
         if not workspace or not interpreter:
             return
-        self.stop()
+        # Une relecture automatique garde ce qui est affiche jusqu'au nouveau
+        # resultat : "Reading card..." toutes les 3 secondes, ce serait un
+        # clignotement, pas une information.
+        if not quiet or not self.state:
+            self._show("reading", "Reading card…", f"Reading the card in {reader}…")
+        if self._process.state() != QProcess.NotRunning:
+            # Une lecture tuee n'est pas encore tout a fait terminee : on
+            # relance des qu'elle l'est (`_finished`).
+            self._stale = True
+            return
         env = QProcessEnvironment()
         for key, value in reader_discovery.discovery_environment().items():
             env.insert(key, value)
         self._process.setProcessEnvironment(env)
         self._process.setWorkingDirectory(workspace)
         self._expired = False
-        self._show("reading", "Reading card…", f"Reading the card in {reader}…")
         self._process.start(interpreter, ["-u", "-c", reader_discovery.PROBE_ATR, reader])
         self._timeout.start(10000)
 
     def stop(self):
+        # Tuee net, sans l'attendre : attendre figerait l'interface au moment
+        # precis ou un run demarre. Son resultat tardif est ignore (`_expired`).
         self._timeout.stop()
         self._expired = True
         if self._process.state() != QProcess.NotRunning:
             self._process.kill()
-            self._process.waitForFinished(1000)
 
     def _finished(self, *_):
         self._timeout.stop()
         output = bytes(self._process.readAllStandardOutput()).decode("utf-8", "replace")
         errors = bytes(self._process.readAllStandardError()).decode("utf-8", "replace")
         if self._expired:
+            if self._stale and not self._busy:
+                QTimer.singleShot(0, self.refresh)
             return
         state, atr, detail = reader_discovery.parse_atr_output(output, errors)
         if state == reader_discovery.ATR_OK:
@@ -227,6 +255,10 @@ class ReaderAtrField(QLineEdit):
         self._show(reader_discovery.ATR_UNAVAILABLE, "ATR unavailable", "Reading the ATR timed out.")
 
     def _show(self, state, text, tooltip):
+        # La relecture automatique rend le plus souvent la meme chose : ne rien
+        # repeindre dans ce cas.
+        if (state, text, tooltip) == (self.state, self.text(), self.toolTip()):
+            return
         self.state = state
         self.setText(text)
         self.setCursorPosition(0)
@@ -255,8 +287,7 @@ class ReaderAtrField(QLineEdit):
     TAILLE_MIN = 8
 
     def _margin(self):
-        icone = self.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize)
-        return 2 * t.SPACE_2 + icone + 20
+        return 2 * t.SPACE_2 + 12
 
     def _text_width(self, taille):
         police = QFont(self.font())

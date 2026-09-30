@@ -52,6 +52,8 @@ class pyHubReader:
     def GetATR(self) -> bytes:
         if not hasattr(self, "connection"):
             raise Exception("GetATR: There is no connection")
+        if pathlib.Path("retiree").exists():
+            raise Exception("Failed to get ATR. Error code: 2148532236")
         if self.readerName == {CARTE!r}:
             return bytes.fromhex("3B8F8001804F0CA000000306")
         raise Exception("Failed to get ATR. Error code: 2148532236")
@@ -211,3 +213,92 @@ def test_a_long_atr_shrinks_until_it_fits_entirely(qtbot):
 
     champ._show(ATR_OK, "3B8F8001", "")
     assert champ.styleSheet() == ""
+
+
+# ------------------------------------------------------- relecture automatique
+
+
+def test_the_card_is_followed_without_any_button(fenetre, qtbot, tmp_path):
+    """Retirer la carte, puis la remettre : le champ suit tout seul, au
+    rythme de la relecture automatique -- il n'y a plus de bouton."""
+    assert fenetre.reader_atr.actions() == []
+    assert fenetre.reader_atr._ticker.isActive()
+    fenetre.show()
+    _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
+
+    (tmp_path / "retiree").write_text("")
+    fenetre.reader_atr._tick()
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_NO_CARD, timeout=15000)
+
+    (tmp_path / "retiree").unlink()
+    fenetre.reader_atr._tick()
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
+
+
+def test_an_automatic_read_does_not_flash_reading_card(fenetre, qtbot, tmp_path):
+    fenetre.show()
+    _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
+    avant = fenetre.reader_atr.text()
+
+    fenetre.reader_atr._tick()
+    assert fenetre.reader_atr._process.state() != QProcess.NotRunning
+    assert fenetre.reader_atr.text() == avant
+    qtbot.waitUntil(lambda: fenetre.reader_atr._process.state() == QProcess.NotRunning,
+                    timeout=15000)
+    assert fenetre.reader_atr.text() == avant
+
+
+def test_no_automatic_read_while_a_run_holds_the_reader(fenetre, qtbot, tmp_path, monkeypatch):
+    fenetre.show()
+    _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
+
+    monkeypatch.setattr(type(fenetre.service), "busy", property(lambda self: True))
+    fenetre._update_actions()
+    fenetre.reader_atr._tick()
+    assert fenetre.reader_atr._process.state() == QProcess.NotRunning
+
+
+def test_starting_a_run_kills_a_read_in_flight_without_waiting(fenetre, qtbot, tmp_path, monkeypatch):
+    """Une lecture en vol au moment du lancement ne doit ni gener le run, ni
+    figer l'interface en attendant qu'elle se termine."""
+    fenetre.show()
+    _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
+    fenetre.reader_atr._tick()
+    assert fenetre.reader_atr._process.state() != QProcess.NotRunning
+
+    attentes = []
+    monkeypatch.setattr(fenetre.reader_atr._process, "waitForFinished",
+                        lambda *a: attentes.append(a) or True)
+    monkeypatch.setattr(type(fenetre.service), "busy", property(lambda self: True))
+    fenetre._update_actions()
+
+    assert attentes == []
+    qtbot.waitUntil(lambda: fenetre.reader_atr._process.state() == QProcess.NotRunning,
+                    timeout=5000)
+    assert fenetre.reader_atr.state == ATR_OK  # le resultat tardif est ignore
+
+
+def test_no_automatic_read_for_a_hidden_field(fenetre, qtbot, tmp_path):
+    fenetre.show()
+    _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
+
+    fenetre._show_page("history")
+    fenetre.reader_atr._tick()
+    assert fenetre.reader_atr._process.state() == QProcess.NotRunning
+
+
+def test_no_automatic_read_once_pyhubreader_is_unavailable(qtbot, tmp_path, monkeypatch):
+    monkeypatch.setenv("PYTHONPATH", str(tmp_path))
+    champ = ReaderAtrField()
+    qtbot.addWidget(champ)
+    champ.show()
+    champ.set_context(str(tmp_path), sys.executable, CARTE)
+    qtbot.waitUntil(lambda: champ.state == ATR_UNAVAILABLE, timeout=15000)
+    champ._tick()
+    assert champ._process.state() == QProcess.NotRunning
+    champ.stop()
