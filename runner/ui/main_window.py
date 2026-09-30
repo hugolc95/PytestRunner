@@ -795,6 +795,20 @@ class MainWindow(QMainWindow):
                         self.history_button):
             workspace_controls.addWidget(control)
         workspace_controls.addStretch(1)
+        from runner.ui.reader_selector import ReaderSelector
+        self.reader_selector = ReaderSelector()
+        self.reader_selector.committed.connect(self._save_primary_reader)
+        workspace_controls.addWidget(QLabel("Reader"))
+        workspace_controls.addWidget(self.reader_selector)
+        self.reader_config_button = QPushButton()
+        self.reader_config_button.setObjectName("NavigationUtilityIcon")
+        self.reader_config_button.setFixedSize(t.CONTROL_SM, t.CONTROL_SM)
+        self.reader_config_button.setIcon(icons.icon("mdi.file-cog-outline", t.TEXT_MUTED))
+        self.reader_config_button.setToolTip("Open YAML configuration")
+        self.reader_config_button.setAccessibleName("Open YAML configuration")
+        self.reader_config_button.clicked.connect(lambda: self._show_page("yaml"))
+        workspace_controls.addWidget(self.reader_config_button)
+        workspace_controls.addStretch(1)
         workspace_box.addLayout(workspace_controls)
         self._pending_run_name = ""
         self.run_name_stack = QStackedWidget()
@@ -1898,6 +1912,7 @@ class MainWindow(QMainWindow):
         self._collector.collected.connect(self._on_collected)
         self._collector.failed.connect(self._on_collect_failed)
         self._collector.start()
+        self._refresh_primary_reader()
 
     @Slot(object)
     def _on_collected(self, collection) -> None:
@@ -2958,6 +2973,61 @@ class MainWindow(QMainWindow):
         self._update_actions()
 
     @Slot()
+    def _primary_reader_setting(self):
+        from runner.domain.config_file import normaliser
+        from runner.domain.workspace import CLES_READER
+
+        def find(settings, prefix=()):
+            for key, value in settings.items():
+                if normaliser(key) in CLES_READER and not isinstance(value, (dict, list)):
+                    return prefix + (key,), str(value or "")
+            for key, value in settings.items():
+                if isinstance(value, dict):
+                    found = find(value, prefix + (key,))
+                    if found is not None:
+                        return found
+            return None
+
+        return find(self.workspace.settings or {}) if self.workspace else None
+
+    def _refresh_primary_reader(self, busy=False):
+        setting = self._primary_reader_setting()
+        configured = bool(self.workspace and self.workspace.config_path)
+        value = setting[1] if setting else ""
+        self.reader_selector.set_context(
+            self.workspace.path if configured else "",
+            self._effective_interpreter() if configured else "", value,
+            [reader.name for reader in self.workspace.readers] if self.workspace else ())
+        collecting = self._collector is not None and self._collector.isRunning()
+        self.reader_selector.setEnabled(configured and not busy and not collecting)
+        self.reader_config_button.setEnabled(self.workspace is not None)
+
+    def _save_primary_reader(self, value):
+        from runner.domain import config_file
+        if self.workspace is None or not self.workspace.config_path:
+            return
+        if self.service.busy or self._stress_worker is not None:
+            return
+        if self._collector is not None and self._collector.isRunning():
+            return
+        # Do not overwrite edits waiting to be saved on the configuration page.
+        if self.yaml_editor is not None and (
+                self.yaml_editor._has_raw_changes() or self.yaml_editor._modifications()):
+            self.reader_selector.setCurrentText(self.reader_selector._value)
+            self.status_label.setText("Save YAML configuration changes before changing the reader.")
+            self._show_page("yaml")
+            return
+        setting = self._primary_reader_setting()
+        key = setting[0] if setting else "Reader"
+        ok, message = config_file.ecrire(Path(self.workspace.config_path), {key: value})
+        if not ok:
+            self.reader_selector.setCurrentText(self.reader_selector._value)
+            ErrorDialog.show_error(self, "Could not save reader", message, "")
+            return
+        self.workspace = Workspace.load(self.workspace.path, self.workspace.config_path)
+        self._refresh_primary_reader()
+        self.load_workspace()
+
     def _on_readers_changed(self) -> None:
         """Le prochain run ne parcourra plus les memes lecteurs : le dire."""
         retenus = self._readers_to_run()
@@ -3302,6 +3372,7 @@ class MainWindow(QMainWindow):
         # deux processus pytest qui se marchent dessus. Stop les couvre tous
         # les deux desormais -- `stop_run()` sait lequel des deux arreter.
         occupe = self.service.busy or self._stress_worker is not None
+        self._refresh_primary_reader(occupe)
         self.run_name_button.setEnabled(not occupe)
         self.run_name_edit.setEnabled(not occupe)
         coches, _ = self.model.counts()
@@ -3365,6 +3436,7 @@ class MainWindow(QMainWindow):
         self._refresh_interpreter_alert()
 
     def closeEvent(self, event) -> None:
+        self.reader_selector.stop_discovery()
         self.results.source.save()
         self.python_editor.wait_for_probe()
         self.settings.setValue(K_GEOMETRY, self.saveGeometry())
