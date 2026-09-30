@@ -213,6 +213,21 @@ def test_selected_run_combines_reader_results(fenetre):
     assert fenetre.issue_preview.item(0, 0).text() == "t2"
 
 
+def test_failed_tab_does_not_show_under_overview(fenetre, qtbot):
+    """Le tableau Failed est une page d'onglet : le rendre visible de force
+    le superposait a Overview."""
+    qtbot.addWidget(fenetre)
+    fenetre.show()
+    fenetre.tabs.setCurrentIndex(0)
+    select_run(fenetre, 0)
+    qtbot.wait(10)
+    assert not fenetre.issues_table.isVisible()
+
+    fenetre.tabs.setCurrentIndex(1)
+    qtbot.wait(10)
+    assert fenetre.issues_table.isVisible()
+
+
 def test_saved_outputs_are_integrated_in_the_output_tab(fenetre):
     select_run(fenetre, 0)
     fenetre.view_output()

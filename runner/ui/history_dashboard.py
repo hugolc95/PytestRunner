@@ -1236,7 +1236,8 @@ class HistoryWindow(QDialog):
             test.setForeground(QColor(t.status_color(Status.FAILED)))
             table.setItem(row, 0, test)
             table.setItem(row, 1, QTableWidgetItem(", ".join(mapping[nodeid])))
-        table.setVisible(bool(nodeids))
+        # Pas de `setVisible()` ici : ce tableau est une page d'onglet, dont Qt
+        # gere lui-meme la visibilite. Le forcer l'affichait sous Overview.
 
     def _fill_readers(self, group: RunGroup) -> None:
         self._execution_group = group
