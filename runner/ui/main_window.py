@@ -2632,6 +2632,8 @@ class MainWindow(QMainWindow):
         self._stress_ran = 0
         self._stress_passed = 0
         self._stress_failed = []
+        self._stress_id = history.nouvel_identifiant()
+        self._stress_aggregate: dict[int, dict] = {}
 
         self._stress_worker = StressRunWorker(
             requete, lecteurs, self.workspace.env, mode, cap, self)
@@ -2641,6 +2643,14 @@ class MainWindow(QMainWindow):
         self._set_status_live(self._stress_detail(mode, nodeid, 0, cap))
         self.model.set_stress_annotation(nodeid, self._stress_compact(mode, 0, cap))
         self.results.detail.show_stress_running(nodeid, mode, cap, 0, 0, 0)
+        # Meme pastille et meme barre que pour un run normal (`_lancer_run`) :
+        # sans ca, elles restent figees sur le run precedent pendant toute la
+        # serie, "1 restant" par exemple, au lieu de suivre les `cap` tentatives.
+        self.progress.setVisible(True)
+        self.progress.setRange(0, cap)
+        self.progress.setValue(0)
+        self.remaining_pill.set_value(cap)
+        self.remaining_pill.setVisible(True)
         self._update_actions()
         self._stress_worker.start()
 
@@ -2671,7 +2681,7 @@ class MainWindow(QMainWindow):
             self.model.apply_outcome(
                 self._stress_nodeid, resultat.status, resultat.reader.index)
 
-        self._archiver_stress(tentative)
+        self._accumuler_stress(tentative)
 
         self._set_status_live(self._stress_detail(
             self._stress_mode, self._stress_nodeid, self._stress_ran, self._stress_cap))
@@ -2681,36 +2691,54 @@ class MainWindow(QMainWindow):
         self.results.detail.show_stress_running(
             self._stress_nodeid, self._stress_mode, self._stress_cap,
             self._stress_ran, self._stress_passed, len(self._stress_failed))
+        self.progress.setValue(self._stress_ran)
+        self.remaining_pill.set_value(max(0, self._stress_cap - self._stress_ran))
 
-    def _archiver_stress(self, tentative: StressAttempt) -> None:
-        """Depose une tentative dans l'historique, un lecteur = une entree --
-        exactement comme un run normal (`_archiver`).
+    def _accumuler_stress(self, tentative: StressAttempt) -> None:
+        """Cumule une tentative par lecteur, sans encore rien ecrire.
 
-        Sans ca, "Run until it fails" et "Run N times" ne laissaient RIEN
-        dans l'onglet History : chaque tentative doit s'y retrouver, avec sa
-        propre sortie et son propre JUnit, pour pouvoir la rejouer ou lire ses
-        logs plus tard comme n'importe quel autre run.
-        """
-        if self.workspace is None:
-            return
-        identifiant = history.nouvel_identifiant()
+        Une serie "Run N times"/"Run until it fails" est UNE operation, pas
+        `cap` runs distincts : ecrire une entree d'historique a chaque
+        tentative (l'ancien comportement) en laissait autant que de
+        tentatives pour une seule action utilisateur. `_archiver_stress`
+        n'ecrit plus qu'une fois la serie terminee, un lecteur = une entree
+        -- meme principe qu'un profil qui agrege ses etapes plutot que d'en
+        laisser une par pas (voir `_archiver`)."""
         for resultat in tentative.reports:
             rapport = resultat.report
+            cumul = self._stress_aggregate.setdefault(resultat.reader.index, {
+                "reader": resultat.reader, "duration": 0.0, "exit_code": 0,
+                "counts": {}, "output": "", "junit_path": "", "failed": False,
+            })
+            cumul["duration"] += rapport.duration
+            cumul["exit_code"] = max(cumul["exit_code"], rapport.exit_code)
+            for statut, n in rapport.counts.items():
+                cumul["counts"][statut] = cumul["counts"].get(statut, 0) + n
+            cumul["output"] += f"\n--- attempt {tentative.number} ---\n" + rapport.output
+            cumul["junit_path"] = rapport.junit_path or cumul["junit_path"]
+            cumul["failed"] = cumul["failed"] or not resultat.ok
+
+    def _archiver_stress(self) -> None:
+        """Depose la serie entiere dans l'historique, un lecteur = une
+        entree -- exactement comme un run normal (`_archiver`)."""
+        if self.workspace is None:
+            return
+        for cumul in self._stress_aggregate.values():
             entree = history.RunEntry(
-                id=identifiant,
+                id=self._stress_id,
                 timestamp=time.time(),
                 workspace=self.workspace.path,
                 build_number=None,
                 log_root=str(self.workspace.log_root),
-                reader=resultat.reader.name,
-                duration=rapport.duration,
-                exit_code=rapport.exit_code,
-                counts={s.name: n for s, n in rapport.counts.items()},
+                reader=cumul["reader"].name,
+                duration=cumul["duration"],
+                exit_code=cumul["exit_code"],
+                counts={s.name: n for s, n in cumul["counts"].items()},
                 nodeids=(self._stress_nodeid,),
-                failed_nodeids=(() if resultat.ok else (self._stress_nodeid,)),
-                junit_path=rapport.junit_path,
+                failed_nodeids=((self._stress_nodeid,) if cumul["failed"] else ()),
+                junit_path=cumul["junit_path"],
             )
-            self.history.add(entree, rapport.output)
+            self.history.add(entree, cumul["output"])
 
     def _sur_fin_stress(self, resume: StressSummary) -> None:
         self._stress_worker = None
@@ -2738,8 +2766,14 @@ class MainWindow(QMainWindow):
         self._set_status_idle(detail)
         self.model.set_stress_annotation(nodeid, compact)
         self.results.detail.show_stress_done(nodeid, resume)
+        self.progress.setVisible(False)
+        self.remaining_pill.setVisible(False)
         self._update_actions()
         if not resume.cancelled:
+            # Meme regle qu'un run normal (`_archiver`) : une serie coupee en
+            # route n'a pas fini de mesurer ce qu'elle mesure, l'archiver la
+            # ferait passer pour une serie complete de `resume.cap` tentatives.
+            self._archiver_stress()
             errors = [f"{result.reader.name or 'Test interpreter'}\n{issue}"
                       for attempt in resume.failed_attempts for result in attempt.reports
                       for issue in result.report.issues]

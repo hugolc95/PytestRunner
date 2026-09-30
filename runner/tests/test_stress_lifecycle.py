@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 
 from runner.domain import execution
 from runner.domain.history import History
-from runner.domain.models import Reader
+from runner.domain.models import Reader, Status
 from runner.domain.stress import MODE_N_TIMES, MODE_UNTIL_FAIL
 from runner.domain.tree import build_tree
 from runner.domain.workspace import Workspace
@@ -180,25 +180,33 @@ def test_n_times_runs_to_completion_and_reports_the_tally(fenetre, monkeypatch, 
     assert len(resume.failed_attempts) == 2
 
 
-def test_each_attempt_lands_in_history(fenetre, monkeypatch, qapp):
-    """Le coeur du reproche : "Run N times" ne laissait RIEN dans l'onglet
-    History. Chaque tentative doit y devenir sa propre entree, retrouvable et
-    rejouable comme n'importe quel autre run."""
+def test_the_whole_series_lands_in_history_as_one_entry(fenetre, monkeypatch, qapp):
+    """Le coeur du reproche d'origine : "Run N times" ne laissait RIEN dans
+    l'onglet History. Une fois corrige une premiere fois, il y laissait une
+    entree PAR TENTATIVE -- 5 lignes pour un seul geste utilisateur. La
+    serie entiere est UNE operation : une seule entree, qui cumule les
+    compteurs de chaque tentative, doit la representer."""
     _popen_scripte(monkeypatch, ["PASSED", "FAILED", "PASSED", "FAILED", "PASSED"])
 
     fenetre._lancer_stress(NODEID, MODE_N_TIMES, cap=5)
     _attendre(fenetre, qapp)
 
     entrees = fenetre.history.entries()
-    assert len(entrees) == 5
-    assert all(e.nodeids == (NODEID,) for e in entrees)
-    assert [e.ok for e in entrees] == [True, False, True, False, True]
+    assert len(entrees) == 1
+    entree = entrees[0]
+    assert entree.nodeids == (NODEID,)
+    assert entree.count(Status.PASSED) == 3
+    assert entree.count(Status.FAILED) == 2
+    assert entree.failed_nodeids == (NODEID,)  # au moins une tentative a rate
+    assert entree.output().count("--- attempt ") == 5
 
 
 def test_a_multi_reader_stress_run_archives_one_entry_per_reader(
         fenetre, monkeypatch, qapp, tmp_path):
-    """Coche sur deux lecteurs, chaque tentative doit tourner -- et
-    s'archiver -- sur CHACUN d'eux, pas seulement le premier."""
+    """Coche sur deux lecteurs, chaque tentative doit tourner sur CHACUN
+    d'eux, pas seulement le premier -- et la serie entiere de chaque
+    lecteur doit rester sa propre entree, comme un run normal multi-lecteur
+    (`_archiver`)."""
     from runner.domain.execution import Collection
 
     (tmp_path / "config.yml").write_text("Reader: A\nReaders:\n  - B\n", encoding="utf-8")
@@ -211,8 +219,9 @@ def test_a_multi_reader_stress_run_archives_one_entry_per_reader(
     _attendre(fenetre, qapp)
 
     entrees = fenetre.history.entries()
-    assert len(entrees) == 6
+    assert len(entrees) == 2
     assert sorted({e.reader for e in entrees}) == ["A", "B"]
+    assert all(e.count(Status.PASSED) == 3 for e in entrees)
 
 
 def test_the_n_times_dialog_feeds_the_chosen_count(fenetre, monkeypatch, qapp):
