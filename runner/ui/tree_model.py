@@ -205,6 +205,8 @@ class TestTreeModel(QAbstractItemModel):
         return self._data_colonne_statut(ligne, index.column() - 1, role)
 
     def _data_colonne_nom(self, ligne: _Row, role):
+        if role == Qt.BackgroundRole:
+            return self._fond_divergent(ligne)
         annotee = (self._stress_annotation is not None
                   and ligne.node.nodeid == self._stress_annotation[0])
         if role == Qt.DisplayRole:
@@ -261,6 +263,8 @@ class TestTreeModel(QAbstractItemModel):
             index, index, [Qt.DisplayRole, Qt.ForegroundRole, Qt.ToolTipRole])
 
     def _data_colonne_statut(self, ligne: _Row, reader_index: int, role):
+        if role == Qt.BackgroundRole:
+            return self._fond_divergent(ligne)
         statut = self.status_for(ligne, reader_index)
         if role == Qt.DecorationRole and statut is not Status.PENDING:
             return icons.status_icon(statut, group=not ligne.is_leaf)
@@ -489,6 +493,7 @@ class TestTreeModel(QAbstractItemModel):
 
         index = self.createIndex(ligne.row, colonne, ligne)
         self.dataChanged.emit(index, index, [Qt.DecorationRole, Qt.ToolTipRole])
+        self._repaint_divergence(ligne)
 
         # Les parents montrent le pire de leurs enfants : leur cellule change
         # aussi, sans qu'aucune donnee ne leur soit propre. Leur agregat est
@@ -634,6 +639,37 @@ class TestTreeModel(QAbstractItemModel):
                 if len(vus) > 1:
                     retenus.append(feuille.node.nodeid)
         return retenus
+
+    def is_divergent(self, ligne: _Row) -> bool:
+        """Les lecteurs ont rendu des verdicts differents pour ce test.
+
+        Seuls les verdicts rendus comptent : un lecteur encore en attente, ou
+        arrete avant d'y arriver, n'est pas en desaccord -- il n'a rien dit.
+        """
+        if not ligne.is_leaf or len(self._readers) < 2:
+            return False
+        rendus = {ligne.statuses.get(r.index, Status.PENDING) for r in self._readers}
+        rendus -= {Status.PENDING, Status.RUNNING}
+        return len(rendus) > 1
+
+    def _fond_divergent(self, ligne: _Row):
+        if not self.is_divergent(ligne):
+            return None
+        couleur = QColor(t.divergent_color())
+        couleur.setAlphaF(0.18)
+        return couleur
+
+    def _repaint_divergence(self, ligne: _Row) -> None:
+        """Toute la ligne change de fond, pas seulement la case du lecteur."""
+        if len(self._readers) < 2:
+            return
+        self.dataChanged.emit(self.createIndex(ligne.row, 0, ligne),
+                              self.createIndex(ligne.row, self.columnCount() - 1, ligne),
+                              [Qt.BackgroundRole])
+
+    def ordered_leaves(self) -> list[_Row]:
+        """Les tests dans l'ordre de l'arbre, de haut en bas."""
+        return [f for racine in self._roots for f in racine.leaves()]
 
     def statuses_for_nodeid(self, nodeid: str) -> dict[int, Status]:
         """Statut de ce test sur chaque lecteur declare.

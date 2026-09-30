@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
 )
@@ -1056,3 +1057,31 @@ def separator() -> QFrame:
     trait.setFrameShape(QFrame.HLine)
     trait.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
     return trait
+
+
+class DivergenceDelegate(QStyledItemDelegate):
+    """Peint le fond des lignes ou les lecteurs divergent.
+
+    La feuille de style pose une regle sur `QTreeView::item` : Qt dessine
+    alors le fond de chaque case lui-meme et ignore le BackgroundRole du
+    modele. Le fond est donc peint ici, avant le rendu normal de la case --
+    survol et selection restent dessines par-dessus. La premiere colonne
+    s'etend jusqu'au bord gauche, indentation comprise, et y porte un liseret.
+    """
+
+    LISERET = 3
+
+    def paint(self, painter, option, index):
+        fond = index.data(Qt.BackgroundRole)
+        if isinstance(fond, QColor):
+            rect = option.rect
+            if index.column() == 0:
+                rect = rect.adjusted(-rect.left(), 0, 0, 0)
+            painter.save()
+            painter.fillRect(rect, fond)
+            if index.column() == 0:
+                trait = QColor(fond)
+                trait.setAlphaF(1.0)
+                painter.fillRect(rect.left(), rect.top(), self.LISERET, rect.height(), trait)
+            painter.restore()
+        super().paint(painter, option, index)

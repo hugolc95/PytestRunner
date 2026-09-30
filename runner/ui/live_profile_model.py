@@ -96,6 +96,7 @@ class LiveProfileModel(TestTreeModel):
         column = columns.index(reader) + 1
         index = self.createIndex(row.row, column, row)
         self.dataChanged.emit(index, index)
+        self._repaint_divergence(row)
         parent = row.parent
         while parent:
             counts = self._group_counts.setdefault((parent, reader), Counter())

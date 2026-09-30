@@ -92,6 +92,7 @@ from runner.ui.widgets import (
     ErrorDialog,
     LiveDot,
     ReaderBar,
+    DivergenceDelegate,
     ReaderHeaderView,
     RemainingPill,
     SearchBar,
@@ -874,7 +875,14 @@ class MainWindow(QMainWindow):
         self.view_failures_button.setObjectName("Primary")
         self.view_failures_button.clicked.connect(self._view_run_failures)
         self.view_failures_button.hide()
+        self.view_failures_button.setToolTip("Go to the next failed test")
         ligne.addWidget(self.view_failures_button)
+        self.view_differences_button = QPushButton("View differences")
+        self.view_differences_button.setToolTip(
+            "Go to the next test where the readers disagree")
+        self.view_differences_button.clicked.connect(self._view_run_differences)
+        self.view_differences_button.hide()
+        ligne.addWidget(self.view_differences_button)
         # Separe visuellement les actions de leur cible materielle, tout en
         # gardant l'ensemble sur une seule rangee compacte.
         from PySide6.QtWidgets import QSpacerItem
@@ -976,6 +984,7 @@ class MainWindow(QMainWindow):
         self.tree = QTreeView()
         self.tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.tree))
         self.tree.setModel(self.model)
+        self.tree.setItemDelegate(DivergenceDelegate(self.tree))
         self.tree.setUniformRowHeights(True)
         self.tree.setAllColumnsShowFocus(True)
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
@@ -1009,6 +1018,7 @@ class MainWindow(QMainWindow):
         self.profile_tree = QTreeView()
         self.profile_tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.profile_tree))
         self.profile_tree.setModel(self.profile_model)
+        self.profile_tree.setItemDelegate(DivergenceDelegate(self.profile_tree))
         self.profile_tree.setUniformRowHeights(True)
         self.profile_tree.setAnimated(False)
         self.profile_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -2189,6 +2199,7 @@ class MainWindow(QMainWindow):
         self._profile_detail_by_reader = {}
         self.profile_progress_label.hide()
         self.view_failures_button.hide()
+        self.view_differences_button.hide()
         self._profile_progress_done = 0 if self._running_execution_profile else None
         self.model.clear_statuses()
         self.model.clear_stress_annotation()
@@ -2290,20 +2301,64 @@ class MainWindow(QMainWindow):
         self.profile_progress_label.show()
 
     def _view_run_failures(self) -> None:
-        if self.tree_view_switch.isVisible():
-            for key, row in self.profile_model._by_nodeid.items():
-                if any(status.is_bad for status in row.statuses.values()):
-                    self._set_profile_tree_visible(True)
-                    index = self.profile_model.index_for_nodeid(key)
-                    self.profile_tree.setCurrentIndex(index)
-                    self.profile_tree.scrollTo(index)
-                    self.profile_results.tabs.setCurrentIndex(ONGLET_DETAIL)
-                    return
-        failed = self.model.failed_nodeids()
-        if failed:
-            self._set_profile_tree_visible(False)
-            self._goto_test(failed[0])
-            self.results.tabs.setCurrentIndex(ONGLET_DETAIL)
+        """Chaque clic va a l'echec suivant, et reboucle apres le dernier."""
+        self._goto_next(lambda model, ligne: any(
+            s.is_bad for s in ligne.statuses.values()))
+
+    def _view_run_differences(self) -> None:
+        """Chaque clic va au test suivant ou les lecteurs divergent."""
+        self._goto_next(lambda model, ligne: model.is_divergent(ligne))
+
+    def _goto_next(self, retenu) -> None:
+        profil = self.left_stack.currentWidget() is self.profile_tree
+        arbres = [(self.profile_tree, self.profile_model, True),
+                  (self.tree, self.model, False)]
+        if not profil:
+            arbres.reverse()
+        for vue, modele, est_profil in arbres:
+            cible = self._suivant(vue, modele, retenu)
+            if cible is None:
+                continue
+            if est_profil != profil:
+                self._set_profile_tree_visible(est_profil)
+            vue.setCurrentIndex(cible)
+            vue.scrollTo(cible)
+            onglets = self.profile_results.tabs if est_profil else self.results.tabs
+            onglets.setCurrentIndex(ONGLET_DETAIL)
+            return
+
+    @staticmethod
+    def _suivant(vue, modele, retenu):
+        """Index du prochain test retenu apres la ligne courante de `vue`."""
+        feuilles = modele.ordered_leaves()
+        rang = {id(f): i for i, f in enumerate(feuilles)}
+
+        def cachee(ligne):
+            index = modele.createIndex(ligne.row, 0, ligne)
+            while index.isValid():
+                if vue.isRowHidden(index.row(), index.parent()):
+                    return True
+                index = index.parent()
+            return False
+
+        candidats = [f for f in feuilles if retenu(modele, f)]
+        visibles = [f for f in candidats if not cachee(f)]
+        candidats = visibles or candidats
+        if not candidats:
+            return None
+        courant = vue.currentIndex().siblingAtColumn(0)
+        depart = -1
+        if courant.isValid():
+            ligne = courant.internalPointer()
+            if id(ligne) in rang:
+                depart = rang[id(ligne)]
+            else:
+                # Un dossier : on part de son premier test, inclus.
+                premiere = next(iter(ligne.leaves()), None)
+                if premiere is not None and id(premiere) in rang:
+                    depart = rang[id(premiere)] - 1
+        suivant = next((f for f in candidats if rang[id(f)] > depart), candidats[0])
+        return modele.createIndex(suivant.row, 0, suivant)
 
     def _show_failure_actions(self, reports) -> None:
         self.profile_model.finish()
@@ -2312,7 +2367,14 @@ class MainWindow(QMainWindow):
             self._profile_selection_timer.start()
         self._rafraichir_compteurs()
         self.view_failures_button.setVisible(any(r.failed for r in reports))
+        self.view_differences_button.setVisible(self._has_differences())
         self.profile_progress_label.hide()
+
+    def _has_differences(self) -> bool:
+        """Dans l'arbre affiche : l'autre peut garder les verdicts d'un ancien run."""
+        profil = self.left_stack.currentWidget() is self.profile_tree
+        modele = self.profile_model if profil else self.model
+        return any(modele.is_divergent(f) for f in modele.ordered_leaves())
 
     def _completed_executions(self) -> int:
         if getattr(self, '_profile_count_statuses', None) is not None:

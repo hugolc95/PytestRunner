@@ -144,6 +144,7 @@ class StructuredRunHeader(QWidget):
         self._move(progress, window.compass_pct)
         progress.addStretch()
         self._move(progress, window.view_failures_button)
+        self._move(progress, window.view_differences_button)
         results.addLayout(progress)
         counters = QHBoxLayout()
         counters.setSpacing(t.SPACE_2)
