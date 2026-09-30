@@ -67,6 +67,26 @@ def _attendre(condition, timeout_ms: int = 60000) -> bool:
 
 # ------------------------------------------------------------------ collecte
 
+def test_execution_keeps_junit_without_allure_arguments(monkeypatch, tmp_path):
+    from runner.domain import execution
+    (tmp_path / "test_plain.py").write_text("def test_ok():\n    assert True\n")
+    commands = []
+    popen = execution.subprocess.Popen
+
+    def capture(command, **kwargs):
+        commands.append(command)
+        return popen(command, **kwargs)
+
+    monkeypatch.setattr(execution.subprocess, "Popen", capture)
+    request = RunRequest(str(tmp_path), sys.executable,
+                         ("test_plain.py::test_ok",), (),
+                         run_id="plain", junit_dir=str(tmp_path / "results"))
+    report = ReaderRun(request, Reader("", 0), {}).run(lambda _: None, lambda _: None)
+    assert report.exit_code == 0
+    assert commands and not any("allure" in arg.lower() for cmd in commands for arg in cmd)
+    assert any(arg.startswith("--junitxml=") for cmd in commands for arg in cmd)
+    assert (tmp_path / "results" / "plain.xml").is_file()
+
 def test_collection_runs_off_the_ui_thread(qapp, suite):
     resultats = []
     worker = CollectWorker(str(suite), Workspace.load(str(suite)).interpreter,

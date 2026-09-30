@@ -121,8 +121,6 @@ def install() -> None:
 
         def finish_lightweight_bookkeeping() -> None:
             self.results.refresh_logs()
-            if self._last_allure_dir:
-                self._lancer_generation_allure(ouvrir_apres=False)
             self._update_actions()
 
         if not entries:

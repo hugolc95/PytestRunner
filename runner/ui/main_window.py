@@ -7,15 +7,9 @@ QThread, la fenetre ne fait qu'ecouter leurs signaux.
 
 from __future__ import annotations
 
-import http.server
 import os
-import shutil
-import socketserver
-import subprocess
-import threading
 import time
 from collections import Counter
-from functools import partial
 from pathlib import Path
 
 from PySide6.QtCore import (
@@ -27,10 +21,9 @@ from PySide6.QtCore import (
     QStandardPaths,
     Qt,
     QTimer,
-    QUrl,
     Slot,
 )
-from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence
+from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -70,7 +63,6 @@ from runner.domain.workspace import (
     Workspace,
     fichiers_config,
 )
-from runner.services.allure_service import AllureReportWorker
 from runner.services.interpreter_service import ProbeWorker
 from runner.services.run_service import CollectWorker, RunService
 from runner.services.stress_service import StressRunWorker
@@ -124,42 +116,6 @@ K_SIDEBAR_COLLAPSED = "window/sidebar_collapsed"
 K_CONFIG = "workspace/config"
 
 
-def _environnement_pour_allure() -> dict:
-    """L'environnement du processus, avec `JAVA_HOME` corrige si besoin.
-
-    Poste Windows frequent : plusieurs JDK installes au fil du temps ont
-    chacun ajoute leur chemin a `JAVA_HOME` au lieu de le remplacer, la
-    laissant contenir une liste `chemin1;chemin2` comme le ferait `PATH`.
-    `allure` veut UN SEUL dossier et refuse de demarrer sinon -- inutile de
-    faire corriger la variable systeme a la main quand un des chemins listes
-    est deja un JDK valide.
-    """
-    env = dict(os.environ)
-    valeur = env.get("JAVA_HOME", "")
-    chemins = [c for c in valeur.split(os.pathsep) if c.strip()]
-    if len(chemins) > 1:
-        valide = next((c for c in chemins if Path(c).is_dir()), None)
-        if valide:
-            env["JAVA_HOME"] = valide
-    return env
-
-
-class _GestionnaireAllure(http.server.SimpleHTTPRequestHandler):
-    """Sert le rapport Allure, sans jamais journaliser sur `sys.stderr`.
-
-    Cette appli est empaquetee `console=False` (PytestRunner.spec) : sous
-    Windows, `sys.stderr` y vaut `None`. Le `log_message()` par defaut de
-    `BaseHTTPRequestHandler` y ecrit -- et il est appele DEPUIS
-    `send_response()`, donc AVANT que les en-tetes ou le corps ne partent.
-    L'exception qui en resulte coupe la reponse a ce moment precis : le
-    navigateur voit une connexion ouverte puis fermee sans un seul octet
-    (ERR_EMPTY_RESPONSE), pas une erreur pytest ni allure.
-    """
-
-    def log_message(self, format, *args):
-        pass
-
-
 class MainWindow(QMainWindow):
     """Fenetre unique de l'application."""
 
@@ -178,24 +134,7 @@ class MainWindow(QMainWindow):
         self._build_number: int | None = None
         self._collector: CollectWorker | None = None
         self._pending_execution_profile: ExecutionProfile | None = None
-        self._allure_prober: ProbeWorker | None = None
-        # Dossier des resultats allure-pytest du dernier run demarre, ou ""
-        # si son interpreteur ne connait pas le plugin. Le bouton Allure lit
-        # cette valeur, il ne la calcule jamais lui-meme.
-        self._last_allure_dir = ""
-        # Le generateur en cours (auto-regeneration en fin de run, ou clic
-        # manuel) et si ce dernier clic attend l'ouverture du navigateur une
-        # fois la generation en cours terminee -- voir `_lancer_generation_allure`.
-        self._allure_worker: AllureReportWorker | None = None
-        self._allure_open_en_attente = False
-        # Petit serveur HTTP local qui sert le rapport genere : ouvrir son
-        # index.html directement en file:// bloque tous ses appels AJAX
-        # (CORS du navigateur), et il ne reste alors qu'un ecran "Loading…"
-        # partout. Demarre une fois, reutilise a chaque clic suivant --
-        # regenerer le rapport dans le meme dossier suffit, pas besoin de le
-        # relancer.
-        self._allure_server: socketserver.TCPServer | None = None
-        self._allure_server_thread: threading.Thread | None = None
+        self._interpreter_prober: ProbeWorker | None = None
         self._matches: list[str] = []
         self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
         self._match_index = -1
@@ -1536,140 +1475,6 @@ class MainWindow(QMainWindow):
         """Affiche les runs passes dans la page integree de la fenetre."""
         self._show_page("history")
 
-    @Slot()
-    def open_allure_report(self) -> None:
-        """Ouvre le rapport Allure du dernier run demarre.
-
-        Se regenere aussi tout seul apres chaque run (`_on_run_finished`) :
-        ce clic n'a donc le plus souvent qu'a ouvrir un rapport deja a jour,
-        sans repayer une generation. S'il n'est pas encore pret -- premier
-        clic, generation encore en cours -- il attend juste qu'elle finisse.
-        """
-        if not self._last_allure_dir:
-            ErrorDialog.show_error(
-                self, "No Allure results",
-                "No Allure results are available for the last run.",
-                "Make sure allure-pytest is installed in the test "
-                'interpreter ("pip install allure-pytest"), then run the '
-                "tests again.")
-            return
-        self._lancer_generation_allure(ouvrir_apres=True)
-
-    def _lancer_generation_allure(self, ouvrir_apres: bool) -> None:
-        """Genere le rapport Allure hors du fil de l'interface.
-
-        Un seul rapport, partage par tous les lecteurs d'un run : ce qui les
-        distingue A L'INTERIEUR n'est pas le dossier -- c'est le parametre
-        "Reader" que le plugin de `reader_isolation.py` pose sur chaque test,
-        directement dans le processus pytest.
-        """
-        dossier_resultats = Path(self._last_allure_dir) if self._last_allure_dir else None
-        if (dossier_resultats is None or not dossier_resultats.is_dir()
-                or not any(dossier_resultats.iterdir())):
-            if ouvrir_apres:
-                ErrorDialog.show_error(
-                    self, "No Allure results",
-                    "No Allure results are available for the last run.",
-                    "Make sure allure-pytest is installed in the test "
-                    'interpreter ("pip install allure-pytest"), then run the '
-                    "tests again.")
-            return
-
-
-        if self._allure_worker is not None and self._allure_worker.isRunning():
-            # Deja en cours -- le plus souvent l'auto-regeneration lancee a
-            # la fin du run. Pas de deuxieme `allure generate` concurrent sur
-            # le meme dossier : juste ouvrir des que celle-la finit.
-            self._allure_open_en_attente = self._allure_open_en_attente or ouvrir_apres
-            return
-
-        allure_bin = shutil.which("allure")
-        if not allure_bin:
-            if ouvrir_apres:
-                ErrorDialog.show_error(
-                    self, "Allure command-line tool not found",
-                    "The \"allure\" command was not found on the PATH.",
-                    "Install the Allure commandline (requires a JRE) from "
-                    "https://allurereport.org/docs/install/ and make sure "
-                    '"allure" is on the PATH.')
-            return
-
-        self._restaurer_historique_allure(dossier_resultats)
-        rapport = self.history.racine / "allure-report" / "latest"
-        self._allure_open_en_attente = ouvrir_apres
-        self._allure_worker = AllureReportWorker(
-            allure_bin, dossier_resultats, rapport, _environnement_pour_allure(), self)
-        self._allure_worker.done.connect(
-            lambda ok, detail, rapport=rapport: self._sur_allure_genere(ok, detail, rapport))
-        self._allure_worker.start()
-
-    @Slot(bool, str)
-    def _sur_allure_genere(self, ok: bool, detail: str, rapport: Path) -> None:
-        ouvrir = self._allure_open_en_attente
-        self._allure_open_en_attente = False
-        self._allure_worker = None
-
-        if not ok:
-            if ouvrir:
-                ErrorDialog.show_error(
-                    self, "Could not generate the Allure report",
-                    "The \"allure generate\" command failed.", detail)
-            return
-
-        self._sauver_historique_allure(rapport)
-        if ouvrir:
-            port = self._ensure_allure_server(rapport)
-            QDesktopServices.openUrl(QUrl(f"http://127.0.0.1:{port}/index.html"))
-
-    def _allure_history_stash(self) -> Path:
-        return self.history.racine / "allure-history"
-
-    def _restaurer_historique_allure(self, dossier_resultats: Path) -> None:
-        """Recopie l'historique du dernier rapport genere dans les resultats
-        bruts, pour qu'Allure y ajoute un point de plus au lieu de repartir
-        d'une tendance vide a chaque generation."""
-        stash = self._allure_history_stash()
-        if not stash.is_dir():
-            return
-        cible = dossier_resultats / "history"
-        if cible.exists():
-            shutil.rmtree(cible)
-        shutil.copytree(stash, cible)
-
-    def _sauver_historique_allure(self, rapport: Path) -> None:
-        """Range l'historique du rapport qui vient d'etre genere, pour la
-        prochaine generation."""
-        genere = rapport / "history"
-        if not genere.is_dir():
-            return
-        stash = self._allure_history_stash()
-        if stash.exists():
-            shutil.rmtree(stash)
-        stash.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copytree(genere, stash)
-
-    def _ensure_allure_server(self, dossier: Path) -> int:
-        """Sert `dossier` en HTTP local, et rend le port choisi.
-
-        Le rapport Allure est une page qui charge ses donnees par requetes
-        AJAX -- ouvrir `index.html` directement en `file://` fait bloquer ces
-        requetes par le navigateur (CORS), et le rapport reste bloque sur
-        "Loading…" partout, chaque autre onglet en 404. `allure serve` existe
-        pour ca, mais bloque le terminal jusqu'a Ctrl+C : impossible a piloter
-        depuis une appli sans console. Un petit serveur HTTP maison, garde en
-        vie pour la session, evite les deux problemes.
-        """
-        if self._allure_server is not None:
-            return self._allure_server.server_address[1]
-
-        gestionnaire = partial(_GestionnaireAllure, directory=str(dossier))
-        serveur = socketserver.ThreadingTCPServer(("127.0.0.1", 0), gestionnaire)
-        fil = threading.Thread(target=serveur.serve_forever, daemon=True)
-        fil.start()
-
-        self._allure_server = serveur
-        self._allure_server_thread = fil
-        return serveur.server_address[1]
 
     @Slot(object)
     def _rerun_history(self, group) -> None:
@@ -1903,9 +1708,9 @@ class MainWindow(QMainWindow):
         # longtemps que ce sondage, le cache est pret bien avant le premier
         # "Run tests".
         if interpreter_mod.cached_probe(python) is None:
-            self._allure_prober = ProbeWorker(python, self)
-            self._allure_prober.done.connect(self._on_interpreter_probed)
-            self._allure_prober.start()
+            self._interpreter_prober = ProbeWorker(python, self)
+            self._interpreter_prober.done.connect(self._on_interpreter_probed)
+            self._interpreter_prober.start()
         else:
             self._on_interpreter_probed(interpreter_mod.cached_probe(python))
 
@@ -2204,9 +2009,6 @@ class MainWindow(QMainWindow):
         readers = self._readers_to_run()
         self._run_id = history.nouvel_identifiant()
         self._build_number = self.history.next_build_number()
-        self._last_allure_dir = (
-            self._allure_dir_for(python, self._run_id)
-            if profile.reports.generate_allure else "")
         request = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,
@@ -2217,7 +2019,6 @@ class MainWindow(QMainWindow):
             run_id=self._run_id,
             junit_dir=str(self.history.racine),
             build_number=self._build_number,
-            allure_dir=self._last_allure_dir,
         )
         self.service.start_profile(
             request, self.workspace.env, profile.sequence,
@@ -2255,7 +2056,6 @@ class MainWindow(QMainWindow):
         lecteurs = self._readers_to_run()
         self._run_id = history.nouvel_identifiant()
         self._build_number = self.history.next_build_number()
-        self._last_allure_dir = self._allure_dir_for(python, self._run_id)
         requete = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,
@@ -2266,25 +2066,9 @@ class MainWindow(QMainWindow):
             run_id=self._run_id,
             junit_dir=str(self.history.racine),
             build_number=self._build_number,
-            allure_dir=self._last_allure_dir,
         )
         self.service.start(requete, self.workspace.env)
 
-    def _allure_dir_for(self, python: str, run_id: str) -> str:
-        """Ou ecrire les resultats allure-pytest de ce run, ou "" si son
-        interpreteur ne connait pas le plugin.
-
-        `cached_probe` ne lance rien : le vrai sondage (couteux, un sous-
-        processus) a deja eu lieu en fond pendant `load_workspace`. Un run
-        demarre avant que ce sondage finisse se passe simplement d'Allure --
-        pas d'attente ici, jamais.
-        """
-        info = interpreter_mod.cached_probe(python)
-        if info is None or not info.has_allure:
-            return ""
-        dossier = self.history.racine / "allure-results" / run_id
-        dossier.mkdir(parents=True, exist_ok=True)
-        return str(dossier)
 
     def _readers_to_run(self) -> tuple:
         """Les lecteurs coches, dans l'ordre des colonnes.
@@ -2545,10 +2329,6 @@ class MainWindow(QMainWindow):
         self.elapsed_label.clear()
         self.results.refresh_logs()
         self._update_actions()
-        if self._last_allure_dir:
-            # Auto-regeneration : l'utilisateur n'a jamais besoin de cliquer
-            # sur le bouton Allure juste pour rafraichir le HTML apres un run.
-            self._lancer_generation_allure(ouvrir_apres=False)
         if not annule:
             self._notifier_fin_de_run(resume)
         if global_errors:
@@ -3457,9 +3237,6 @@ class MainWindow(QMainWindow):
         if self.service.busy:
             self.service.cancel()
             self.service.wait(3000)
-        if self._allure_server is not None:
-            self._allure_server.shutdown()
-            self._allure_server.server_close()
         if self._stress_worker is not None:
             self._stress_worker.cancel()
             self._stress_worker.wait(3000)

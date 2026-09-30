@@ -5,7 +5,7 @@ from pathlib import Path
 
 from runner.domain.execution_profile import (
     ExecutionOptions, ExecutionProfile, ProfileValidationError, ReportOptions,
-    validate_profile,
+    validate_profile, report_options_from_dict,
 )
 
 
@@ -25,8 +25,7 @@ def capture_profile(request, profile=None, name="") -> dict | None:
         sequence=list(profile.sequence if profile else request.nodeids),
         configuration_name=config_name, configuration_text=config_text,
         execution=profile.execution if profile else ExecutionOptions(),
-        reports=profile.reports if profile else ReportOptions(
-            generate_allure=bool(request.allure_dir)),
+        reports=profile.reports if profile else ReportOptions(),
     )
     return asdict(captured)
 
@@ -40,7 +39,7 @@ def profile_from_entry(entry, name="", configuration_path=None) -> ExecutionProf
                 configuration_name=saved["configuration_name"],
                 configuration_text=saved["configuration_text"],
                 execution=ExecutionOptions(**saved["execution"]),
-                reports=ReportOptions(**saved["reports"]),
+                reports=report_options_from_dict(saved["reports"]),
             )
         else:
             sequence = ([nodeid for nodeid, _ in entry.executions]

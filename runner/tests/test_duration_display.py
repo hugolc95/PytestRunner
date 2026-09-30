@@ -1,7 +1,7 @@
 """Duree affichee dans le panneau Detail : par test, et agregee par groupe.
 
 La mesure elle-meme est testee dans test_durations.py (parsing) et
-test_stress_service.py / test_allure_report.py (le flag sur la commande
+test_stress_service.py / test_run_service.py (le flag sur la commande
 reelle) -- ici on verifie seulement que le panneau l'affiche correctement
 une fois qu'elle lui est passee.
 """

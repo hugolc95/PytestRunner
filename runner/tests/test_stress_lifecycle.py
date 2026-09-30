@@ -2,7 +2,7 @@
 demarrage, badge sur l'arbre, barre de statut, panneau Detail, et retour a la
 normale une fois fini.
 
-`subprocess.Popen` est remplace, comme dans test_allure_report.py et
+`subprocess.Popen` est remplace, comme dans test_run_service.py et
 test_stress_service.py : aucun vrai pytest ne tourne, seule l'orchestration
 est testee.
 """

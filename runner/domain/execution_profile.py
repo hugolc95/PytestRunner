@@ -44,8 +44,16 @@ class ExecutionOptions:
 
 @dataclass
 class ReportOptions:
-    generate_allure: bool = True
     save_complete_logs: bool = True
+
+
+def report_options_from_dict(settings: dict) -> ReportOptions:
+    """Read current settings and discard the retired flag in older saved profiles."""
+    if not isinstance(settings, dict) or set(settings) not in (
+            {"save_complete_logs"}, {"save_complete_logs", "generate_allure"}):
+        raise ProfileValidationError("The report settings are invalid.")
+    return ReportOptions(save_complete_logs=_boolean(
+        settings["save_complete_logs"], "Save complete logs"))
 
 
 @dataclass
@@ -179,7 +187,6 @@ def validate_profile(profile: ExecutionProfile) -> None:
     _integer(profile.execution.repetitions, "Repetitions", 1, MAX_REPETITIONS)
     _integer(profile.execution.rerun_failures, "Re-run failures", 0, MAX_RERUN_FAILURES)
     _boolean(profile.execution.stop_after_failure, "Stop after failure")
-    _boolean(profile.reports.generate_allure, "Generate Allure")
     _boolean(profile.reports.save_complete_logs, "Save complete logs")
     if profile.total_executions > MAX_TOTAL_EXECUTIONS:
         raise ProfileValidationError(
@@ -269,8 +276,7 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
         raise ProfileValidationError("The configuration metadata is invalid.")
     if set(execution) != {"repetitions", "rerun_failures", "stop_after_failure"}:
         raise ProfileValidationError("The execution settings are invalid.")
-    if set(reports) != {"generate_allure", "save_complete_logs"}:
-        raise ProfileValidationError("The report settings are invalid.")
+    report_options = report_options_from_dict(reports)
     nodeids: list[str] = []
     step_ids: set[str] = set()
     for step in steps:
@@ -298,10 +304,7 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
             rerun_failures=_integer(execution.get("rerun_failures"), "Re-run failures", 0, MAX_RERUN_FAILURES),
             stop_after_failure=_boolean(execution.get("stop_after_failure"), "Stop after failure"),
         ),
-        reports=ReportOptions(
-            generate_allure=_boolean(reports.get("generate_allure"), "Generate Allure"),
-            save_complete_logs=_boolean(reports.get("save_complete_logs"), "Save complete logs"),
-        ),
+        reports=report_options,
         source="imported",
     )
     validate_profile(profile)
