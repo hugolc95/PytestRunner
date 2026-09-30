@@ -6,7 +6,6 @@ from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QComboBox, QLineEdit, QStyle
 
 from runner.domain import reader_discovery
-from runner.domain.card_presence import CardPresence
 from runner.domain.models import Status
 from runner.ui import icons
 from runner.ui import tokens as t
@@ -126,21 +125,18 @@ class ReaderSelector(QComboBox):
 class ReaderAtrField(QLineEdit):
     """ATR de la carte presente dans le lecteur principal, sous son selecteur.
 
-    Lu par PROBE_ATR dans l'interpreteur des tests, comme la liste des
-    lecteurs : jamais dans le processus de l'interface, qui n'a pas forcement
-    la meme architecture que les DLL du lecteur -- et qui ne l'attend donc
-    jamais non plus.
-
-    Relu seulement quand l'etat de la carte change : toutes les
-    `INTERVALLE_MS`, on demande a Windows (`CardPresence`, PC/SC) si une carte
-    est la, sans ouvrir le lecteur ni toucher a la carte, et l'ATR n'est relu
-    que si elle est arrivee, partie ou a ete changee. Le bouton de la fin du
-    champ relit a la demande. Jamais de lecture pendant un run, ni pour un
-    champ qu'on ne voit pas.
+    Suivi par PROBE_MONITOR, un processus unique qui tourne dans
+    l'interpreteur des tests -- PyHubReader n'est utilisable que la, et
+    l'interface ne l'attend jamais. Il demande `IsCardPresent()` toutes les
+    `INTERVALLE_S` secondes et ne lit l'ATR qu'a l'arrivee d'une carte ; un
+    retrait s'affiche sans rien lire. Le bouton de la fin du champ relance la
+    surveillance, donc une lecture. Aucun appel au lecteur pendant un run : le
+    processus est arrete, puis relance a la fin.
     """
 
     NO_CARD = "No card in reader"
-    INTERVALLE_MS = 1000
+    INTERVALLE_S = 2.0
+    DEMARRAGE_MS = 10000
     # Pastille d'etat devant le texte : verte avec une carte, rouge sans.
     # `PADDING` reprend le retrait du texte de la liste au-dessus (feuille de
     # style), pour que pastille et nom du lecteur partent du meme bord.
@@ -159,143 +155,145 @@ class ReaderAtrField(QLineEdit):
             icons.icon("mdi.refresh", t.TEXT_MUTED), QLineEdit.TrailingPosition)
         self._refresh_action.setToolTip("Read the card again")
         self._refresh_action.triggered.connect(lambda: self.refresh())
-        # Remplacable dans les tests ; rend None quand on ne peut pas savoir.
-        self._presence = CardPresence()
-        self.presence = self._presence.check
-        self._signature = None
         self._context = None
         self._busy = False
-        self._stale = False
+        # Relance en attente de la fin d'un processus qu'on vient de tuer :
+        # None, ou le `quiet` de la relance.
+        self._pending = None
+        self._buffer = b""
+        self._got_event = False
+        self._expired = True
+        self.state = ""
         self._process = QProcess(self)
+        self._process.readyReadStandardOutput.connect(self._read_events)
         self._process.finished.connect(self._finished)
         self._process.errorOccurred.connect(self._error)
-        self._timeout = QTimer(self)
-        self._timeout.setSingleShot(True)
-        self._timeout.timeout.connect(self._timed_out)
-        self._expired = False
-        self.state = ""
-        self._ticker = QTimer(self)
-        self._ticker.setInterval(self.INTERVALLE_MS)
-        self._ticker.timeout.connect(self._tick)
-        self._ticker.start()
+        self._startup = QTimer(self)
+        self._startup.setSingleShot(True)
+        self._startup.timeout.connect(self._timed_out)
 
     def restyle(self):
         # Appele par le balayage de `MainWindow._restyle()` a chaque bascule.
         self._refresh_action.setIcon(icons.icon("mdi.refresh", t.TEXT_MUTED))
 
     def release(self):
+        self._pending = None
         self.stop()
-        self._presence.close()
-
-    def _check_presence(self):
-        try:
-            return self.presence(self._context[2]) if self._context else None
-        except Exception:
-            return None
 
     def set_context(self, workspace, interpreter, reader, busy=False):
         context = (workspace, interpreter, (reader or "").strip())
         was_busy, self._busy = self._busy, busy
         if busy:
+            self._pending = None
             self.stop()
-            self._stale = True
             return
         if context != self._context:
-            # Une lecture encore en vol concerne l'ancien lecteur : son
-            # resultat ne doit pas s'afficher pour le nouveau.
-            self.stop()
             self._context = context
-            self._signature = self._check_presence()
             self.refresh()
-        elif was_busy or self._stale:
+        elif was_busy:
             # Meme lecteur qu'avant le run : son ATR reste affiche jusqu'au
-            # nouveau resultat, sans passer par "Reading card...".
-            self._signature = self._check_presence()
+            # nouveau resultat, sans passer par "Reading card...". La carte a
+            # pu changer pendant le run : la surveillance repart d'une lecture.
             self.refresh(quiet=True)
 
-    def _tick(self):
-        """Surveille la presence de la carte ; ne relit l'ATR que si elle a
-        change. Jamais pendant un run, jamais pour un champ qu'on ne voit pas."""
-        if self._busy or not self._context or not self._context[2]:
-            return
-        if not self.isVisible() or self.window().isMinimized():
-            return
-        signature = self._check_presence()
-        if signature is None or signature == self._signature:
-            return
-        self._signature = signature
-        # PyHubReader absent : relire ne donnerait rien de plus. Le bouton,
-        # un changement de lecteur ou la fin d'un run retentent quand meme.
-        if self.state == reader_discovery.ATR_UNAVAILABLE:
-            return
-        self.refresh(quiet=True)
-
     def refresh(self, quiet=False):
-        self._stale = False
+        """(Re)lance la surveillance ; sa premiere mesure lit la carte."""
         if not self._context or self._busy:
             return
         workspace, interpreter, reader = self._context
         if not reader:
+            self.stop()
             self._show("", "", "No reader selected.")
             return
         if not workspace or not interpreter:
             return
-        # Une relecture automatique garde ce qui est affiche jusqu'au nouveau
-        # resultat : "Reading card..." toutes les 3 secondes, ce serait un
-        # clignotement, pas une information.
         if not quiet or not self.state:
             self._show("reading", "Reading card…", f"Reading the card in {reader}…")
+        self.stop()
         if self._process.state() != QProcess.NotRunning:
-            # Une lecture tuee n'est pas encore tout a fait terminee : on
-            # relance des qu'elle l'est (`_finished`).
-            self._stale = True
+            # Tue, mais pas encore tout a fait termine : on relance des qu'il
+            # l'est (`_finished`).
+            self._pending = quiet
             return
+        self._start()
+
+    def _start(self):
+        workspace, interpreter, reader = self._context
         env = QProcessEnvironment()
         for key, value in reader_discovery.discovery_environment().items():
             env.insert(key, value)
         self._process.setProcessEnvironment(env)
         self._process.setWorkingDirectory(workspace)
         self._expired = False
-        self._process.start(interpreter, ["-u", "-c", reader_discovery.PROBE_ATR, reader])
-        self._timeout.start(10000)
+        self._buffer = b""
+        self._got_event = False
+        self._process.start(interpreter, ["-u", "-c", reader_discovery.PROBE_MONITOR,
+                                          reader, str(self.INTERVALLE_S)])
+        self._startup.start(self.DEMARRAGE_MS)
 
     def stop(self):
-        # Tuee net, sans l'attendre : attendre figerait l'interface au moment
-        # precis ou un run demarre. Son resultat tardif est ignore (`_expired`).
-        self._timeout.stop()
+        # Tue net, sans l'attendre : attendre figerait l'interface au moment
+        # precis ou un run demarre. Sa sortie tardive est ignoree (`_expired`).
+        self._startup.stop()
         self._expired = True
         if self._process.state() != QProcess.NotRunning:
             self._process.kill()
 
-    def _finished(self, *_):
-        self._timeout.stop()
-        output = bytes(self._process.readAllStandardOutput()).decode("utf-8", "replace")
-        errors = bytes(self._process.readAllStandardError()).decode("utf-8", "replace")
+    def _read_events(self):
+        data = bytes(self._process.readAllStandardOutput())
         if self._expired:
-            if self._stale and not self._busy:
-                QTimer.singleShot(0, self.refresh)
             return
-        state, atr, detail = reader_discovery.parse_atr_output(output, errors)
-        if self._stale and not self._busy:
-            # L'etat de la carte a encore change pendant cette lecture.
-            QTimer.singleShot(0, lambda: self.refresh(quiet=True))
+        self._buffer += data
+        *lignes, self._buffer = self._buffer.split(b"\n")
+        for ligne in lignes:
+            self._apply_line(ligne)
+
+    def _apply_line(self, ligne: bytes):
+        event = reader_discovery.parse_atr_line(ligne.decode("utf-8", "replace").strip())
+        if event is None:
+            return
+        state, atr, detail, note = event
+        self._got_event = True
+        self._startup.stop()
+        reader = self._context[2] if self._context else ""
         if state == reader_discovery.ATR_OK:
-            self._show(state, atr, f"ATR of the card in {self._context[2]}:\n{atr}")
+            text, tooltip = atr, f"ATR of the card in {reader}:\n{atr}"
         elif state == reader_discovery.ATR_NO_CARD:
-            self._show(state, self.NO_CARD, detail or "No card could be read in this reader.")
+            text, tooltip = self.NO_CARD, detail or "No card could be read in this reader."
         else:
-            self._show(state, "ATR unavailable", detail)
+            text, tooltip = "ATR unavailable", detail
+        self._show(state, text, f"{tooltip}\n\n{note}" if note else tooltip)
+
+    def _finished(self, *_):
+        self._startup.stop()
+        reste = bytes(self._process.readAllStandardOutput())
+        errors = bytes(self._process.readAllStandardError()).decode("utf-8", "replace")
+        if not self._expired:
+            # Arret de lui-meme : PyHubReader indisponible, IsCardPresent en
+            # echec, ou plantage. Pas de relance automatique -- le bouton reste.
+            for ligne in (self._buffer + reste).split(b"\n"):
+                self._apply_line(ligne)
+            self._buffer = b""
+            self._expired = True
+            if not self._got_event:
+                detail = (errors.strip().splitlines()[-1] if errors.strip()
+                          else "No valid response from HubReader.")
+                self._show(reader_discovery.ATR_UNAVAILABLE, "ATR unavailable", detail)
+        pending, self._pending = self._pending, None
+        if pending is not None and not self._busy:
+            QTimer.singleShot(0, lambda: self.refresh(quiet=pending))
 
     def _error(self, error):
         if error == QProcess.FailedToStart:
-            self._timeout.stop()
+            self._startup.stop()
+            self._expired = True
             self._show(reader_discovery.ATR_UNAVAILABLE, "ATR unavailable",
                        "Could not start the test Python interpreter.")
 
     def _timed_out(self):
-        self._expired = True
-        self._process.kill()
-        self._show(reader_discovery.ATR_UNAVAILABLE, "ATR unavailable", "Reading the ATR timed out.")
+        self.stop()
+        self._show(reader_discovery.ATR_UNAVAILABLE, "ATR unavailable",
+                   "Reading the ATR timed out.")
 
     def _show(self, state, text, tooltip):
         # La relecture automatique rend le plus souvent la meme chose : ne rien
