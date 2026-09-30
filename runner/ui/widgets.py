@@ -817,8 +817,19 @@ class ReaderBar(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._toggles: list[ReaderToggle] = []
+        self._integrated = False
+        from PySide6.QtWidgets import QMenu
+        self._overflow_menu = QMenu(self)
+        self._more = QPushButton(self)
+        self._more.setObjectName("Ghost")
+        self._more.setMenu(self._overflow_menu)
+        self._more.hide()
 
-        self._ligne = QHBoxLayout(self)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(2)
+        self._ligne = QHBoxLayout()
+        root.addLayout(self._ligne)
         self._ligne.setContentsMargins(0, 0, 0, 0)
         self._ligne.setSpacing(t.SPACE_2)
 
@@ -829,9 +840,37 @@ class ReaderBar(QWidget):
         self._mode = QLabel("")
         self._mode.setObjectName("Faint")
 
+        self._ligne.addWidget(self._more)
         self._ligne.addStretch(1)
-        self._ligne.addWidget(self._mode)
+        root.addWidget(self._mode)
         self.setVisible(False)
+
+    def set_integrated(self) -> None:
+        """Keep three direct toggles; expose additional readers in a menu."""
+        self._integrated = True
+        self._label.hide()
+        self._refresh_overflow()
+
+    def _refresh_overflow(self) -> None:
+        self._overflow_menu.clear()
+        overflow = self._toggles[3:] if self._integrated else []
+        for position, toggle in enumerate(self._toggles):
+            toggle.setVisible(not self._integrated or position < 3)
+        for toggle in overflow:
+            action = self._overflow_menu.addAction(toggle.toolTip())
+            action.setCheckable(True)
+            action.setChecked(toggle.isChecked())
+            action.toggled.connect(toggle.setChecked)
+        self._more.setVisible(bool(overflow))
+        self._update_overflow()
+
+    def _update_overflow(self) -> None:
+        overflow = self._toggles[3:] if self._integrated else []
+        for action, toggle in zip(self._overflow_menu.actions(), overflow):
+            action.setChecked(toggle.isChecked())
+        selected = sum(toggle.isChecked() for toggle in overflow)
+        self._more.setText(f"+{len(overflow)} more ({selected})")
+        self._more.setToolTip("Select additional readers for the next run")
 
     def set_readers(self, readers, sequential: bool = False) -> None:
         for bouton in self._toggles:
@@ -842,9 +881,12 @@ class ReaderBar(QWidget):
         for position, lecteur in enumerate(readers):
             bouton = ReaderToggle(lecteur)
             bouton.toggled.connect(self.changed)
+            bouton.toggled.connect(self._update_overflow)
             # Apres le libelle, avant l'espace elastique.
             self._ligne.insertWidget(1 + position, bouton)
             self._toggles.append(bouton)
+
+        self._refresh_overflow()
 
         # Le mode vient du workspace et ne se change pas d'ici : c'est une
         # contrainte du materiel ou du code de test, pas une preference. Il est

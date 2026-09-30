@@ -213,7 +213,7 @@ class MainWindow(QMainWindow):
         colonne.setContentsMargins(t.SPACE_3, t.SPACE_3, t.SPACE_3, t.SPACE_2)
         colonne.setSpacing(t.SPACE_3)
 
-        colonne.addWidget(self._build_command_bar())
+        command_bar = self._build_command_bar()
 
         self.interpreter_alert = QFrame()
         self.interpreter_alert.setObjectName("InterpreterAlert")
@@ -235,7 +235,10 @@ class MainWindow(QMainWindow):
         # lui seul au-dessus de l'arbre.
         self.readers_bar = ReaderBar()
         self.readers_bar.changed.connect(self._on_readers_changed)
-        colonne.addWidget(self._build_run_bar())
+        run_bar = self._build_run_bar()
+        from runner.ui.run_header import StructuredRunHeader
+        self.run_header = StructuredRunHeader(self, command_bar, run_bar)
+        colonne.insertWidget(0, self.run_header)
 
         self.split = QSplitter(Qt.Horizontal)
         self.split.setChildrenCollapsible(False)
