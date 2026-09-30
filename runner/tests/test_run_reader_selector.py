@@ -1,4 +1,5 @@
 import sys
+import pytest
 
 from PySide6.QtCore import QSettings
 
@@ -43,6 +44,36 @@ def test_primary_reader_save_preserves_other_settings_and_opens_config(qtbot, tm
     window.reader_config_button.click()
     assert window.pages.currentWidget() is window.yaml_page
     assert next(f for f in window.yaml_editor._champs if f.chemin == ("hardware", "Reader")).valeur() == "New"
+    window.close()
+
+
+@pytest.mark.parametrize("yaml, visible", [
+    ("Component: PQC\n", False),
+    ("Readers: [Extra]\n", False),
+    ("Reader:\n", True),
+    ("hardware:\n  reader: Device A\n", True),
+])
+def test_reader_controls_require_an_existing_primary_field(qtbot, tmp_path, monkeypatch, yaml, visible):
+    QSettings(ORG, APP).clear()
+    path = tmp_path / "config.yml"
+    path.write_text(yaml, encoding="utf-8")
+    window = MainWindow()
+    qtbot.addWidget(window)
+    monkeypatch.setattr(window, "_effective_interpreter", lambda: "")
+    window.workspace = Workspace.load(str(tmp_path))
+    window._refresh_primary_reader()
+    assert window.reader_controls.isHidden() is not visible
+    assert window.reader_selector.isEnabled() is visible
+    if not visible:
+        window._save_primary_reader("Must not create a Reader field")
+        assert path.read_text() == yaml
+        assert window.reader_selector._context[0] == ""
+
+    # Removing the field also hides the complete group when configuration reloads.
+    path.write_text("Component: PQC\n", encoding="utf-8")
+    window.workspace = Workspace.load(str(tmp_path))
+    window._refresh_primary_reader()
+    assert window.reader_controls.isHidden()
     window.close()
 
 

@@ -795,11 +795,16 @@ class MainWindow(QMainWindow):
                         self.history_button):
             workspace_controls.addWidget(control)
         workspace_controls.addStretch(1)
+        self.reader_controls = QWidget()
+        reader_layout = QHBoxLayout(self.reader_controls)
+        # Keep a real gap even when the expanding spacer has no room left.
+        reader_layout.setContentsMargins(t.SPACE_6, 0, 0, 0)
+        reader_layout.setSpacing(t.SPACE_2)
         from runner.ui.reader_selector import ReaderSelector
         self.reader_selector = ReaderSelector()
         self.reader_selector.committed.connect(self._save_primary_reader)
-        workspace_controls.addWidget(QLabel("Reader"))
-        workspace_controls.addWidget(self.reader_selector)
+        reader_layout.addWidget(QLabel("Reader"))
+        reader_layout.addWidget(self.reader_selector)
         self.reader_config_button = QPushButton()
         self.reader_config_button.setObjectName("NavigationUtilityIcon")
         self.reader_config_button.setFixedSize(t.CONTROL_SM, t.CONTROL_SM)
@@ -807,7 +812,9 @@ class MainWindow(QMainWindow):
         self.reader_config_button.setToolTip("Open YAML configuration")
         self.reader_config_button.setAccessibleName("Open YAML configuration")
         self.reader_config_button.clicked.connect(lambda: self._show_page("yaml"))
-        workspace_controls.addWidget(self.reader_config_button)
+        reader_layout.addWidget(self.reader_config_button)
+        workspace_controls.addWidget(self.reader_controls)
+        self.reader_controls.hide()
         workspace_controls.addStretch(1)
         workspace_box.addLayout(workspace_controls)
         self._pending_run_name = ""
@@ -2992,7 +2999,8 @@ class MainWindow(QMainWindow):
 
     def _refresh_primary_reader(self, busy=False):
         setting = self._primary_reader_setting()
-        configured = bool(self.workspace and self.workspace.config_path)
+        configured = bool(self.workspace and self.workspace.config_path and setting is not None)
+        self.reader_controls.setVisible(configured)
         value = setting[1] if setting else ""
         self.reader_selector.set_context(
             self.workspace.path if configured else "",
@@ -3010,6 +3018,9 @@ class MainWindow(QMainWindow):
             return
         if self._collector is not None and self._collector.isRunning():
             return
+        setting = self._primary_reader_setting()
+        if setting is None:
+            return
         # Do not overwrite edits waiting to be saved on the configuration page.
         if self.yaml_editor is not None and (
                 self.yaml_editor._has_raw_changes() or self.yaml_editor._modifications()):
@@ -3017,8 +3028,7 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Save YAML configuration changes before changing the reader.")
             self._show_page("yaml")
             return
-        setting = self._primary_reader_setting()
-        key = setting[0] if setting else "Reader"
+        key = setting[0]
         ok, message = config_file.ecrire(Path(self.workspace.config_path), {key: value})
         if not ok:
             self.reader_selector.setCurrentText(self.reader_selector._value)

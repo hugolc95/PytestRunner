@@ -16,7 +16,9 @@ class ReaderSelector(QComboBox):
         self.setInsertPolicy(QComboBox.NoInsert)
         self.setAccessibleName("Primary reader")
         self.setMinimumWidth(200)
-        self.setMaximumWidth(340)
+        self.setMaximumWidth(440)
+        self.setMinimumContentsLength(38)
+        self.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.lineEdit().setPlaceholderText("Select or enter a reader…")
         self.activated.connect(lambda *_: self._commit())
         self.lineEdit().editingFinished.connect(self._commit)
@@ -54,6 +56,14 @@ class ReaderSelector(QComboBox):
         value = self.currentText().strip()
         if self.isEnabled() and value != self._value:
             self.committed.emit(value)
+
+    def showPopup(self):
+        # Long device names can use more space in the open list than in the header.
+        width = max((self.fontMetrics().horizontalAdvance(self.itemText(i))
+                     for i in range(self.count())), default=0) + 48
+        self.view().setMinimumWidth(min(max(self.width(), width),
+                                       self.screen().availableGeometry().width()))
+        super().showPopup()
 
     def discover(self):
         if not self._context or self._process.state() != QProcess.NotRunning:
