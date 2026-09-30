@@ -1,11 +1,12 @@
 """Compact primary-reader editor using the workspace's test interpreter."""
 import json
 
-from PySide6.QtCore import QProcess, QProcessEnvironment, QSize, QTimer, Signal
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtCore import QProcess, QProcessEnvironment, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QComboBox, QLineEdit
 
 from runner.domain import reader_discovery
+from runner.domain.models import Status
 from runner.ui import tokens as t
 
 
@@ -133,6 +134,12 @@ class ReaderAtrField(QLineEdit):
 
     NO_CARD = "No card in reader"
     INTERVALLE_MS = 3000
+    # Pastille d'etat devant le texte : verte avec une carte, rouge sans.
+    # `PADDING` reprend le retrait du texte de la liste au-dessus (feuille de
+    # style), pour que pastille et nom du lecteur partent du meme bord.
+    PADDING = t.SPACE_2 + 1
+    PASTILLE = 6
+    ECART = 7
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -140,6 +147,7 @@ class ReaderAtrField(QLineEdit):
         self.setReadOnly(True)
         self.setAccessibleName("Card ATR")
         self.setPlaceholderText("ATR")
+        self.setTextMargins(self.PASTILLE + self.ECART, 0, 0, 0)
         self._context = None
         self._busy = False
         self._stale = False
@@ -268,6 +276,7 @@ class ReaderAtrField(QLineEdit):
         self.setProperty("state", state)
         self.style().unpolish(self)
         self.style().polish(self)
+        self.update()
         # Un ATR se lit en entier ou pas du tout. Le champ demande d'abord la
         # place de l'ATR, jusqu'a la largeur maximale du selecteur ; quand il ne
         # l'obtient pas (ATR tres long, fenetre etroite), le texte retrecit.
@@ -287,7 +296,31 @@ class ReaderAtrField(QLineEdit):
     TAILLE_MIN = 8
 
     def _margin(self):
-        return 2 * t.SPACE_2 + 12
+        return self.PADDING + self.PASTILLE + self.ECART + 12
+
+    def dot_color(self):
+        """Couleur de la pastille, ou None s'il n'y en a pas (lecture en cours,
+        PyHubReader indisponible). Lue a chaque dessin : elle suit le theme."""
+        if self.state == reader_discovery.ATR_OK:
+            return QColor(t.status_color(Status.PASSED))
+        if self.state == reader_discovery.ATR_NO_CARD:
+            couleur = QColor(t.status_color(Status.FAILED))
+            couleur.setAlphaF(0.85)
+            return couleur
+        return None
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        couleur = self.dot_color()
+        if couleur is None:
+            return
+        peintre = QPainter(self)
+        peintre.setRenderHint(QPainter.Antialiasing)
+        peintre.setPen(Qt.NoPen)
+        peintre.setBrush(couleur)
+        haut = (self.height() - self.PASTILLE) / 2
+        peintre.drawEllipse(QRectF(self.PADDING, haut, self.PASTILLE, self.PASTILLE))
+        peintre.end()
 
     def _text_width(self, taille):
         police = QFont(self.font())

@@ -302,3 +302,34 @@ def test_no_automatic_read_once_pyhubreader_is_unavailable(qtbot, tmp_path, monk
     champ._tick()
     assert champ._process.state() == QProcess.NotRunning
     champ.stop()
+
+
+def test_the_dot_is_green_with_a_card_red_without_and_absent_otherwise(qtbot):
+    """Pas d'etiquette "ATR" : une pastille devant le texte dit l'etat."""
+    from PySide6.QtGui import QColor
+
+    from runner.domain.models import Status
+    from runner.ui import tokens as t
+
+    champ = ReaderAtrField()
+    qtbot.addWidget(champ)
+    champ.resize(400, 24)
+    champ.show()
+
+    def pixel_pastille():
+        image = champ.grab().toImage()
+        x = champ.PADDING + champ.PASTILLE // 2
+        return QColor(image.pixel(x, champ.height() // 2))
+
+    def proche(a, b):
+        return all(abs(x - y) <= 40 for x, y in zip(a.getRgb()[:3], b.getRgb()[:3]))
+
+    champ._show(ATR_OK, "3B8F8001", "")
+    assert champ.dot_color() == QColor(t.status_color(Status.PASSED))
+    assert proche(pixel_pastille(), QColor(t.status_color(Status.PASSED)))
+
+    champ._show(ATR_NO_CARD, ReaderAtrField.NO_CARD, "")
+    assert champ.dot_color().rgb() == QColor(t.status_color(Status.FAILED)).rgb()
+
+    champ._show("reading", "Reading card…", "")
+    assert champ.dot_color() is None

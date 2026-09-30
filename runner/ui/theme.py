@@ -444,14 +444,19 @@ QLineEdit, QComboBox {{
     selection-background-color: {t.ACCENT};
     selection-color: {t.ON_ACCENT};
 }}
-/* ATR de la carte, sous le selecteur de lecteur : une lecture, pas une
-   saisie -- compacte, en police fixe pour que les octets s'alignent. */
+/* ATR de la carte, sous le selecteur de lecteur : une information discrete,
+   pas un champ de saisie -- ni cadre ni fond, le texte aligne sur celui de la
+   liste au-dessus (`ReaderAtrField` dessine lui-meme la pastille d'etat
+   devant). Police fixe pour que les octets s'alignent. */
 QLineEdit#ReaderAtr {{
     font-family: {t.FONT_MONO};
     font-size: {t.TEXT_SM}px;
     min-height: {t.CONTROL_SM - 4}px;
     max-height: {t.CONTROL_SM - 4}px;
-    color: {t.TEXT};
+    color: {t.TEXT_MUTED};
+    background: transparent;
+    border: none;
+    padding: 0 0 0 {t.SPACE_2 + 1}px;
 }}
 QLineEdit#ReaderAtr[state="reading"], QLineEdit#ReaderAtr[state="unavailable"] {{
     font-family: {t.FONT_UI};
@@ -462,8 +467,6 @@ QLineEdit#ReaderAtr[state="reading"], QLineEdit#ReaderAtr[state="unavailable"] {
 QLineEdit#ReaderAtr[state="nocard"] {{
     font-family: {t.FONT_UI};
     color: {t.rgba(t.status_color(Status.FAILED), 0.85)};
-    background-color: {t.rgba(t.status_color(Status.FAILED), 0.07)};
-    border-color: {t.rgba(t.status_color(Status.FAILED), 0.28)};
 }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {t.ACCENT}; }}
 /* Une expression que pytest refuserait : le champ le dit avant qu'on lance. */
