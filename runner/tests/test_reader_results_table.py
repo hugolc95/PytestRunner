@@ -107,3 +107,26 @@ def test_showing_another_test_replaces_the_rows(qapp):
                 if l.toolTip().startswith("OnmikeyCardman")
                 and l.isVisibleTo(panneau.results_row)]
     assert len(visibles) == 1
+
+
+def test_each_reader_name_is_painted_in_its_reader_colour(qapp):
+    """Meme couleur que la pastille devant le nom : on relie la ligne a son
+    lecteur d'un coup d'oeil, comme dans le panneau Execution."""
+    from PySide6.QtGui import QColor
+
+    from runner.ui import tokens as t
+
+    panneau = _panneau(qapp)
+    panneau.resize(900, 500)
+    qapp.processEvents()
+    for lecteur in READERS[:2]:
+        [label] = [l for l in panneau.results_row.findChildren(QLabel)
+                   if l.toolTip() == lecteur.name]
+        image = label.grab().toImage()
+        attendu = QColor(t.reader_color(lecteur.index))
+        proches = sum(
+            max(abs(image.pixelColor(x, y).red() - attendu.red()),
+                abs(image.pixelColor(x, y).green() - attendu.green()),
+                abs(image.pixelColor(x, y).blue() - attendu.blue())) <= 30
+            for x in range(image.width()) for y in range(image.height()))
+        assert proches >= 10, f"{lecteur.name} n'est pas peint en {attendu.name()}"

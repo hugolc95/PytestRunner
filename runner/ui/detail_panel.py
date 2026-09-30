@@ -82,11 +82,13 @@ class _ReaderDot(QWidget):
 
 
 class _ElidedLabel(QLabel):
-    """Nom de lecteur raccourci par "..." plutot que d'imposer sa largeur."""
+    """Nom de lecteur raccourci par "..." plutot que d'imposer sa largeur,
+    dans la couleur du lecteur quand `index` est donne."""
 
-    def __init__(self, texte: str, parent=None):
+    def __init__(self, texte: str, index: int | None = None, parent=None):
         super().__init__(texte, parent)
         self._complet = texte
+        self._index = index
         self.setToolTip(texte)
         self.setMinimumWidth(0)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -101,6 +103,19 @@ class _ElidedLabel(QLabel):
         court = self.fontMetrics().elidedText(self._complet, Qt.ElideRight, self.width())
         if court != self.text():
             self.setText(court)
+
+    def paintEvent(self, event):
+        if self._index is None:
+            super().paintEvent(event)
+            return
+        # Peint ici plutot que par `setStyleSheet()` : une feuille posee sur
+        # ce label ferait dessiner a Qt un contour fantome (voir theme.py).
+        # Couleur lue a chaque dessin : elle suit la bascule de theme.
+        peintre = QPainter(self)
+        peintre.setPen(QColor(t.reader_color(self._index)))
+        peintre.setFont(self.font())
+        peintre.drawText(self.rect(), int(Qt.AlignLeft | Qt.AlignVCenter), self.text())
+        peintre.end()
 
 
 class ReaderResultsTable(QWidget):
@@ -163,7 +178,8 @@ class ReaderResultsTable(QWidget):
             rangee.setContentsMargins(0, 0, 0, 0)
             rangee.setSpacing(t.SPACE_2)
             rangee.addWidget(_ReaderDot(lecteur.index))
-            rangee.addWidget(_ElidedLabel(lecteur.name or "Test interpreter"), 1)
+            rangee.addWidget(_ElidedLabel(lecteur.name or "Test interpreter",
+                                          lecteur.index if lecteur.name else None), 1)
             nom.setMinimumWidth(0)
             nom.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             self._grille.addWidget(nom, ligne, self.COL_NOM)
