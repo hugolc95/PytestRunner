@@ -34,6 +34,18 @@ QWidget {{
 QLabel {{
     border: none;
 }}
+/* La regle `QWidget` ci-dessus peint aussi les conteneurs invisibles -- le
+   `QWidget` qui enveloppe un champ et son aide, une rangee, une page -- et
+   les labels. Poses dans une carte (`BG_SURFACE`), ils y dessinaient des
+   bandes du fond de l'appli, plus sombres en theme sombre, grises en theme
+   clair. Meme chose pour les piles de pages, zones defilantes et separateurs,
+   simples contenants eux aussi. `.QWidget` ne vise que la classe exacte (sous
+   PySide6, les sous-classes Python aussi) : ni les champs, ni les listes, ni
+   les cadres, ni les fenetres, qui gardent chacun leur fond. Un nom d'objet
+   reste plus specifique et l'emporte toujours. */
+.QWidget, QLabel, QStackedWidget, QScrollArea, QSplitter {{
+    background-color: transparent;
+}}
 QToolTip {{
     background-color: {t.BG_RAISED};
     color: {t.TEXT};
