@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QFrame,
     QFileDialog,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -740,15 +741,21 @@ class MainWindow(QMainWindow):
             workspace_controls.addWidget(control)
         workspace_controls.addStretch(1)
         self.reader_controls = QWidget()
-        reader_layout = QHBoxLayout(self.reader_controls)
+        reader_layout = QGridLayout(self.reader_controls)
         # Keep a real gap even when the expanding spacer has no room left.
         reader_layout.setContentsMargins(t.SPACE_6, 0, 0, 0)
-        reader_layout.setSpacing(t.SPACE_2)
-        from runner.ui.reader_selector import ReaderSelector
+        reader_layout.setHorizontalSpacing(t.SPACE_2)
+        reader_layout.setVerticalSpacing(2)
+        from runner.ui.reader_selector import ReaderAtrField, ReaderSelector
         self.reader_selector = ReaderSelector()
         self.reader_selector.committed.connect(self._save_primary_reader)
-        reader_layout.addWidget(QLabel("Reader"))
-        reader_layout.addWidget(self.reader_selector)
+        reader_layout.addWidget(QLabel("Reader"), 0, 0)
+        reader_layout.addWidget(self.reader_selector, 0, 1)
+        # Juste sous le lecteur : l'ATR de la carte qui s'y trouve, ou
+        # l'absence de carte -- savoir d'un coup d'oeil sur quoi le run va
+        # tourner, sans sortir de l'appli.
+        self.reader_atr = ReaderAtrField()
+        reader_layout.addWidget(self.reader_atr, 1, 1, 1, 2)
         self.reader_config_button = QPushButton()
         self.reader_config_button.setObjectName("NavigationUtilityIcon")
         self.reader_config_button.setFixedSize(t.CONTROL_SM, t.CONTROL_SM)
@@ -756,10 +763,8 @@ class MainWindow(QMainWindow):
         self.reader_config_button.setToolTip("Open YAML configuration")
         self.reader_config_button.setAccessibleName("Open YAML configuration")
         self.reader_config_button.clicked.connect(lambda: self._show_page("yaml"))
-        reader_layout.addWidget(self.reader_config_button)
-        workspace_controls.addWidget(self.reader_controls)
+        reader_layout.addWidget(self.reader_config_button, 0, 2)
         self.reader_controls.hide()
-        workspace_controls.addStretch(1)
         workspace_box.addLayout(workspace_controls)
         self._pending_run_name = ""
         self.run_name_stack = QStackedWidget()
@@ -785,6 +790,10 @@ class MainWindow(QMainWindow):
         self.run_name_edit.editingFinished.connect(self._save_run_name)
         workspace_box.addWidget(self.run_name_stack)
         ligne.addLayout(workspace_box)
+        # A cote du bloc workspace plutot que dans sa premiere rangee : ses deux
+        # lignes (lecteur, puis ATR) s'alignent ainsi sur celles du workspace
+        # (dossier, puis nom du run) sans allonger la barre.
+        ligne.addWidget(self.reader_controls, 0, Qt.AlignTop)
         ligne.addStretch(1)
         ligne.addWidget(self.compass_ring)
         ligne.addWidget(self.compass_pct)
@@ -2835,6 +2844,10 @@ class MainWindow(QMainWindow):
             [reader.name for reader in self.workspace.readers] if self.workspace else ())
         collecting = self._collector is not None and self._collector.isRunning()
         self.reader_selector.setEnabled(configured and not busy and not collecting)
+        self.reader_atr.set_context(
+            self.workspace.path if configured else "",
+            self._effective_interpreter() if configured else "",
+            value if configured else "", busy=busy or collecting)
         self.reader_config_button.setEnabled(self.workspace is not None)
 
     def _save_primary_reader(self, value):
@@ -3274,6 +3287,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.reader_selector.stop_discovery()
+        self.reader_atr.stop()
         self.results.source.save()
         self.python_editor.wait_for_probe()
         self.settings.setValue(K_GEOMETRY, self.saveGeometry())
