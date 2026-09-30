@@ -215,33 +215,84 @@ def test_a_long_atr_shrinks_until_it_fits_entirely(qtbot):
     assert champ.styleSheet() == ""
 
 
-# ------------------------------------------------------- relecture automatique
+# ------------------------------------------- relecture sur changement de carte
 
 
-def test_the_card_is_followed_without_any_button(fenetre, qtbot, tmp_path):
-    """Retirer la carte, puis la remettre : le champ suit tout seul, au
-    rythme de la relecture automatique -- il n'y a plus de bouton."""
-    assert fenetre.reader_atr.actions() == []
-    assert fenetre.reader_atr._ticker.isActive()
+class _Carte:
+    """Presence simulee, a la place de PC/SC : ce que `CardPresence.check`
+    rendrait -- (presente, compteur d'evenements), ou None si inconnue."""
+
+    def __init__(self, presente=True):
+        self.presente, self.evenements, self.appels = presente, 0, 0
+
+    def __call__(self, lecteur):
+        self.appels += 1
+        return self.presente, self.evenements
+
+    def retirer(self, tmp_path):
+        self.presente, self.evenements = False, self.evenements + 1
+        (tmp_path / "retiree").write_text("")
+
+    def inserer(self, tmp_path):
+        self.presente, self.evenements = True, self.evenements + 1
+        (tmp_path / "retiree").unlink(missing_ok=True)
+
+
+def _pret(fenetre, qtbot, tmp_path, carte=None):
+    carte = carte or _Carte()
+    fenetre.reader_atr.presence = carte
     fenetre.show()
     _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
     qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
+    return carte
 
-    (tmp_path / "retiree").write_text("")
+
+def _lectures(champ, monkeypatch):
+    lancements = []
+    reel = champ.refresh
+    monkeypatch.setattr(champ, "refresh", lambda *a, **k: (lancements.append(k), reel(*a, **k)))
+    return lancements
+
+
+def test_nothing_is_read_while_the_card_stays_the_same(fenetre, qtbot, tmp_path, monkeypatch):
+    """Le coeur de la demande : plus d'ouverture du lecteur a intervalle
+    regulier -- on regarde seulement si la carte a change."""
+    carte = _pret(fenetre, qtbot, tmp_path)
+    lancements = _lectures(fenetre.reader_atr, monkeypatch)
+    for _ in range(5):
+        fenetre.reader_atr._tick()
+    assert carte.appels >= 5
+    assert lancements == []
+    assert fenetre.reader_atr._process.state() == QProcess.NotRunning
+
+
+def test_removing_then_inserting_the_card_is_followed(fenetre, qtbot, tmp_path):
+    carte = _pret(fenetre, qtbot, tmp_path)
+
+    carte.retirer(tmp_path)
     fenetre.reader_atr._tick()
     qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_NO_CARD, timeout=15000)
 
-    (tmp_path / "retiree").unlink()
+    carte.inserer(tmp_path)
     fenetre.reader_atr._tick()
     qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
 
 
-def test_an_automatic_read_does_not_flash_reading_card(fenetre, qtbot, tmp_path):
-    fenetre.show()
-    _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
-    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
-    avant = fenetre.reader_atr.text()
+def test_a_card_swapped_between_two_checks_is_read_again(fenetre, qtbot, tmp_path, monkeypatch):
+    """Retiree puis remise entre deux verifications : toujours "presente",
+    mais le compteur d'evenements de Windows a bouge -- c'est peut-etre une
+    autre carte."""
+    carte = _pret(fenetre, qtbot, tmp_path)
+    lancements = _lectures(fenetre.reader_atr, monkeypatch)
+    carte.evenements += 2
+    fenetre.reader_atr._tick()
+    assert lancements == [{"quiet": True}]
 
+
+def test_an_automatic_read_does_not_flash_reading_card(fenetre, qtbot, tmp_path):
+    carte = _pret(fenetre, qtbot, tmp_path)
+    avant = fenetre.reader_atr.text()
+    carte.evenements += 2
     fenetre.reader_atr._tick()
     assert fenetre.reader_atr._process.state() != QProcess.NotRunning
     assert fenetre.reader_atr.text() == avant
@@ -250,24 +301,45 @@ def test_an_automatic_read_does_not_flash_reading_card(fenetre, qtbot, tmp_path)
     assert fenetre.reader_atr.text() == avant
 
 
-def test_no_automatic_read_while_a_run_holds_the_reader(fenetre, qtbot, tmp_path, monkeypatch):
-    fenetre.show()
-    _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
-    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
+def test_an_unknown_presence_never_reads_on_its_own(fenetre, qtbot, tmp_path, monkeypatch):
+    """Lecteur que PC/SC ne connait pas : pas de detection automatique, il
+    reste le bouton."""
+    _pret(fenetre, qtbot, tmp_path)
+    fenetre.reader_atr.presence = lambda lecteur: None
+    lancements = _lectures(fenetre.reader_atr, monkeypatch)
+    for _ in range(3):
+        fenetre.reader_atr._tick()
+    assert lancements == []
 
+
+def test_the_refresh_button_reads_the_card_on_demand(fenetre, qtbot, tmp_path):
+    carte = _pret(fenetre, qtbot, tmp_path)
+    fenetre.reader_atr.presence = lambda lecteur: None  # pas de detection auto
+    (tmp_path / "retiree").write_text("")
+    [bouton] = fenetre.reader_atr.actions()
+    bouton.trigger()
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_NO_CARD, timeout=15000)
+
+
+def test_no_automatic_read_while_a_run_holds_the_reader(fenetre, qtbot, tmp_path, monkeypatch):
+    carte = _pret(fenetre, qtbot, tmp_path)
     monkeypatch.setattr(type(fenetre.service), "busy", property(lambda self: True))
     fenetre._update_actions()
+    carte.retirer(tmp_path)
     fenetre.reader_atr._tick()
     assert fenetre.reader_atr._process.state() == QProcess.NotRunning
+
+    # Des la fin du run, la carte est relue : elle a pu changer pendant.
+    monkeypatch.setattr(type(fenetre.service), "busy", property(lambda self: False))
+    fenetre._update_actions()
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_NO_CARD, timeout=15000)
 
 
 def test_starting_a_run_kills_a_read_in_flight_without_waiting(fenetre, qtbot, tmp_path, monkeypatch):
     """Une lecture en vol au moment du lancement ne doit ni gener le run, ni
     figer l'interface en attendant qu'elle se termine."""
-    fenetre.show()
-    _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
-    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
-    fenetre.reader_atr._tick()
+    _pret(fenetre, qtbot, tmp_path)
+    fenetre.reader_atr.refresh(quiet=True)
     assert fenetre.reader_atr._process.state() != QProcess.NotRunning
 
     attentes = []
@@ -282,13 +354,13 @@ def test_starting_a_run_kills_a_read_in_flight_without_waiting(fenetre, qtbot, t
     assert fenetre.reader_atr.state == ATR_OK  # le resultat tardif est ignore
 
 
-def test_no_automatic_read_for_a_hidden_field(fenetre, qtbot, tmp_path):
-    fenetre.show()
-    _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
-    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
-
+def test_no_presence_check_for_a_hidden_field(fenetre, qtbot, tmp_path):
+    carte = _pret(fenetre, qtbot, tmp_path)
     fenetre._show_page("history")
+    avant = carte.appels
+    carte.retirer(tmp_path)
     fenetre.reader_atr._tick()
+    assert carte.appels == avant
     assert fenetre.reader_atr._process.state() == QProcess.NotRunning
 
 
@@ -296,12 +368,15 @@ def test_no_automatic_read_once_pyhubreader_is_unavailable(qtbot, tmp_path, monk
     monkeypatch.setenv("PYTHONPATH", str(tmp_path))
     champ = ReaderAtrField()
     qtbot.addWidget(champ)
+    carte = _Carte()
+    champ.presence = carte
     champ.show()
     champ.set_context(str(tmp_path), sys.executable, CARTE)
     qtbot.waitUntil(lambda: champ.state == ATR_UNAVAILABLE, timeout=15000)
+    carte.retirer(tmp_path)
     champ._tick()
     assert champ._process.state() == QProcess.NotRunning
-    champ.stop()
+    champ.release()
 
 
 def test_the_dot_is_green_with_a_card_red_without_and_absent_otherwise(qtbot):

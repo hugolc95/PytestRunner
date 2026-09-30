@@ -3,10 +3,12 @@ import json
 
 from PySide6.QtCore import QProcess, QProcessEnvironment, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
-from PySide6.QtWidgets import QComboBox, QLineEdit
+from PySide6.QtWidgets import QComboBox, QLineEdit, QStyle
 
 from runner.domain import reader_discovery
+from runner.domain.card_presence import CardPresence
 from runner.domain.models import Status
+from runner.ui import icons
 from runner.ui import tokens as t
 
 
@@ -127,13 +129,18 @@ class ReaderAtrField(QLineEdit):
     Lu par PROBE_ATR dans l'interpreteur des tests, comme la liste des
     lecteurs : jamais dans le processus de l'interface, qui n'a pas forcement
     la meme architecture que les DLL du lecteur -- et qui ne l'attend donc
-    jamais non plus. Relu tout seul toutes les `INTERVALLE_MS`, pour suivre
-    une carte qu'on insere ou qu'on retire, mais seulement quand le champ est
-    a l'ecran et qu'aucun run ne tient le lecteur : les tests en ont besoin.
+    jamais non plus.
+
+    Relu seulement quand l'etat de la carte change : toutes les
+    `INTERVALLE_MS`, on demande a Windows (`CardPresence`, PC/SC) si une carte
+    est la, sans ouvrir le lecteur ni toucher a la carte, et l'ATR n'est relu
+    que si elle est arrivee, partie ou a ete changee. Le bouton de la fin du
+    champ relit a la demande. Jamais de lecture pendant un run, ni pour un
+    champ qu'on ne voit pas.
     """
 
     NO_CARD = "No card in reader"
-    INTERVALLE_MS = 3000
+    INTERVALLE_MS = 1000
     # Pastille d'etat devant le texte : verte avec une carte, rouge sans.
     # `PADDING` reprend le retrait du texte de la liste au-dessus (feuille de
     # style), pour que pastille et nom du lecteur partent du meme bord.
@@ -148,6 +155,14 @@ class ReaderAtrField(QLineEdit):
         self.setAccessibleName("Card ATR")
         self.setPlaceholderText("ATR")
         self.setTextMargins(self.PASTILLE + self.ECART, 0, 0, 0)
+        self._refresh_action = self.addAction(
+            icons.icon("mdi.refresh", t.TEXT_MUTED), QLineEdit.TrailingPosition)
+        self._refresh_action.setToolTip("Read the card again")
+        self._refresh_action.triggered.connect(lambda: self.refresh())
+        # Remplacable dans les tests ; rend None quand on ne peut pas savoir.
+        self._presence = CardPresence()
+        self.presence = self._presence.check
+        self._signature = None
         self._context = None
         self._busy = False
         self._stale = False
@@ -164,6 +179,20 @@ class ReaderAtrField(QLineEdit):
         self._ticker.timeout.connect(self._tick)
         self._ticker.start()
 
+    def restyle(self):
+        # Appele par le balayage de `MainWindow._restyle()` a chaque bascule.
+        self._refresh_action.setIcon(icons.icon("mdi.refresh", t.TEXT_MUTED))
+
+    def release(self):
+        self.stop()
+        self._presence.close()
+
+    def _check_presence(self):
+        try:
+            return self.presence(self._context[2]) if self._context else None
+        except Exception:
+            return None
+
     def set_context(self, workspace, interpreter, reader, busy=False):
         context = (workspace, interpreter, (reader or "").strip())
         was_busy, self._busy = self._busy, busy
@@ -176,25 +205,28 @@ class ReaderAtrField(QLineEdit):
             # resultat ne doit pas s'afficher pour le nouveau.
             self.stop()
             self._context = context
+            self._signature = self._check_presence()
             self.refresh()
         elif was_busy or self._stale:
             # Meme lecteur qu'avant le run : son ATR reste affiche jusqu'au
             # nouveau resultat, sans passer par "Reading card...".
+            self._signature = self._check_presence()
             self.refresh(quiet=True)
 
     def _tick(self):
-        """Relecture automatique : jamais pendant un run, jamais pour un champ
-        qu'on ne voit pas, jamais par-dessus une lecture deja en cours."""
-        if self._busy or not self._context:
-            return
-        # PyHubReader absent ne se reparera pas tout seul d'ici 3 secondes :
-        # inutile de relancer un interpreteur pour rien. Changer de lecteur,
-        # de workspace ou finir un run retente quand meme.
-        if self.state == reader_discovery.ATR_UNAVAILABLE:
+        """Surveille la presence de la carte ; ne relit l'ATR que si elle a
+        change. Jamais pendant un run, jamais pour un champ qu'on ne voit pas."""
+        if self._busy or not self._context or not self._context[2]:
             return
         if not self.isVisible() or self.window().isMinimized():
             return
-        if self._process.state() != QProcess.NotRunning:
+        signature = self._check_presence()
+        if signature is None or signature == self._signature:
+            return
+        self._signature = signature
+        # PyHubReader absent : relire ne donnerait rien de plus. Le bouton,
+        # un changement de lecteur ou la fin d'un run retentent quand meme.
+        if self.state == reader_discovery.ATR_UNAVAILABLE:
             return
         self.refresh(quiet=True)
 
@@ -244,6 +276,9 @@ class ReaderAtrField(QLineEdit):
                 QTimer.singleShot(0, self.refresh)
             return
         state, atr, detail = reader_discovery.parse_atr_output(output, errors)
+        if self._stale and not self._busy:
+            # L'etat de la carte a encore change pendant cette lecture.
+            QTimer.singleShot(0, lambda: self.refresh(quiet=True))
         if state == reader_discovery.ATR_OK:
             self._show(state, atr, f"ATR of the card in {self._context[2]}:\n{atr}")
         elif state == reader_discovery.ATR_NO_CARD:
@@ -296,7 +331,8 @@ class ReaderAtrField(QLineEdit):
     TAILLE_MIN = 8
 
     def _margin(self):
-        return self.PADDING + self.PASTILLE + self.ECART + 12
+        bouton = self.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize) + 8
+        return self.PADDING + self.PASTILLE + self.ECART + bouton + 12
 
     def dot_color(self):
         """Couleur de la pastille, ou None s'il n'y en a pas (lecture en cours,

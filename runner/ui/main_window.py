@@ -3287,7 +3287,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:
         self.reader_selector.stop_discovery()
-        self.reader_atr.stop()
+        self.reader_atr.release()
         self.results.source.save()
         self.python_editor.wait_for_probe()
         self.settings.setValue(K_GEOMETRY, self.saveGeometry())
