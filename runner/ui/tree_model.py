@@ -12,12 +12,16 @@ from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 
 from runner.domain.models import Kind, Reader, Status, TestNode, worst
+from runner.domain.reader_labels import badge_labels
 from runner.ui import icons
 from runner.ui import tokens as t
 
 # Roles propres a ce modele, au-dela de ceux de Qt.
 NODE_ROLE = Qt.UserRole + 1
 NODEID_ROLE = Qt.UserRole + 2
+# Texte court du badge d'un lecteur, en tete de sa colonne (voir
+# `reader_labels.badge_labels`).
+BADGE_ROLE = Qt.UserRole + 3
 
 
 class _Row:
@@ -86,6 +90,7 @@ class TestTreeModel(QAbstractItemModel):
         self._by_nodeid: dict[str, _Row] = {}
         self._search_index: tuple[tuple[str, str], ...] = ()
         self._readers: tuple[Reader, ...] = ()
+        self._badges: list[str] = []
         # Decompte par statut des cases (test, lecteur) deja rendues. Tenu au
         # fil de l'eau : le recalculer a chaque resultat reparcourrait tout
         # l'arbre, ce qui redonnerait le gel quadratique deja corrige.
@@ -117,6 +122,7 @@ class TestTreeModel(QAbstractItemModel):
         """Une colonne de statut par lecteur, ou une seule sans lecteur."""
         self.beginResetModel()
         self._readers = tuple(readers)
+        self._badges = badge_labels([r.name for r in self._readers])
         # Pas de purge des agregats ici : ils sont ranges par index de lecteur,
         # exactement comme les statuts des feuilles dont ils derivent. Les deux
         # vieillissent donc ensemble et restent coherents. Ce qui repart
@@ -173,6 +179,8 @@ class TestTreeModel(QAbstractItemModel):
             return "Status"
         if role == Qt.ToolTipRole and 0 < section <= len(self._readers):
             return self._readers[section - 1].name
+        if role == BADGE_ROLE and 0 < section <= len(self._readers):
+            return self._badges[section - 1] or self._readers[section - 1].short_name
         if role == Qt.ForegroundRole and 0 < section <= len(self._readers):
             return QColor(t.reader_color(self._readers[section - 1].index))
         if role == Qt.TextAlignmentRole and section > 0:

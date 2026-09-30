@@ -36,6 +36,64 @@ class ReaderHeaderView(QHeaderView):
     texte est peint ici, tandis que le modele reste la source de la couleur.
     """
 
+    # Badge d'un lecteur : bordure et texte a sa couleur, une petite icone de
+    # carte, puis le texte court qui le distingue des autres (son nom entier
+    # s'il est seul). Le nom complet reste dans l'infobulle.
+    BADGE_HAUTEUR = 18
+    BADGE_MARGE = 6
+    ICONE = 10
+    ECART = 4
+
+    def _badge_text(self, logical_index):
+        from runner.ui.tree_model import BADGE_ROLE
+
+        modele = self.model()
+        texte = modele.headerData(logical_index, self.orientation(), BADGE_ROLE) if modele else None
+        return str(texte) if texte else None
+
+    def _badge_font(self) -> QFont:
+        fonte = QFont(self.font())
+        fonte.setPixelSize(t.TEXT_XS)
+        fonte.setWeight(QFont.Bold)
+        return fonte
+
+    def _badge_extra(self) -> int:
+        return 2 * self.BADGE_MARGE + self.ICONE + self.ECART + 2
+
+    def badge_width(self, logical_index):
+        """Largeur du badge de cette section, ou None si ce n'est pas un lecteur."""
+        texte = self._badge_text(logical_index)
+        if texte is None:
+            return None
+        return QFontMetrics(self._badge_font()).horizontalAdvance(texte) + self._badge_extra()
+
+    def _paint_badge(self, painter, rect, texte, couleur) -> None:
+        fonte = self._badge_font()
+        mesure = QFontMetrics(fonte)
+        place = max(0, rect.width() - 2 * t.SPACE_1 - self._badge_extra())
+        affiche = mesure.elidedText(texte, Qt.ElideRight, place)
+        largeur = mesure.horizontalAdvance(affiche) + self._badge_extra()
+        hauteur = self.BADGE_HAUTEUR
+        x = rect.x() + (rect.width() - largeur) / 2
+        y = rect.y() + (rect.height() - hauteur) / 2
+
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setBrush(Qt.NoBrush)
+        painter.setPen(QPen(couleur, 1.5))
+        painter.drawRoundedRect(QRectF(x + 0.75, y + 0.75, largeur - 1.5, hauteur - 1.5), 4, 4)
+
+        ix, iy = x + self.BADGE_MARGE, y + (hauteur - 8) / 2
+        painter.setPen(QPen(couleur, 1.2))
+        painter.drawRoundedRect(QRectF(ix, iy, self.ICONE, 8), 1.5, 1.5)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(couleur)
+        painter.drawRoundedRect(QRectF(ix + 2, iy + 2.2, 3, 2.6), 0.5, 0.5)
+
+        painter.setFont(fonte)
+        painter.setPen(couleur)
+        painter.drawText(QRectF(ix + self.ICONE + self.ECART, y, largeur, hauteur),
+                         int(Qt.AlignLeft | Qt.AlignVCenter), affiche)
+
     def paintSection(self, painter, rect, logical_index) -> None:
         if not rect.isValid():
             return
@@ -51,6 +109,12 @@ class ReaderHeaderView(QHeaderView):
             logical_index, self.orientation(), Qt.ForegroundRole)
         if not isinstance(couleur, QColor) or not couleur.isValid():
             couleur = QColor(t.TEXT_MUTED)
+
+        badge = self._badge_text(logical_index)
+        if badge is not None:
+            self._paint_badge(painter, rect, badge, couleur)
+            painter.restore()
+            return
 
         fonte = QFont(self.font())
         fonte.setPixelSize(t.TEXT_XS)

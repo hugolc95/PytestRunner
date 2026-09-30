@@ -5,6 +5,7 @@ from collections import Counter
 from PySide6.QtCore import Qt, QModelIndex
 
 from runner.domain.models import Kind, Status, TestNode, worst
+from runner.domain.reader_labels import badge_labels
 from runner.domain.tree import build_sequence_tree
 from runner.ui.tree_model import TestTreeModel, _Row, NODEID_ROLE
 
@@ -33,6 +34,7 @@ class LiveProfileModel(TestTreeModel):
         elif new_count < old_count:
             self.beginRemoveColumns(QModelIndex(), new_count, old_count - 1)
         self._readers = readers
+        self._badges = badge_labels([r.name for r in readers])
         if new_count > old_count:
             self.endInsertColumns()
         elif new_count < old_count:

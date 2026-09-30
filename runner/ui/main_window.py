@@ -1910,12 +1910,19 @@ class MainWindow(QMainWindow):
         entete = tree.header()
         metriques = entete.fontMetrics()
 
+        badge = getattr(entete, "badge_width", None)
         for colonne in range(1, model.columnCount()):
-            titre = model.headerData(colonne, Qt.Horizontal, Qt.DisplayRole) or ""
-            # De quoi loger le titre, sa marge de section, et l'icone de statut.
-            largeur = metriques.horizontalAdvance(str(titre)) + t.SPACE_8
+            largeur_badge = badge(colonne) if badge else None
+            if largeur_badge is not None:
+                # Le badge du lecteur, et juste de quoi respirer autour : le
+                # badge est court (sauf lecteur unique, qui garde son nom).
+                largeur = max(largeur_badge + t.SPACE_4, 40)
+            else:
+                titre = model.headerData(colonne, Qt.Horizontal, Qt.DisplayRole) or ""
+                # De quoi loger le titre, sa marge de section, et l'icone de statut.
+                largeur = max(metriques.horizontalAdvance(str(titre)) + t.SPACE_8, 72)
             entete.setSectionResizeMode(colonne, QHeaderView.Fixed)
-            entete.resizeSection(colonne, max(largeur, 72))
+            entete.resizeSection(colonne, largeur)
 
     def _config_retenue(self, workspace: str) -> str:
         """Chemin du fichier de configuration choisi pour ce workspace, ou "".
