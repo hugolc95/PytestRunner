@@ -387,11 +387,9 @@ class ExecutionProfilesPage(QWidget):
             row.addWidget(widget)
             layout.addLayout(row)
         self.stop_after_failure = QCheckBox("Stop after failure")
-        self.generate_allure = QCheckBox("Generate Allure report")
         self.save_logs = QCheckBox("Save complete logs")
         layout.addWidget(self.stop_after_failure)
         layout.addWidget(QLabel("Reports"))
-        layout.addWidget(self.generate_allure)
         layout.addWidget(self.save_logs)
         layout.addStretch(1)
 
@@ -401,7 +399,6 @@ class ExecutionProfilesPage(QWidget):
         self.repetitions.valueChanged.connect(self._options_changed)
         self.rerun_failures.valueChanged.connect(self._mark_dirty)
         self.stop_after_failure.toggled.connect(self._mark_dirty)
-        self.generate_allure.toggled.connect(self._mark_dirty)
         self.save_logs.toggled.connect(self._mark_dirty)
         return frame
 
@@ -449,7 +446,6 @@ class ExecutionProfilesPage(QWidget):
         self.repetitions.setValue(profile.execution.repetitions)
         self.rerun_failures.setValue(profile.execution.rerun_failures)
         self.stop_after_failure.setChecked(profile.execution.stop_after_failure)
-        self.generate_allure.setChecked(profile.reports.generate_allure)
         self.save_logs.setChecked(profile.reports.save_complete_logs)
         self._building = False
         self._dirty = False
@@ -494,7 +490,6 @@ class ExecutionProfilesPage(QWidget):
                 rerun_failures=self.rerun_failures.value(),
                 stop_after_failure=self.stop_after_failure.isChecked()),
             reports=ReportOptions(
-                generate_allure=self.generate_allure.isChecked(),
                 save_complete_logs=self.save_logs.isChecked()),
             source=current.source if current else "local",
         )

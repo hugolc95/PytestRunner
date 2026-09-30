@@ -35,7 +35,7 @@ def sample_profile() -> ExecutionProfile:
         execution=ExecutionOptions(
             repetitions=20, rerun_failures=2, stop_after_failure=False),
         reports=ReportOptions(
-            generate_allure=True, save_complete_logs=True),
+            save_complete_logs=True),
     )
 
 
@@ -53,6 +53,24 @@ def test_profile_round_trip_preserves_order_duplicates_and_configuration(tmp_pat
     assert loaded.reports == source.reports
     assert loaded.total_executions == 60
     assert not validation.has_warnings
+
+
+@pytest.mark.parametrize("legacy_value", [True, False])
+def test_old_allure_option_is_ignored_and_removed_on_export(tmp_path, legacy_value):
+    path = export_profile(sample_profile(), tmp_path / "legacy")
+    with zipfile.ZipFile(path) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist()}
+    manifest = json.loads(contents["manifest.json"])
+    manifest["reports"]["generate_allure"] = legacy_value
+    contents["manifest.json"] = json.dumps(manifest)
+    with zipfile.ZipFile(path, "w") as archive:
+        for name, content in contents.items():
+            archive.writestr(name, content)
+    loaded = inspect_profile(path).profile
+    assert loaded.reports == ReportOptions(save_complete_logs=True)
+    clean_path = export_profile(loaded, tmp_path / "updated")
+    with zipfile.ZipFile(clean_path) as archive:
+        assert json.loads(archive.read("manifest.json"))["reports"] == {"save_complete_logs": True}
 
 
 def test_profile_without_configuration_is_valid_and_round_trips(tmp_path):

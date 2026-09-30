@@ -1,7 +1,7 @@
 """Rejouer un test jusqu'a l'echec, ou exactement N fois.
 
 `StressRunWorker.run()` est appele directement (pas `.start()`) : sa logique
-ne depend pas de tourner sur un vrai fil, seul `AllureReportWorker` et les
+ne depend pas de tourner sur un vrai fil, seuls les
 autres worker Qt de l'appli ont besoin d'un vrai thread pour ne pas geler
 l'interface -- ici on verifie juste l'enchainement des tentatives.
 """

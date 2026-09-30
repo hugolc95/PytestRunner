@@ -18,7 +18,7 @@ def test_archived_profile_preserves_original_yaml_sequence_and_options(tmp_path)
     original = ExecutionProfile(
         name="Validation", sequence=[B, A, B], configuration_name="config.yaml",
         configuration_text="voltage: 5\n",
-        execution=ExecutionOptions(3, 2, True), reports=ReportOptions(False, False))
+        execution=ExecutionOptions(3, 2, True), reports=ReportOptions(False))
     request = RunRequest(str(tmp_path), "python", tuple(original.sequence), (),
                          config_path=str(config))
     snapshot = capture_profile(request, original)
@@ -34,7 +34,7 @@ def test_archived_profile_preserves_original_yaml_sequence_and_options(tmp_path)
     assert imported.sequence == [B, A, B]
     assert imported.configuration_text == "voltage: 5\n"
     assert imported.execution == ExecutionOptions(3, 2, True)
-    assert imported.reports == ReportOptions(False, False)
+    assert imported.reports == ReportOptions(False)
 
 
 def test_classic_snapshot_keeps_only_requested_tests_and_no_config(tmp_path):
@@ -45,6 +45,16 @@ def test_classic_snapshot_keeps_only_requested_tests_and_no_config(tmp_path):
     assert profile.sequence == [B, A]
     assert profile.configuration_name == profile.configuration_text == ""
     assert profile.execution.repetitions == 1
+
+
+def test_old_history_snapshot_ignores_retired_report_option(tmp_path):
+    request = RunRequest(str(tmp_path), "python", (B, A), ())
+    snapshot = capture_profile(request)
+    snapshot["reports"]["generate_allure"] = True
+    entry = RunEntry(id="old", timestamp=1, workspace="", replay_profile=snapshot)
+    profile = profile_from_entry(entry)
+    assert profile.sequence == [B, A]
+    assert profile.reports == ReportOptions()
 
 
 def test_legacy_export_preserves_occurrences_and_accepts_chosen_yaml(tmp_path):

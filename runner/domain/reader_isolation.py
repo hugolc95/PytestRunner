@@ -221,12 +221,6 @@ def pytest_runtest_setup(item):
             "Continuing would have run every reader against the same value "
             "with nothing to signal it." % (_READER, _erreur)
         )
-    if _READER:
-        try:
-            import allure
-            allure.dynamic.parameter("Reader", _READER)
-        except Exception:
-            pass
 
 
 def _record_outcome(nodeid, status):
