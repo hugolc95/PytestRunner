@@ -18,15 +18,16 @@ from __future__ import annotations
 import time
 from html import escape
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
-    QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QListWidget,
     QListWidgetItem,
     QPushButton,
+    QSizePolicy,
     QStackedWidget,
     QTextEdit,
     QVBoxLayout,
@@ -60,6 +61,146 @@ def _teinte(nature: str) -> str:
         "text": t.TEXT_MUTED,
     }
     return table.get(nature, t.TEXT_MUTED)
+
+
+class _ReaderDot(QWidget):
+    """Pastille de la couleur du lecteur, la meme que ses onglets et badges."""
+
+    def __init__(self, index: int, parent=None):
+        super().__init__(parent)
+        self._index = index
+        self.setFixedSize(8, 8)
+
+    def paintEvent(self, event):
+        peintre = QPainter(self)
+        peintre.setRenderHint(QPainter.Antialiasing)
+        peintre.setPen(Qt.NoPen)
+        # Lue a chaque dessin : la pastille suit la bascule de theme.
+        peintre.setBrush(QColor(t.reader_color(self._index)))
+        peintre.drawEllipse(QRectF(0, 0, 8, 8))
+        peintre.end()
+
+
+class _ElidedLabel(QLabel):
+    """Nom de lecteur raccourci par "..." plutot que d'imposer sa largeur."""
+
+    def __init__(self, texte: str, parent=None):
+        super().__init__(texte, parent)
+        self._complet = texte
+        self.setToolTip(texte)
+        self.setMinimumWidth(0)
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+
+    def minimumSizeHint(self):
+        indice = super().minimumSizeHint()
+        indice.setWidth(0)
+        return indice
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        court = self.fontMetrics().elidedText(self._complet, Qt.ElideRight, self.width())
+        if court != self.text():
+            self.setText(court)
+
+
+class ReaderResultsTable(QWidget):
+    """Verdict de CE test, une ligne par lecteur : nom, resultat, duree,
+    derniers runs.
+
+    Remplace une rangee unique qui alignait une case par lecteur, une case
+    duree et une case d'historique par lecteur : a 4 lecteurs, ses 9 cases
+    imposaient leur largeur a toute la fenetre, qu'on ne pouvait plus
+    reduire. Ici la largeur ne depend plus du nombre de lecteurs -- le nom se
+    raccourcit, et la colonne duree s'efface sous `ETROIT` pixels.
+    """
+
+    ETROIT = 440
+    COL_NOM, COL_RESULTAT, COL_DUREE, COL_HISTORIQUE = range(4)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._grille = QGridLayout(self)
+        self._grille.setContentsMargins(0, 0, 0, 0)
+        self._grille.setHorizontalSpacing(t.SPACE_4)
+        self._grille.setVerticalSpacing(t.SPACE_1)
+        self._grille.setColumnStretch(self.COL_NOM, 1)
+        self._durees: list[QWidget] = []
+        self._lignes = 0
+
+    def clear(self) -> None:
+        while self._grille.count():
+            element = self._grille.takeAt(0)
+            widget = element.widget()
+            if widget is not None:
+                # `hide()` tout de suite : un widget retire du layout reste
+                # peint par-dessus les nouvelles lignes tant que
+                # `deleteLater()` n'a pas ete traite.
+                widget.hide()
+                widget.deleteLater()
+        self._durees = []
+        self._lignes = 0
+
+    def set_rows(self, rows, avec_duree: bool, avec_historique: bool) -> None:
+        """`rows` : (lecteur, statut, duree ou None, sparkline ou None)."""
+        self.clear()
+        entetes = [(self.COL_NOM, "Reader"), (self.COL_RESULTAT, "Result")]
+        if avec_duree:
+            entetes.append((self.COL_DUREE, "Duration"))
+        if avec_historique:
+            entetes.append((self.COL_HISTORIQUE, "Last runs"))
+        for colonne, texte in entetes:
+            entete = QLabel(texte.upper())
+            # Style par la regle globale `QLabel#StatCellLabel`, jamais par
+            # `setStyleSheet()` : voir la mise en garde dans theme.py.
+            entete.setObjectName("StatCellLabel")
+            self._grille.addWidget(entete, 0, colonne)
+            if colonne == self.COL_DUREE:
+                self._durees.append(entete)
+
+        for ligne, (lecteur, statut, duree, sparkline) in enumerate(rows, start=1):
+            nom = QWidget()
+            rangee = QHBoxLayout(nom)
+            rangee.setContentsMargins(0, 0, 0, 0)
+            rangee.setSpacing(t.SPACE_2)
+            rangee.addWidget(_ReaderDot(lecteur.index))
+            rangee.addWidget(_ElidedLabel(lecteur.name or "Test interpreter"), 1)
+            nom.setMinimumWidth(0)
+            nom.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+            self._grille.addWidget(nom, ligne, self.COL_NOM)
+            self._grille.addWidget(ReaderResult("", lecteur.index, statut), ligne, self.COL_RESULTAT)
+            if avec_duree:
+                texte = QLabel("" if duree is None else f"{duree:.2f}s")
+                texte.setObjectName("Faint")
+                self._grille.addWidget(texte, ligne, self.COL_DUREE)
+                self._durees.append(texte)
+            if avec_historique and sparkline is not None:
+                self._grille.addWidget(sparkline, ligne, self.COL_HISTORIQUE, Qt.AlignVCenter)
+        self._lignes = len(rows)
+        self._ajuster()
+
+    def _ajuster(self) -> None:
+        large = self.width() >= self.ETROIT
+        for widget in self._durees:
+            widget.setVisible(large)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._ajuster()
+
+    def paintEvent(self, event):
+        # Un filet entre les lignes, dessine plutot que pose en bordure de
+        # feuille de style : c'est ce qui evitait les contours fantomes.
+        if self._lignes == 0:
+            return
+        peintre = QPainter(self)
+        peintre.setPen(QPen(QColor(t.BORDER), 1))
+        for ligne in range(1, self._lignes + 1):
+            case = self._grille.cellRect(ligne, self.COL_NOM)
+            if not case.isValid():
+                continue
+            y = case.top() - 2
+            peintre.drawLine(0, y, self.width(), y)
+        peintre.end()
 
 
 class DetailPanel(QWidget):
@@ -172,10 +313,7 @@ class DetailPanel(QWidget):
         self._markers_layout.setSpacing(t.SPACE_1)
         colonne.addWidget(self.markers_row)
 
-        self.results_row = QWidget()
-        self._results_layout = QHBoxLayout(self.results_row)
-        self._results_layout.setContentsMargins(0, 0, 0, 0)
-        self._results_layout.setSpacing(t.SPACE_2)
+        self.results_row = ReaderResultsTable()
         colonne.addWidget(self.results_row)
 
         self.body = QTextEdit()
@@ -603,25 +741,6 @@ class DetailPanel(QWidget):
         self._markers_layout.addStretch(1)
         self.markers_row.setVisible(bool(markers))
 
-    def _stat_cell(self, legende: str, valeur: QWidget) -> QWidget:
-        """Case etiquetee du bandeau de stats : une legende discrete au-dessus
-        d'une valeur qui, elle, doit se voir du premier coup d'oeil -- la
-        duree d'un test se perdait avant dans une simple etiquette grise en
-        bout de rangee."""
-        cellule = QFrame()
-        cellule.setStyleSheet(
-            f"background-color: {t.BG_RAISED}; border: 1px solid {t.BORDER};"
-            f"border-radius: {t.RADIUS_MD}px;")
-        colonne = QVBoxLayout(cellule)
-        colonne.setContentsMargins(t.SPACE_2, t.SPACE_1, t.SPACE_2, t.SPACE_1)
-        colonne.setSpacing(2)
-
-        libelle = QLabel(legende.upper())
-        libelle.setObjectName("StatCellLabel")
-        colonne.addWidget(libelle)
-        colonne.addWidget(valeur)
-        return cellule
-
     def _texte_duree(self, cibles, durations: dict[int, float | None]) -> str:
         """Duree connue de chaque lecteur, telle que pytest l'a chronometree.
 
@@ -642,42 +761,23 @@ class DetailPanel(QWidget):
     def _remplir_resultats(self, readers, statuses: dict[int, Status],
                            durations: dict[int, float | None],
                            recent_runs: dict[int, list[bool]]) -> None:
-        while self._results_layout.count():
-            element = self._results_layout.takeAt(0)
-            widget = element.widget()
-            if widget is not None:
-                # `hide()` tout de suite : retire du layout, un widget garde
-                # sa derniere position et reste peint par-dessus les
-                # nouvelles cases tant que `deleteLater()` n'a pas ete traite.
-                widget.hide()
-                widget.deleteLater()
         self._sparklines = {}
-
         cibles = readers or (Reader("", 0),)
-        plusieurs = len(cibles) > 1
-        for lecteur in cibles:
-            statut = statuses.get(lecteur.index, Status.PENDING)
-            legende = lecteur.short_name if lecteur.name else "Status"
-            valeur = ReaderResult("", lecteur.index, statut)
-            self._results_layout.addWidget(self._stat_cell(legende, valeur))
-
         self._duree_visible = self._texte_duree(cibles, durations)
-        if self._duree_visible:
-            duree_label = QLabel(self._duree_visible)
-            duree_label.setObjectName("StatCellValue")
-            self._results_layout.addWidget(self._stat_cell("Duration", duree_label))
-
+        lignes = []
         for lecteur in cibles:
+            sparkline = None
             runs = recent_runs.get(lecteur.index, [])
-            if not runs:
-                continue
-            sparkline = RecentRunsSparkline()
-            sparkline.set_runs(runs)
-            self._sparklines[lecteur.index] = sparkline
-            legende = f"{lecteur.short_name} history" if plusieurs and lecteur.name else "Last runs"
-            self._results_layout.addWidget(self._stat_cell(legende, sparkline))
-
-        self._results_layout.addStretch(1)
+            if runs:
+                sparkline = RecentRunsSparkline()
+                sparkline.set_runs(runs)
+                self._sparklines[lecteur.index] = sparkline
+            lignes.append((lecteur, statuses.get(lecteur.index, Status.PENDING),
+                           durations.get(lecteur.index), sparkline))
+        self.results_row.set_rows(
+            lignes,
+            avec_duree=any(durations.get(l.index) is not None for l in cibles),
+            avec_historique=bool(self._sparklines))
 
     def _remplir_corps(self, readers, statuses: dict[int, Status],
                        failures: dict[int, Failure | None],

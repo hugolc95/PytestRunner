@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from runner.domain.models import Status
 from runner.ui import icons
@@ -27,23 +26,9 @@ _START_PREFIX = "PYTESTRUNNER_START\t"
 def install() -> None:
     """Install the visual refinements before the main window is created."""
     from runner.domain import execution, reader_isolation
-    from runner.ui.detail_panel import DetailPanel
     from runner.ui.main_window import MainWindow
     from runner.ui.tree_model import TestTreeModel
     from runner.ui.widgets import CompassRing
-
-    def flat_stat_cell(self, legende: str, valeur: QWidget) -> QWidget:
-        cellule = QWidget()
-        colonne = QVBoxLayout(cellule)
-        colonne.setContentsMargins(t.SPACE_2, t.SPACE_1, t.SPACE_2, t.SPACE_1)
-        colonne.setSpacing(2)
-
-        from PySide6.QtWidgets import QLabel
-        libelle = QLabel(legende.upper())
-        libelle.setObjectName("StatCellLabel")
-        colonne.addWidget(libelle)
-        colonne.addWidget(valeur)
-        return cellule
 
     def flat_status_live(self, texte: str) -> None:
         couleur = t.status_color(Status.RUNNING)
@@ -55,7 +40,6 @@ def install() -> None:
         self.live_dot.start()
         self.live_chip.setStyleSheet("")
 
-    DetailPanel._stat_cell = flat_stat_cell
     MainWindow._set_status_live = flat_status_live
 
     # ------------------------------------------------------------------
