@@ -73,12 +73,12 @@ except Exception as exc:
     fail('nocard', exc)
 
 if isinstance(atr, (bytes, bytearray, list, tuple)):
-    text = ' '.join(f'{int(b) & 0xFF:02X}' for b in atr)
+    text = ''.join(f'{int(b) & 0xFF:02X}' for b in atr)
 else:
     text = str(atr or '').strip()
     compact = text.replace(' ', '')
     if compact and len(compact) % 2 == 0 and all(c in '0123456789abcdefABCDEF' for c in compact):
-        text = ' '.join(compact[i:i + 2] for i in range(0, len(compact), 2)).upper()
+        text = compact.upper()
 out(state='atr' if text else 'nocard', atr=text)
 '''
 

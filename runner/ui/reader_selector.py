@@ -1,8 +1,9 @@
 """Compact primary-reader editor using the workspace's test interpreter."""
 import json
 
-from PySide6.QtCore import QProcess, QProcessEnvironment, QTimer, Signal
-from PySide6.QtWidgets import QComboBox, QLineEdit
+from PySide6.QtCore import QProcess, QProcessEnvironment, QSize, QTimer, Signal
+from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtWidgets import QComboBox, QLineEdit, QStyle
 
 from runner.domain import reader_discovery
 from runner.ui import icons
@@ -235,3 +236,45 @@ class ReaderAtrField(QLineEdit):
         self.setProperty("state", state)
         self.style().unpolish(self)
         self.style().polish(self)
+        # Un ATR se lit en entier ou pas du tout. Le champ demande d'abord la
+        # place de l'ATR, jusqu'a la largeur maximale du selecteur ; quand il ne
+        # l'obtient pas (ATR tres long, fenetre etroite), le texte retrecit.
+        # Largeur souhaitee, pas imposee : une largeur minimale ferait deborder
+        # toute la barre sur une fenetre etroite.
+        self.updateGeometry()
+        self._fit()
+
+    def sizeHint(self):
+        base = super().sizeHint()
+        if self.state != reader_discovery.ATR_OK:
+            return base
+        voulu = self._text_width(t.TEXT_SM) + self._margin()
+        return QSize(max(base.width(), min(voulu, self.LARGEUR_MAX)), base.height())
+
+    LARGEUR_MAX = 440
+    TAILLE_MIN = 8
+
+    def _margin(self):
+        icone = self.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize)
+        return 2 * t.SPACE_2 + icone + 20
+
+    def _text_width(self, taille):
+        police = QFont(self.font())
+        police.setPixelSize(taille)
+        return QFontMetrics(police).horizontalAdvance(self.text())
+
+    def _fit(self):
+        taille = t.TEXT_SM
+        if self.state == reader_discovery.ATR_OK:
+            place = self.width() - self._margin()
+            while taille > self.TAILLE_MIN and self._text_width(taille) > place:
+                taille -= 1
+        # Une feuille propre au widget passe devant celle de la fenetre, qui
+        # fixe sinon la taille pour tout le monde ; elle ne porte que ca.
+        feuille = "" if taille == t.TEXT_SM else f"font-size: {taille}px;"
+        if feuille != self.styleSheet():
+            self.setStyleSheet(feuille)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit()

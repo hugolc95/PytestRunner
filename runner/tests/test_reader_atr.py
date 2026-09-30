@@ -49,9 +49,9 @@ def _sonder(tmp_path, corps, lecteur, monkeypatch):
     return parse_atr_output(fini.stdout, fini.stderr)
 
 
-def test_a_card_gives_its_atr_as_spaced_hex(tmp_path, monkeypatch):
+def test_a_card_gives_its_atr_as_compact_hex(tmp_path, monkeypatch):
     etat, atr, _ = _sonder(tmp_path, HUB_ARGUMENT, CARTE, monkeypatch)
-    assert (etat, atr) == (ATR_OK, "3B 8F 80 01 80 4F 0C A0 00 00 03 06")
+    assert (etat, atr) == (ATR_OK, "3B8F8001804F0CA000000306")
 
 
 def test_a_reader_without_card_says_so(tmp_path, monkeypatch):
@@ -75,7 +75,7 @@ def test_connect_then_getatr_is_supported_and_released(tmp_path, monkeypatch):
     '''
     monkeypatch.chdir(tmp_path)
     etat, atr, _ = _sonder(tmp_path, corps, CARTE, monkeypatch)
-    assert (etat, atr) == (ATR_OK, "3B 8F 80 01")
+    assert (etat, atr) == (ATR_OK, "3B8F8001")
     assert (tmp_path / "released").read_text() == CARTE
 
 
@@ -113,7 +113,7 @@ def test_the_reader_name_is_passed_as_data_not_code(tmp_path, monkeypatch):
     nom = "x'); import os; os._exit(3) #"
     etat, atr, _ = _sonder(tmp_path, corps, nom, monkeypatch)
     assert etat == ATR_OK
-    assert atr == " ".join(f"{b:02X}" for b in nom.encode())
+    assert atr == nom.encode().hex().upper()
 
 
 # ------------------------------------------------------------------ fenetre
@@ -140,7 +140,7 @@ def _charger(window, tmp_path, yaml):
 def test_the_field_shows_the_atr_of_the_configured_reader(fenetre, qtbot, tmp_path):
     _charger(fenetre, tmp_path, f"Reader: {CARTE}\n")
     qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=15000)
-    assert fenetre.reader_atr.text() == "3B 8F 80 01 80 4F 0C A0 00 00 03 06"
+    assert fenetre.reader_atr.text() == "3B8F8001804F0CA000000306"
     assert fenetre.reader_atr.text() in fenetre.reader_atr.toolTip()
 
 
@@ -176,3 +176,21 @@ def test_nothing_is_read_while_a_run_holds_the_reader(fenetre, qtbot, tmp_path, 
     fenetre._update_actions()
     assert lancements == [1]
     qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_NO_CARD, timeout=15000)
+
+
+def test_a_long_atr_shrinks_until_it_fits_entirely(qtbot):
+    """Un ATR se lit en entier : faute de place, la police retrecit plutot
+    que de couper la fin -- et reprend sa taille des qu'il tient."""
+    champ = ReaderAtrField()
+    qtbot.addWidget(champ)
+    champ.resize(champ.LARGEUR_MAX, 26)
+    champ.show()
+    long_atr = bytes(range(0x3B, 0x3B + 33)).hex().upper()
+
+    champ._show(ATR_OK, long_atr, "")
+    taille = int(champ.styleSheet().removeprefix("font-size: ").removesuffix("px;"))
+    assert taille < 12
+    assert champ._text_width(taille) + champ._margin() <= champ.width()
+
+    champ._show(ATR_OK, "3B8F8001", "")
+    assert champ.styleSheet() == ""
