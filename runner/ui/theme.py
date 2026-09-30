@@ -471,6 +471,7 @@ QComboBox QAbstractItemView {{
 
 /* ----------------------------------------------------------------- arbre */
 QTreeView {{
+    qproperty-indentation: {t.TREE_INDENTATION};
     background-color: {t.BG_SURFACE};
     border: 1px solid {t.BORDER};
     border-radius: {t.RADIUS_LG}px;
