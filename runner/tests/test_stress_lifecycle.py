@@ -180,6 +180,37 @@ def test_n_times_runs_to_completion_and_reports_the_tally(fenetre, monkeypatch, 
     assert len(resume.failed_attempts) == 2
 
 
+def test_the_top_counters_tally_every_attempt(fenetre, monkeypatch, qapp):
+    """L'anneau et les pastilles du haut restaient sur l'etat d'avant la
+    serie ("1 passed" au mieux, puisque l'arbre ne garde que le dernier
+    verdict de l'unique test rejoue). Ils doivent compter CHAQUE tentative."""
+    _popen_scripte(monkeypatch, ["PASSED", "FAILED", "PASSED", "FAILED", "PASSED"])
+
+    fenetre._lancer_stress(NODEID, MODE_N_TIMES, cap=5)
+    assert fenetre.pills[Status.PASSED].value() == 0
+    assert fenetre.remaining_pill.isVisibleTo(fenetre)
+    _attendre(fenetre, qapp)
+
+    assert fenetre.pills[Status.PASSED].value() == 3
+    assert fenetre.pills[Status.FAILED].value() == 2
+    assert fenetre.compass_pct.text() == "60%"
+
+
+def test_a_normal_run_takes_the_top_counters_back(fenetre, monkeypatch, qapp):
+    _popen_scripte(monkeypatch, ["PASSED"] * 3)
+    fenetre._lancer_stress(NODEID, MODE_N_TIMES, cap=3)
+    _attendre(fenetre, qapp)
+    assert fenetre.pills[Status.PASSED].value() == 3
+
+    from runner.domain.models import RunRequest
+
+    fenetre._on_run_started(RunRequest(
+        workspace=str(fenetre.workspace.path), interpreter=sys.executable,
+        nodeids=(NODEID,), readers=(Reader("", 0),)))
+
+    assert fenetre.pills[Status.PASSED].value() == 0
+
+
 def test_the_whole_series_lands_in_history_as_one_entry(fenetre, monkeypatch, qapp):
     """Le coeur du reproche d'origine : "Run N times" ne laissait RIEN dans
     l'onglet History. Une fois corrige une premiere fois, il y laissait une

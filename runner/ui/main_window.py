@@ -169,6 +169,11 @@ class MainWindow(QMainWindow):
         # archivee dans l'historique et redeclencherait la notification de fin
         # de run, comme si c'etait un vrai run complet.
         self._stress_worker: StressRunWorker | None = None
+        # Verdicts de la derniere serie, tentative par tentative et lecteur par
+        # lecteur. Tant qu'elle n'est pas `None`, c'est elle que montrent
+        # l'anneau et les pastilles du haut : l'arbre, lui, ne garde que le
+        # dernier verdict de l'unique test rejoue -- "1 passed" pour 10 runs.
+        self._stress_counts: dict | None = None
         self._stress_nodeid = ""
         self._stress_mode = MODE_UNTIL_FAIL
         self._stress_cap = 0
@@ -1764,6 +1769,7 @@ class MainWindow(QMainWindow):
             self._clear_status_filter()
             self.remaining_pill.setVisible(False)
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
+        self._stress_counts = None
         self._refresh_profile_picker()
         self.tree_view_switch.setVisible(self.workspace is not None)
         self._tree_workspace = self.workspace.path if self.workspace else ""
@@ -2167,6 +2173,7 @@ class MainWindow(QMainWindow):
         self._profile_progress_done = 0 if self._running_execution_profile else None
         self.model.clear_statuses()
         self.model.clear_stress_annotation()
+        self._stress_counts = None
         self.results.begin_run()
 
         self.progress.setVisible(True)
@@ -2291,6 +2298,8 @@ class MainWindow(QMainWindow):
     def _completed_executions(self) -> int:
         if getattr(self, '_profile_count_statuses', None) is not None:
             return sum(self._profile_verdict_counts.values())
+        if self._stress_counts is not None:
+            return sum(self._stress_counts.values())
         value = getattr(self, "_profile_progress_done", None)
         return self.model.done() if value is None else value
 
@@ -2298,6 +2307,8 @@ class MainWindow(QMainWindow):
         """Shared snapshot for the result counters and completion notification."""
         if getattr(self, '_profile_count_statuses', None) is not None:
             return dict(self._profile_verdict_counts)
+        if self._stress_counts is not None:
+            return dict(self._stress_counts)
         return self.model.status_counts()
 
     @Slot(list)
@@ -2634,6 +2645,7 @@ class MainWindow(QMainWindow):
         self._stress_failed = []
         self._stress_id = history.nouvel_identifiant()
         self._stress_aggregate: dict[int, dict] = {}
+        self._stress_counts = {}
 
         self._stress_worker = StressRunWorker(
             requete, lecteurs, self.workspace.env, mode, cap, self)
@@ -2643,14 +2655,14 @@ class MainWindow(QMainWindow):
         self._set_status_live(self._stress_detail(mode, nodeid, 0, cap))
         self.model.set_stress_annotation(nodeid, self._stress_compact(mode, 0, cap))
         self.results.detail.show_stress_running(nodeid, mode, cap, 0, 0, 0)
-        # Meme pastille et meme barre que pour un run normal (`_lancer_run`) :
-        # sans ca, elles restent figees sur le run precedent pendant toute la
-        # serie, "1 restant" par exemple, au lieu de suivre les `cap` tentatives.
+        # Memes compteurs que pour un run normal (`_on_run_started`) : sans ca,
+        # anneau, pastilles et barre restent figes sur le run precedent pendant
+        # toute la serie. Une execution = une tentative sur un lecteur.
+        self._clear_status_filter()
         self.progress.setVisible(True)
-        self.progress.setRange(0, cap)
-        self.progress.setValue(0)
-        self.remaining_pill.set_value(cap)
+        self.progress.setRange(0, cap * len(lecteurs))
         self.remaining_pill.setVisible(True)
+        self._rafraichir_compteurs()
         self._update_actions()
         self._stress_worker.start()
 
@@ -2680,6 +2692,8 @@ class MainWindow(QMainWindow):
         for resultat in tentative.reports:
             self.model.apply_outcome(
                 self._stress_nodeid, resultat.status, resultat.reader.index)
+            self._stress_counts[resultat.status] = (
+                self._stress_counts.get(resultat.status, 0) + 1)
 
         self._accumuler_stress(tentative)
 
@@ -2691,8 +2705,7 @@ class MainWindow(QMainWindow):
         self.results.detail.show_stress_running(
             self._stress_nodeid, self._stress_mode, self._stress_cap,
             self._stress_ran, self._stress_passed, len(self._stress_failed))
-        self.progress.setValue(self._stress_ran)
-        self.remaining_pill.set_value(max(0, self._stress_cap - self._stress_ran))
+        self._rafraichir_compteurs()
 
     def _accumuler_stress(self, tentative: StressAttempt) -> None:
         """Cumule une tentative par lecteur, sans encore rien ecrire.
