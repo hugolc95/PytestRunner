@@ -10,17 +10,20 @@ print('HUBREADERS_JSON:' + json.dumps(list(method()), ensure_ascii=True))
 '''
 
 
+# API de pyHubReader (SmartcardFramework, Reader/PyHubreader.py) : le lecteur
+# se choisit a la construction (`readerName`), `OpenReader()` s'y connecte,
+# `GetATR()` rend l'ATR en `bytes` -- ou leve s'il n'y a pas de connexion ou pas
+# de carte -- et `CloseReader()` relache la connexion, aussitot : les tests
+# auront besoin du lecteur.
+#
 # Le nom du lecteur arrive par `sys.argv[1]`, jamais colle dans le code : un
 # nom saisi a la main peut contenir n'importe quoi.
 #
-# Tolerant sur l'API, comme PROBE : la signature de getAtr n'est pas figee --
-# soit getAtr(lecteur), soit connexion au lecteur puis getAtr(). La connexion
-# est relachee aussitot, pour ne pas garder la main sur un lecteur dont les
-# tests auront besoin.
-#
-# Deux echecs a ne pas confondre : PyHubReader absent ou sans getAtr, c'est
-# "unavailable" ; getAtr qui echoue ou ne rend rien sur CE lecteur, c'est qu'il
-# n'y a pas de carte a lire -- "nocard".
+# Deux echecs a ne pas confondre : PyHubReader absent ou inutilisable, c'est
+# "unavailable" ; l'ouverture ou la lecture qui echoue sur CE lecteur, ou un ATR
+# vide, c'est qu'il n'y a pas de carte a lire -- "nocard". La valeur rendue par
+# `OpenReader()` n'est pas interpretee : une connexion ratee fait lever
+# `GetATR()`, ce qui dit la meme chose sans supposer de convention.
 PROBE_ATR = r'''
 import json, sys
 
@@ -34,51 +37,29 @@ def fail(state, exc):
 reader = sys.argv[1]
 try:
     from Reader.PyHubreader import pyHubReader
-    hub = pyHubReader()
+    hub = pyHubReader(readerName=reader)
 except Exception as exc:
     fail('unavailable', exc)
 
-def pick(*names):
-    for name in names:
-        method = getattr(hub, name, None)
-        if callable(method):
-            return method
-    return None
-
-get_atr = pick('getAtr', 'getATR', 'GetAtr', 'GetATR', 'get_atr')
-if get_atr is None:
-    fail('unavailable', 'PyHubReader has no getAtr method')
-
-def read():
-    try:
-        return get_atr(reader)
-    except TypeError:
-        connect = pick('connect', 'Connect', 'selectReader', 'SelectReader', 'open', 'Open')
-        if connect is None:
-            raise
-    connect(reader)
-    try:
-        return get_atr()
-    finally:
-        close = pick('disconnect', 'Disconnect', 'close', 'Close')
-        if close is not None:
-            try:
-                close()
-            except Exception:
-                pass
-
 try:
-    atr = read()
+    hub.OpenReader()
+    atr = hub.GetATR()
 except Exception as exc:
-    fail('nocard', exc)
+    atr, erreur = None, exc
+else:
+    erreur = None
+finally:
+    try:
+        hub.CloseReader()
+    except Exception:
+        pass
+if erreur is not None:
+    fail('nocard', erreur)
 
 if isinstance(atr, (bytes, bytearray, list, tuple)):
     text = ''.join(f'{int(b) & 0xFF:02X}' for b in atr)
 else:
-    text = str(atr or '').strip()
-    compact = text.replace(' ', '')
-    if compact and len(compact) % 2 == 0 and all(c in '0123456789abcdefABCDEF' for c in compact):
-        text = compact.upper()
+    text = str(atr or '').replace(' ', '').upper()
 out(state='atr' if text else 'nocard', atr=text)
 '''
 

@@ -31,17 +31,38 @@ def _faux_hub(tmp_path, corps):
     return str(tmp_path / "fakehub")
 
 
-HUB_ARGUMENT = f'''
+# Meme forme que la vraie classe (SmartcardFramework, Reader/PyHubreader.py) :
+# lecteur choisi a la construction, OpenReader/GetATR/CloseReader sans
+# argument, GetATR qui leve sans connexion ou sans carte. Chaque appel laisse
+# une trace dans `journal.txt` pour verifier l'ordre et la liberation.
+HUB_REEL = f'''
+import pathlib
+
+def trace(ligne):
+    with open("journal.txt", "a") as f:
+        f.write(ligne + "\\n")
+
 class pyHubReader:
-    def getAtr(self, reader):
-        if reader == {CARTE!r}:
+    def __init__(self, readerName="", logger=None):
+        self.readerName = readerName
+    def OpenReader(self) -> int:
+        trace("open " + self.readerName)
+        self.connection = 1
+        return 0
+    def GetATR(self) -> bytes:
+        if not hasattr(self, "connection"):
+            raise Exception("GetATR: There is no connection")
+        if self.readerName == {CARTE!r}:
             return bytes.fromhex("3B8F8001804F0CA000000306")
-        raise RuntimeError("SCARD_E_NO_SMARTCARD")
+        raise Exception("Failed to get ATR. Error code: 2148532236")
+    def CloseReader(self, free_library=False) -> None:
+        trace("close " + self.readerName)
 '''
 
 
 def _sonder(tmp_path, corps, lecteur, monkeypatch):
     monkeypatch.setenv("PYTHONPATH", _faux_hub(tmp_path, corps))
+    monkeypatch.chdir(tmp_path)
     fini = subprocess.run(
         [sys.executable, "-c", reader_discovery.PROBE_ATR, lecteur],
         capture_output=True, text=True, timeout=30,
@@ -49,42 +70,43 @@ def _sonder(tmp_path, corps, lecteur, monkeypatch):
     return parse_atr_output(fini.stdout, fini.stderr)
 
 
+def _journal(tmp_path):
+    chemin = tmp_path / "journal.txt"
+    return chemin.read_text().splitlines() if chemin.exists() else []
+
+
 def test_a_card_gives_its_atr_as_compact_hex(tmp_path, monkeypatch):
-    etat, atr, _ = _sonder(tmp_path, HUB_ARGUMENT, CARTE, monkeypatch)
+    etat, atr, _ = _sonder(tmp_path, HUB_REEL, CARTE, monkeypatch)
     assert (etat, atr) == (ATR_OK, "3B8F8001804F0CA000000306")
 
 
-def test_a_reader_without_card_says_so(tmp_path, monkeypatch):
-    etat, atr, detail = _sonder(tmp_path, HUB_ARGUMENT, VIDE, monkeypatch)
+def test_the_reader_is_opened_then_released(tmp_path, monkeypatch):
+    """Les tests ont besoin du lecteur : la connexion ouverte pour lire l'ATR
+    doit etre refermee aussitot."""
+    _sonder(tmp_path, HUB_REEL, CARTE, monkeypatch)
+    assert _journal(tmp_path) == [f"open {CARTE}", f"close {CARTE}"]
+
+
+def test_a_reader_without_card_says_so_and_is_still_released(tmp_path, monkeypatch):
+    etat, atr, detail = _sonder(tmp_path, HUB_REEL, VIDE, monkeypatch)
     assert (etat, atr) == (ATR_NO_CARD, "")
-    assert "SCARD_E_NO_SMARTCARD" in detail
+    assert "Failed to get ATR" in detail
+    assert _journal(tmp_path) == [f"open {VIDE}", f"close {VIDE}"]
 
 
-def test_connect_then_getatr_is_supported_and_released(tmp_path, monkeypatch):
-    """L'autre forme d'API : connexion au lecteur, puis getAtr() sans
-    argument -- et la connexion doit etre relachee, les tests en ont besoin."""
-    corps = '''
-    import pathlib
-    class pyHubReader:
-        def connect(self, reader):
-            self.reader = reader
-        def getATR(self):
-            return "3b8f8001"
-        def disconnect(self):
-            pathlib.Path("released").write_text(self.reader)
-    '''
-    monkeypatch.chdir(tmp_path)
-    etat, atr, _ = _sonder(tmp_path, corps, CARTE, monkeypatch)
-    assert (etat, atr) == (ATR_OK, "3B8F8001")
-    assert (tmp_path / "released").read_text() == CARTE
+def test_a_reader_that_cannot_be_opened_means_no_card(tmp_path, monkeypatch):
+    corps = HUB_REEL.replace(
+        "        self.connection = 1\n        return 0",
+        "        raise Exception(\"OpenReader failed. Error code: 2148532236\")")
+    assert corps != HUB_REEL
+    etat, _, detail = _sonder(tmp_path, corps, CARTE, monkeypatch)
+    assert etat == ATR_NO_CARD
+    assert "OpenReader failed" in detail
 
 
 def test_an_empty_atr_means_no_card(tmp_path, monkeypatch):
-    corps = '''
-    class pyHubReader:
-        def getAtr(self, reader):
-            return ""
-    '''
+    corps = HUB_REEL.replace('return bytes.fromhex("3B8F8001804F0CA000000306")', 'return b""')
+    assert corps != HUB_REEL
     assert _sonder(tmp_path, corps, CARTE, monkeypatch)[0] == ATR_NO_CARD
 
 
@@ -105,15 +127,10 @@ def test_unreadable_output_is_unavailable():
 
 def test_the_reader_name_is_passed_as_data_not_code(tmp_path, monkeypatch):
     """Un nom de lecteur saisi a la main ne doit jamais s'executer."""
-    corps = '''
-    class pyHubReader:
-        def getAtr(self, reader):
-            return reader.encode()
-    '''
     nom = "x'); import os; os._exit(3) #"
-    etat, atr, _ = _sonder(tmp_path, corps, nom, monkeypatch)
-    assert etat == ATR_OK
-    assert atr == nom.encode().hex().upper()
+    etat, _, _ = _sonder(tmp_path, HUB_REEL, nom, monkeypatch)
+    assert etat == ATR_NO_CARD
+    assert _journal(tmp_path) == [f"open {nom}", f"close {nom}"]
 
 
 # ------------------------------------------------------------------ fenetre
@@ -122,7 +139,7 @@ def test_the_reader_name_is_passed_as_data_not_code(tmp_path, monkeypatch):
 @pytest.fixture
 def fenetre(qtbot, tmp_path, monkeypatch):
     QSettings(ORG, APP).clear()
-    monkeypatch.setenv("PYTHONPATH", _faux_hub(tmp_path, HUB_ARGUMENT))
+    monkeypatch.setenv("PYTHONPATH", _faux_hub(tmp_path, HUB_REEL))
     window = MainWindow()
     qtbot.addWidget(window)
     monkeypatch.setattr(window, "_effective_interpreter", lambda: sys.executable)
