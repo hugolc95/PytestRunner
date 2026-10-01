@@ -649,6 +649,55 @@ def test_restyle_repaints_run_cards_already_on_screen(qapp, historique):
 
 # ------------------------------------------------------------- stabilite Qt
 
+@pytest.mark.parametrize("pixel_scroll", [False, True])
+def test_large_history_keeps_visible_cards_when_scrolling_and_resizing(
+        qapp, tmp_path, pixel_scroll):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QAbstractItemView
+
+    history = History(tmp_path)
+    for index in range(133):
+        history.add(RunEntry(
+            id=f"run-{index}", timestamp=1790800000 + index * 3600,
+            workspace="/w", nodeids=("test_ok",), counts={"PASSED": 1},
+            test_statuses={"test_ok": "PASSED"}))
+    window = HistoryWindow(history)
+    view = window.run_list
+    if pixel_scroll:
+        view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+    window.show()
+
+    def visible_cards():
+        qapp.processEvents()
+        qapp.processEvents()
+        items = [view.item(row) for row in range(view.count())
+                 if view.item(row).data(Qt.UserRole) is not None
+                 and view.visualItemRect(view.item(row)).intersects(
+                     view.viewport().rect())]
+        assert items
+        assert all(view.itemWidget(item) is not None for item in items)
+        assert len(window._cards) < 25  # Do not eagerly build all 133 cards.
+        return items
+
+    visible_cards()
+    for fraction in (0.15, 0.4, 0.75, 1.0, 0.0):
+        bar = view.verticalScrollBar()
+        bar.setValue(round(bar.maximum() * fraction))
+        items = visible_cards()
+        item = items[len(items) // 2]
+        QTest.mouseClick(view.viewport(), Qt.LeftButton, Qt.NoModifier,
+                         view.visualItemRect(item).center())
+        assert window._current_group().id == item.data(Qt.UserRole).id
+
+    view.verticalScrollBar().setValue(view.verticalScrollBar().maximum() // 2)
+    window.resize(1380, 1400)
+    visible_cards()
+    window.hide()
+    window.resize(1380, 790)
+    window.show()
+    visible_cards()
+    window.close()
+
 def test_refreshing_with_the_same_visible_runs_touches_no_item(fenetre, monkeypatch):
     """Un vrai crash natif (segfault, pas une exception Python) frappait
     l'appli quand la page Historique etait regardee PENDANT qu'un run tourne

@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QActionGroup, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -649,6 +649,12 @@ class HistoryWindow(QDialog):
         self.run_list.itemDoubleClicked.connect(lambda _item: self.view_output())
         self.run_list.verticalScrollBar().valueChanged.connect(
             lambda _value: self._materialize_cards())
+        self._cards_timer = QTimer(self)
+        self._cards_timer.setSingleShot(True)
+        self._cards_timer.timeout.connect(self._materialize_cards)
+        self.run_list.viewport().installEventFilter(self)
+        self.run_list.verticalScrollBar().rangeChanged.connect(
+            lambda _minimum, _maximum: self._cards_timer.start(0))
 
         self.empty = EmptyState(
             "mdi.history", "No run recorded yet",
@@ -1116,6 +1122,13 @@ class HistoryWindow(QDialog):
             self.detail_stack.setCurrentWidget(self.detail_empty)
         self._update_compare_action()
 
+    def eventFilter(self, watched, event):
+        if (watched is self.run_list.viewport()
+                and event.type() in (QEvent.Resize, QEvent.Show)):
+            # Wait until Qt has laid out the newly visible viewport.
+            self._cards_timer.start(0)
+        return super().eventFilter(watched, event)
+
     def _materialize_cards(self) -> None:
         """Ne construit que les cartes proches de la zone visible.
 
@@ -1134,14 +1147,24 @@ class HistoryWindow(QDialog):
         count = self.run_list.count()
         if not count:
             return
-        viewport = self.run_list.viewport()
-        first = self.run_list.indexAt(QPoint(1, 1)).row()
-        last = self.run_list.indexAt(
-            QPoint(1, max(1, viewport.height() - 2))).row()
-        if first < 0:
-            first = 0
-        if last < first:
-            last = min(count - 1, first + 12)
+        viewport = self.run_list.viewport().rect()
+        # Hit-testing a fixed point can land in the list's spacing, returning
+        # no index even far down the history. Use actual row geometry instead.
+        # Binary search keeps this cheap regardless of the history length.
+        first, end = 0, count
+        while first < end:
+            middle = (first + end) // 2
+            rect = self.run_list.visualItemRect(self.run_list.item(middle))
+            if rect.bottom() < viewport.top():
+                first = middle + 1
+            else:
+                end = middle
+        last = first
+        while last + 1 < count:
+            rect = self.run_list.visualItemRect(self.run_list.item(last + 1))
+            if rect.top() > viewport.bottom():
+                break
+            last += 1
         wanted = set(range(max(0, first - 3), min(count, last + 4)))
 
         kept: list[tuple[QListWidgetItem, RunCard]] = []
