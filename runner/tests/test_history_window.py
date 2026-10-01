@@ -103,7 +103,8 @@ def test_history_shows_the_build_and_opens_its_log_folder(
         qapp, tmp_path, monkeypatch):
     import runner.ui.history_dashboard as dashboard
 
-    log_file = tmp_path / "logs" / "20260819" / "Run_0042" / "test.log"
+    run_folder = tmp_path / "logs" / "20260819" / "Run_0042"
+    log_file = run_folder / "Reader A" / "suite" / "test.log"
     log_file.parent.mkdir(parents=True)
     log_file.write_text("ok", encoding="utf-8")
     history = History(tmp_path / "history")
@@ -117,7 +118,44 @@ def test_history_shows_the_build_and_opens_its_log_folder(
                         lambda url: opened.append(url) or True)
     window.open_logs()
 
-    assert Path(opened[0].toLocalFile()) == log_file.parent
+    assert Path(opened[0].toLocalFile()) == run_folder
+
+
+def test_history_logs_follow_the_selected_run_date(qapp, tmp_path, monkeypatch):
+    from datetime import datetime
+    import runner.ui.history_dashboard as dashboard
+
+    history = History(tmp_path / "history")
+    folders = []
+    for day in (18, 19):
+        folder = tmp_path / "logs" / f"202608{day}" / "Run_0042"
+        folder.mkdir(parents=True)
+        folders.append(folder)
+        history.add(RunEntry(id=str(day), workspace=str(tmp_path),
+                            timestamp=datetime(2026, 8, day, 12).timestamp(),
+                            build_number=42, log_root="logs"))
+    window = HistoryWindow(history)
+    opened = []
+    monkeypatch.setattr(dashboard.QDesktopServices, "openUrl",
+                        lambda url: opened.append(Path(url.toLocalFile())) or True)
+    select_run(window, 0)
+    window.open_logs()
+    select_run(window, 1)
+    window.open_logs()
+    assert opened == list(reversed(folders))
+
+
+def test_history_reports_a_folder_open_failure(qapp, tmp_path, monkeypatch):
+    import runner.ui.history_dashboard as dashboard
+
+    folder = tmp_path / "Run_0042"
+    folder.mkdir()
+    history = History(tmp_path / "history")
+    ajoute(history, "run", build_number=42, log_root=str(tmp_path))
+    window = HistoryWindow(history)
+    monkeypatch.setattr(dashboard.QDesktopServices, "openUrl", lambda url: False)
+    window.open_logs()
+    assert "Could not open log folder" in window.status.text()
 
 
 def test_runs_are_listed_newest_first(fenetre):

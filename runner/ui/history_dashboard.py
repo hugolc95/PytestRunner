@@ -7,7 +7,6 @@ que l'ecran initial ne montre que le verdict et les problemes utiles.
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -1468,18 +1467,24 @@ class HistoryWindow(QDialog):
         group = self._current_group()
         if group is None or group.build_number is None or not group.log_root:
             return
-        fichiers = logs.find_logs_for_build(
-            Path(group.log_root), group.build_number,
-            self._filter_reader,
-        )
-        if not fichiers:
-            self._say(f"No logs found for build #{group.build_number:04d}.", True)
-            return
+        root = Path(group.log_root)
+        if not root.is_absolute():
+            root = Path(group.workspace) / root
         try:
-            dossier = os.path.commonpath([str(path.parent) for path in fichiers])
-        except ValueError:
-            dossier = str(fichiers[0].parent)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(dossier))
+            folders = logs.history_log_directories(
+                root, group.build_number, group.timestamp, group.duration,
+                self._filter_reader)
+        except OSError as exc:
+            self._say(f"Could not access logs: {exc}", True)
+            return
+        if not folders:
+            self._say(f"No log folder found for build #{group.build_number:04d} "
+                      f"from {_when(group.timestamp)} in {root}.", True)
+            return
+        for folder in folders:
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+                self._say(f"Could not open log folder: {folder}", True)
+                return
 
     def rerun(self) -> None:
         group = self._current_group()
