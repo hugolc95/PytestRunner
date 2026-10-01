@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from runner.domain.duration import format_duration
 from runner.domain import logs, report
 from runner.domain.history import History, RunEntry, compare
 from runner.domain.models import Reader, Status
@@ -312,7 +313,7 @@ class RunCard(QFrame):
                                          t.TEXT_XS, 600,
                                          lambda: t.status_color(Status.SKIPPED)))
         counts.addStretch(1)
-        counts.addWidget(self._label(f"{group.duration:.1f}s", t.TEXT_XS, 500,
+        counts.addWidget(self._label(format_duration(group.duration), t.TEXT_XS, 500,
                                     lambda: t.TEXT_MUTED))
 
         readers = QHBoxLayout()
@@ -1314,7 +1315,7 @@ class HistoryWindow(QDialog):
             f"{counts[Status.PASSED]} / {executed} excluding skipped"
             if executed else "No executed results · skipped excluded")
         self.detail_meta.setText(
-            f"{len(group.nodeids)} tests · {total} results · {group.duration:.1f}s · "
+            f"{len(group.nodeids)} tests · {total} results · {format_duration(group.duration)} · "
             f"{len(entries)} reader{'s' if len(entries) != 1 else ''} · "
             + (f"Build #{group.build_number:04d} · " if group.build_number is not None else "")
             + f"Run ID {group.id}")
@@ -1385,7 +1386,7 @@ class HistoryWindow(QDialog):
                 str(entry.count(Status.FAILED)),
                 str(entry.count(Status.SKIPPED)),
                 str(entry.count(Status.ERROR)),
-                f"{entry.duration:.1f}s",
+                format_duration(entry.duration),
                 str(entry.exit_code),
                 "Available" if entry.junit_path else "—",
             )

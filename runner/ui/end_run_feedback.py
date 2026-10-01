@@ -6,6 +6,7 @@ import time
 
 from PySide6.QtCore import QTimer
 
+from runner.domain.duration import format_duration
 from runner.domain import history
 from runner.domain.history import RunEntry
 from runner.services.finalize_service import RunArchiveWorker
@@ -107,7 +108,7 @@ def install() -> None:
         else:
             summary = "All tests passed"
 
-        self._set_status_idle(f"{summary} · {self._seconds}s")
+        self._set_status_idle(f"{summary} · {format_duration(self._seconds, precision=0)}")
         self.elapsed_label.clear()
         if not cancelled:
             self._notifier_fin_de_run(summary)

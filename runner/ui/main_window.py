@@ -52,6 +52,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_icon import APP_ICON_RELATIVE_PATH, resource_path
+from runner.domain.duration import format_duration
 from runner.domain import history, failures as failures_mod
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.execution_profile import ExecutionProfile, ProfileStore
@@ -2220,7 +2221,7 @@ class MainWindow(QMainWindow):
         self.remaining_pill.setVisible(True)
 
         self._seconds = 0
-        self.elapsed_label.setText("0s")
+        self.elapsed_label.setText(format_duration(0, precision=0))
         self._elapsed.start()
         self._set_status_live(f"Running {len(request.nodeids)} tests…")
         self._update_actions()
@@ -2415,7 +2416,7 @@ class MainWindow(QMainWindow):
             resume = f"{echecs} failed"
         else:
             resume = "All tests passed"
-        self._set_status_idle(f"{resume} · {self._seconds}s")
+        self._set_status_idle(f"{resume} · {format_duration(self._seconds, precision=0)}")
         # La duree est deja dans le resume : la laisser aussi a cote
         # l'afficherait deux fois.
         self.elapsed_label.clear()
@@ -2504,7 +2505,7 @@ class MainWindow(QMainWindow):
 
     def _tick(self) -> None:
         self._seconds += 1
-        self.elapsed_label.setText(f"{self._seconds}s")
+        self.elapsed_label.setText(f"{format_duration(self._seconds, precision=0)}")
 
     # =====================================================================
     # Interactions de l'arbre

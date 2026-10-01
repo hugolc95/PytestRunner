@@ -17,6 +17,7 @@ import time
 from html import escape
 from pathlib import Path
 
+from runner.domain.duration import format_duration
 from runner.domain.ansi import strip_ansi
 from runner.domain.history import RunEntry
 from runner.domain.models import Status
@@ -105,7 +106,7 @@ def html_report(entry: RunEntry, output: str = "") -> str:
 <body><div class="wrap">
 <div class="card">
   <h1>Test report</h1>
-  <p class="meta">{escape(quand)} · {entry.duration:.1f}s ·
+  <p class="meta">{escape(quand)} · {format_duration(entry.duration)} ·
      {escape(entry.workspace)}</p>
   <p style="margin-top:12px">{"".join(etiquettes)}</p>
   {_compteurs(entry)}

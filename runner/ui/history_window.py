@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from runner.domain.duration import format_duration
 from runner.domain import report
 from runner.domain.history import History, compare
 from runner.domain.models import Status
@@ -128,7 +129,7 @@ class HistoryWindow(QDialog):
                 str(entree.count(Status.FAILED)),
                 str(entree.count(Status.SKIPPED)),
                 str(entree.count(Status.ERROR)),
-                f"{entree.duration:.1f}s",
+                format_duration(entree.duration),
                 entree.workspace,
             )
             for colonne, valeur in enumerate(valeurs):
