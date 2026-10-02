@@ -353,6 +353,21 @@ def test_the_most_recent_run_is_named_first(tmp_path):
 
 # --------------------------------------------------------------- par build
 
+def test_incremental_history_opens_the_dated_run_folder(tmp_path):
+    from datetime import datetime
+    from runner.domain.logs import history_log_directories
+
+    for day in (18, 19):
+        ecrire(tmp_path / f"202608{day}" / "Reader A" / "suite",
+               "test_B0042_001")
+    assert history_log_directories(
+        tmp_path, 42, datetime(2026, 8, 19, 12).timestamp()) == [
+            tmp_path / "20260819"]
+    # Never fall back to the shared root or an unrelated day's logs.
+    assert history_log_directories(
+        tmp_path, 42, datetime(2026, 8, 20, 12).timestamp()) == []
+
+
 def test_all_normal_logs_of_a_build_are_found(tmp_path):
     a = ecrire(tmp_path / "20260819" / "Run_0042" / "Reader A" / "suite",
                "test_a")

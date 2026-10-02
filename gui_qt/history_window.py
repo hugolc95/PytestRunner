@@ -23,6 +23,7 @@ from PyQt5.QtCore import Qt
 from PyQt5.QtCore import QUrl
 from PyQt5.QtGui import QDesktopServices
 
+from runner.domain.duration import format_duration
 from core.run_history import RunHistoryManager
 from core.report_export import export_html_report
 from gui_qt.config.config_loader import find_logs_for_build
@@ -30,7 +31,7 @@ from gui_qt.styles.styles import primary_button, neutral_button, danger_button, 
 from gui_qt.status_icons import status_icon, STATUS_COLORS
 
 
-COLUMNS = ["Date", "Build", "Mode", "Workspace", "Reader", "Total", "Passed", "Failed", "Skipped", "Error", "Duration (s)"]
+COLUMNS = ["Date", "Build", "Mode", "Workspace", "Reader", "Total", "Passed", "Failed", "Skipped", "Error", "Duration"]
 
 
 class HistoryWindow(QDialog):
@@ -116,7 +117,7 @@ class HistoryWindow(QDialog):
                 str(entry.get("failed", 0)),
                 str(entry.get("skipped", 0)),
                 str(entry.get("error", 0)),
-                str(entry.get("duration_seconds", 0)),
+                format_duration(entry.get("duration_seconds", 0)),
             ]
             for col, value in enumerate(values):
                 item = QTableWidgetItem(value)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import pytest
 
 from runner.domain.models import Reader, Status
+from runner.domain.duration import format_duration
 from runner.ui.detail_panel import DetailPanel
 
 NODEID = "tests/test_x.py::test_slow"
@@ -25,12 +26,50 @@ def qapp():
 
 # --------------------------------------------------------------------- test
 
-def test_a_single_readers_duration_is_shown(qapp):
+@pytest.mark.parametrize("seconds, expected", [
+    (0.45, "0.45s"), (65.25, "1 min 5.25s"),
+    (3661.5, "1 h 1 min 1.5s"),
+])
+def test_a_single_readers_duration_is_shown(qapp, seconds, expected):
     panneau = DetailPanel()
     panneau.show_test(NODEID, (Reader("", 0),), {0: Status.PASSED}, {0: None},
-                      {0: 0.45})
+                      {0: seconds})
 
-    assert "0.45s" in panneau._duree_visible
+    assert expected in panneau._duree_visible
+    from PySide6.QtWidgets import QLabel
+    assert expected in [label.text() for label in panneau.findChildren(QLabel)]
+
+
+@pytest.mark.parametrize("seconds, precision, expected", [
+    (0, 0, "0s"), (0.45, 2, "0.45s"), (59.94, 1, "59.9s"),
+    (59.99, 1, "1 min 0s"), (60, 0, "1 min 0s"),
+    (3599.99, 1, "1 h 0 min 0s"), (3665, 0, "1 h 1 min 5s"),
+    (90061, 1, "25 h 1 min 1s"), (None, 1, "—"),
+    (float("nan"), 1, "—"),
+])
+def test_duration_units_and_rounding(seconds, precision, expected):
+    assert format_duration(seconds, precision) == expected
+
+
+def test_long_run_duration_in_history_and_html(qapp, tmp_path):
+    from runner.domain.history import History, RunEntry
+    from runner.domain import report
+    from runner.ui.history_dashboard import HistoryWindow
+    from PySide6.QtWidgets import QLabel
+
+    history = History(tmp_path)
+    entry = history.add(RunEntry(id="long", timestamp=1, workspace="/w",
+                                 duration=3665, counts={"PASSED": 1}))
+    window = HistoryWindow(history)
+    expected = "1 h 1 min 5s"
+    assert expected in window.detail_meta.text()
+    assert expected in [label.text() for _, card in window._cards
+                        for label in card.findChildren(QLabel)]
+    assert window.details_table.item(0, 5).text() == expected
+    target = tmp_path / "report.html"
+    ok, message = report.write_html(entry, target, "")
+    assert ok, message
+    assert expected in target.read_text()
 
 
 def test_each_readers_duration_is_labelled_when_there_are_several(qapp):

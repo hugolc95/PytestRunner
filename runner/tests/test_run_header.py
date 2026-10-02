@@ -68,27 +68,28 @@ def test_integrated_readers_overflow_keeps_selection_and_reload(qtbot):
     assert bar.selected_indexes() == (0, 1)
 
 
-def test_atr_falls_back_to_details_and_copies_full_value(qtbot):
-    from PySide6.QtWidgets import QApplication, QDialog, QPushButton
+def test_atr_stays_inline_and_copies_full_value_at_any_width(qtbot):
+    from PySide6.QtWidgets import QApplication
+    from runner.domain.reader_discovery import ATR_OK
     from runner.ui.reader_selector import ReaderAtrField
     from runner.ui.run_header import ResponsiveAtr
     field = ReaderAtrField()
     widget = ResponsiveAtr(field)
     qtbot.addWidget(widget)
     atr = "3B 8F 80 01 80 4F 0C A0 00 00 03 06 03 00 01 00 00 00 00 6A"
-    field.setText(atr)
+    field._show(ATR_OK, atr, atr)
     widget.resize(130, 34)
     widget.show()
     qtbot.wait(20)
-    assert widget.stack.currentIndex() == 1
-    qtbot.mouseClick(widget.button, Qt.LeftButton)
-    dialog = widget.findChild(QDialog)
-    assert dialog.isVisible()
-    copy = next(b for b in dialog.findChildren(QPushButton) if b.text() == "Copy ATR")
-    qtbot.mouseClick(copy, Qt.LeftButton)
+    assert widget.stack.currentIndex() == 0
+    assert field.isVisible()
+    assert not widget.button.isVisible()
+    assert field.font().pixelSize() <= 10
+    field.selectAll()
+    field.copy()
     assert QApplication.clipboard().text() == atr
-    dialog.close()
     widget.resize(900, 34)
     qtbot.wait(20)
     assert widget.stack.currentIndex() == 0
     assert field.text() == atr
+    assert field.font().pixelSize() == 10

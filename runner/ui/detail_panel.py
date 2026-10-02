@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from runner.domain.duration import format_duration
 from runner.domain.ansi import strip_ansi
 from runner.domain.failures import Failure, classify_line, failure_for, index_failures
 from runner.domain.models import Reader, Status
@@ -185,7 +186,7 @@ class ReaderResultsTable(QWidget):
             self._grille.addWidget(nom, ligne, self.COL_NOM)
             self._grille.addWidget(ReaderResult("", lecteur.index, statut), ligne, self.COL_RESULTAT)
             if avec_duree:
-                texte = QLabel("" if duree is None else f"{duree:.2f}s")
+                texte = QLabel("" if duree is None else format_duration(duree, precision=2))
                 texte.setObjectName("Faint")
                 self._grille.addWidget(texte, ligne, self.COL_DUREE)
                 self._durees.append(texte)
@@ -771,7 +772,7 @@ class DetailPanel(QWidget):
             if valeur is None:
                 continue
             prefixe = f"{lecteur.short_name}: " if lecteur.name and plusieurs else ""
-            morceaux.append(f"{prefixe}{valeur:.2f}s")
+            morceaux.append(f"{prefixe}{format_duration(valeur, precision=2)}")
         return "   ".join(morceaux)
 
     def _remplir_resultats(self, readers, statuses: dict[int, Status],

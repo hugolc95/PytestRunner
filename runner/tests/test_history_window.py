@@ -103,7 +103,8 @@ def test_history_shows_the_build_and_opens_its_log_folder(
         qapp, tmp_path, monkeypatch):
     import runner.ui.history_dashboard as dashboard
 
-    log_file = tmp_path / "logs" / "20260819" / "Run_0042" / "test.log"
+    run_folder = tmp_path / "logs" / "20260819" / "Run_0042"
+    log_file = run_folder / "Reader A" / "suite" / "test.log"
     log_file.parent.mkdir(parents=True)
     log_file.write_text("ok", encoding="utf-8")
     history = History(tmp_path / "history")
@@ -117,7 +118,44 @@ def test_history_shows_the_build_and_opens_its_log_folder(
                         lambda url: opened.append(url) or True)
     window.open_logs()
 
-    assert Path(opened[0].toLocalFile()) == log_file.parent
+    assert Path(opened[0].toLocalFile()) == run_folder
+
+
+def test_history_logs_follow_the_selected_run_date(qapp, tmp_path, monkeypatch):
+    from datetime import datetime
+    import runner.ui.history_dashboard as dashboard
+
+    history = History(tmp_path / "history")
+    folders = []
+    for day in (18, 19):
+        folder = tmp_path / "logs" / f"202608{day}" / "Run_0042"
+        folder.mkdir(parents=True)
+        folders.append(folder)
+        history.add(RunEntry(id=str(day), workspace=str(tmp_path),
+                            timestamp=datetime(2026, 8, day, 12).timestamp(),
+                            build_number=42, log_root="logs"))
+    window = HistoryWindow(history)
+    opened = []
+    monkeypatch.setattr(dashboard.QDesktopServices, "openUrl",
+                        lambda url: opened.append(Path(url.toLocalFile())) or True)
+    select_run(window, 0)
+    window.open_logs()
+    select_run(window, 1)
+    window.open_logs()
+    assert opened == list(reversed(folders))
+
+
+def test_history_reports_a_folder_open_failure(qapp, tmp_path, monkeypatch):
+    import runner.ui.history_dashboard as dashboard
+
+    folder = tmp_path / "Run_0042"
+    folder.mkdir()
+    history = History(tmp_path / "history")
+    ajoute(history, "run", build_number=42, log_root=str(tmp_path))
+    window = HistoryWindow(history)
+    monkeypatch.setattr(dashboard.QDesktopServices, "openUrl", lambda url: False)
+    window.open_logs()
+    assert "Could not open log folder" in window.status.text()
 
 
 def test_runs_are_listed_newest_first(fenetre):
@@ -648,6 +686,55 @@ def test_restyle_repaints_run_cards_already_on_screen(qapp, historique):
 
 
 # ------------------------------------------------------------- stabilite Qt
+
+@pytest.mark.parametrize("pixel_scroll", [False, True])
+def test_large_history_keeps_visible_cards_when_scrolling_and_resizing(
+        qapp, tmp_path, pixel_scroll):
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QAbstractItemView
+
+    history = History(tmp_path)
+    for index in range(133):
+        history.add(RunEntry(
+            id=f"run-{index}", timestamp=1790800000 + index * 3600,
+            workspace="/w", nodeids=("test_ok",), counts={"PASSED": 1},
+            test_statuses={"test_ok": "PASSED"}))
+    window = HistoryWindow(history)
+    view = window.run_list
+    if pixel_scroll:
+        view.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+    window.show()
+
+    def visible_cards():
+        qapp.processEvents()
+        qapp.processEvents()
+        items = [view.item(row) for row in range(view.count())
+                 if view.item(row).data(Qt.UserRole) is not None
+                 and view.visualItemRect(view.item(row)).intersects(
+                     view.viewport().rect())]
+        assert items
+        assert all(view.itemWidget(item) is not None for item in items)
+        assert len(window._cards) < 25  # Do not eagerly build all 133 cards.
+        return items
+
+    visible_cards()
+    for fraction in (0.15, 0.4, 0.75, 1.0, 0.0):
+        bar = view.verticalScrollBar()
+        bar.setValue(round(bar.maximum() * fraction))
+        items = visible_cards()
+        item = items[len(items) // 2]
+        QTest.mouseClick(view.viewport(), Qt.LeftButton, Qt.NoModifier,
+                         view.visualItemRect(item).center())
+        assert window._current_group().id == item.data(Qt.UserRole).id
+
+    view.verticalScrollBar().setValue(view.verticalScrollBar().maximum() // 2)
+    window.resize(1380, 1400)
+    visible_cards()
+    window.hide()
+    window.resize(1380, 790)
+    window.show()
+    visible_cards()
+    window.close()
 
 def test_refreshing_with_the_same_visible_runs_touches_no_item(fenetre, monkeypatch):
     """Un vrai crash natif (segfault, pas une exception Python) frappait

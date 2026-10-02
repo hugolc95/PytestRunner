@@ -56,6 +56,15 @@ def test_a_single_tests_duration_reaches_the_detail_panel(fenetre):
     assert "0.75s" in fenetre.results.detail._duree_visible
 
 
+@pytest.mark.parametrize("before, expected", [
+    (59, "1 min 0s"), (3599, "1 h 0 min 0s"),
+])
+def test_live_timer_changes_units(fenetre, before, expected):
+    fenetre._seconds = before
+    fenetre._tick()
+    assert fenetre.elapsed_label.text() == expected
+
+
 def test_a_module_shows_the_sum_of_its_tests(fenetre):
     fenetre.results.set_report(ReaderReport(
         reader=Reader("", 0),

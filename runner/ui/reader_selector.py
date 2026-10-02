@@ -329,7 +329,8 @@ class ReaderAtrField(QLineEdit):
     TAILLE_MIN = 8
 
     def _margin(self):
-        bouton = self.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize) + 8
+        bouton = (self.style().pixelMetric(QStyle.PixelMetric.PM_SmallIconSize) + 8
+                  if self._refresh_action.isVisible() else 0)
         return self.PADDING + self.PASTILLE + self.ECART + bouton + 12
 
     def dot_color(self):
@@ -362,7 +363,7 @@ class ReaderAtrField(QLineEdit):
         return QFontMetrics(police).horizontalAdvance(self.text())
 
     def _fit(self):
-        taille = t.TEXT_SM
+        taille = getattr(self, "maximum_text_size", t.TEXT_SM)
         if self.state == reader_discovery.ATR_OK:
             place = self.width() - self._margin()
             while taille > self.TAILLE_MIN and self._text_width(taille) > place:

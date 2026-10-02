@@ -7,12 +7,11 @@ que l'ecran initial ne montre que le verdict et les problemes utiles.
 
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QSize, Qt, QUrl, Signal
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QActionGroup, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -44,6 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from runner.domain.duration import format_duration
 from runner.domain import logs, report
 from runner.domain.history import History, RunEntry, compare
 from runner.domain.models import Reader, Status
@@ -312,7 +312,7 @@ class RunCard(QFrame):
                                          t.TEXT_XS, 600,
                                          lambda: t.status_color(Status.SKIPPED)))
         counts.addStretch(1)
-        counts.addWidget(self._label(f"{group.duration:.1f}s", t.TEXT_XS, 500,
+        counts.addWidget(self._label(format_duration(group.duration), t.TEXT_XS, 500,
                                     lambda: t.TEXT_MUTED))
 
         readers = QHBoxLayout()
@@ -649,6 +649,12 @@ class HistoryWindow(QDialog):
         self.run_list.itemDoubleClicked.connect(lambda _item: self.view_output())
         self.run_list.verticalScrollBar().valueChanged.connect(
             lambda _value: self._materialize_cards())
+        self._cards_timer = QTimer(self)
+        self._cards_timer.setSingleShot(True)
+        self._cards_timer.timeout.connect(self._materialize_cards)
+        self.run_list.viewport().installEventFilter(self)
+        self.run_list.verticalScrollBar().rangeChanged.connect(
+            lambda _minimum, _maximum: self._cards_timer.start(0))
 
         self.empty = EmptyState(
             "mdi.history", "No run recorded yet",
@@ -1116,6 +1122,13 @@ class HistoryWindow(QDialog):
             self.detail_stack.setCurrentWidget(self.detail_empty)
         self._update_compare_action()
 
+    def eventFilter(self, watched, event):
+        if (watched is self.run_list.viewport()
+                and event.type() in (QEvent.Resize, QEvent.Show)):
+            # Wait until Qt has laid out the newly visible viewport.
+            self._cards_timer.start(0)
+        return super().eventFilter(watched, event)
+
     def _materialize_cards(self) -> None:
         """Ne construit que les cartes proches de la zone visible.
 
@@ -1134,14 +1147,24 @@ class HistoryWindow(QDialog):
         count = self.run_list.count()
         if not count:
             return
-        viewport = self.run_list.viewport()
-        first = self.run_list.indexAt(QPoint(1, 1)).row()
-        last = self.run_list.indexAt(
-            QPoint(1, max(1, viewport.height() - 2))).row()
-        if first < 0:
-            first = 0
-        if last < first:
-            last = min(count - 1, first + 12)
+        viewport = self.run_list.viewport().rect()
+        # Hit-testing a fixed point can land in the list's spacing, returning
+        # no index even far down the history. Use actual row geometry instead.
+        # Binary search keeps this cheap regardless of the history length.
+        first, end = 0, count
+        while first < end:
+            middle = (first + end) // 2
+            rect = self.run_list.visualItemRect(self.run_list.item(middle))
+            if rect.bottom() < viewport.top():
+                first = middle + 1
+            else:
+                end = middle
+        last = first
+        while last + 1 < count:
+            rect = self.run_list.visualItemRect(self.run_list.item(last + 1))
+            if rect.top() > viewport.bottom():
+                break
+            last += 1
         wanted = set(range(max(0, first - 3), min(count, last + 4)))
 
         kept: list[tuple[QListWidgetItem, RunCard]] = []
@@ -1291,7 +1314,7 @@ class HistoryWindow(QDialog):
             f"{counts[Status.PASSED]} / {executed} excluding skipped"
             if executed else "No executed results · skipped excluded")
         self.detail_meta.setText(
-            f"{len(group.nodeids)} tests · {total} results · {group.duration:.1f}s · "
+            f"{len(group.nodeids)} tests · {total} results · {format_duration(group.duration)} · "
             f"{len(entries)} reader{'s' if len(entries) != 1 else ''} · "
             + (f"Build #{group.build_number:04d} · " if group.build_number is not None else "")
             + f"Run ID {group.id}")
@@ -1362,7 +1385,7 @@ class HistoryWindow(QDialog):
                 str(entry.count(Status.FAILED)),
                 str(entry.count(Status.SKIPPED)),
                 str(entry.count(Status.ERROR)),
-                f"{entry.duration:.1f}s",
+                format_duration(entry.duration),
                 str(entry.exit_code),
                 "Available" if entry.junit_path else "—",
             )
@@ -1444,18 +1467,24 @@ class HistoryWindow(QDialog):
         group = self._current_group()
         if group is None or group.build_number is None or not group.log_root:
             return
-        fichiers = logs.find_logs_for_build(
-            Path(group.log_root), group.build_number,
-            self._filter_reader,
-        )
-        if not fichiers:
-            self._say(f"No logs found for build #{group.build_number:04d}.", True)
-            return
+        root = Path(group.log_root)
+        if not root.is_absolute():
+            root = Path(group.workspace) / root
         try:
-            dossier = os.path.commonpath([str(path.parent) for path in fichiers])
-        except ValueError:
-            dossier = str(fichiers[0].parent)
-        QDesktopServices.openUrl(QUrl.fromLocalFile(dossier))
+            folders = logs.history_log_directories(
+                root, group.build_number, group.timestamp, group.duration,
+                self._filter_reader)
+        except OSError as exc:
+            self._say(f"Could not access logs: {exc}", True)
+            return
+        if not folders:
+            self._say(f"No log folder found for build #{group.build_number:04d} "
+                      f"from {_when(group.timestamp)} in {root}.", True)
+            return
+        for folder in folders:
+            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
+                self._say(f"Could not open log folder: {folder}", True)
+                return
 
     def rerun(self) -> None:
         group = self._current_group()
