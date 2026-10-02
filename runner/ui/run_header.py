@@ -4,17 +4,17 @@ from PySide6.QtWidgets import (
     QPushButton, QPlainTextEdit, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QFontMetrics
 
 from runner.ui import tokens as t
 from runner.ui import icons
 
 
 class ResponsiveAtr(QWidget):
-    """Keep the full ATR at normal size, or expose it through a detail button."""
+    """Keep the ATR visible inline with compact, adaptive text."""
     def __init__(self, field):
         super().__init__()
         self.field = field
+        field.maximum_text_size = 10
         self.setMinimumWidth(80)
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         row = QHBoxLayout(self)
@@ -44,10 +44,10 @@ class ResponsiveAtr(QWidget):
         self.refresh_button.setIcon(icons.icon("mdi.refresh", t.TEXT_MUTED))
 
     def update_presentation(self):
-        font = self.field.font()
-        font.setPixelSize(t.TEXT_SM)
-        needed = QFontMetrics(font).horizontalAdvance(self.field.text() or "ATR") + self.field._margin()
-        self.stack.setCurrentIndex(0 if self.stack.width() >= needed else 1)
+        # Never replace the ATR with an extra button, even in narrow windows.
+        # The read-only field supports selection/copy and horizontal scrolling.
+        self.stack.setCurrentIndex(0)
+        self.field._fit()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -123,9 +123,11 @@ class StructuredRunHeader(QWidget):
         reader_layout.addWidget(window.reader_selector, 0, 0)
         reader_layout.addWidget(window.reader_config_button, 0, 1)
         self.atr_presentation = ResponsiveAtr(window.reader_atr)
-        reader_layout.addWidget(self.atr_presentation, 0, 2)
+        # A full-width compact line keeps long ATRs readable without squeezing
+        # the reader name or falling back to the ATR details button.
+        reader_layout.addWidget(self.atr_presentation, 1, 0, 1, 2)
         reader_layout.setColumnStretch(0, 2)
-        reader_layout.setColumnStretch(2, 2)
+        reader_layout.setColumnStretch(2, 0)
         self._move(execution, window.reader_controls)
         window.readers_bar.set_integrated()
         self._move(execution, window.readers_bar)
