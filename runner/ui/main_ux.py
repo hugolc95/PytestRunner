@@ -30,7 +30,10 @@ def install() -> None:
                 nested=root_layout.itemAt(index).layout()
                 if nested is not None and nested.indexOf(self.page_theme_button)>=0:
                     utility_layout=nested; break
-        if utility_layout is not None: utility_layout.addWidget(self.colorblind_theme_button)
+        if utility_layout is not None:
+            utility_layout.insertWidget(
+                utility_layout.indexOf(self.sidebar_toggle_button),
+                self.colorblind_theme_button)
         return navigation
     MainWindow._build_navigation=build_navigation_with_colorblind_theme
 

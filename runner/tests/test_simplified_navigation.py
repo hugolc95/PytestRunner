@@ -15,10 +15,11 @@ def test_main_navigation_separates_python_and_yaml_configuration(qapp):
     window = MainWindow()
     try:
         assert list(window.nav_buttons) == [
-            "workspace", "profiles", "yaml", "history", "comparison", "python"]
+            "workspace", "profiles", "yaml", "history", "comparison", "python",
+            "console", "settings"]
         assert [button.text() for button in window.nav_buttons.values()] == [
             "Run Tests", "Execution Profiles", "YAML Configuration", "History",
-            "Comparison", "Python Environment"]
+            "Comparison", "Python Environment", "Console", "Settings"]
         assert window.page_theme_button.text() == ""
         assert window.page_theme_button.width() <= 32
         assert window.sidebar_toggle_button.width() <= 32

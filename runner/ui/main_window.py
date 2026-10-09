@@ -27,6 +27,7 @@ from PySide6.QtGui import QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
+    QBoxLayout,
     QComboBox,
     QDialog,
     QFrame,
@@ -196,6 +197,8 @@ class MainWindow(QMainWindow):
         self._connect_service()
         self._restore()
         self._update_actions()
+        from runner.ui.preferences_pages import PreferencesController
+        self.preferences = PreferencesController(self)
 
     # =====================================================================
     # Construction
@@ -308,6 +311,8 @@ class MainWindow(QMainWindow):
             ("history", "History", "mdi.history"),
             ("comparison", "Comparison", "mdi.table-search"),
             ("python", "Python Environment", "mdi.language-python"),
+            ("console", "Console", "mdi.console"),
+            ("settings", "Settings", "mdi.cog-outline"),
         )
         for cle, texte, glyph in entrees:
             bouton = QPushButton(texte)
@@ -318,9 +323,11 @@ class MainWindow(QMainWindow):
             bouton.setCursor(Qt.PointingHandCursor)
             bouton.clicked.connect(lambda checked=False, page=cle: self._show_page(page))
             self.nav_buttons[cle] = bouton
+            if cle == "settings":
+                colonne.addStretch(1)
             colonne.addWidget(bouton)
-        colonne.addStretch(1)
-        utilities = QVBoxLayout()
+        utilities = QBoxLayout(QBoxLayout.LeftToRight)
+        self.navigation_utilities = utilities
         utilities.setContentsMargins(0, 0, 0, 0)
         utilities.setSpacing(t.SPACE_2)
 
@@ -330,7 +337,6 @@ class MainWindow(QMainWindow):
         self.sidebar_toggle_button.setToolTip("Collapse sidebar")
         self.sidebar_toggle_button.setCursor(Qt.PointingHandCursor)
         self.sidebar_toggle_button.clicked.connect(self.toggle_sidebar)
-        utilities.addWidget(self.sidebar_toggle_button)
 
         self.page_theme_button = QPushButton()
         self.page_theme_button.setObjectName("NavigationUtilityIcon")
@@ -344,6 +350,8 @@ class MainWindow(QMainWindow):
         self.page_theme_button.setCursor(Qt.PointingHandCursor)
         self.page_theme_button.clicked.connect(self.toggle_theme)
         utilities.addWidget(self.page_theme_button)
+        utilities.addWidget(self.sidebar_toggle_button)
+        utilities.addStretch(1)
         colonne.addLayout(utilities)
 
         self._sidebar_animation = QParallelAnimationGroup(self)
@@ -364,9 +372,13 @@ class MainWindow(QMainWindow):
             "history": "History",
             "comparison": "Comparison",
             "python": "Python Environment",
+            "settings": "Settings",
+            "console": "Console",
         }
         self.navigation_title.setVisible(not collapsed)
         self.navigation_logo.setVisible(collapsed)
+        self.navigation_utilities.setDirection(
+            QBoxLayout.TopToBottom if collapsed else QBoxLayout.LeftToRight)
         for key, button in self.nav_buttons.items():
             button.setText("" if collapsed else labels[key])
             button.setProperty("compact", collapsed)
@@ -485,6 +497,8 @@ class MainWindow(QMainWindow):
             "comparison": self.comparison_page,
             "python": self.python_page,
             "yaml": self.yaml_page,
+            "settings": getattr(self, "settings_page", self.workspace_page),
+            "console": getattr(self, "console_page", self.workspace_page),
         }
         cible = pages.get(page, self.workspace_page)
         self.pages.setCurrentWidget(cible)
@@ -501,6 +515,8 @@ class MainWindow(QMainWindow):
         for cle, bouton in self.nav_buttons.items():
             bouton.setChecked(cle == page)
         self.statusBar().setVisible(page == "workspace")
+        if hasattr(self, "preferences"):
+            self.preferences.record("actions", f"Navigation: {page}")
 
     def _open_comparison(self, groups):
         self.comparison_page.set_groups(groups)
@@ -1633,6 +1649,9 @@ class MainWindow(QMainWindow):
 
         self._restyle()
 
+        if hasattr(self, "preferences"):
+            self.preferences.theme_changed()
+
     def _restyle(self) -> None:
         """Rejoue les couleurs qui ne viennent pas de la feuille globale."""
         soleil = t.is_dark()
@@ -1648,6 +1667,8 @@ class MainWindow(QMainWindow):
                 ("history", "mdi.history"),
                 ("comparison", "mdi.table-search"),
                 ("python", "mdi.language-python"),
+                ("settings", "mdi.cog-outline"),
+                ("console", "mdi.console"),
                 ("yaml", "mdi.file-cog-outline")):
             self.nav_buttons[cle].setIcon(icons.icon(glyph, t.TEXT_MUTED))
         # Ni une icone teintee ni un StatusPill : juste un label dont la
@@ -2438,6 +2459,8 @@ class MainWindow(QMainWindow):
         aux pastilles de la barre d'etat, une notification qui disparait ne se
         relit pas -- mieux vaut le zero explicite qu'un compte qu'on devine absent.
         """
+        if hasattr(self, "preferences") and not self.preferences.values["notify_end"]:
+            return
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
         rendus = self._run_status_counts()
@@ -3359,6 +3382,8 @@ class MainWindow(QMainWindow):
         self._refresh_interpreter_alert()
 
     def closeEvent(self, event) -> None:
+        if hasattr(self, "preferences"):
+            self.preferences.shutdown()
         self.reader_selector.stop_discovery()
         self.reader_atr.release()
         self.results.source.save()
