@@ -68,3 +68,17 @@ reports remain available in History.
 Reader discovery and ATR hardware polling are suspended during execution.
 Source editing is disabled while a run is active. Queued and running tabs lock
 their configuration; other drafts can edit their independent copy.
+
+
+The YAML Configuration page mirrors the Run Tests tabs, including their names
+and state colours. Its tabs remain available when a run is locked, so another
+draft's configuration can be edited during execution. The single configuration
+icon in EXECUTION opens the selected run's copy. Without readers, launch actions
+and this icon share one row.
+
+History preserves the YAML captured at launch as a separate `.config.yaml`
+file per archived reader entry. The Configuration tab displays that snapshot
+read-only, and Export offers **Export configuration YAML…**. Later draft edits
+cannot change archived configurations. Older history entries with embedded
+configuration snapshots also remain readable and exportable; entries without
+snapshots indicate that no configuration was recorded.

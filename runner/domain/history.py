@@ -82,6 +82,7 @@ class RunEntry:
     test_statuses: dict[str, str] = field(default_factory=dict)
     executions: tuple[tuple[str, str], ...] = ()
     replay_profile: dict | None = None
+    configuration_file: str = ""
 
     @property
     def total(self) -> int:
@@ -115,6 +116,18 @@ class RunEntry:
         except OSError:
             return ""
 
+    def configuration_text(self) -> str | None:
+        """The YAML captured at launch, including archives predating YAML files."""
+        if self.configuration_file:
+            try:
+                return Path(self.configuration_file).read_text(encoding="utf-8")
+            except OSError:
+                pass
+        saved = self.replay_profile or {}
+        if saved.get("configuration_name"):
+            return str(saved.get("configuration_text", ""))
+        return None
+
     def to_json(self) -> dict:
         return {
             "id": self.id, "timestamp": self.timestamp,
@@ -131,6 +144,7 @@ class RunEntry:
             "test_statuses": dict(self.test_statuses),
             "executions": [list(result) for result in self.executions],
             "replay_profile": self.replay_profile,
+            "configuration_file": self.configuration_file,
         }
 
     @classmethod
@@ -158,6 +172,7 @@ class RunEntry:
                 failed_nodeids=tuple(donnees.get("failed_nodeids") or ()),
                 output_file=str(donnees.get("output_file", "")),
                 junit_path=str(donnees.get("junit_path", "")),
+                configuration_file=str(donnees.get("configuration_file", "")),
                 locked=bool(donnees.get("locked", False)),
                 run_kind=str(donnees.get("run_kind", "unknown")),
                 profile_name=str(donnees.get("profile_name", "")),
@@ -363,6 +378,19 @@ class History:
 
     def add(self, entry: RunEntry, output: str = "") -> RunEntry:
         """Enregistre un run, avec sa sortie console dans un fichier a part."""
+        config_text = entry.configuration_text()
+        if config_text is not None:
+            path = self.racine / f"{_sain(entry.id)}_{_sain(entry.reader) or 'no-reader'}.config.yaml"
+            temporary = path.with_suffix(".tmp")
+            try:
+                temporary.write_text(config_text, encoding="utf-8")
+                temporary.replace(path)
+                entry = replace(entry, configuration_file=str(path))
+            except OSError:
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
         if output:
             nom = f"{entry.id}{'_' + _sain(entry.reader) if entry.reader else ''}.log"
             chemin = self.racine / nom
@@ -433,7 +461,7 @@ class History:
         aucune entree ne designe -- invisibles, et jamais nettoyes.
         """
         for entree in entrees:
-            for chemin in (entree.output_file, entree.junit_path):
+            for chemin in (entree.output_file, entree.junit_path, entree.configuration_file):
                 if not chemin:
                     continue
                 try:

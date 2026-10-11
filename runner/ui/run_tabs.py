@@ -104,6 +104,7 @@ class RunTabsController(QObject):
         self.closing = False
         self._refreshing = False
         self._restoring = False
+        self._selecting_configuration = False
         self._recent = []
         self.save_timer = QTimer(self)
         self.save_timer.setSingleShot(True)
@@ -283,6 +284,7 @@ class RunTabsController(QObject):
         if not self._restoring:
             self.ensure_configuration(context)
         self.stack.addWidget(page)
+        context.statusBar().setStyleSheet("QStatusBar { border-top: none; }")
         self.footer_stack.addWidget(context.statusBar())
         self.window.preferences.attach_context(context)
         index = self.tabs.addTab("New run · Draft")
@@ -364,7 +366,7 @@ class RunTabsController(QObject):
         self.stack.setCurrentWidget(entry.placeholder if entry.floating else entry.page)
         if not entry.floating:
             self.footer_stack.setCurrentWidget(entry.context.statusBar())
-        if entry.floating:
+        if entry.floating and not self._selecting_configuration:
             entry.floating.show()
             entry.floating.raise_()
             entry.floating.activateWindow()
@@ -538,8 +540,16 @@ class RunTabsController(QObject):
         self.schedule_save()
 
     def edit_configuration(self, entry):
-        self.show_context(entry.context)
-        entry.context._show_page("yaml")
+        if entry not in self.entries:
+            return
+        self._selecting_configuration = True
+        try:
+            index = self.entries.index(entry)
+            self.tabs.setCurrentIndex(index)
+            self.select(index)
+            self.window._show_page("yaml")
+        finally:
+            self._selecting_configuration = False
 
     def move_waiting(self, entry, delta):
         index = self.queue.index(entry)
@@ -581,6 +591,7 @@ class RunTabsController(QObject):
         entry.placeholder = placeholder
         entry.floating = DetachedRun(self, entry)
         self.footer_stack.removeWidget(entry.context.statusBar())
+        entry.context.statusBar().setStyleSheet("")
         entry.floating.setStatusBar(entry.context.statusBar())
         entry.floating.show()
         entry.page.show()  # removeWidget leaves an explicitly hidden page.
@@ -597,6 +608,7 @@ class RunTabsController(QObject):
         if not entry.floating:
             return
         floating, entry.floating = entry.floating, None
+        entry.context.statusBar().setStyleSheet("QStatusBar { border-top: none; }")
         self.footer_stack.addWidget(entry.context.statusBar())
         self.window.settings.setValue("runs/detached_geometry", floating.saveGeometry())
         self.stack.addWidget(entry.page)
@@ -766,7 +778,8 @@ class RunTabsController(QObject):
         context.reader_config_button.setEnabled(editable_configuration)
         context.workspace_config_button.setEnabled(editable_configuration)
         context.act_config.setEnabled(editable_configuration)
-        context.yaml_page.setEnabled(editable_configuration)
+        context.yaml_stack.setEnabled(editable_configuration)
+        context.run_header.run_config_button.setEnabled(context.workspace is not None)
         for button in (context.select_all_button, context.select_none_button):
             button.setEnabled(not locked and bool(context.model._by_nodeid)
                               and not context.profile_tree_button.isChecked())
@@ -835,6 +848,30 @@ class RunTabsController(QObject):
             label.setStyleSheet(style)
 
     def refresh_labels(self):
+        # Mirror the run list in every configuration page without triggering
+        # navigation when tabs are added, removed, renamed or reordered.
+        for owner in self.entries:
+            bar = owner.context.configuration_tabs
+            was_blocked = bar.blockSignals(True)
+            try:
+                while bar.count() > len(self.entries):
+                    bar.removeTab(bar.count() - 1)
+                while bar.count() < len(self.entries):
+                    bar.addTab("")
+                for index, entry in enumerate(self.entries):
+                    state, colour, glyph = self.presentation(entry)
+                    text = f"{entry.name} · {state}"
+                    if bar.tabText(index) != text:
+                        bar.setTabText(index, text)
+                        bar.setTabIcon(index, icons.icon(glyph, colour))
+                    data = dict(name=entry.name, detail=state, colour=colour)
+                    if bar.tabData(index) != data:
+                        bar.setTabData(index, data)
+                    bar.setTabToolTip(index, str(entry.context.workspace.config_path)
+                                      if entry.context.workspace else "Load a workspace for this run")
+                bar.setCurrentIndex(self.tabs.currentIndex())
+            finally:
+                bar.blockSignals(was_blocked)
         for index, entry in enumerate(self.entries):
             state, colour, glyph = self.presentation(entry)
             self.tabs.setTabText(index, f"{entry.name} · {state}")

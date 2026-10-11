@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPlainTextEdit,
     QListWidget,
     QListWidgetItem,
     QMenu,
@@ -832,6 +833,9 @@ class HistoryWindow(QDialog):
         self.tabs.addTab(self.issues_table, "Failed (0)")
         self.tabs.addTab(self.output, "Output")
         self.tabs.addTab(self.details_table, "Details")
+        self.configuration_view = QPlainTextEdit()
+        self.configuration_view.setReadOnly(True)
+        self.tabs.addTab(self.configuration_view, "Configuration")
 
         self.flaky_button = QPushButton("Unstable tests")
         self.flaky_button.setObjectName("Ghost")
@@ -1238,6 +1242,10 @@ class HistoryWindow(QDialog):
         self._fill_output(group)
         self._select_execution_reader(-1)
         self._fill_details(group)
+        configuration = next((text for value in group.entries
+                              if (text := value.configuration_text()) is not None), None)
+        self.configuration_view.setPlainText(configuration if configuration is not None
+                                             else "No configuration was saved for this older run.")
         self._fill_export_menu(group)
         self.rerun_button.setEnabled(bool(group.nodeids))
         self.logs_button.setEnabled(
@@ -1402,6 +1410,9 @@ class HistoryWindow(QDialog):
         profile_action = self.export_menu.addAction("Export as execution profile…")
         profile_action.setEnabled(bool(group.nodeids))
         profile_action.triggered.connect(lambda checked=False: self.export_execution_profile())
+        configuration_action = self.export_menu.addAction("Export configuration YAML…")
+        configuration_action.setEnabled(any(e.configuration_text() is not None for e in group.entries))
+        configuration_action.triggered.connect(lambda checked=False: self.export_configuration(group))
         self.export_menu.addSeparator()
         for entry in group.entries:
             if len(group.entries) > 1:
@@ -1422,6 +1433,21 @@ class HistoryWindow(QDialog):
                 lambda checked=False, value=entry: self.export_junit(value))
 
     # -------------------------------------------------------------- actions
+
+    def export_configuration(self, group: RunGroup) -> None:
+        text = next((value for entry in group.entries
+                     if (value := entry.configuration_text()) is not None), None)
+        if text is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export archived configuration", f"{group.id}.config.yaml",
+            "YAML files (*.yaml *.yml)")
+        if path:
+            try:
+                Path(path).write_text(text, encoding="utf-8")
+                self._say(f"Configuration exported to {path}.")
+            except OSError as exc:
+                self._say(f"Could not export configuration: {exc}", True)
 
     def export_execution_profile(self) -> None:
         from runner.domain.execution_profile import EXTENSION, ProfileValidationError, export_profile

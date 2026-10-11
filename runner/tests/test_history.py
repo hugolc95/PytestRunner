@@ -506,3 +506,32 @@ def test_the_total_adds_every_status():
     assert e.total == 6
     assert e.count(Status.SKIPPED) == 2
     assert e.count(Status.ERROR) == 0
+
+
+def test_archived_yaml_keeps_launch_snapshot_and_survives_reload(historique, tmp_path):
+    from types import SimpleNamespace
+    from runner.domain.history_profile import capture_profile
+    source = tmp_path / "source.yaml"
+    text = "# run one\nmode: first\n"
+    source.write_text(text, encoding="utf-8")
+    snapshot = capture_profile(SimpleNamespace(config_path=str(source), nodeids=("t1",)))
+    source.write_text("mode: edited after launch\n", encoding="utf-8")
+    first = historique.add(entree("first", replay_profile=snapshot))
+    second = historique.add(entree("second", replay_profile={
+        "configuration_name": "config.yaml", "configuration_text": "mode: second\n"}))
+    assert Path(first.configuration_file).read_text(encoding="utf-8") == text
+    assert first.configuration_file != second.configuration_file
+    restored = History(historique.racine).find("first")
+    assert restored.configuration_text() == text
+    historique.remove_run("first")
+    assert not Path(first.configuration_file).exists()
+    assert Path(second.configuration_file).exists()
+
+
+def test_legacy_history_yaml_is_readable_and_empty_yaml_is_preserved(historique):
+    old = entree(replay_profile={"configuration_name": "config.yaml", "configuration_text": ""})
+    assert old.configuration_text() == ""
+    assert entree().configuration_text() is None
+    saved = historique.add(old)
+    assert Path(saved.configuration_file).exists()
+    assert RunEntry.from_json(saved.to_json()).configuration_text() == ""

@@ -483,7 +483,13 @@ class MainWindow(QMainWindow):
     def _build_yaml_page(self) -> QWidget:
         page, layout = self._page_landing(
             "YAML Configuration",
-            "Manage configuration files associated with the workspace and tests.")
+            "Each run has its own editable copy of the configuration.")
+        from runner.ui.run_tabs_strip import RunTabBar
+        self.configuration_tabs = RunTabBar(page)
+        self.configuration_tabs.setObjectName("RunTabs")
+        self.configuration_tabs.setExpanding(False)
+        self.configuration_tabs.currentChanged.connect(self._select_configuration_run)
+        layout.addWidget(self.configuration_tabs)
         self.yaml_empty = EmptyState(
             "mdi.file-cog-outline", "No YAML configuration open",
             "Load a workspace, then select its .yml or .yaml file.",
@@ -505,6 +511,19 @@ class MainWindow(QMainWindow):
         self._yaml_editor_signature = None
         layout.addWidget(self.yaml_stack, 1)
         return page
+
+    def _select_configuration_run(self, index):
+        controller = self.run_tabs
+        if controller is not None and 0 <= index < len(controller.entries):
+            controller.edit_configuration(controller.entries[index])
+
+    def _open_run_configuration(self):
+        if self.run_tabs is not None:
+            entry = self.run_tabs.entry_for(self)
+            if entry is not None:
+                self.run_tabs.edit_configuration(entry)
+                return
+        self._show_page("yaml")
 
     def _show_page(self, page: str) -> None:
         if self._run_host is not None:
@@ -857,7 +876,7 @@ class MainWindow(QMainWindow):
         self.reader_config_button.setIcon(icons.icon("mdi.file-cog-outline", t.TEXT_MUTED))
         self.reader_config_button.setToolTip("Open YAML configuration")
         self.reader_config_button.setAccessibleName("Open YAML configuration")
-        self.reader_config_button.clicked.connect(lambda: self._show_page("yaml"))
+        self.reader_config_button.clicked.connect(self._open_run_configuration)
         reader_layout.addWidget(self.reader_config_button, 0, 2)
         self.reader_controls.hide()
         workspace_box.addLayout(workspace_controls)
@@ -2955,6 +2974,8 @@ class MainWindow(QMainWindow):
             config_path=self.workspace.config_path, sequential=True,
         )
 
+        from runner.domain.history_profile import capture_profile
+        self._stress_replay_profile = capture_profile(requete)
         self._stress_nodeid = nodeid
         self._stress_mode = mode
         self._stress_cap = cap
@@ -2966,7 +2987,9 @@ class MainWindow(QMainWindow):
         self._stress_counts = {}
 
         self._stress_worker = StressRunWorker(
-            requete, lecteurs, self.workspace.env, mode, cap, self)
+            requete, lecteurs,
+            self.run_tabs.configuration_env(self, self.workspace.env) if self.run_tabs else self.workspace.env,
+            mode, cap, self)
         self._stress_worker.attempt_done.connect(self._sur_tentative_stress)
         self._stress_worker.finished_stress.connect(self._sur_fin_stress)
 
@@ -3058,6 +3081,7 @@ class MainWindow(QMainWindow):
             return
         for cumul in self._stress_aggregate.values():
             entree = history.RunEntry(
+                replay_profile=getattr(self, "_stress_replay_profile", None),
                 id=self._stress_id,
                 timestamp=time.time(),
                 workspace=self.workspace.path,

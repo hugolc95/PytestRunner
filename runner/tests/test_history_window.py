@@ -774,3 +774,24 @@ def test_refreshing_after_a_real_change_still_updates_the_list(fenetre, historiq
 
     assert [group.id for group in fenetre._groups][0] == "brand-new"
     assert run_items(fenetre)[0].data(Qt.UserRole).id == "brand-new"
+
+
+def test_history_configuration_tab_and_export_use_saved_yaml(qapp, tmp_path, monkeypatch):
+    history = History(tmp_path)
+    text = "# retained comment\nmode: saved-run\n"
+    ajoute(history, "config-run", replay_profile={
+        "configuration_name": "config.yaml", "configuration_text": text})
+    window = HistoryWindow(history)
+    window.show()
+    qapp.processEvents()
+    select_run(window, 0)
+    assert window.configuration_view.toPlainText() == text
+    assert window.configuration_view.isReadOnly()
+    target = tmp_path / "export.yaml"
+    monkeypatch.setattr("runner.ui.history_dashboard.QFileDialog.getSaveFileName",
+                        lambda *args: (str(target), ""))
+    action = next(a for a in window.export_menu.actions() if a.text() == "Export configuration YAML…")
+    assert action.isEnabled()
+    action.trigger()
+    assert target.read_text(encoding="utf-8") == text
+    window.close()

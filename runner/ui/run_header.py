@@ -1,6 +1,6 @@
 """Run-page layout using the existing controls and their existing signals."""
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLayout,
+    QApplication, QBoxLayout, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLayout,
     QPushButton, QPlainTextEdit, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -170,7 +170,6 @@ class StructuredRunHeader(QWidget):
         window.reader_selector.setMinimumContentsLength(16)
         window.reader_selector.setMaximumWidth(16777215)
         window.reader_selector.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        reader_layout.addWidget(window.reader_config_button, 0, 0)
         self.atr_presentation = ResponsiveAtr(window.reader_atr)
         # A full-width compact line keeps long ATRs readable without squeezing
         # the reader name or falling back to the ATR details button.
@@ -207,6 +206,16 @@ class StructuredRunHeader(QWidget):
         self._move(execution_fields, window.reader_controls)
         execution_fields.setStretch(1, 1)
         execution_fields.addStretch(0)
+        self.commands = commands
+        self.execution_fields = execution_fields
+        self.execution_heading = QHBoxLayout()
+        heading = execution.takeAt(0).widget()
+        self.execution_heading.addWidget(heading)
+        self.execution_heading.addStretch()
+        execution.insertLayout(0, self.execution_heading)
+        self.run_config_button = window.reader_config_button
+        self.run_config_button.setToolTip("Open this run’s independent YAML configuration")
+        self._reader_mode = None
         execution.addLayout(execution_fields)
         execution.addStretch()
 
@@ -248,6 +257,18 @@ class StructuredRunHeader(QWidget):
     def update_environment(self):
         visible = not self._window.readers_bar.isHidden()
         self.reader_fields.setVisible(visible)
+        reader_mode = not self._window.reader_controls.isHidden()
+        if reader_mode != self._reader_mode:
+            self._reader_mode = reader_mode
+            self.commands.setDirection(QBoxLayout.TopToBottom if reader_mode else QBoxLayout.LeftToRight)
+            self.execution_fields.removeWidget(self.run_config_button)
+            self._window.reader_controls.layout().removeWidget(self.run_config_button)
+            self.execution_fields.setStretch(2, 0 if reader_mode else 1)
+            if reader_mode:
+                self._window.reader_controls.layout().addWidget(self.run_config_button, 0, 0)
+            else:
+                self.execution_fields.addWidget(self.run_config_button)
+            self.run_config_button.show()
 
     @staticmethod
     def _panel(title):

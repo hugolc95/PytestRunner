@@ -72,7 +72,8 @@ def test_draft_configuration_remains_editable_during_another_run(window, monkeyp
     assert draft.act_config.isEnabled()
     assert draft.yaml_page.isEnabled()
     assert not window.config_button.isEnabled()
-    assert not window.yaml_page.isEnabled()
+    assert not window.yaml_stack.isEnabled()
+    assert window.configuration_tabs.isEnabled()
 
 
 def test_configuration_editor_imports_into_run_copy(window, tmp_path, monkeypatch):
@@ -626,3 +627,76 @@ def test_environment_change_returns_completed_run_to_clean_draft(window, tmp_pat
     assert window._run_status_counts() == {}
     assert window.run_tabs.tabs.tabData(0)["detail"].startswith("Draft")
     assert window.pills[Status.PASSED]._value == 0
+
+
+def test_configuration_tabs_follow_runs_and_shortcut_selects_own_copy(window, qtbot):
+    draft = window.run_tabs.new_run()
+    draft._pending_run_name = "Second run"
+    window.run_tabs.refresh_labels()
+    assert window.configuration_tabs.count() == draft.configuration_tabs.count() == 2
+    assert draft.configuration_tabs.tabData(1)["name"] == "Second run"
+    qtbot.mouseClick(window.run_header.run_config_button, Qt.LeftButton)
+    assert window.run_tabs.current.context is window
+    assert window.pages.currentWidget() is window.yaml_page
+    window.configuration_tabs.setCurrentIndex(1)
+    assert window.run_tabs.current.context is draft
+    assert window.pages.currentWidget() is draft.yaml_page
+    assert draft.yaml_editor.path == Path(draft.workspace.config_path)
+    assert draft.yaml_editor.path != Path(window.workspace.config_path)
+    window.run_tabs.tabs.moveTab(1, 0)
+    assert draft.configuration_tabs.tabData(0)["name"] == "Second run"
+    assert draft.configuration_tabs.currentIndex() == 0
+
+
+def test_no_reader_actions_share_one_row(window, qtbot):
+    from PySide6.QtWidgets import QBoxLayout
+    qtbot.wait(50)
+    header = window.run_header
+    assert header.commands.direction() == QBoxLayout.LeftToRight
+    assert header.execution_fields.indexOf(header.run_config_button) >= 0
+    assert abs(window.run_button.mapTo(header, window.run_button.rect().center()).y()
+               - window.stop_button.mapTo(header, window.stop_button.rect().center()).y()) <= 2
+
+
+def test_config_navigation_stays_available_while_run_is_locked(window, monkeypatch):
+    calls = []
+    fake_start(window, calls, monkeypatch)
+    window.run_selected()
+    draft = window.run_tabs.new_run()
+    window._open_run_configuration()
+    assert window.pages.currentWidget() is window.yaml_page
+    assert not window.yaml_stack.isEnabled()
+    assert window.configuration_tabs.isEnabled()
+    window.configuration_tabs.setCurrentIndex(1)
+    assert window.pages.currentWidget() is draft.yaml_page
+    assert draft.yaml_stack.isEnabled()
+    assert window.run_tabs.active.context is window
+
+
+def test_config_shortcut_of_detached_run_does_not_raise_run_window(window, monkeypatch):
+    draft = window.run_tabs.new_run()
+    entry = window.run_tabs.entry_for(draft)
+    window.run_tabs.detach(entry)
+    calls = []
+    monkeypatch.setattr(entry.floating, "raise_", lambda: calls.append("raised"))
+    draft._open_run_configuration()
+    assert window.pages.currentWidget() is draft.yaml_page
+    assert window.run_tabs.current is entry
+    assert entry.floating is not None
+    assert calls == []
+
+
+def test_only_one_icon_configuration_shortcut_with_and_without_readers(window, tmp_path, qtbot):
+    button = window.reader_config_button
+    assert window.run_header.run_config_button is button
+    assert button.text() == ""
+    assert not button.icon().isNull()
+    config = tmp_path / "readers.yaml"
+    config.write_text("Reader: Demo reader\nReaders:\n  - Demo reader\n", encoding="utf-8")
+    window.workspace = Workspace.load(str(tmp_path), str(config))
+    window._on_collected(Collection(tuple(window.model._by_nodeid)))
+    qtbot.wait(20)
+    assert window.reader_controls.layout().indexOf(button) >= 0
+    assert window.run_header.execution_fields.indexOf(button) == -1
+    assert button.isVisible()
+    assert button.width() <= 32
