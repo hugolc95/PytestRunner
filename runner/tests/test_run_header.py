@@ -24,7 +24,8 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     panels = [window.run_header.environment, window.run_header.execution, window.run_header.results]
     assert window.run_header.results.isVisible()
     assert window.compass_ring.isVisible()
-    assert window.run_header.environment.isAncestorOf(window.reader_controls)
+    assert window.run_header.execution.isAncestorOf(window.reader_controls)
+    assert window.run_header.execution.isAncestorOf(window.reader_selector)
     assert window.run_header.environment.isAncestorOf(window.readers_bar)
     for i, panel in enumerate(panels):
         assert window.run_header.rect().contains(panel.geometry())

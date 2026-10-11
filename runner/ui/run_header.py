@@ -176,7 +176,7 @@ class StructuredRunHeader(QWidget):
         reader_layout.addWidget(self.atr_presentation, 1, 0, 1, 2)
         reader_layout.setColumnStretch(0, 2)
         reader_layout.setColumnStretch(2, 0)
-        self._move(reader_column, window.reader_controls)
+        self._move(execution, window.reader_controls)
         window.readers_bar.set_integrated()
         self._move(reader_column, window.readers_bar)
         actions = QHBoxLayout()
@@ -218,8 +218,7 @@ class StructuredRunHeader(QWidget):
         self.update_environment()
 
     def update_environment(self):
-        visible = (not self._window.reader_controls.isHidden()
-                   or not self._window.readers_bar.isHidden())
+        visible = not self._window.readers_bar.isHidden()
         self.reader_fields.setVisible(visible)
         self.environment_fields.setColumnStretch(1, 1 if visible else 0)
 

@@ -24,8 +24,9 @@ runs. The selected tab keeps its original RESULTS panel with the progress ring
 and clickable result counters. When viewing another tab, **Live** returns to
 the current execution from the compact tab row.
 
-The ENVIRONMENT panel groups the workspace, primary reader, ATR and reader
-selection in aligned columns. EXECUTION contains the run actions and run name.
+The ENVIRONMENT panel groups the workspace and multiple-reader selection in
+aligned columns. EXECUTION contains the primary-reader dropdown, ATR, run
+actions and run name.
 Changing the workspace, configuration or interpreter resets a completed tab
 to a clean draft; reports already saved in History are retained.
 
