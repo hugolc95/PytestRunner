@@ -1219,10 +1219,11 @@ class MainWindow(QMainWindow):
         self.profile_picker.setVisible(visible)
         self.profile_chip.hide()
         self.run_button.setText('Run profile' if visible else 'Run tests')
-        # Both labels share the same slot; switching modes must not move Stop.
+        # Both modes share the full launch column in the structured header.
         metrics = self.run_button.fontMetrics()
-        self.run_button.setFixedWidth(max(metrics.horizontalAdvance(label)
-                                         for label in ('Run tests', 'Run profile')) + 64)
+        self.run_button.setMinimumWidth(max(metrics.horizontalAdvance(label)
+                                           for label in ('Run tests', 'Run profile')) + 64)
+        self.run_button.setMaximumWidth(16777215)
         self.run_name_button.setText(self._pending_run_name or 'Run name (optional)')
         self.run_name_button.setEnabled(not self.service.busy and self._stress_worker is None)
         name_policy = self.run_name_stack.sizePolicy()

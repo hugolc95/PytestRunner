@@ -1,9 +1,31 @@
 """Compact run cards whose execution state stays visible on inactive tabs."""
 from PySide6.QtCore import QRect, QSize, Qt
-from PySide6.QtGui import QColor, QPainter, QPen
-from PySide6.QtWidgets import QTabBar
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen
+from PySide6.QtWidgets import QAbstractButton, QTabBar
 
 from runner.ui import tokens as t
+
+
+class RunTabClose(QAbstractButton):
+    """Quiet close affordance drawn with the current application palette."""
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setFixedSize(22, 22)
+        self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Close run")
+        self.setAccessibleName("Close run")
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        if self.underMouse() or self.hasFocus():
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(t.BG_SURFACE))
+            painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 4, 4)
+        painter.setPen(QPen(QColor(t.TEXT if self.underMouse() or self.hasFocus()
+                                  else t.TEXT_MUTED), 1.4))
+        painter.drawLine(8, 8, 14, 14)
+        painter.drawLine(8, 14, 14, 8)
 
 
 class RunTabBar(QTabBar):
@@ -26,7 +48,12 @@ class RunTabBar(QTabBar):
             painter.drawRoundedRect(rect, 6, 6)
             painter.setPen(Qt.NoPen)
             painter.setBrush(QColor(colour))
-            painter.drawRoundedRect(QRect(rect.left() + 1, rect.top() + 7, 3, rect.height() - 14), 1, 1)
+            path = QPainterPath()
+            path.addRoundedRect(rect, 6, 6)
+            painter.save()
+            painter.setClipPath(path)
+            painter.drawRect(QRect(rect.left(), rect.top(), 3, rect.height()))
+            painter.restore()
             icon_rect = QRect(rect.left() + 10, rect.top() + 3, 14, 14)
             self.tabIcon(index).paint(painter, icon_rect)
             width = max(0, rect.width() - 60)

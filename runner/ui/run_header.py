@@ -1,6 +1,6 @@
 """Run-page layout using the existing controls and their existing signals."""
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
+    QApplication, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLayout,
     QPushButton, QPlainTextEdit, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QSize, Qt, QTimer
@@ -161,12 +161,14 @@ class StructuredRunHeader(QWidget):
 
         window.reader_controls.layout().setContentsMargins(0, 0, 0, 0)
         reader_layout = window.reader_controls.layout()
+        reader_layout.setSizeConstraint(QLayout.SetMinimumSize)
         while reader_layout.count():
             item = reader_layout.takeAt(0)
             if isinstance(item.widget(), QLabel):
                 item.widget().hide()
         reader_layout.addWidget(window.reader_selector, 0, 1)
         window.reader_selector.setMinimumContentsLength(16)
+        window.reader_selector.setMaximumWidth(16777215)
         window.reader_selector.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         reader_layout.addWidget(window.reader_config_button, 0, 0)
         self.atr_presentation = ResponsiveAtr(window.reader_atr)
@@ -179,19 +181,28 @@ class StructuredRunHeader(QWidget):
         execution_fields = QHBoxLayout()
         execution_fields.setContentsMargins(0, 0, 0, 0)
         execution_fields.setSpacing(t.SPACE_2)
-        execution_fields.addWidget(self.reader_fields, 1, Qt.AlignTop)
+        window.readers_bar.set_integrated()
+        self._move(reader_column, window.readers_bar)
+        reader_layout.addWidget(self.reader_fields, 2, 1)
+        reader_layout.setVerticalSpacing(t.SPACE_1)
+        # Launch controls form the left column; inspection and selection share
+        # the right column in selector / ATR / run-readers order.
+        commands = QVBoxLayout()
+        commands.setSpacing(t.SPACE_2)
+        commands.addStretch()
+        window.run_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._move(commands, window.run_button)
+        secondary = QHBoxLayout()
+        secondary.setSpacing(t.SPACE_1)
+        for control in (window.stop_button, window.rerun_button):
+            self._move(secondary, control)
+        commands.addLayout(secondary)
+        self._move(commands, window.profile_chip)
+        commands.addStretch()
+        execution_fields.addLayout(commands)
         self._move(execution_fields, window.reader_controls)
         execution_fields.setStretch(1, 1)
         execution.addLayout(execution_fields)
-        window.readers_bar.set_integrated()
-        self._move(reader_column, window.readers_bar)
-        actions = QHBoxLayout()
-        actions.setSpacing(t.SPACE_2)
-        for control in (window.run_button, window.stop_button, window.rerun_button):
-            self._move(actions, control)
-        actions.addStretch()
-        execution.addLayout(actions)
-        self._move(execution, window.profile_chip)
         execution.addStretch()
 
         progress = QHBoxLayout()
@@ -259,6 +270,12 @@ class StructuredRunHeader(QWidget):
         self._compact = compact
         for panel in (self.environment, self.execution, self.results):
             self._grid.removeWidget(panel)
+        if compact == "stacked":
+            for row, panel in enumerate((self.environment, self.execution, self.results)):
+                self._grid.addWidget(panel, row, 0)
+            for column in range(3):
+                self._grid.setColumnStretch(column, 1 if column == 0 else 0)
+            return
         self._grid.addWidget(self.environment, 0, 0)
         self._grid.addWidget(self.execution, 0, 1)
         if compact:
@@ -276,4 +293,8 @@ class StructuredRunHeader(QWidget):
         self.results.setMinimumWidth(counter_width + 2 * t.SPACE_3 + 3 * t.SPACE_2)
         required = sum(max(panel.minimumWidth(), panel.minimumSizeHint().width()) for panel in
                        (self.environment, self.execution, self.results))
-        self._arrange(event.size().width() < required + 2 * self._grid.spacing())
+        pair_width = sum(max(panel.minimumWidth(), panel.minimumSizeHint().width())
+                         for panel in (self.environment, self.execution))
+        width = event.size().width()
+        self._arrange("stacked" if width < pair_width + self._grid.spacing() else
+                      width < required + 2 * self._grid.spacing())

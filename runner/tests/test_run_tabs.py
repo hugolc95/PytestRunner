@@ -39,6 +39,47 @@ def fake_start(context, calls, monkeypatch):
     monkeypatch.setattr(context.service, "start", start)
 
 
+def test_context_menu_renames_target_run_and_updates_detached_title(window, monkeypatch):
+    from PySide6.QtWidgets import QMenu, QInputDialog
+    controller = window.run_tabs
+    draft = controller.new_run()
+    entry = controller.entry_for(draft)
+    controller.detach(entry)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("  Card qualification  ", True))
+    def trigger_rename(menu, position):
+        action = next(action for action in menu.actions() if action.text() == "Rename run…")
+        action.trigger()
+    class TestMenu(QMenu):
+        def exec(self, position):
+            trigger_rename(self, position)
+    monkeypatch.setattr("runner.ui.run_tabs.QMenu", TestMenu)
+    controller.context_menu(controller.tabs.tabRect(controller.entries.index(entry)).center())
+    assert entry.name == "Card qualification"
+    assert draft.run_name_button.text() == entry.name
+    assert controller.tabs.tabData(1)["name"] == entry.name
+    assert entry.floating.windowTitle().startswith(entry.name)
+    assert controller.entries[0].name != entry.name
+    assert controller.save_timer.isActive()
+    monkeypatch.setattr(QInputDialog, "getText", lambda *args, **kwargs: ("Ignored", False))
+    controller.rename(entry)
+    assert entry.name == "Card qualification"
+    controller.reattach(entry)
+
+
+def test_custom_close_button_keeps_target_after_tab_move(window, qtbot):
+    from PySide6.QtWidgets import QTabBar
+    from runner.ui.run_tabs_strip import RunTabClose
+    controller = window.run_tabs
+    draft = controller.new_run()
+    entry = controller.entry_for(draft)
+    controller.tabs.moveTab(1, 0)
+    button = controller.tabs.tabButton(0, QTabBar.RightSide)
+    assert isinstance(button, RunTabClose)
+    qtbot.mouseClick(button, Qt.LeftButton)
+    assert entry not in controller.entries
+    assert len(controller.entries) == 1
+
+
 def test_new_run_button_follows_last_tab_and_handles_overflow(window, qtbot):
     controller = window.run_tabs
     window.resize(1600, 900)

@@ -15,13 +15,13 @@ from uuid import uuid4
 from PySide6.QtCore import QObject, QTimer, Qt
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton, QStackedWidget,
+    QHBoxLayout, QInputDialog, QLabel, QMainWindow, QMenu, QPushButton, QStackedWidget,
     QSizePolicy, QStatusBar, QTabBar, QVBoxLayout, QWidget,
 )
 
 from runner.domain.execution import Collection
 from runner.domain.models import Status
-from runner.ui.run_tabs_strip import RunTabBar
+from runner.ui.run_tabs_strip import RunTabBar, RunTabClose
 from runner.ui import icons, tokens as t
 from runner.ui.widgets import ErrorDialog
 
@@ -118,7 +118,7 @@ class RunTabsController(QObject):
         self.tabs.setObjectName("RunTabs")
         self.tabs.setExpanding(False)
         self.tabs.setMovable(True)
-        self.tabs.setTabsClosable(True)
+        self.tabs.setTabsClosable(False)
         self.tabs.setContextMenuPolicy(Qt.CustomContextMenu)
         self.tabs.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
         tools.addWidget(self.tabs)
@@ -228,7 +228,10 @@ class RunTabsController(QObject):
         self.stack.addWidget(page)
         self.footer_stack.addWidget(context.statusBar())
         self.window.preferences.attach_context(context)
-        self.tabs.addTab("New run · Draft")
+        index = self.tabs.addTab("New run · Draft")
+        close = RunTabClose(self.tabs)
+        close.clicked.connect(lambda: self.close_tab(self.entries.index(entry)))
+        self.tabs.setTabButton(index, QTabBar.RightSide, close)
         context.service.started.connect(lambda request: self.started(entry, request))
         context.service.progress.connect(lambda done, total: self.progress(entry, done, total))
         # MainWindow finalizes and archives before this connection runs.
@@ -446,6 +449,8 @@ class RunTabsController(QObject):
             return
         entry = self.entries[index]
         menu = QMenu(self.tabs)
+        menu.addAction("Rename run…", lambda: self.rename(entry))
+        menu.addSeparator()
         menu.addAction("Duplicate as a new draft", lambda: self.duplicate(entry))
         menu.addAction("Reattach tab" if entry.floating else "Detach tab",
                        lambda: self.reattach(entry) if entry.floating else self.detach(entry))
@@ -459,6 +464,18 @@ class RunTabsController(QObject):
         close = menu.addAction("Close tab", lambda: self.close_tab(self.entries.index(entry)))
         close.setEnabled(len(self.entries) > 1 and entry.state not in ("running", "finalizing"))
         menu.exec(global_position)
+
+    def rename(self, entry):
+        name, accepted = QInputDialog.getText(
+            entry.floating or self.window, "Rename run", "Run name:", text=entry.name)
+        if not accepted or entry not in self.entries:
+            return
+        context = entry.context
+        context._pending_run_name = name.strip()[:100]
+        context.run_name_edit.setText(context._pending_run_name)
+        context.run_name_button.setText(context._pending_run_name or "Run name (optional)")
+        self.refresh_labels()
+        self.schedule_save()
 
     def move_waiting(self, entry, delta):
         index = self.queue.index(entry)
