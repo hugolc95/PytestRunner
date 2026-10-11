@@ -16,7 +16,7 @@ from PySide6.QtCore import QObject, QTimer, Qt
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton, QStackedWidget,
-    QSizePolicy, QTabBar, QVBoxLayout, QWidget,
+    QSizePolicy, QStatusBar, QTabBar, QVBoxLayout, QWidget,
 )
 
 from runner.domain.execution import Collection
@@ -69,14 +69,15 @@ class DetachedRun(QMainWindow):
         layout.addLayout(tools)
         layout.addWidget(entry.page, 1)
         self.setCentralWidget(body)
-        callbacks = {"F5": entry.context.run_selected,
-                     "Esc": lambda: controller.active.context.stop_run() if controller.active else None,
-                     "Ctrl+F": entry.context.search.field.setFocus}
-        for number in range(4):
-            callbacks[f"Ctrl+{number + 1}"] = lambda number=number: entry.context.results.show_tab(number)
-        for sequence, callback in callbacks.items():
-            shortcut = QShortcut(QKeySequence(sequence), self)
+        for action in QWidget.actions(entry.context):
+            sequence = getattr(action, "_run_shortcut", action.shortcut())
+            if sequence.isEmpty() or sequence == QKeySequence("Esc"):
+                continue
+            shortcut = QShortcut(sequence, self)
+            callback = controller.window.close if action.text() == "Quit" else action.trigger
             shortcut.activated.connect(callback)
+        stop = QShortcut(QKeySequence("Esc"), self)
+        stop.activated.connect(lambda: controller.active.context.stop_run() if controller.active else None)
         geometry = controller.window.settings.value("runs/detached_geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
@@ -141,6 +142,14 @@ class RunTabsController(QObject):
         tools.addWidget(self.pause_button)
         self.stack = QStackedWidget()
         layout.addWidget(self.stack, 1)
+        self.footer_stack = QStackedWidget()
+        self.footer_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        original_footer = window.statusBar()
+        self.footer_stack.addWidget(original_footer)
+        window._status_host = QStatusBar(window)
+        window._status_host.setSizeGripEnabled(False)
+        window.setStatusBar(window._status_host)
+        window._status_host.addWidget(self.footer_stack, 1)
         original_page = window.workspace_page
         window.pages.removeWidget(original_page)
         window.pages.insertWidget(0, self.panel)
@@ -153,7 +162,7 @@ class RunTabsController(QObject):
         self.tabs.customContextMenuRequested.connect(self.context_menu)
         self.summary = QLabel()
         self.summary.setObjectName("Faint")
-        window.statusBar().insertPermanentWidget(window._status_permanent_index, self.summary, 1)
+        window._status_host.insertWidget(0, self.summary)
         self.timer = QTimer(self)
         self.timer.setInterval(500)
         self.timer.timeout.connect(self.refresh_labels)
@@ -217,6 +226,8 @@ class RunTabsController(QObject):
         entry = RunTab(context, page, uuid4().hex)
         self.entries.append(entry)
         self.stack.addWidget(page)
+        self.footer_stack.addWidget(context.statusBar())
+        self.window.preferences.attach_context(context)
         self.tabs.addTab("New run · Draft")
         context.service.started.connect(lambda request: self.started(entry, request))
         context.service.progress.connect(lambda done, total: self.progress(entry, done, total))
@@ -250,12 +261,19 @@ class RunTabsController(QObject):
         context.navigation.hide()
         context.menuBar().hide()
         context._interpreter_override = source._interpreter_override
+        from runner.ui.main_window import K_RECENT
+        context.workspace_combo.addItems(self.window.settings.value(K_RECENT, [], type=list))
         if source.workspace is not None:
             context.workspace = deepcopy(source.workspace)
             context.workspace_combo.setCurrentText(context.workspace.path)
             context._on_collected(Collection(
                 tuple(source.model._by_nodeid), deepcopy(source._markers_by_nodeid)))
             context.model.set_all_checked(False)
+            context.readers_bar.select_names(context.workspace.readers, [
+                reader.name for reader in source.workspace.readers
+                if reader.index in source.readers_bar.selected_indexes()])
+        context.split.restoreState(source.split.saveState())
+        context.tree.header().restoreState(source.tree.header().saveState())
         entry = self._register(context, context.workspace_page)
         self.tabs.setCurrentIndex(self.entries.index(entry))
         self.window._show_page("workspace")
@@ -283,10 +301,13 @@ class RunTabsController(QObject):
             self._recent.append(entry)
             self._recent = self._recent[-30:]
         self.stack.setCurrentWidget(entry.placeholder if entry.floating else entry.page)
+        if not entry.floating:
+            self.footer_stack.setCurrentWidget(entry.context.statusBar())
         if entry.floating:
             entry.floating.show()
             entry.floating.raise_()
             entry.floating.activateWindow()
+        entry.context._update_actions()
         self.refresh_labels()
         self.schedule_save()
 
@@ -478,8 +499,11 @@ class RunTabsController(QObject):
         self.stack.addWidget(placeholder)
         entry.placeholder = placeholder
         entry.floating = DetachedRun(self, entry)
+        self.footer_stack.removeWidget(entry.context.statusBar())
+        entry.floating.setStatusBar(entry.context.statusBar())
         entry.floating.show()
         entry.page.show()  # removeWidget leaves an explicitly hidden page.
+        entry.context.statusBar().show()
         if previous is not None:
             self.tabs.setCurrentIndex(self.entries.index(previous))
         else:
@@ -492,6 +516,7 @@ class RunTabsController(QObject):
         if not entry.floating:
             return
         floating, entry.floating = entry.floating, None
+        self.footer_stack.addWidget(entry.context.statusBar())
         self.window.settings.setValue("runs/detached_geometry", floating.saveGeometry())
         self.stack.addWidget(entry.page)
         entry.page.show()
@@ -522,6 +547,9 @@ class RunTabsController(QObject):
         self.tabs.blockSignals(False)
         self.stack.removeWidget(entry.page)
         entry.page.hide()
+        self.window.preferences.forget_context(entry.context)
+        self.footer_stack.removeWidget(entry.context.statusBar())
+        entry.context.statusBar().setParent(entry.context)
         entry.context.reader_selector.stop_discovery()
         entry.context.reader_atr.release()
         if entry.context is not self.window:
@@ -557,6 +585,8 @@ class RunTabsController(QObject):
                 readers=context.readers_bar.selected_indexes(),
                 detached=entry.floating is not None, geometry=geometry,
                 interpreter=context._interpreter_override,
+                splitter=context.split.saveState().toBase64().data().decode("ascii"),
+                columns=context.tree.header().saveState().toBase64().data().decode("ascii"),
             ))
         self.window.settings.setValue("runs/session", json.dumps(data))
         self.window.settings.setValue("runs/selected", self.tabs.currentIndex())
@@ -594,6 +624,10 @@ class RunTabsController(QObject):
                         context._on_collected(Collection(tuple(nodeids), item.get("markers", {})))
                     context.model.set_checked_nodeids(item.get("checked", []))
                 context._interpreter_override = item.get("interpreter", "")
+                for key, widget in (("splitter", context.split), ("columns", context.tree.header())):
+                    state = item.get(key)
+                    if isinstance(state, str) and state:
+                        widget.restoreState(QByteArray.fromBase64(state.encode("ascii")))
                 context._pending_run_name = item.get("name", "")
                 context.run_name_button.setText(context._pending_run_name or "Run name (optional)")
                 profile = item.get("profile")
@@ -740,6 +774,9 @@ class RunTabsController(QObject):
                 ("act_stop", bool(self.active and self.active.context.stop_button.isEnabled())),
                 ("act_rerun", selected.rerun_button.isEnabled())):
             getattr(self.window, name).setEnabled(enabled)
+        if selected is not self.window:
+            for name in ("act_config", "act_markers", "act_diverge"):
+                getattr(self.window, name).setEnabled(getattr(selected, name).isEnabled())
         if hasattr(self, "summary"):
             active = f"{self.active.name} running · " if self.active else ""
             self.summary.setText(f"{active}{len(self.queue)} waiting" + (" · queue paused" if self.paused else ""))

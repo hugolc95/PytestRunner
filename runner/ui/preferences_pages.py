@@ -447,6 +447,7 @@ class PreferencesController(QObject):
         self.values["theme"] = t.current_theme()
         self.saved = dict(self.values)
         self._applied_values = {}
+        self._contexts = weakref.WeakSet()
         self.preview_timer = QTimer(self)
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self.finish_preview)
@@ -462,17 +463,47 @@ class PreferencesController(QObject):
         window.settings_page = self.settings_page
         window.console_page = self.console_page
         self.apply()
-        window.service.line.connect(self.process_line)
-        window.service.started.connect(lambda request: self.record("actions", f"Execution started: {len(request.nodeids)} tests"))
-        window.service.reader_finished.connect(self.reader_finished)
-        window.service.finished.connect(lambda reports: self.record("actions", "Execution finished"))
-        window.model.selection_changed.connect(lambda: self.record("actions", f"Test selection changed: {len(window.model.checked_nodeids())} selected"))
-        window.tree.selectionModel().currentChanged.connect(self.selected_test)
+        self.attach_context(window)
         self._traced_buttons = weakref.WeakSet()
         self.track_buttons()
         self.install_command_trace()
         self.record("actions", "Pytest Runner started • Settings and Console pages ready")
         QTimer.singleShot(0, self.restore_detached_pages)
+
+    def attach_context(self, context):
+        if context in self._contexts:
+            return
+        self._contexts.add(context)
+        context.service.line.connect(lambda index, text: self.process_line(index, text, context))
+        context.service.started.connect(lambda request: self.context_record(
+            context, "actions", f"Execution started: {len(request.nodeids)} tests"))
+        context.service.reader_finished.connect(lambda report: self.reader_finished(report, context))
+        context.service.profile_execution.connect(lambda position, attempt, reader, nodeid, status:
+            self.follow_profile(context, position, attempt, status))
+        context.service.finished.connect(lambda reports: self.context_record(context, "actions", "Execution finished"))
+        context.model.selection_changed.connect(lambda: self.context_record(
+            context, "actions", f"Test selection changed: {len(context.model.checked_nodeids())} selected"))
+        for tree in (context.tree, context.profile_tree):
+            tree.selectionModel().currentChanged.connect(
+                lambda current, previous: self.selected_test(current, previous, context))
+        self.apply_context(context)
+
+    def context_record(self, context, kind, message):
+        if context is not self.window:
+            entry = context.run_tabs.entry_for(context) if context.run_tabs else None
+            message = f"[{entry.name if entry else 'New run'}] {message}"
+        self.record(kind, message)
+
+    def forget_context(self, context):
+        self._contexts.discard(context)
+
+    def follow_profile(self, context, position, attempt, status):
+        from runner.domain.models import Status
+        if self.values["follow_test"] and status == Status.RUNNING:
+            item = context.profile_model.index_for_nodeid(context.profile_model.key(position, attempt))
+            if item.isValid():
+                context.profile_tree.setCurrentIndex(item)
+                context.profile_tree.scrollTo(item)
 
     def restore_detached_pages(self):
         if not self.active:
@@ -516,29 +547,33 @@ class PreferencesController(QObject):
         self.exception_handler = handle_exception
         sys.excepthook = handle_exception
 
-    def selected_test(self, current, previous):
+    def selected_test(self, current, previous, context=None):
+        context = context or self.window
         self.track_buttons()
         if current.isValid():
             from runner.ui.tree_model import NODEID_ROLE
             nodeid = current.data(NODEID_ROLE)
             if nodeid:
-                self.record("actions", f"Selected test: {nodeid}")
-                self.window.results.tabs.setCurrentIndex(("Detail", "Source", "Output", "Logs").index(self.values["default_tab"]))
+                self.context_record(context, "actions", f"Selected test: {nodeid}")
+            panel = context.profile_results if context.profile_tree_button.isChecked() else context.results
+            panel.tabs.setCurrentIndex(("Detail", "Source", "Output", "Logs").index(self.values["default_tab"]))
 
-    def process_line(self, index, text):
-        self.record("output", f"Reader {index}: {text}")
+    def process_line(self, index, text, context=None):
+        context = context or self.window
+        self.context_record(context, "output", f"Reader {index}: {text}")
         prefix = "PYTESTRUNNER_START\t"
         if self.values["follow_test"] and text.strip().startswith(prefix):
             nodeid = text.strip()[len(prefix):]
-            item = self.window.model.index_for_nodeid(nodeid)
+            item = context.model.index_for_nodeid(nodeid)
             if item.isValid():
-                self.window.tree.setCurrentIndex(item)
-                self.window.tree.scrollTo(item)
+                context.tree.setCurrentIndex(item)
+                context.tree.scrollTo(item)
 
-    def reader_finished(self, report):
-        self.record("commands", f"Reader {report.reader.index} finished • exit code {report.exit_code}")
+    def reader_finished(self, report, context=None):
+        context = context or self.window
+        self.context_record(context, "commands", f"Reader {report.reader.index} finished • exit code {report.exit_code}")
         if report.exit_code not in (0, 5) or report.issues:
-            self.record("errors", report.output)
+            self.context_record(context, "errors", report.output)
 
     def apply_font(self):
         key = (t.current_theme(), self.values["font_size"])
@@ -579,6 +614,24 @@ class PreferencesController(QObject):
                 self._applying_theme = False
         if changed & {"font_size", "theme"}:
             self.apply_font()
+        for context in tuple(self._contexts) or (window,):
+            self.apply_context(context)
+        if "auto_scroll" in changed:
+            self.console.scroll.setChecked(values["auto_scroll"])
+        while len(self.console.events) > values["limit"]:
+            self.console.events.popleft()
+        if changed & {"timestamps", "limit"}:
+            self.console._dirty = True
+        if "font_size" in changed:
+            for page in (self.settings_page, self.console_page):
+                if page.detached_window:
+                    page.detached_window.setStyleSheet(window.styleSheet())
+        self._applied_values = dict(values)
+
+    def apply_context(self, window):
+        values = self.values
+        previous = getattr(window, "_applied_run_preferences", {})
+        changed = {key for key, value in values.items() if previous.get(key) != value}
         if "compact_header" in changed:
             for panel in (window.run_header.environment, window.run_header.execution, window.run_header.results):
                 layout = panel.layout()
@@ -600,18 +653,9 @@ class PreferencesController(QObject):
         atr.show()
         if "tree_density" in changed:
             height = {"Compact": 23, "Normal": 29, "Comfortable": 35}[values["tree_density"]]
-            window.tree.setStyleSheet(f"QTreeView::item {{ min-height: {height}px; }}")
-        if "auto_scroll" in changed:
-            self.console.scroll.setChecked(values["auto_scroll"])
-        while len(self.console.events) > values["limit"]:
-            self.console.events.popleft()
-        if changed & {"timestamps", "limit"}:
-            self.console._dirty = True
-        if "font_size" in changed:
-            for page in (self.settings_page, self.console_page):
-                if page.detached_window:
-                    page.detached_window.setStyleSheet(window.styleSheet())
-        self._applied_values = dict(values)
+            for tree in (window.tree, window.profile_tree):
+                tree.setStyleSheet(f"QTreeView::item {{ min-height: {height}px; }}")
+        window._applied_run_preferences = dict(values)
 
     def finish_preview(self):
         QApplication.setOverrideCursor(Qt.WaitCursor)

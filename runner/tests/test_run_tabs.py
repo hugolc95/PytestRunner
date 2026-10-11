@@ -83,6 +83,125 @@ def test_new_run_never_shows_temporary_top_level_widgets(window, qtbot):
         app.removeEventFilter(probe)
 
 
+def test_new_runs_receive_preferences_and_context_specific_console(window, qtbot):
+    preferences = window.preferences
+    preferences.values.update(compact_header=True, atr_bottom=True,
+                              tree_density="Comfortable", default_tab="Output", follow_test=True)
+    preferences.apply()
+    draft = window.run_tabs.new_run()
+    assert draft.run_header.atr_presentation.parentWidget() is draft.statusBar()
+    assert draft.run_header.execution.layout().spacing() == window.run_header.execution.layout().spacing() == 4
+    assert "35px" in draft.tree.styleSheet()
+    assert draft.profile_tree.styleSheet() == draft.tree.styleSheet()
+    index = draft.model.index_for_nodeid("test_demo.py::test_b")
+    draft.tree.setCurrentIndex(index)
+    assert draft.results.tabs.currentIndex() == 2
+    draft.service.line.emit(0, "PYTESTRUNNER_START\ttest_demo.py::test_a")
+    assert draft.tree.currentIndex() == draft.model.index_for_nodeid("test_demo.py::test_a")
+    assert not window.tree.currentIndex().isValid()
+    output = [message for _, kind, message in preferences.console.events if kind == "output"]
+    assert sum("PYTESTRUNNER_START" in message for message in output) == 1
+    assert "[New run]" in output[-1]
+    preferences.values.update(atr_bottom=False, tree_density="Compact")
+    preferences.apply()
+    assert draft.run_header.atr_presentation.parentWidget() is draft.reader_controls
+    assert "23px" in draft.tree.styleSheet()
+    second = window.run_tabs.new_run()
+    assert second.tree.styleSheet() == draft.tree.styleSheet()
+
+
+def test_draft_collection_footer_follows_tabs_and_detachment(window, qtbot, monkeypatch):
+    from PySide6.QtCore import QObject, Signal
+    class Collector(QObject):
+        collected = Signal(object)
+        failed = Signal(str)
+        def __init__(self, path, python, env, parent):
+            super().__init__(parent)
+            self.running = False
+        def start(self):
+            self.running = True
+        def isRunning(self):
+            return self.running
+        def wait(self, *_):
+            return not self.running
+
+    draft = window.run_tabs.new_run()
+    monkeypatch.setattr("runner.ui.main_window.CollectWorker", Collector)
+    monkeypatch.setattr("runner.ui.main_window.interpreter_mod.cached_probe", lambda *_: object())
+    monkeypatch.setattr(draft, "_on_interpreter_probed", lambda *_: None)
+    monkeypatch.setattr(draft, "_require_interpreter", lambda: sys.executable)
+    draft.load_workspace()
+    qtbot.wait(10)
+    assert draft.progress.isVisible()
+    assert draft.progress.maximum() == 0
+    assert draft.status_label.text() == "Collecting tests…"
+    assert window.run_tabs.footer_stack.currentWidget() is draft.statusBar()
+    window.run_tabs.show_context(window)
+    assert not draft.progress.isVisible()
+    assert not window.progress.isVisible()
+    window.run_tabs.show_context(draft)
+    assert draft.progress.isVisible()
+    window.run_tabs.detach_current()
+    entry = window.run_tabs.entry_for(draft)
+    qtbot.wait(10)
+    assert entry.floating.statusBar() is draft.statusBar()
+    assert draft.progress.isVisible()
+    draft._collector.running = False
+    draft._collector.collected.emit(Collection(("test_demo.py::test_a", "test_demo.py::test_b")))
+    assert draft.progress.isHidden()
+    window.run_tabs.reattach(entry)
+    assert window.run_tabs.footer_stack.currentWidget() is draft.statusBar()
+    draft._tick()
+    assert draft.elapsed_label.text()
+    assert window.elapsed_label.text() == ""
+
+
+def test_new_run_inherits_reader_choices_recent_workspaces_and_layout(window, qtbot):
+    from runner.domain.models import Reader
+    from runner.ui.main_window import K_RECENT
+    readers = [Reader(index=i, name=f"Reader {i}") for i in range(2)]
+    window.workspace = replace(window.workspace, settings={"Reader": "Reader 0", "Readers": ["Reader 1"]})
+    window._on_collected(Collection(("test_demo.py::test_a", "test_demo.py::test_b")))
+    window.readers_bar.select_names(readers, ["Reader 1"])
+    window.settings.setValue(K_RECENT, [window.workspace.path, "C:/recent-environment"])
+    window.split.setSizes([650, 300])
+    window.tree.setColumnWidth(1, 123)
+    qtbot.wait(10)
+    draft = window.run_tabs.new_run()
+    qtbot.wait(10)
+    assert draft.readers_bar.selected_indexes() == (1,)
+    assert draft.workspace_combo.findText("C:/recent-environment") >= 0
+    assert draft.tree.columnWidth(1) == window.tree.columnWidth(1)
+    assert abs(draft.split.sizes()[0] / sum(draft.split.sizes()) -
+               window.split.sizes()[0] / sum(window.split.sizes())) < .02
+    assert window.act_diverge.isEnabled()
+    window.run_tabs.show_context(window)
+    assert window.act_diverge.isEnabled()
+
+
+def test_draft_shortcuts_target_visible_run_and_detached_window(window, qtbot, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    calls = []
+    draft = window.run_tabs.new_run()
+    draft.model.set_checked_nodeids(["test_demo.py::test_b"])
+    fake_start(draft, calls, monkeypatch)
+    window.activateWindow()
+    qtbot.wait(20)
+    qtbot.keyClick(window, Qt.Key_F5)
+    assert len(calls) == 1 and calls[0][0] is draft
+    window.run_tabs.paused = True
+    draft.service.finished.emit([])
+    window.run_tabs.detach_current()
+    floating = window.run_tabs.entry_for(draft).floating
+    floating.activateWindow()
+    qtbot.wait(20)
+    qtbot.keyClick(floating, Qt.Key_F, Qt.ControlModifier)
+    assert QApplication.focusWidget() is draft.search.field
+    qtbot.keyClick(floating, Qt.Key_3, Qt.ControlModifier)
+    assert draft.results.tabs.currentIndex() == 2
+    window.run_tabs.reattach(window.run_tabs.entry_for(draft))
+
+
 def test_drafts_keep_independent_selection_and_live_results(window, monkeypatch):
     calls = []
     fake_start(window, calls, monkeypatch)
@@ -271,6 +390,10 @@ def test_real_runs_execute_serially_and_archive_separately(window, qtbot):
 def test_restart_restores_draft_and_detached_mode_without_starting(window, qtbot):
     draft = window.run_tabs.new_run()
     draft._pending_run_name = "Preserved draft"
+    from PySide6.QtWidgets import QHeaderView
+    draft.tree.header().setStretchLastSection(False)
+    draft.tree.header().setSectionResizeMode(0, QHeaderView.Interactive)
+    draft.tree.setColumnWidth(0, 357)
     draft.model.set_checked_nodeids(["test_demo.py::test_b"])
     window.run_tabs.detach_current()
     window.run_tabs.entry_for(draft).floating.resize(1000, 650)
@@ -283,6 +406,7 @@ def test_restart_restores_draft_and_detached_mode_without_starting(window, qtbot
         restored = reopened.run_tabs.entries[1]
         assert restored.name == "Preserved draft"
         assert restored.context.model.checked_nodeids() == ["test_demo.py::test_b"]
+        assert restored.context.tree.columnWidth(0) == 357
         assert restored.floating is not None
         assert restored.floating.isVisible()
         assert restored.floating.size().width() == 1000

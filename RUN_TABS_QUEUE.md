@@ -5,6 +5,14 @@ tabs. Use **+ New run** to prepare a selection while another tab displays live
 results. Each new tab starts with an unchecked copy of the collected tests.
 The **+ New run** button follows the last tab; overflowing tabs remain scrollable.
 Creating a draft shows **Preparing…** without opening temporary native windows.
+Every tab receives the same personal preferences and diagnostics as the first
+run: density, compact panels, default result view and automatic test following.
+Its own status footer displays collection/run progress, elapsed time and ATR;
+switching tabs or detaching moves that footer with the run. New drafts inherit
+reader choices, recent environments and panel/column sizes, while test selections
+and verdicts start clean. Panel/column sizes are also saved with each session.
+Keyboard shortcuts work in attached and detached runs: **F5** starts the selected
+run, **Ctrl+R** recollects tests, and **Esc** stops the active execution.
 Execution profiles can also be loaded into a draft; opening a profile while the
 selected tab is running or waiting creates a new draft automatically.
 

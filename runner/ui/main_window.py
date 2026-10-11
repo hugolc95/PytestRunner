@@ -552,7 +552,7 @@ class MainWindow(QMainWindow):
             context._refresh_yaml_page()
         for cle, bouton in self.nav_buttons.items():
             bouton.setChecked(cle == page)
-        self.statusBar().setVisible(page == "workspace")
+        getattr(self, "_status_host", self.statusBar()).setVisible(page == "workspace")
         if hasattr(self, "preferences"):
             self.preferences.track_buttons()
             self.preferences.record("actions", f"Navigation: {page}")
@@ -1361,6 +1361,7 @@ class MainWindow(QMainWindow):
         d'etat est faite pour ca, et c'est la que l'oeil la cherche.
         """
         barre = self.statusBar()
+        self._run_status_bar = barre
 
         self.progress = QProgressBar()
         self.progress.setTextVisible(False)
@@ -1405,6 +1406,10 @@ class MainWindow(QMainWindow):
         barre.addPermanentWidget(QLabel(""))
         barre.addPermanentWidget(self.remaining_pill)
 
+    def statusBar(self):
+        # A run keeps its footer when moved into the shared or detached host.
+        return getattr(self, "_run_status_bar", None) or super().statusBar()
+
     def _build_menus(self) -> None:
         """Menus et raccourcis. Chaque action frequente en a un, visible ici."""
         # Le theme se loge dans le coin de la barre de menus : tout en haut a
@@ -1420,7 +1425,7 @@ class MainWindow(QMainWindow):
         fichier = self.menuBar().addMenu("&File")
         self._action(fichier, "Open workspace…", QKeySequence.Open, self.browse_workspace,
                      "mdi.folder-open-outline")
-        self._action(fichier, "Reload tests", QKeySequence.Refresh, self.load_workspace,
+        self._action(fichier, "Reload tests", "Ctrl+R", self.load_workspace,
                      "mdi.refresh")
         fichier.addSeparator()
         self.act_config = self._action(
@@ -1486,7 +1491,12 @@ class MainWindow(QMainWindow):
         if glyph:
             action.setIcon(icons.icon(glyph, t.TEXT_MUTED))
         if raccourci:
-            action.setShortcut(raccourci)
+            if self._run_host is not None:
+                # The host owns global shortcuts. Hidden context windows must
+                # not register another F5/Ctrl+F in the same native window.
+                action._run_shortcut = QKeySequence(raccourci)
+            else:
+                action.setShortcut(raccourci)
             # Le raccourci est deja affiche par le menu ; l'infobulle sert aux
             # boutons qui declenchent la meme action.
             action.setToolTip(f"{texte}  ({QKeySequence(raccourci).toString()})")
@@ -1773,8 +1783,8 @@ class MainWindow(QMainWindow):
         finally:
             self.setUpdatesEnabled(updates_enabled)
 
-    def _restyle(self) -> None:
-        """Rejoue les couleurs qui ne viennent pas de la feuille globale."""
+    def _restyle_controls(self) -> None:
+        """Refresh this run's control colours without visiting other runs."""
         self.run_name_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
         soleil = t.is_dark()
         self.theme_button.setIcon(icons.icon(
@@ -1815,6 +1825,16 @@ class MainWindow(QMainWindow):
             bouton.setIcon(icons.icon(glyphe, t.TEXT_MUTED))
 
         self.filter_clear.setIcon(icons.icon("mdi.close", t.TEXT_MUTED))
+
+    def _restyle(self) -> None:
+        """Rejoue les couleurs qui ne viennent pas de la feuille globale."""
+        self._restyle_controls()
+        if self._run_host is None and self.run_tabs:
+            for entry in self.run_tabs.entries:
+                if entry.context is not self:
+                    entry.context._restyle_controls()
+                    entry.context._show_active_filter()
+                    entry.context.model.layoutChanged.emit()
 
         # Balayage plutot qu'une liste tenue a la main : c'est en oubliant un
         # widget de cette liste qu'on laisse un ilot de l'ancien theme, et
