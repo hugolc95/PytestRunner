@@ -284,7 +284,8 @@ class StructuredRunHeader(QWidget):
         else:
             self._grid.addWidget(self.results, 0, 2)
         for column in range(3):
-            self._grid.setColumnStretch(column, 0 if compact and column == 2 else 1)
+            self._grid.setColumnStretch(column, 0 if compact and column == 2 else
+                                        5 if column == 1 else 4)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
