@@ -22,7 +22,10 @@ environment, execution options and YAML configuration are captured when added.
 Only one run executes at a time; the next starts after the previous run and its
 report archiving finish. Results remain associated with their original tab.
 
-Drag tabs to reorder waiting runs. The tab context menu can duplicate a run,
+Drag tabs to reorder waiting runs. Right-click a tab and choose **Rename run…**
+to edit its name, including in a detached window. Renaming updates the tab and
+window titles; requests already queued or executing retain their captured name.
+The tab context menu can duplicate a run,
 move it in the queue, remove it from the queue for editing, or close it.
 **Pause queue** lets the current run finish and holds subsequent runs.
 Stopping a run cancels that run; pause the queue to also prevent the next start.
@@ -34,10 +37,13 @@ runs. The selected tab keeps its original RESULTS panel with the progress ring
 and clickable result counters. When viewing another tab, **Live** returns to
 the current execution from the compact tab row.
 
-The ENVIRONMENT panel places multiple-reader selection below Browse / Collect,
-with the run name alongside those actions. EXECUTION contains the primary-reader
-dropdown, ATR and a single row of run actions. Compact spacing keeps the tree
-and detail pane higher on the page while preserving the result ring and counters.
+The ENVIRONMENT panel groups the workspace, Browse / Collect and run name.
+EXECUTION places run actions on the left, with the primary-reader dropdown,
+its ATR and multiple-reader selection stacked and aligned on the right.
+Execution receives a modest width preference (4:5:4 across the three panels);
+smaller windows reflow the panels to keep controls usable. RESULTS places the
+progress ring at the top right and failure/difference actions on the left.
+Tab state stripes fill the card height and close buttons use the theme palette.
 Changing the workspace, configuration or interpreter resets a completed tab
 to a clean draft; reports already saved in History are retained.
 

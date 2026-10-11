@@ -77,6 +77,28 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     window.close()
 
 
+def test_execution_actions_stay_compact_without_readers(qtbot, monkeypatch, tmp_path):
+    from PySide6.QtCore import QSettings
+    settings = QSettings(str(tmp_path / "no-readers.ini"), QSettings.IniFormat)
+    monkeypatch.setattr("runner.ui.main_window.QSettings", lambda *_: settings)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.resize(1920, 900)
+    window.show()
+    window.reader_controls.hide()
+    window.readers_bar.hide()
+    window.run_header.update_environment()
+    qtbot.wait(30)
+    execution = window.run_header.execution
+    assert window.run_button.width() < 300
+    assert window.stop_button.width() < 120
+    assert window.run_button.width() < execution.width() / 2
+    assert window.run_button.mapTo(execution, window.run_button.rect().topLeft()).x() == (
+        execution.contentsRect().left() + execution.layout().contentsMargins().left()
+    )
+    window.close()
+
+
 def test_integrated_readers_overflow_keeps_selection_and_reload(qtbot):
     from runner.domain.models import Reader
     from runner.ui.widgets import ReaderBar

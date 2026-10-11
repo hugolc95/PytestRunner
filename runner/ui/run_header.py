@@ -188,7 +188,10 @@ class StructuredRunHeader(QWidget):
         reader_layout.setVerticalSpacing(t.SPACE_1)
         # Launch controls form the left column; inspection and selection share
         # the right column in selector / ATR / run-readers order.
-        commands = QVBoxLayout()
+        command_fields = QWidget()
+        command_fields.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        commands = QVBoxLayout(command_fields)
+        commands.setContentsMargins(0, 0, 0, 0)
         commands.setSpacing(t.SPACE_2)
         commands.setAlignment(Qt.AlignTop)
         window.run_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -200,9 +203,10 @@ class StructuredRunHeader(QWidget):
         commands.addLayout(secondary)
         self._move(commands, window.profile_chip)
         commands.addStretch()
-        execution_fields.addLayout(commands)
+        execution_fields.addWidget(command_fields, 0, Qt.AlignTop)
         self._move(execution_fields, window.reader_controls)
         execution_fields.setStretch(1, 1)
+        execution_fields.addStretch(0)
         execution.addLayout(execution_fields)
         execution.addStretch()
 
