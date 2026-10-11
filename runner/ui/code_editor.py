@@ -217,6 +217,10 @@ class CodeEditor(QPlainTextEdit):
         gardent sinon les couleurs du theme de depart, sur un fond qui, lui,
         a change.
         """
+        # Detach the old QObject: replacing the Python reference alone leaves
+        # it attached to the document, highlighting every future edit again.
+        self.highlighter.setDocument(None)
+        self.highlighter.deleteLater()
         self.highlighter = PythonHighlighter(self.document())
         self.highlight_current_line()
         self._update_width()

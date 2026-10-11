@@ -486,6 +486,9 @@ class ReaderViews(QWidget):
     def restyle(self) -> None:
         for vue in self.views:
             vue.restyle()
+        self._restyle_local()
+
+    def _restyle_local(self) -> None:
         self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
         for bouton in self.open_buttons:
             bouton.setIcon(icons.icon("mdi.open-in-new", t.TEXT_MUTED))
@@ -583,6 +586,9 @@ class ResultsPanel(QWidget):
         for vues in (self.output, self.logs):
             vues.restyle()
         self.source.restyle()
+        self._restyle_local()
+
+    def _restyle_local(self) -> None:
         for position, glyphe in (
                 (ONGLET_DETAIL, "mdi.text-box-search-outline"),
                 (ONGLET_SOURCE, "mdi.file-code-outline"),

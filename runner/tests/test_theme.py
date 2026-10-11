@@ -554,17 +554,19 @@ def fermer(fenetre, qapp) -> None:
     qapp.processEvents()
 
 
-def test_the_button_offers_the_theme_you_are_not_in(fenetre):
+def test_the_button_offers_the_theme_you_are_not_in(fenetre, qtbot):
     """Le pictogramme annonce la destination, pas l'etat courant : un soleil
     dans le noir veut dire « aller vers le clair »."""
     fenetre.apply_theme("dark")
     assert "light" in fenetre.theme_button.toolTip()
 
     fenetre.toggle_theme()
+    qtbot.waitUntil(lambda: t.current_theme() == "light")
     assert t.current_theme() == "light"
     assert "dark" in fenetre.theme_button.toolTip()
 
     fenetre.toggle_theme()
+    qtbot.waitUntil(lambda: t.current_theme() == "dark")
     assert t.current_theme() == "dark"
 
 

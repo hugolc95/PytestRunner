@@ -7,6 +7,17 @@ from runner.ui import icons
 from runner.ui import tokens as t
 from runner.version import COPYRIGHT, __version__
 
+
+def _add_status_metadata(window):
+    window.remaining_pill.setVisible(False)
+    meta = QLabel(f"v{__version__}  ·  {COPYRIGHT}")
+    meta.setObjectName("Faint")
+    meta.setToolTip(f"Pytest Runner version {__version__}")
+    meta.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    window._version_copyright_label = meta
+    window.statusBar().addPermanentWidget(meta)
+
+
 def install() -> None:
     from runner.ui.main_window import MainWindow
     from runner.ui.history_dashboard import HistoryWindow, RunCard
@@ -22,7 +33,7 @@ def install() -> None:
         self.colorblind_theme_button.setCursor(Qt.PointingHandCursor)
         def toggle_colorblind_theme(checked=False):
             base = t.base_theme()
-            self.apply_theme(base if t.is_colorblind() else f"{base}_colorblind")
+            self.request_theme(base if t.is_colorblind() else f"{base}_colorblind")
         self.colorblind_theme_button.clicked.connect(toggle_colorblind_theme)
         root_layout=navigation.layout(); utility_layout=None
         if root_layout is not None:
@@ -40,7 +51,7 @@ def install() -> None:
     def toggle_theme_independent(self):
         target="light" if t.is_dark() else "dark"
         if t.is_colorblind(): target += "_colorblind"
-        self.apply_theme(target)
+        self.request_theme(target)
     MainWindow.toggle_theme=toggle_theme_independent
 
     original_build_command_bar=MainWindow._build_command_bar
@@ -141,8 +152,6 @@ def install() -> None:
     MainWindow.load_workspace=load_workspace_reset_progress
     original_build_status_bar=MainWindow._build_status_bar
     def build_status_bar_with_metadata(self):
-        original_build_status_bar(self); parent=self.remaining_pill.parentWidget(); layout=parent.layout() if parent is not None else None; self.remaining_pill.setVisible(False)
-        meta=QLabel(f"v{__version__}  ·  {COPYRIGHT}"); meta.setObjectName("Faint"); meta.setToolTip(f"Pytest Runner version {__version__}"); self._version_copyright_label=meta
-        if layout is not None:
-            index=layout.indexOf(self.remaining_pill); layout.insertWidget(index,meta) if index>=0 else layout.addWidget(meta)
+        original_build_status_bar(self)
+        _add_status_metadata(self)
     MainWindow._build_status_bar=build_status_bar_with_metadata

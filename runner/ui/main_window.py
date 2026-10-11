@@ -501,6 +501,16 @@ class MainWindow(QMainWindow):
             "console": getattr(self, "console_page", self.workspace_page),
         }
         cible = pages.get(page, self.workspace_page)
+        if getattr(cible, "detached_window", None):
+            active_page = getattr(self, "_page_history", ["workspace"])[-1]
+            for key, button in self.nav_buttons.items():
+                button.setChecked(key == active_page)
+            cible.show_detached()
+            return
+        navigation_history = getattr(self, "_page_history", ["workspace"])
+        if page != navigation_history[-1]:
+            navigation_history.append(page)
+        self._page_history = navigation_history[-20:]
         self.pages.setCurrentWidget(cible)
         if page == "history":
             self.history_dashboard.refresh()
@@ -517,6 +527,14 @@ class MainWindow(QMainWindow):
         self.statusBar().setVisible(page == "workspace")
         if hasattr(self, "preferences"):
             self.preferences.record("actions", f"Navigation: {page}")
+
+    def _show_previous_attached_page(self) -> None:
+        for page in reversed(getattr(self, "_page_history", ["workspace"])):
+            widget = getattr(self, page + "_page", None)
+            if widget is not None and not getattr(widget, "detached_window", None):
+                self._show_page(page)
+                return
+        self._show_page("workspace")
 
     def _open_comparison(self, groups):
         self.comparison_page.set_groups(groups)
@@ -1341,12 +1359,13 @@ class MainWindow(QMainWindow):
         # A gauche des verdicts : ce qui reste n'est pas un resultat.
         self.remaining_pill = RemainingPill()
 
-        barre.addWidget(self.live_chip)
-        barre.addWidget(self.progress)
         self.profile_progress_label = ProfileProgressLabel()
         self.profile_progress_label.hide()
-        barre.addWidget(self.profile_progress_label, 1)
-        barre.addWidget(self.elapsed_label)
+        status_widgets = ((self.live_chip, 0), (self.progress, 0),
+                          (self.profile_progress_label, 1), (self.elapsed_label, 0))
+        for widget, stretch in status_widgets:
+            barre.addWidget(widget, stretch)
+        self._status_permanent_index = len(status_widgets)
         barre.addPermanentWidget(QLabel(""))
         barre.addPermanentWidget(self.remaining_pill)
 
@@ -1622,7 +1641,47 @@ class MainWindow(QMainWindow):
     @Slot()
     def toggle_theme(self) -> None:
         """Passe de sombre a clair, et retient le choix."""
-        self.apply_theme("light" if t.is_dark() else "dark")
+        self.request_theme("light" if t.is_dark() else "dark")
+
+    def request_theme(self, nom: str) -> None:
+        """Paint feedback before starting the native Qt style update."""
+        if not hasattr(self, "preferences"):
+            self.apply_theme(nom)
+            return
+        self.preferences.settings_panel.notice.setText("Updating appearance…")
+        if not hasattr(self, "_appearance_notice"):
+            self._appearance_notice = QLabel("Updating appearance…", self.centralWidget())
+            self._appearance_notice.setObjectName("AppearanceNotice")
+            self._theme_preview_timer = QTimer(self)
+            self._theme_preview_timer.setSingleShot(True)
+            self._theme_preview_timer.timeout.connect(
+                lambda: self._finish_theme_request(self._requested_theme))
+        self._requested_theme = nom
+        self._appearance_notice.adjustSize()
+        self._appearance_notice.move(
+            max(0, self.centralWidget().width() - self._appearance_notice.width() - 16), 12)
+        self._appearance_notice.show()
+        self._appearance_notice.raise_()
+        self._appearance_notice.repaint()
+        self.page_theme_button.setToolTip("Updating appearance…")
+        self.page_theme_button.setEnabled(False)
+        self.theme_button.setEnabled(False)
+        self.repaint()
+        self._theme_preview_timer.start(20)
+
+    def _finish_theme_request(self, nom: str) -> None:
+        if not self.preferences.active:
+            return
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.apply_theme(nom)
+        finally:
+            QApplication.restoreOverrideCursor()
+            self.page_theme_button.setEnabled(True)
+            self.theme_button.setEnabled(True)
+            self._appearance_notice.hide()
+            self.page_theme_button.setToolTip("Switch theme")
+            self.preferences.settings_panel.notice.setText("Theme updated")
 
     def apply_theme(self, nom: str) -> None:
         """Change de palette a chaud et repeint tout ce qui ne suit pas seul.
@@ -1643,17 +1702,23 @@ class MainWindow(QMainWindow):
         """
         t.set_theme(nom)
         self.settings.setValue(K_THEME, t.current_theme())
-        self.settings.sync()
-
-        self.setStyleSheet(theme.app_stylesheet())
-
-        self._restyle()
-
-        if hasattr(self, "preferences"):
-            self.preferences.theme_changed()
+        updates_enabled = self.updatesEnabled()
+        self.setUpdatesEnabled(False)
+        try:
+            # QSettings already buffers writes; disk I/O must not delay a preview.
+            if hasattr(self, "preferences"):
+                self.preferences.apply_font()
+            else:
+                self.setStyleSheet(theme.app_stylesheet())
+            self._restyle()
+            if hasattr(self, "preferences"):
+                self.preferences.theme_changed()
+        finally:
+            self.setUpdatesEnabled(updates_enabled)
 
     def _restyle(self) -> None:
         """Rejoue les couleurs qui ne viennent pas de la feuille globale."""
+        self.run_name_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
         soleil = t.is_dark()
         self.theme_button.setIcon(icons.icon(
             "mdi.weather-sunny" if soleil else "mdi.weather-night", t.TEXT_MUTED))
@@ -1697,11 +1762,14 @@ class MainWindow(QMainWindow):
         # Balayage plutot qu'une liste tenue a la main : c'est en oubliant un
         # widget de cette liste qu'on laisse un ilot de l'ancien theme, et
         # l'oubli ne se voit que sur un ecran precis, dans un etat precis. Les
-        # `restyle()` sont idempotents, un double appel ne coute rien.
+        # Les conteneurs exposent un rejeu local pour que le balayage ne
+        # recolore pas plusieurs fois leurs descendants.
         from PySide6.QtWidgets import QWidget
 
         for enfant in self.findChildren(QWidget):
-            rejouer = getattr(enfant, "restyle", None)
+            # Containers normally propagate restyle() to children. The full
+            # window sweep already visits them, so repaint each widget once.
+            rejouer = getattr(enfant, "_restyle_local", None) or getattr(enfant, "restyle", None)
             if callable(rejouer):
                 rejouer()
 

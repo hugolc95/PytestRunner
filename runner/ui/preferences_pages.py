@@ -11,7 +11,7 @@ from collections import deque
 from datetime import datetime
 
 from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QMainWindow, QPlainTextEdit, QPushButton,
@@ -60,7 +60,9 @@ class DetachedWindow(QMainWindow):
         self.resize(960, 680)
 
     def closeEvent(self, event):
-        self.page.reattach()
+        # Closing a floating page hides it; only Reattach changes its mode.
+        self.page.save_detached_state()
+        self.page.owner.preferences.record("actions", f"{self.page.title} detached window closed")
         event.accept()
 
 
@@ -69,6 +71,7 @@ class DetachablePage(QWidget):
         super().__init__()
         self.owner, self.title, self.content = owner, title, content
         self.detached_window = None
+        self.settings_key = f"preferences/pages/{title.casefold()}"
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
         self.body = QWidget()
@@ -135,12 +138,23 @@ class DetachablePage(QWidget):
         self.body.layout().setContentsMargins(20, 18, 20, 18)
         self.detached_window.setCentralWidget(self.body)
         self.detached_window.setStyleSheet(self.owner.styleSheet())
+        geometry = self.owner.settings.value(self.settings_key + "/geometry")
+        if geometry is not None:
+            self.detached_window.restoreGeometry(geometry)
         self.detach_button.setText("Reattach to tab")
         self.placeholder.show()
         self.detached_window.show()
+        self.save_detached_state()
+        if self.owner.pages.currentWidget() is self:
+            self.owner._show_previous_attached_page()
         self.owner.preferences.record("actions", f"{self.title} detached into a native window")
 
-    def reattach(self):
+    def save_detached_state(self):
+        self.owner.settings.setValue(self.settings_key + "/detached", bool(self.detached_window))
+        if self.detached_window:
+            self.owner.settings.setValue(self.settings_key + "/geometry", self.detached_window.saveGeometry())
+
+    def reattach(self, *, persist=True):
         floating = self.detached_window
         if not floating:
             return
@@ -153,6 +167,9 @@ class DetachablePage(QWidget):
         self.detached_window = None
         floating.hide()
         floating.deleteLater()
+        if persist:
+            self.save_detached_state()
+            self.owner._show_page(self.title.casefold())
         self.owner.preferences.record("actions", f"{self.title} reattached to its tab")
 
 
@@ -167,6 +184,7 @@ class DiagnosticConsole(QWidget):
         self.events = deque()
         self.paused = False
         self._dirty = False
+        self._rendered = []
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 16, 0, 0)
         filters = QHBoxLayout()
@@ -220,7 +238,12 @@ class DiagnosticConsole(QWidget):
         self._dirty = True
 
     def _flush(self):
-        if self._dirty and not self.paused:
+        if self._dirty and not self.paused and self.isVisible():
+            self.refresh()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._dirty:
             self.refresh()
 
     def refresh(self, *_):
@@ -235,7 +258,29 @@ class DiagnosticConsole(QWidget):
             lines.append(f"{prefix}[{category.upper()}]  {message}")
         scroll = self.text.verticalScrollBar()
         position = scroll.value()
-        self.text.setPlainText("\n".join(lines))
+        if lines != self._rendered:
+            # The usual output batch only appends events. Preserve the existing
+            # document and selection instead of laying out the entire log again.
+            previous = self._rendered
+            dropped = next((i for i, line in enumerate(previous)
+                            if lines and line == lines[0]
+                            and previous[i:] == lines[:len(previous) - i]), None)
+            if previous and dropped is not None:
+                cursor = QTextCursor(self.text.document())
+                cursor.beginEditBlock()
+                if dropped:
+                    cursor.setPosition(0)
+                    chars = sum(len(line) + 1 for line in previous[:dropped])
+                    cursor.setPosition(chars, QTextCursor.KeepAnchor)
+                    cursor.removeSelectedText()
+                cursor.movePosition(QTextCursor.End)
+                added = lines[len(previous) - dropped:]
+                if added:
+                    cursor.insertText("\n" + "\n".join(added))
+                cursor.endEditBlock()
+            else:
+                self.text.setPlainText("\n".join(lines))
+            self._rendered = lines
         scroll.setValue(scroll.maximum() if self.scroll.isChecked() else position)
         self.summary.setText(f"{len(lines)} / {len(self.events)} events • recording active • session only")
         self._dirty = False
@@ -351,10 +396,16 @@ class PreferencesPanel(QWidget):
 
     def update_value(self, key, value):
         self.controller.values[key] = value
+        if key in ("theme", "font_size"):
+            self.notice.setText("Updating appearance…")
+            self.notice.repaint()
+            self.controller.preview_timer.start(80 if key == "font_size" else 20)
+            return
         self.controller.apply()
         self.notice.setText("Unsaved preview • click Apply settings to keep it")
 
     def cancel(self):
+        self.controller.preview_timer.stop()
         self.controller.values = dict(self.controller.saved)
         for key, control in self.controls.items():
             control.blockSignals(True)
@@ -395,6 +446,10 @@ class PreferencesController(QObject):
                 self.values[key] = DEFAULTS[key]
         self.values["theme"] = t.current_theme()
         self.saved = dict(self.values)
+        self._applied_values = {}
+        self.preview_timer = QTimer(self)
+        self.preview_timer.setSingleShot(True)
+        self.preview_timer.timeout.connect(self.finish_preview)
         self.bus = TraceBus(self)
         self.active = True
         self.console = DiagnosticConsole(self)
@@ -416,6 +471,15 @@ class PreferencesController(QObject):
         QApplication.instance().installEventFilter(self)
         self.install_command_trace()
         self.record("actions", "Pytest Runner started • Settings and Console pages ready")
+        QTimer.singleShot(0, self.restore_detached_pages)
+
+    def restore_detached_pages(self):
+        if not self.active:
+            return
+        for page in (self.settings_page, self.console_page):
+            if (not page.detached_window and
+                    self.window.settings.value(page.settings_key + "/detached", False, type=bool)):
+                page.toggle_detach()
 
     def record(self, kind, message):
         if self.active:
@@ -475,14 +539,12 @@ class PreferencesController(QObject):
                                 theme.app_stylesheet())
             self.window.setStyleSheet(stylesheet)
             self._applied_font_key = key
-        font = self.window.font()
-        font.setPixelSize(self.values["font_size"])
-        self.window.setFont(font)
+            font = self.window.font()
+            font.setPixelSize(self.values["font_size"])
+            self.window.setFont(font)
 
     def theme_changed(self):
         # Sidebar shortcuts use the same preferences as the Settings page.
-        self._applied_font_key = None
-        self.apply_font()
         if not getattr(self, "_applying_theme", False):
             self.values["theme"] = t.current_theme()
             self.saved["theme"] = t.current_theme()
@@ -497,42 +559,61 @@ class PreferencesController(QObject):
 
     def apply(self):
         window, values = self.window, self.values
+        changed = {key for key, value in values.items()
+                   if self._applied_values.get(key) != value}
         if t.current_theme() != values["theme"]:
             self._applying_theme = True
             try:
                 window.apply_theme(values["theme"])
             finally:
                 self._applying_theme = False
-        self.apply_font()
-        for panel in (window.run_header.environment, window.run_header.execution, window.run_header.results):
-            layout = panel.layout()
-            margin, spacing = (8, 4) if values["compact_header"] else (12, 8)
-            layout.setContentsMargins(margin, spacing, margin, spacing)
-            layout.setSpacing(spacing)
+        if changed & {"font_size", "theme"}:
+            self.apply_font()
+        if "compact_header" in changed:
+            for panel in (window.run_header.environment, window.run_header.execution, window.run_header.results):
+                layout = panel.layout()
+                margin, spacing = (8, 4) if values["compact_header"] else (12, 8)
+                layout.setContentsMargins(margin, spacing, margin, spacing)
+                layout.setSpacing(spacing)
         atr = window.run_header.atr_presentation
         if values["atr_bottom"]:
             if atr.parentWidget() != window.statusBar():
                 window.reader_controls.layout().removeWidget(atr)
-                window.statusBar().addPermanentWidget(atr, 1)
-                atr.setMinimumWidth(400)
+                atr.set_bottom_bar(True)
+                window.statusBar().insertPermanentWidget(window._status_permanent_index, atr, 1)
+                atr.setMinimumWidth(80)
         elif atr.parentWidget() != window.reader_controls:
             window.statusBar().removeWidget(atr)
+            atr.set_bottom_bar(False)
             window.reader_controls.layout().addWidget(atr, 1, 0, 1, 2)
             atr.setMinimumWidth(80)
         atr.show()
-        height = {"Compact": 23, "Normal": 29, "Comfortable": 35}[values["tree_density"]]
-        window.tree.setStyleSheet(f"QTreeView::item {{ min-height: {height}px; }}")
-        self.console.scroll.setChecked(values["auto_scroll"])
+        if "tree_density" in changed:
+            height = {"Compact": 23, "Normal": 29, "Comfortable": 35}[values["tree_density"]]
+            window.tree.setStyleSheet(f"QTreeView::item {{ min-height: {height}px; }}")
+        if "auto_scroll" in changed:
+            self.console.scroll.setChecked(values["auto_scroll"])
         while len(self.console.events) > values["limit"]:
             self.console.events.popleft()
-        self.console._dirty = True
-        self.settings_panel.restyle()
-        for name in ("settings_page", "console_page"):
-            page = getattr(self, name, None)
-            if page and page.detached_window:
-                page.detached_window.setStyleSheet(window.styleSheet())
+        if changed & {"timestamps", "limit"}:
+            self.console._dirty = True
+        if "font_size" in changed:
+            for page in (self.settings_page, self.console_page):
+                if page.detached_window:
+                    page.detached_window.setStyleSheet(window.styleSheet())
+        self._applied_values = dict(values)
+
+    def finish_preview(self):
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            self.apply()
+        finally:
+            QApplication.restoreOverrideCursor()
+        self.settings_panel.notice.setText("Unsaved preview • click Apply settings to keep it")
 
     def save(self):
+        self.preview_timer.stop()
+        self.apply()
         self.saved = dict(self.values)
         self.window.settings.setValue("preferences/personal", json.dumps(self.saved))
         self.window.settings.sync()
@@ -540,9 +621,16 @@ class PreferencesController(QObject):
         self.record("actions", "Personal settings applied and saved")
 
     def shutdown(self):
+        if not self.active:
+            return
         for page in (self.settings_page, self.console_page):
-            page.reattach()
+            page.save_detached_state()
+            page.reattach(persist=False)
+        self.window.settings.sync()
         self.active = False
+        self.preview_timer.stop()
+        if hasattr(self.window, "_theme_preview_timer"):
+            self.window._theme_preview_timer.stop()
         QApplication.instance().removeEventFilter(self)
         self.console.timer.stop()
         if sys.excepthook is self.exception_handler:

@@ -364,7 +364,7 @@ class ReaderAtrField(QLineEdit):
 
     def _fit(self):
         taille = getattr(self, "maximum_text_size", t.TEXT_SM)
-        if self.state == reader_discovery.ATR_OK:
+        if self.state == reader_discovery.ATR_OK and not getattr(self, "bottom_bar", False):
             place = self.width() - self._margin()
             while taille > self.TAILLE_MIN and self._text_width(taille) > place:
                 taille -= 1

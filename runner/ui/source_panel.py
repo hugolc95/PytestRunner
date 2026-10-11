@@ -219,8 +219,11 @@ class SourcePanel(QWidget):
 
     def restyle(self) -> None:
         """Rejoue ce qui porte une couleur calculee, puis l'editeur."""
-        self.edit_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
         self.editor.restyle()
+        self._restyle_local()
+
+    def _restyle_local(self) -> None:
+        self.edit_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
         self._refresh_button()
 
     def _refresh_button(self) -> None:

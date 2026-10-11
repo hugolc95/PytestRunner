@@ -693,6 +693,10 @@ class DetailPanel(QWidget):
         dur dans le document. Sans ce rejeu, l'exception restait rouge sombre
         sur le fond blanc du theme clair.
         """
+        self.nodeid_label.setStyleSheet(
+            f"font-family: {t.FONT_MONO}; font-size: {t.TEXT_XS}px;"
+            f" color: {t.TEXT_FAINT}; background: transparent;")
+        self.copy_nodeid_button.setIcon(icons.icon("mdi.content-copy", t.TEXT_FAINT))
         # La fiche affichee est refaite, l'autre attend son tour : elle sera
         # rebatie a son prochain affichage, avec la palette d'alors.
         if self.stack.currentIndex() == self.PAGE_GROUPE:

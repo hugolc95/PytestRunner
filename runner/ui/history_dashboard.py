@@ -932,10 +932,13 @@ class HistoryWindow(QDialog):
         les reconstruire toutes -- l'ancienne approche -- couterait bien plus
         cher qu'un simple repeint.
         """
-        self._style_result_counts()
+        self._restyle_local()
         self.execution_detail.restyle()
         for _item, card in self._cards:
             card.restyle()
+
+    def _restyle_local(self) -> None:
+        self._style_result_counts()
 
     # --------------------------------------------------------------- donnees
 

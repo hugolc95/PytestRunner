@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel,
     QPushButton, QPlainTextEdit, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QSize, Qt, QTimer
 
 from runner.ui import tokens as t
 from runner.ui import icons
@@ -31,8 +31,10 @@ class ResponsiveAtr(QWidget):
         self.stack.addWidget(self.button)
         row.addWidget(self.stack, 1)
         self.refresh_button = QPushButton()
-        self.refresh_button.setObjectName("NavigationUtilityIcon")
+        self.refresh_button.setObjectName("AtrRefresh")
         self.refresh_button.setFixedSize(t.CONTROL_SM, t.CONTROL_SM)
+        self.refresh_button.setIconSize(QSize(16, 16))
+        self.refresh_button.setCursor(Qt.PointingHandCursor)
         self.refresh_button.setAccessibleName("Refresh ATR")
         self.refresh_button.setToolTip("Read the card again")
         self.refresh_button.clicked.connect(lambda: field.refresh())
@@ -42,6 +44,30 @@ class ResponsiveAtr(QWidget):
 
     def restyle(self):
         self.refresh_button.setIcon(icons.icon("mdi.refresh", t.TEXT_MUTED))
+
+    def set_bottom_bar(self, enabled):
+        self.field.setProperty("bottomBar", enabled)
+        self.field.bottom_bar = enabled
+        self.field.maximum_text_size = t.TEXT_SM if enabled else 10
+        self.refresh_button.setProperty("bottomBar", enabled)
+        row = self.layout()
+        row.removeWidget(self.refresh_button)
+        if enabled:
+            row.insertWidget(0, self.refresh_button)
+        else:
+            row.addWidget(self.refresh_button)
+        row.setSpacing(6 if enabled else 2)
+        height = 20 if enabled else t.CONTROL_SM
+        self.refresh_button.setFixedSize(height, height)
+        icon_size = 14 if enabled else 16
+        self.refresh_button.setIconSize(QSize(icon_size, icon_size))
+        self.setMaximumHeight(20 if enabled else 16777215)
+        self.stack.setMaximumHeight(20 if enabled else 16777215)
+        self.field.style().unpolish(self.field)
+        self.field.style().polish(self.field)
+        self.refresh_button.style().unpolish(self.refresh_button)
+        self.refresh_button.style().polish(self.refresh_button)
+        self.field._fit()
 
     def update_presentation(self):
         # Never replace the ATR with an extra button, even in narrow windows.

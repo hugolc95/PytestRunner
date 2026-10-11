@@ -16,6 +16,13 @@ from runner.ui import tokens as t
 def app_stylesheet() -> str:
     """QSS de l'application entiere."""
     return f"""
+QLabel#AppearanceNotice {{
+    background: {t.BG_SURFACE};
+    color: {t.TEXT};
+    border: 1px solid {t.BORDER};
+    border-radius: {t.RADIUS_MD}px;
+    padding: 8px 12px;
+}}
 /* ------------------------------------------------------------------ base */
 QWidget {{
     background-color: {t.BG_APP};
@@ -101,6 +108,25 @@ QPushButton#NavigationUtilityIcon {{
 QPushButton#NavigationUtilityIcon:hover {{
     background-color: {t.BG_HOVER};
 }}
+QPushButton#AtrRefresh {{
+    background: transparent;
+    border: none;
+    border-radius: {t.RADIUS_SM}px;
+    padding: 0;
+    min-width: {t.CONTROL_SM}px;
+    max-width: {t.CONTROL_SM}px;
+    min-height: {t.CONTROL_SM}px;
+    max-height: {t.CONTROL_SM}px;
+}}
+QPushButton#AtrRefresh[bottomBar="true"] {{
+    min-width: 20px;
+    max-width: 20px;
+    min-height: 20px;
+    max-height: 20px;
+}}
+QPushButton#AtrRefresh:hover {{ background: {t.BG_HOVER}; }}
+QPushButton#AtrRefresh:pressed {{ background: {t.ACCENT_SOFT}; }}
+QPushButton#AtrRefresh:focus {{ border: 1px solid {t.ACCENT}; }}
 QLabel#PageTitle {{
     color: {t.TEXT};
     font-size: {t.TEXT_LG + 5}px;
@@ -467,6 +493,11 @@ QLineEdit#ReaderAtr[state="reading"], QLineEdit#ReaderAtr[state="unavailable"] {
 QLineEdit#ReaderAtr[state="nocard"] {{
     font-family: {t.FONT_UI};
     color: {t.rgba(t.status_color(Status.FAILED), 0.85)};
+}}
+QLineEdit#ReaderAtr[bottomBar="true"] {{
+    font-family: {t.FONT_UI};
+    min-height: 20px;
+    max-height: 20px;
 }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {t.ACCENT}; }}
 /* Une expression que pytest refuserait : le champ le dit avant qu'on lance. */
