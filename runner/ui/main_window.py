@@ -123,8 +123,10 @@ K_CONFIG = "workspace/config"
 class MainWindow(QMainWindow):
     """Fenetre unique de l'application."""
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, run_host=None):
         super().__init__(parent)
+        self._run_host = run_host
+        self.run_tabs = getattr(run_host, "run_tabs", None)
         self.setWindowTitle(WINDOW_TITLE)
         self.setMinimumSize(1100, 640)
 
@@ -165,7 +167,7 @@ class MainWindow(QMainWindow):
         # `showMessage()` ne fait rien, et le reste de l'appli continue
         # normalement.
         self._tray = QSystemTrayIcon(icons.icon("mdi.flask-outline"), self)
-        if QSystemTrayIcon.isSystemTrayAvailable():
+        if run_host is None and QSystemTrayIcon.isSystemTrayAvailable():
             self._tray.show()
 
         # "Run until it fails" / "Run N times" : un seul test rejoue plusieurs
@@ -195,10 +197,16 @@ class MainWindow(QMainWindow):
         self.service.profile_output.connect(self._on_profile_output)
         self._build_menus()
         self._connect_service()
-        self._restore()
+        if run_host is None:
+            self._restore()
+        else:
+            self._interpreter_override = run_host._interpreter_override
         self._update_actions()
-        from runner.ui.preferences_pages import PreferencesController
-        self.preferences = PreferencesController(self)
+        if run_host is None:
+            from runner.ui.preferences_pages import PreferencesController
+            self.preferences = PreferencesController(self)
+            from runner.ui.run_tabs import RunTabsController
+            self.run_tabs = RunTabsController(self)
 
     # =====================================================================
     # Construction
@@ -490,6 +498,12 @@ class MainWindow(QMainWindow):
         return page
 
     def _show_page(self, page: str) -> None:
+        if self._run_host is not None:
+            if page == "workspace":
+                self.run_tabs.show_context(self)
+            else:
+                self._run_host._show_page(page)
+            return
         pages = {
             "workspace": self.workspace_page,
             "profiles": self.profiles_page,
@@ -501,6 +515,11 @@ class MainWindow(QMainWindow):
             "console": getattr(self, "console_page", self.workspace_page),
         }
         cible = pages.get(page, self.workspace_page)
+        context = self._selected_run_context()
+        if page in ("python", "yaml") and context is not self:
+            cible = context.python_page if page == "python" else context.yaml_page
+            if self.pages.indexOf(cible) < 0:
+                self.pages.addWidget(cible)
         if getattr(cible, "detached_window", None):
             active_page = getattr(self, "_page_history", ["workspace"])[-1]
             for key, button in self.nav_buttons.items():
@@ -519,9 +538,9 @@ class MainWindow(QMainWindow):
         elif page == "profiles":
             self._refresh_profiles_page()
         elif page == "python":
-            self._refresh_python_page()
+            context._refresh_python_page()
         elif page == "yaml":
-            self._refresh_yaml_page()
+            context._refresh_yaml_page()
         for cle, bouton in self.nav_buttons.items():
             bouton.setChecked(cle == page)
         self.statusBar().setVisible(page == "workspace")
@@ -542,13 +561,19 @@ class MainWindow(QMainWindow):
         self._show_page("comparison")
 
     def _refresh_profiles_page(self) -> None:
-        nodeids = list(getattr(self.model, "_by_nodeid", {}))
-        config = self.workspace.config_path if self.workspace else ""
+        context = self.run_tabs.current.context if self.run_tabs else self
+        nodeids = list(getattr(context.model, "_by_nodeid", {}))
+        config = context.workspace.config_path if context.workspace else ""
         self.profiles_page.set_workspace_context(nodeids, config)
 
     @Slot(object)
     def _load_execution_profile(self, profile: ExecutionProfile) -> None:
         """Load a validated profile without changing local reader selection."""
+        if self._run_host is None and self.run_tabs is not None:
+            context = self.run_tabs.profile_target()
+            if context is not self:
+                context._load_execution_profile(profile)
+                return
         if self.service.busy or self._stress_worker is not None:
             ErrorDialog.show_error(self, "Could not open profile",
                                    "Stop the current run before choosing another profile.")
@@ -1413,9 +1438,9 @@ class MainWindow(QMainWindow):
             self._open_markers, "mdi.tag-multiple-outline")
         selection.addSeparator()
         self._action(selection, "All", QKeySequence.SelectAll,
-                     lambda: self.model.set_all_checked(True))
+                     lambda: self._selected_run_context().model.set_all_checked(True))
         self._action(selection, "None", "Ctrl+Shift+A",
-                     lambda: self.model.set_all_checked(False))
+                     lambda: self._selected_run_context().model.set_all_checked(False))
         selection.addSeparator()
         self.act_diverge = self._action(
             selection, "Only where readers disagree", "Ctrl+D",
@@ -1423,20 +1448,20 @@ class MainWindow(QMainWindow):
 
         vue = self.menuBar().addMenu("&View")
         self._action(vue, "Find a test", QKeySequence.Find,
-                     lambda: self.search.field.setFocus(), "mdi.magnify")
+                     lambda: self._selected_run_context().search.field.setFocus(), "mdi.magnify")
         vue.addSeparator()
         # Les trois vues du panneau de droite, au clavier : c'est le geste le
         # plus repete d'un depouillement de run.
         self._action(vue, "Test detail", "Ctrl+1",
-                     lambda: self.results.show_tab(ONGLET_DETAIL),
+                     lambda: self._selected_run_context().results.show_tab(ONGLET_DETAIL),
                      "mdi.text-box-search-outline")
         self._action(vue, "Source", "Ctrl+2",
-                     lambda: self.results.show_tab(ONGLET_SOURCE),
+                     lambda: self._selected_run_context().results.show_tab(ONGLET_SOURCE),
                      "mdi.file-code-outline")
         self._action(vue, "Raw output", "Ctrl+3",
-                     lambda: self.results.show_tab(ONGLET_OUTPUT), "mdi.console")
+                     lambda: self._selected_run_context().results.show_tab(ONGLET_OUTPUT), "mdi.console")
         self._action(vue, "Logs", "Ctrl+4",
-                     lambda: self.results.show_tab(ONGLET_LOGS),
+                     lambda: self._selected_run_context().results.show_tab(ONGLET_LOGS),
                      "mdi.file-document-outline")
         vue.addSeparator()
         self._action(vue, "Compare readers side by side", "Ctrl+Shift+D",
@@ -1456,9 +1481,25 @@ class MainWindow(QMainWindow):
             # Le raccourci est deja affiche par le menu ; l'infobulle sert aux
             # boutons qui declenchent la meme action.
             action.setToolTip(f"{texte}  ({QKeySequence(raccourci).toString()})")
-        action.triggered.connect(slot)
+        def invoke():
+            context = self.run_tabs.current.context if self.run_tabs else self
+            if (self._run_host is None and self.run_tabs and self.run_tabs.active
+                    and getattr(slot, "__name__", "") == "stop_run"):
+                context = self.run_tabs.active.context
+            if (self._run_host is None and context is not self
+                    and getattr(slot, "__self__", None) is self
+                    and getattr(slot, "__name__", "") != "close"):
+                getattr(context, slot.__name__)()
+            else:
+                slot()
+        action.triggered.connect(invoke)
         self.addAction(action)
         return action
+
+    def _selected_run_context(self):
+        if self._run_host is None and self.run_tabs:
+            return self.run_tabs.current.context
+        return self
 
     def _effective_interpreter(self) -> str:
         """Interpreteur a utiliser : workspace declare > reglage global > defaut.
@@ -1544,6 +1585,11 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _rerun_history(self, group) -> None:
         """Recharge au besoin le workspace, puis rejoue le lancement choisi."""
+        if self._run_host is None and self.run_tabs:
+            context = self.run_tabs.profile_target()
+            if context is not self:
+                context._rerun_history(group)
+                return
         if self.service.busy:
             self.status_label.setText("A run is already in progress")
             return
@@ -1803,6 +1849,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def load_workspace(self) -> None:
+        if self.run_tabs and self.run_tabs.is_locked(self):
+            self.status_label.setText("This run is locked. Create a new run to change its workspace.")
+            return
         chemin = self.workspace_combo.currentText().strip()
         if not chemin:
             self.browse_workspace()
@@ -2097,6 +2146,9 @@ class MainWindow(QMainWindow):
         self._pending_run_name = self.run_name_edit.text().strip()
         self.run_name_button.setText(self._pending_run_name or "Run name (optional)")
         self.run_name_stack.setCurrentWidget(self.run_name_button)
+        if self.run_tabs:
+            self.run_tabs.refresh_labels()
+            self.run_tabs.schedule_save()
 
     def _profile_configuration_path(self, profile: ExecutionProfile) -> str:
         """Use embedded YAML when present, otherwise the current Run Tests YAML."""
@@ -2110,7 +2162,8 @@ class MainWindow(QMainWindow):
         return str(path)
 
     def _start_profile(self, profile: ExecutionProfile) -> None:
-        if self.workspace is None or self.service.busy:
+        if (self.workspace is None or self.service.busy
+                or self.run_tabs and self.run_tabs.is_locked(self)):
             return
         missing = [nodeid for nodeid in profile.sequence
                    if nodeid not in getattr(self.model, "_by_nodeid", {})]
@@ -2147,11 +2200,14 @@ class MainWindow(QMainWindow):
             junit_dir=str(self.history.racine),
             build_number=self._build_number,
         )
-        self.service.start_profile(
-            request, self.workspace.env, profile.sequence,
-            repetitions=profile.execution.repetitions,
-            rerun_failures=profile.execution.rerun_failures,
-            stop_after_failure=profile.execution.stop_after_failure)
+        if self.run_tabs:
+            self.run_tabs.submit(self, request, self.workspace.env, profile)
+        else:
+            self.service.start_profile(
+                request, self.workspace.env, profile.sequence,
+                repetitions=profile.execution.repetitions,
+                rerun_failures=profile.execution.rerun_failures,
+                stop_after_failure=profile.execution.stop_after_failure)
 
     @Slot()
     def rerun_failed(self) -> None:
@@ -2162,7 +2218,8 @@ class MainWindow(QMainWindow):
         self._start(echecs)
 
     def _start(self, nodeids: list) -> None:
-        if self.workspace is None or not nodeids or self.service.busy:
+        if (self.workspace is None or not nodeids or self.service.busy
+                or self.run_tabs and self.run_tabs.is_locked(self)):
             return
 
         # Une correction encore dans le tampon de l'editeur ferait relancer la
@@ -2194,7 +2251,10 @@ class MainWindow(QMainWindow):
             junit_dir=str(self.history.racine),
             build_number=self._build_number,
         )
-        self.service.start(requete, self.workspace.env)
+        if self.run_tabs:
+            self.run_tabs.submit(self, requete, self.workspace.env)
+        else:
+            self.service.start(requete, self.workspace.env)
 
 
     def _readers_to_run(self) -> tuple:
@@ -2529,7 +2589,8 @@ class MainWindow(QMainWindow):
         aux pastilles de la barre d'etat, une notification qui disparait ne se
         relit pas -- mieux vaut le zero explicite qu'un compte qu'on devine absent.
         """
-        if hasattr(self, "preferences") and not self.preferences.values["notify_end"]:
+        preferences = getattr(self, "preferences", None) or getattr(self._run_host, "preferences", None)
+        if preferences is not None and not preferences.values["notify_end"]:
             return
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
@@ -2719,7 +2780,9 @@ class MainWindow(QMainWindow):
             menu.exec_(self.tree.viewport().mapToGlobal(point))
 
     def _construire_menu_test(self, menu: QMenu, nodeid: str) -> None:
-        occupe = self.service.busy or self._stress_worker is not None
+        entry = self.run_tabs.entry_for(self) if self.run_tabs else None
+        occupe = (self.service.busy or self._stress_worker is not None
+                  or entry is not None and entry.state == "running")
         action_run = menu.addAction(
             icons.icon("mdi.play"), "Run only this test",
             lambda: self._start([nodeid]))
@@ -2788,7 +2851,8 @@ class MainWindow(QMainWindow):
 
     def _lancer_stress(self, nodeid: str, mode: str, cap: int) -> None:
         if (self.workspace is None or self.service.busy
-                or self._stress_worker is not None):
+                or self._stress_worker is not None
+                or self.run_tabs and (self.run_tabs.busy or self.run_tabs.is_locked(self))):
             return
 
         # Meme garde qu'un run normal : une correction encore dans l'editeur
@@ -2839,6 +2903,8 @@ class MainWindow(QMainWindow):
         self.remaining_pill.setVisible(True)
         self._rafraichir_compteurs()
         self._update_actions()
+        if self.run_tabs:
+            self.run_tabs.watch_stress(self, self._stress_worker)
         self._stress_worker.start()
 
     def _stress_compact(self, mode: str, ran: int, cap: int) -> str:
@@ -3021,6 +3087,8 @@ class MainWindow(QMainWindow):
         if self.workspace is None or not self.workspace.config_path:
             return
         if self.service.busy or self._stress_worker is not None:
+            return
+        if self.run_tabs and self.run_tabs.is_locked(self):
             return
         if self._collector is not None and self._collector.isRunning():
             return
@@ -3388,7 +3456,7 @@ class MainWindow(QMainWindow):
         # deux processus pytest qui se marchent dessus. Stop les couvre tous
         # les deux desormais -- `stop_run()` sait lequel des deux arreter.
         occupe = self.service.busy or self._stress_worker is not None
-        self._refresh_primary_reader(occupe)
+        self._refresh_primary_reader(occupe or bool(self.run_tabs and self.run_tabs.busy))
         self.run_name_button.setEnabled(not occupe)
         self.run_name_edit.setEnabled(not occupe)
         coches, _ = self.model.counts()
@@ -3422,6 +3490,9 @@ class MainWindow(QMainWindow):
         self.act_config.setEnabled(editable)
         self.config_button.setEnabled(editable)
         self.workspace_config_button.setEnabled(editable)
+        if self.run_tabs:
+            self.run_tabs.apply_context_actions(self)
+            self.run_tabs.refresh_labels()
 
     def _restore(self) -> None:
         geometrie = self.settings.value(K_GEOMETRY)
@@ -3452,6 +3523,9 @@ class MainWindow(QMainWindow):
         self._refresh_interpreter_alert()
 
     def closeEvent(self, event) -> None:
+        if self._run_host is None and self.run_tabs and not self.run_tabs.shutdown():
+            event.ignore()
+            return
         if hasattr(self, "preferences"):
             self.preferences.shutdown()
         self.reader_selector.stop_discovery()

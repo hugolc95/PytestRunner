@@ -70,7 +70,8 @@ class ReaderSelector(QComboBox):
         super().showPopup()
 
     def discover(self):
-        if not self._context or self._process.state() != QProcess.NotRunning:
+        if (not self.isEnabled() or not self._context
+                or self._process.state() != QProcess.NotRunning):
             return
         workspace, interpreter, *_ = self._context
         if not workspace or not interpreter:

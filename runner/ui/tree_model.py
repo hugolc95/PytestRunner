@@ -90,6 +90,7 @@ class TestTreeModel(QAbstractItemModel):
         self._by_nodeid: dict[str, _Row] = {}
         self._search_index: tuple[tuple[str, str], ...] = ()
         self._readers: tuple[Reader, ...] = ()
+        self.selection_locked = False
         self._badges: list[str] = []
         # Decompte par statut des cases (test, lecteur) deja rendues. Tenu au
         # fil de l'eau : le recalculer a chaque resultat reparcourrait tout
@@ -191,7 +192,7 @@ class TestTreeModel(QAbstractItemModel):
         if not index.isValid():
             return Qt.NoItemFlags
         drapeaux = Qt.ItemIsEnabled | Qt.ItemIsSelectable
-        if index.column() == 0:
+        if index.column() == 0 and not self.selection_locked:
             drapeaux |= Qt.ItemIsUserCheckable
         return drapeaux
 
@@ -277,7 +278,8 @@ class TestTreeModel(QAbstractItemModel):
         return None
 
     def setData(self, index: QModelIndex, value, role=Qt.CheckStateRole) -> bool:
-        if not index.isValid() or role != Qt.CheckStateRole or index.column() != 0:
+        if (self.selection_locked or not index.isValid()
+                or role != Qt.CheckStateRole or index.column() != 0):
             return False
 
         ligne: _Row = index.internalPointer()
@@ -376,6 +378,8 @@ class TestTreeModel(QAbstractItemModel):
         self.layoutChanged.emit()
 
     def set_all_checked(self, coche: bool) -> None:
+        if self.selection_locked:
+            return
         for racine in self._roots:
             racine.checked = coche
             for ligne in racine.descendants():
@@ -404,6 +408,8 @@ class TestTreeModel(QAbstractItemModel):
         evite cette explosion : la vue ne requalifie chaque noeud visible
         qu'UNE fois, pas une fois par feuille cochee.
         """
+        if self.selection_locked:
+            return
         for racine in self._roots:
             racine.checked = False
             for ligne in racine.descendants():
