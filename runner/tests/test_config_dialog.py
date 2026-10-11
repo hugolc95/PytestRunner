@@ -332,7 +332,10 @@ def test_the_run_actions_have_a_row_of_their_own(fenetre):
     chemin du workspace -- qu'on ne touche qu'une fois par session. Une rangee
     a eux repond aux deux : a portee, et sans confusion sur ce qui agit.
     """
-    barre = fenetre.run_button.parentWidget().layout()
+    panel = fenetre.run_header.execution.layout()
+    barre = next(panel.itemAt(i).layout() for i in range(panel.count())
+                 if panel.itemAt(i).layout() is not None
+                 and panel.itemAt(i).layout().indexOf(fenetre.run_button) >= 0)
     dedans = {barre.itemAt(i).widget() for i in range(barre.count())}
 
     assert {fenetre.run_button, fenetre.stop_button, fenetre.rerun_button} <= dedans
@@ -340,12 +343,13 @@ def test_the_run_actions_have_a_row_of_their_own(fenetre):
     assert fenetre.load_button not in dedans
 
 
-def test_the_run_row_sits_between_the_workspace_and_the_tree(fenetre):
+def test_workspace_and_run_panels_both_sit_above_the_tree(fenetre):
     fenetre.show()
     try:
-        assert (_hauteur(fenetre, fenetre.workspace_combo)
-                < _hauteur(fenetre, fenetre.run_button)
-                < _hauteur(fenetre, fenetre.search))
+        assert _hauteur(fenetre, fenetre.workspace_combo) < _hauteur(fenetre, fenetre.search)
+        assert _hauteur(fenetre, fenetre.run_button) < _hauteur(fenetre, fenetre.search)
+        assert fenetre.workspace_combo.parentWidget() is fenetre.run_header.environment
+        assert fenetre.run_button.parentWidget() is fenetre.run_header.execution
     finally:
         fenetre.hide()
 

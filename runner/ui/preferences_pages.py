@@ -10,10 +10,10 @@ import weakref
 from collections import deque
 from datetime import datetime
 
-from PySide6.QtCore import QEvent, QObject, Qt, QTimer, Signal
+from PySide6.QtCore import QObject, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
-    QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
+    QApplication, QAbstractButton, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QMainWindow, QPlainTextEdit, QPushButton,
     QScrollArea, QSlider, QStackedWidget, QVBoxLayout, QWidget,
 )
@@ -468,7 +468,8 @@ class PreferencesController(QObject):
         window.service.finished.connect(lambda reports: self.record("actions", "Execution finished"))
         window.model.selection_changed.connect(lambda: self.record("actions", f"Test selection changed: {len(window.model.checked_nodeids())} selected"))
         window.tree.selectionModel().currentChanged.connect(self.selected_test)
-        QApplication.instance().installEventFilter(self)
+        self._traced_buttons = weakref.WeakSet()
+        self.track_buttons()
         self.install_command_trace()
         self.record("actions", "Pytest Runner started • Settings and Console pages ready")
         QTimer.singleShot(0, self.restore_detached_pages)
@@ -485,11 +486,19 @@ class PreferencesController(QObject):
         if self.active:
             self.bus.event.emit(kind, str(message))
 
-    def eventFilter(self, watched, event):
-        if event.type() == QEvent.MouseButtonRelease and isinstance(watched, (QPushButton, QCheckBox)):
-            if self.window.isAncestorOf(watched):
-                self.record("actions", f"Click: {watched.text() or watched.toolTip() or watched.objectName()}")
-        return False
+    def track_buttons(self):
+        # Signals avoid inspecting every native Qt event, including events from
+        # viewports being destroyed or reparented while switching tree modes.
+        for button in self.window.findChildren(QAbstractButton):
+            if button not in self._traced_buttons:
+                button.clicked.connect(self.button_clicked)
+                self._traced_buttons.add(button)
+
+    def button_clicked(self):
+        if self.active:
+            button = self.sender()
+            self.record("actions", f"Click: {button.text() or button.toolTip() or button.objectName()}")
+            self.track_buttons()
 
     def install_command_trace(self):
         ref = weakref.ref(self)
@@ -508,6 +517,7 @@ class PreferencesController(QObject):
         sys.excepthook = handle_exception
 
     def selected_test(self, current, previous):
+        self.track_buttons()
         if current.isValid():
             from runner.ui.tree_model import NODEID_ROLE
             nodeid = current.data(NODEID_ROLE)
@@ -631,7 +641,6 @@ class PreferencesController(QObject):
         self.preview_timer.stop()
         if hasattr(self.window, "_theme_preview_timer"):
             self.window._theme_preview_timer.stop()
-        QApplication.instance().removeEventFilter(self)
         self.console.timer.stop()
         if sys.excepthook is self.exception_handler:
             sys.excepthook = self.previous_excepthook

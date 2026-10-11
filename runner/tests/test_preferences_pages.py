@@ -2,7 +2,7 @@ import sys
 
 import pytest
 from PySide6.QtCore import QSettings
-from PySide6.QtWidgets import QApplication, QBoxLayout
+from PySide6.QtWidgets import QApplication, QBoxLayout, QPushButton
 
 from runner.domain import history
 from runner.ui import tokens as t
@@ -22,6 +22,21 @@ def window(qtbot, tmp_path, monkeypatch):
     w.close()
     settings.clear()
     t.set_theme("dark")
+
+
+def test_dynamic_button_clicks_are_recorded_once_and_stop_on_shutdown(window):
+    button = QPushButton("Trace this action", window.workspace_page)
+    window._show_page("workspace")
+    window.preferences.track_buttons()
+    button.click()
+    messages = [message for _, kind, message in window.preferences.console.events
+                if kind == "actions" and message == "Click: Trace this action"]
+    assert len(messages) == 1
+    window.preferences.shutdown()
+    button.click()
+    messages = [message for _, kind, message in window.preferences.console.events
+                if kind == "actions" and message == "Click: Trace this action"]
+    assert len(messages) == 1
 
 
 @pytest.mark.parametrize("name", ["settings", "console"])

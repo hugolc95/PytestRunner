@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 from runner.domain.execution_profile import ExecutionProfile, ProfileStore
 from runner.domain.tree import build_tree
+from runner.domain.workspace import Workspace
 from runner.ui.main_window import MainWindow
 
 
@@ -9,6 +10,10 @@ def make_window(qtbot, monkeypatch, tmp_path):
     monkeypatch.setattr(MainWindow, '_restore', lambda self: None)
     window = MainWindow()
     qtbot.addWidget(window)
+    # These tests supply collected nodeids themselves, so their workspace
+    # must also be loaded before opening a profile (no directory chooser).
+    window.workspace = Workspace.load(str(tmp_path))
+    window._tree_workspace = window.workspace.path
     window.profiles_page.store = ProfileStore(tmp_path)
     return window
 
@@ -73,9 +78,13 @@ def test_profiles_cannot_replace_the_active_run(qtbot, monkeypatch, tmp_path):
     first = ExecutionProfile(name='First', sequence=['test_a'], configuration_name='', configuration_text='')
     second = ExecutionProfile(name='Second', sequence=['test_a'], configuration_name='', configuration_text='')
     window._load_execution_profile(first)
+    errors = []
+    monkeypatch.setattr('runner.ui.main_window.ErrorDialog.show_error',
+                        lambda *args: errors.append(args[1]))
     window._stress_worker = SimpleNamespace()
     window._load_execution_profile(second)
     assert window._active_execution_profile.name == 'First'
+    assert errors == ['Could not open profile']
     window._stress_worker = None
 
 

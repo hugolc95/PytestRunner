@@ -526,6 +526,7 @@ class MainWindow(QMainWindow):
             bouton.setChecked(cle == page)
         self.statusBar().setVisible(page == "workspace")
         if hasattr(self, "preferences"):
+            self.preferences.track_buttons()
             self.preferences.record("actions", f"Navigation: {page}")
 
     def _show_previous_attached_page(self) -> None:
@@ -1185,8 +1186,9 @@ class MainWindow(QMainWindow):
         self.profile_chip.hide()
         self.run_button.setText('Run profile' if visible else 'Run tests')
         # Both labels share the same slot; switching modes must not move Stop.
-        self.run_button.setFixedWidth(max(self.run_button.sizeHint().width(),
-                                         self.run_button.fontMetrics().horizontalAdvance('Run profile') + 48))
+        metrics = self.run_button.fontMetrics()
+        self.run_button.setFixedWidth(max(metrics.horizontalAdvance(label)
+                                         for label in ('Run tests', 'Run profile')) + 64)
         self.run_name_button.setText(self._pending_run_name or 'Run name (optional)')
         self.run_name_button.setEnabled(not self.service.busy and self._stress_worker is None)
         name_policy = self.run_name_stack.sizePolicy()
