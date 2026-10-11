@@ -20,22 +20,22 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     window.profile_chip.show()
     qtbot.wait(30)
 
-    panels = [window.run_header.environment, window.run_header.execution]
-    assert not window.run_header.results.isVisible()
+    panels = [window.run_header.environment, window.run_header.execution, window.run_header.results]
+    assert window.run_header.results.isVisible()
+    assert window.compass_ring.isVisible()
     for i, panel in enumerate(panels):
         assert window.run_header.rect().contains(panel.geometry())
         for other in panels[i + 1:]:
             assert not panel.geometry().intersects(other.geometry())
     for control in (window.run_button, window.stop_button, window.rerun_button,
                     window.reader_controls, window.workspace_combo,
-                    ):
+                    window.view_failures_button, *window.pills.values()):
         assert control.isVisible()
         assert control.parentWidget().rect().contains(control.geometry())
 
     # A status click must still reach the original filter implementation.
-    window.run_tabs.entries[0].state = "finished"
-    window.run_tabs.refresh_labels()
-    qtbot.mouseClick(window.run_tabs.result_labels[Status.FAILED], Qt.LeftButton)
+    window.pills[Status.FAILED].set_value(8)
+    qtbot.mouseClick(window.pills[Status.FAILED], Qt.LeftButton)
     assert window._status_filter == Status.FAILED
 
     window._set_interpreter_alert("Interpreter unavailable")

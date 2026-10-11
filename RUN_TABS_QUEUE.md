@@ -20,8 +20,9 @@ Stopping a run cancels that run; pause the queue to also prevent the next start.
 The tab cards identify running work in blue, waiting work in amber, successful
 work in green and failed work in red, with explicit text for every state.
 Completed tabs show their overall verdict, including incomplete or stopped
-runs. The selected tab's result counters sit below the tabs and can filter its
-tree. When viewing another tab, **Live** returns to the current execution.
+runs. The selected tab keeps its original RESULTS panel with the progress ring
+and clickable result counters. When viewing another tab, **Live** returns to
+the current execution from the compact tab row.
 
 The tab context menu's **Detach tab** opens the same tree and results in a separate window. Closing
 that window hides it; selecting its tab opens it again. **Reattach tab** brings

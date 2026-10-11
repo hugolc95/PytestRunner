@@ -129,32 +129,14 @@ class RunTabsController(QObject):
         self.detach_button.clicked.connect(self.detach_current)
         self.detach_button.hide()  # Available in the tab context menu.
         layout.addWidget(toolbar)
-        self.overview = QWidget()
-        overview = QHBoxLayout(self.overview)
-        overview.setContentsMargins(t.SPACE_3 + 3, 6, t.SPACE_3, 6)
-        overview.setSpacing(12)
-        self.state_badge = QLabel()
-        overview.addWidget(self.state_badge)
-        self.result_labels = {}
-        for status, label in ((Status.PASSED, "passed"), (Status.FAILED, "failed"),
-                              (Status.ERROR, "errors"), (Status.SKIPPED, "skipped")):
-            value = QPushButton()
-            value.setObjectName("Ghost")
-            value.setAccessibleName(label)
-            value.setToolTip(f"Filter this run's tree: {label}")
-            value.clicked.connect(lambda checked=False, status=status: self.current.context.filter_by_status(status))
-            overview.addWidget(value)
-            self.result_labels[status] = value
-        overview.addStretch()
         self.live_button = QPushButton()
         self.live_button.setObjectName("Ghost")
-        self.live_button.setMaximumWidth(320)
+        self.live_button.setMaximumWidth(140)
         self.live_button.clicked.connect(lambda: self.show_context(self.active.context) if self.active else None)
-        overview.addWidget(self.live_button)
+        tools.insertWidget(1, self.live_button)
         self.queue_label = QLabel()
-        overview.addWidget(self.queue_label)
-        overview.addWidget(self.pause_button)
-        layout.addWidget(self.overview)
+        tools.insertWidget(2, self.queue_label)
+        tools.insertWidget(3, self.pause_button)
         self.stack = QStackedWidget()
         layout.addWidget(self.stack, 1)
         original_page = window.workspace_page
@@ -198,7 +180,6 @@ class RunTabsController(QObject):
 
     def _register(self, context, page):
         entry = RunTab(context, page, uuid4().hex)
-        context.run_header.set_tab_overview(True)
         self.entries.append(entry)
         self.stack.addWidget(page)
         self.tabs.addTab("New run · Draft")
@@ -461,7 +442,6 @@ class RunTabsController(QObject):
         self.stack.removeWidget(entry.page)
         self.stack.addWidget(placeholder)
         entry.placeholder = placeholder
-        entry.context.run_header.set_tab_overview(False)
         entry.floating = DetachedRun(self, entry)
         entry.floating.show()
         entry.page.show()  # removeWidget leaves an explicitly hidden page.
@@ -477,7 +457,6 @@ class RunTabsController(QObject):
         if not entry.floating:
             return
         floating, entry.floating = entry.floating, None
-        entry.context.run_header.set_tab_overview(True)
         self.window.settings.setValue("runs/detached_geometry", floating.saveGeometry())
         self.stack.addWidget(entry.page)
         entry.page.show()
@@ -713,19 +692,10 @@ class RunTabsController(QObject):
         self.detach_button.setText("Reattach tab" if self.current.floating else "Detach tab")
         self.detach_button.setIcon(icons.icon("mdi.open-in-new", t.TEXT_MUTED))
         selected = self.current.context
-        state, colour, _ = self.presentation(self.current)
-        self.state_badge.setText(state)
-        self.colour_label(self.state_badge, colour, badge=True)
-        counts = selected._run_status_counts() if self.current.state != "draft" else {}
-        for status, label in self.result_labels.items():
-            name = {Status.PASSED: "passed", Status.FAILED: "failed", Status.ERROR: "errors", Status.SKIPPED: "skipped"}[status]
-            label.setText(f"{counts.get(status, 0)} {name}")
-            label.setVisible(self.current.state != "draft")
-            self.colour_label(label, t.status_color(status))
         self.live_button.setVisible(self.active is not None and self.active is not self.current)
         if self.active:
-            self.live_button.setText(f"● Live: {self.active.name[:28]} · {self.active.progress[0]}/{self.active.progress[1]}")
-            self.live_button.setToolTip("Show the running tab and its live results")
+            self.live_button.setText(f"● Live {self.active.progress[0]}/{self.active.progress[1]}")
+            self.live_button.setToolTip(f"Show live results: {self.active.name}")
             self.colour_label(self.live_button, t.status_color(Status.RUNNING))
         self.queue_label.setText(f"{len(self.queue)} waiting" + (" · paused" if self.paused else ""))
         self.queue_label.setVisible(bool(self.queue) or self.paused)

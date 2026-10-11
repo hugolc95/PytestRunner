@@ -289,8 +289,8 @@ def test_run_colours_results_and_live_navigation(window, monkeypatch):
     window.service.outcome.emit(Outcome("test_demo.py::test_a", Status.FAILED))
     window.run_tabs.paused = True
     window.service.finished.emit([])
-    assert window.run_tabs.state_badge.text().startswith("Failed")
-    assert window.run_tabs.result_labels[Status.FAILED].text() == "1 failed"
+    assert window.run_tabs.tabs.tabData(0)["detail"].startswith("Failed")
+    assert window._run_status_counts()[Status.FAILED] == 1
     failed_colour = window.run_tabs.tabs.tabData(0)["colour"]
     assert failed_colour != running_colour
     assert not window.run_tabs.detach_button.isVisible()
@@ -302,4 +302,4 @@ def test_incomplete_run_is_not_presented_as_success(window):
     entry.progress = (1, 2)
     window.model.apply_outcome("test_demo.py::test_a", Status.PASSED, 0)
     window.run_tabs.refresh_labels()
-    assert window.run_tabs.state_badge.text() == "Incomplete"
+    assert window.run_tabs.tabs.tabData(0)["detail"] == "Incomplete"
