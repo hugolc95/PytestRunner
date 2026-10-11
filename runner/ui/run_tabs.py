@@ -178,6 +178,39 @@ class RunTabsController(QObject):
         entry = self.entry_for(context)
         return bool(entry and entry.state in ("waiting", "running", "finalizing"))
 
+    def environment_changed(self, context):
+        entry = self.entry_for(context)
+        if entry is None or self.is_locked(context):
+            return
+        entry.state = "draft"
+        entry.progress = (0, 0)
+        self.release_snapshot(entry)
+        context._running_execution_profile = None
+        context._profile_count_statuses = None
+        context._profile_progress_done = None
+        if hasattr(context, "_profile_verdict_counts"):
+            context._profile_verdict_counts.clear()
+        context._profile_execution_total = 0
+        context._profile_reports.clear()
+        context._profile_batch_output.clear()
+        context._profile_pending_console.clear()
+        context._stress_counts = None
+        context.model.clear_statuses()
+        context._clear_status_filter()
+        for panel in (context.results, context.profile_results):
+            panel._statuses = {}
+            panel._nodeid = ""
+            panel.begin_run()
+            panel.detail.clear()
+        if hasattr(context.compass_ring, "set_remaining"):
+            context.compass_ring.set_remaining(0)
+        context._rafraichir_compteurs()
+        context.view_failures_button.hide()
+        context.view_differences_button.hide()
+        context.remaining_pill.hide()
+        self.refresh_labels()
+        self.schedule_save()
+
     def _register(self, context, page):
         entry = RunTab(context, page, uuid4().hex)
         self.entries.append(entry)

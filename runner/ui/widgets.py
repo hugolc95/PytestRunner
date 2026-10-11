@@ -18,6 +18,9 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QStyle,
+    QStyleOptionButton,
+    QStylePainter,
     QStyledItemDelegate,
     QVBoxLayout,
     QWidget,
@@ -862,6 +865,23 @@ class ReaderToggle(QPushButton):
     def reader_index(self) -> int:
         return self._index
 
+    def minimumSizeHint(self):
+        size = super().minimumSizeHint()
+        return QSize(76, size.height()) if getattr(self, "_integrated", False) else size
+
+    def sizeHint(self):
+        size = super().sizeHint()
+        return QSize(min(160, max(76, size.width())), size.height()) if getattr(self, "_integrated", False) else size
+
+    def paintEvent(self, event):
+        if not getattr(self, "_integrated", False):
+            return super().paintEvent(event)
+        option = QStyleOptionButton()
+        self.initStyleOption(option)
+        option.text = self.fontMetrics().elidedText(self.text(), Qt.ElideMiddle, max(0, self.width() - 20))
+        painter = QStylePainter(self)
+        painter.drawControl(QStyle.CE_PushButton, option)
+
     def restyle(self) -> None:
         # Eteinte plutot qu'absente : un lecteur decoche garde sa place et sa
         # couleur en creux, donc on voit d'un coup d'oeil ce qu'on a exclu.
@@ -920,6 +940,10 @@ class ReaderBar(QWidget):
         self._overflow_menu.clear()
         overflow = self._toggles[3:] if self._integrated else []
         for position, toggle in enumerate(self._toggles):
+            toggle._integrated = self._integrated
+            if self._integrated:
+                toggle.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+                toggle.setMinimumWidth(76)
             toggle.setVisible(not self._integrated or position < 3)
         for toggle in overflow:
             action = self._overflow_menu.addAction(toggle.toolTip())

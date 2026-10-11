@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import time
+from copy import deepcopy
 from collections import Counter
 from pathlib import Path
 
@@ -1904,6 +1905,12 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_collected(self, collection) -> None:
+        environment = (self.workspace.path, self.workspace.config_path,
+                       deepcopy(self.workspace.settings), self._effective_interpreter()) if self.workspace else None
+        previous_environment = getattr(self, "_collected_environment", None)
+        if previous_environment is not None and previous_environment != environment and self.run_tabs:
+            self.run_tabs.environment_changed(self)
+        self._collected_environment = environment
         same_workspace = getattr(self, "_tree_workspace", None) == (
             self.workspace.path if self.workspace else "")
         lecteurs = self.workspace.readers if self.workspace else ()
@@ -3089,6 +3096,8 @@ class MainWindow(QMainWindow):
             self._effective_interpreter() if configured else "",
             value if configured else "", busy=busy or collecting)
         self.reader_config_button.setEnabled(self.workspace is not None)
+        if hasattr(self, "run_header"):
+            self.run_header.update_environment()
 
     def _save_primary_reader(self, value):
         from runner.domain import config_file

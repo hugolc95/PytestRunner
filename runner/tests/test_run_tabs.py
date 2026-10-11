@@ -303,3 +303,25 @@ def test_incomplete_run_is_not_presented_as_success(window):
     window.model.apply_outcome("test_demo.py::test_a", Status.PASSED, 0)
     window.run_tabs.refresh_labels()
     assert window.run_tabs.tabs.tabData(0)["detail"] == "Incomplete"
+
+
+@pytest.mark.parametrize("change", ["workspace", "configuration"])
+def test_environment_change_returns_completed_run_to_clean_draft(window, tmp_path, change):
+    entry = window.run_tabs.entries[0]
+    entry.state = "finished"
+    entry.progress = (1, 1)
+    window.model.apply_outcome("test_demo.py::test_a", Status.PASSED, 0)
+    if change == "workspace":
+        other = tmp_path / "other"
+        other.mkdir()
+        window.workspace = Workspace.load(str(other))
+    else:
+        config = tmp_path / "new-config.yaml"
+        config.write_text("demo: changed\n", encoding="utf-8")
+        window.workspace = Workspace.load(str(tmp_path), str(config))
+    window._on_collected(Collection(("test_demo.py::test_a",)))
+    assert entry.state == "draft"
+    assert entry.progress == (0, 0)
+    assert window._run_status_counts() == {}
+    assert window.run_tabs.tabs.tabData(0)["detail"].startswith("Draft")
+    assert window.pills[Status.PASSED]._value == 0

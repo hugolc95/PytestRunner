@@ -24,6 +24,11 @@ runs. The selected tab keeps its original RESULTS panel with the progress ring
 and clickable result counters. When viewing another tab, **Live** returns to
 the current execution from the compact tab row.
 
+The ENVIRONMENT panel groups the workspace, primary reader, ATR and reader
+selection in aligned columns. EXECUTION contains the run actions and run name.
+Changing the workspace, configuration or interpreter resets a completed tab
+to a clean draft; reports already saved in History are retained.
+
 The tab context menu's **Detach tab** opens the same tree and results in a separate window. Closing
 that window hides it; selecting its tab opens it again. **Reattach tab** brings
 it back into the main window. The last selected attached tab remains visible

@@ -120,11 +120,30 @@ class StructuredRunHeader(QWidget):
         self.environment, environment = self._panel("ENVIRONMENT")
         self.execution, execution = self._panel("EXECUTION")
         self.results, results = self._panel("RESULTS")
+        environment_fields = QGridLayout()
+        environment_fields.setContentsMargins(0, 0, 0, 0)
+        environment_fields.setHorizontalSpacing(t.SPACE_3)
+        environment_fields.setVerticalSpacing(t.SPACE_2)
+        workspace_column = QVBoxLayout()
+        workspace_column.setSpacing(t.SPACE_2)
+        workspace_column.setAlignment(Qt.AlignTop)
+        self.reader_fields = QWidget()
+        reader_column = QVBoxLayout(self.reader_fields)
+        reader_column.setContentsMargins(0, 0, 0, 0)
+        reader_column.setSpacing(t.SPACE_2)
+        reader_column.setAlignment(Qt.AlignTop)
+        environment_fields.addLayout(workspace_column, 0, 0, Qt.AlignTop)
+        environment_fields.addWidget(self.reader_fields, 0, 1, Qt.AlignTop)
+        self.environment_fields = environment_fields
+        self._window = window
+        environment_fields.setColumnStretch(0, 1)
+        environment_fields.setColumnStretch(1, 1)
+        environment.addLayout(environment_fields)
 
         # Reparent the actual controls; do not duplicate actions or state.
         window.workspace_combo.setMinimumWidth(180)
         window.workspace_combo.setMaximumWidth(16777215)
-        self._move(environment, window.workspace_combo)
+        self._move(workspace_column, window.workspace_combo)
         for button, text in ((window.browse_button, "Browse…"),
                              (window.load_button, "Collect")):
             button.setMinimumWidth(0)
@@ -139,8 +158,7 @@ class StructuredRunHeader(QWidget):
         window.run_name_stack.setMinimumWidth(90)
         window.run_name_stack.setMaximumWidth(260)
         window.run_name_stack.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        self._move(workspace_actions, window.run_name_stack)
-        environment.addLayout(workspace_actions)
+        workspace_column.addLayout(workspace_actions)
 
         window.reader_controls.layout().setContentsMargins(0, 0, 0, 0)
         reader_layout = window.reader_controls.layout()
@@ -149,6 +167,8 @@ class StructuredRunHeader(QWidget):
             if isinstance(item.widget(), QLabel):
                 item.widget().hide()
         reader_layout.addWidget(window.reader_selector, 0, 0)
+        window.reader_selector.setMinimumContentsLength(16)
+        window.reader_selector.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         reader_layout.addWidget(window.reader_config_button, 0, 1)
         self.atr_presentation = ResponsiveAtr(window.reader_atr)
         # A full-width compact line keeps long ATRs readable without squeezing
@@ -156,15 +176,21 @@ class StructuredRunHeader(QWidget):
         reader_layout.addWidget(self.atr_presentation, 1, 0, 1, 2)
         reader_layout.setColumnStretch(0, 2)
         reader_layout.setColumnStretch(2, 0)
-        self._move(execution, window.reader_controls)
+        self._move(reader_column, window.reader_controls)
         window.readers_bar.set_integrated()
-        self._move(execution, window.readers_bar)
+        self._move(reader_column, window.readers_bar)
         actions = QHBoxLayout()
         actions.setSpacing(t.SPACE_2)
-        for control in (window.run_button, window.stop_button, window.rerun_button):
+        for control in (window.run_button, window.stop_button):
             self._move(actions, control)
         actions.addStretch()
         execution.addLayout(actions)
+        secondary_actions = QHBoxLayout()
+        secondary_actions.setSpacing(t.SPACE_2)
+        self._move(secondary_actions, window.rerun_button)
+        secondary_actions.addStretch()
+        self._move(secondary_actions, window.run_name_stack)
+        execution.addLayout(secondary_actions)
         self._move(execution, window.profile_chip)
         execution.addStretch()
 
@@ -178,6 +204,7 @@ class StructuredRunHeader(QWidget):
         results.addLayout(progress)
         counters = QHBoxLayout()
         counters.setSpacing(t.SPACE_2)
+        self._result_pills = tuple(window.pills.values())
         for pill in window.pills.values():
             self._move(counters, pill)
         results.addLayout(counters)
@@ -188,6 +215,13 @@ class StructuredRunHeader(QWidget):
             old.setParent(self)
             old.hide()
         self._arrange(False)
+        self.update_environment()
+
+    def update_environment(self):
+        visible = (not self._window.reader_controls.isHidden()
+                   or not self._window.readers_bar.isHidden())
+        self.reader_fields.setVisible(visible)
+        self.environment_fields.setColumnStretch(1, 1 if visible else 0)
 
     @staticmethod
     def _panel(title):
@@ -197,6 +231,7 @@ class StructuredRunHeader(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
         layout.setSpacing(t.SPACE_2)
+        layout.setAlignment(Qt.AlignTop)
         heading = QLabel(title)
         heading.setObjectName("Faint")
         layout.addWidget(heading)
@@ -221,10 +256,13 @@ class StructuredRunHeader(QWidget):
         else:
             self._grid.addWidget(self.results, 0, 2)
         for column in range(3):
-            self._grid.setColumnStretch(column, 0 if compact and column == 2 else 1)
+            self._grid.setColumnStretch(column, 2 if column == 0 else 0 if compact and column == 2 else 1)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        counter_width = sum(max(72, pill.fontMetrics().horizontalAdvance(pill._status.label.upper()) + 45)
+                            for pill in self._result_pills)
+        self.results.setMinimumWidth(counter_width + 2 * t.SPACE_3 + 3 * t.SPACE_2)
         required = sum(panel.minimumSizeHint().width() for panel in
                        (self.environment, self.execution, self.results))
         self._arrange(event.size().width() < required + 2 * self._grid.spacing())
