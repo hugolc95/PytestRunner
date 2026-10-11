@@ -133,7 +133,6 @@ class StructuredRunHeader(QWidget):
         reader_column.setSpacing(t.SPACE_2)
         reader_column.setAlignment(Qt.AlignTop)
         environment_fields.addLayout(workspace_column, 0, 0, Qt.AlignTop)
-        environment_fields.addWidget(self.reader_fields, 1, 0, Qt.AlignTop)
         self.environment_fields = environment_fields
         self._window = window
         environment_fields.setColumnStretch(0, 1)
@@ -166,17 +165,24 @@ class StructuredRunHeader(QWidget):
             item = reader_layout.takeAt(0)
             if isinstance(item.widget(), QLabel):
                 item.widget().hide()
-        reader_layout.addWidget(window.reader_selector, 0, 0)
+        reader_layout.addWidget(window.reader_selector, 0, 1)
         window.reader_selector.setMinimumContentsLength(16)
         window.reader_selector.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        reader_layout.addWidget(window.reader_config_button, 0, 1)
+        reader_layout.addWidget(window.reader_config_button, 0, 0)
         self.atr_presentation = ResponsiveAtr(window.reader_atr)
         # A full-width compact line keeps long ATRs readable without squeezing
         # the reader name or falling back to the ATR details button.
         reader_layout.addWidget(self.atr_presentation, 1, 0, 1, 2)
-        reader_layout.setColumnStretch(0, 2)
+        reader_layout.setColumnStretch(0, 0)
+        reader_layout.setColumnStretch(1, 2)
         reader_layout.setColumnStretch(2, 0)
-        self._move(execution, window.reader_controls)
+        execution_fields = QHBoxLayout()
+        execution_fields.setContentsMargins(0, 0, 0, 0)
+        execution_fields.setSpacing(t.SPACE_2)
+        execution_fields.addWidget(self.reader_fields, 1, Qt.AlignTop)
+        self._move(execution_fields, window.reader_controls)
+        execution_fields.setStretch(1, 1)
+        execution.addLayout(execution_fields)
         window.readers_bar.set_integrated()
         self._move(reader_column, window.readers_bar)
         actions = QHBoxLayout()
@@ -190,11 +196,23 @@ class StructuredRunHeader(QWidget):
 
         progress = QHBoxLayout()
         progress.setSpacing(t.SPACE_2)
-        self._move(progress, window.compass_ring)
+        # Share the heading row with the ring instead of reserving a separate
+        # line above it. Result actions stay together on the left.
+        result_heading = results.takeAt(0).widget()
+        result_actions = QVBoxLayout()
+        result_actions.setSpacing(t.SPACE_1)
+        result_actions.addWidget(result_heading, 0, Qt.AlignTop)
+        result_buttons = QHBoxLayout()
+        result_buttons.setSpacing(t.SPACE_2)
+        self._move(result_buttons, window.view_failures_button)
+        self._move(result_buttons, window.view_differences_button)
+        result_buttons.addStretch()
+        result_actions.addLayout(result_buttons)
+        result_actions.addStretch()
+        progress.addLayout(result_actions, 1)
         self._move(progress, window.compass_pct)
-        progress.addStretch()
-        self._move(progress, window.view_failures_button)
-        self._move(progress, window.view_differences_button)
+        self._move(progress, window.compass_ring)
+        progress.setAlignment(window.compass_ring, Qt.AlignRight | Qt.AlignTop)
         results.addLayout(progress)
         counters = QHBoxLayout()
         counters.setSpacing(t.SPACE_2)
@@ -248,13 +266,14 @@ class StructuredRunHeader(QWidget):
         else:
             self._grid.addWidget(self.results, 0, 2)
         for column in range(3):
-            self._grid.setColumnStretch(column, 0 if compact and column == 2 else 1)
+            self._grid.setColumnStretch(column, 0 if compact and column == 2 else
+                                        2 if column == 1 else 1)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
         counter_width = sum(max(72, pill.fontMetrics().horizontalAdvance(pill._status.label.upper()) + 45)
                             for pill in self._result_pills)
         self.results.setMinimumWidth(counter_width + 2 * t.SPACE_3 + 3 * t.SPACE_2)
-        required = sum(panel.minimumSizeHint().width() for panel in
+        required = sum(max(panel.minimumWidth(), panel.minimumSizeHint().width()) for panel in
                        (self.environment, self.execution, self.results))
         self._arrange(event.size().width() < required + 2 * self._grid.spacing())

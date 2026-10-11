@@ -19,6 +19,7 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     window.readers_bar.set_readers([Reader(index=i, name=f"Reader {i}") for i in range(2)])
     window.run_header.update_environment()
     window.view_failures_button.show()
+    window.view_differences_button.show()
     window.profile_chip_label.setText("Qualification")
     window.profile_chip.show()
     qtbot.wait(30)
@@ -28,17 +29,31 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     assert window.compass_ring.isVisible()
     assert window.run_header.execution.isAncestorOf(window.reader_controls)
     assert window.run_header.execution.isAncestorOf(window.reader_selector)
-    assert window.run_header.environment.isAncestorOf(window.readers_bar)
-    assert window.readers_bar.mapTo(window.run_header, window.readers_bar.rect().topLeft()).y() > (
-        window.load_button.mapTo(window.run_header, window.load_button.rect().bottomLeft()).y()
+    assert window.run_header.execution.isAncestorOf(window.readers_bar)
+    execution = window.run_header.execution
+    reader_position = window.reader_controls.mapTo(execution, window.reader_controls.rect().topLeft())
+    assert reader_position.x() + window.reader_controls.width() == (
+        execution.contentsRect().right() + 1 - execution.layout().contentsMargins().right()
     )
+    assert window.readers_bar.mapTo(execution, window.readers_bar.rect().topRight()).x() < reader_position.x()
+    assert window.reader_selector.geometry().right() == window.reader_controls.contentsRect().right()
+    results = window.run_header.results
+    ring_position = window.compass_ring.mapTo(results, window.compass_ring.rect().topLeft())
+    margins = results.layout().contentsMargins()
+    assert ring_position.y() == results.contentsRect().top() + margins.top()
+    assert ring_position.x() + window.compass_ring.width() == (
+        results.contentsRect().right() + 1 - margins.right()
+    )
+    for button in (window.view_failures_button, window.view_differences_button):
+        assert button.mapTo(results, button.rect().topRight()).x() < ring_position.x()
     for i, panel in enumerate(panels):
         assert window.run_header.rect().contains(panel.geometry())
         for other in panels[i + 1:]:
             assert not panel.geometry().intersects(other.geometry())
     for control in (window.run_button, window.stop_button, window.rerun_button,
                     window.reader_controls, window.workspace_combo,
-                    window.view_failures_button, *window.pills.values()):
+                    window.view_failures_button, window.view_differences_button,
+                    window.readers_bar, *window.pills.values()):
         assert control.isVisible()
         assert control.parentWidget().rect().contains(control.geometry())
 
