@@ -116,10 +116,12 @@ class StructuredRunHeader(QWidget):
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(t.SPACE_3)
         self._compact = None
+        self._tab_overview = window._run_host is not None
 
         self.environment, environment = self._panel("ENVIRONMENT")
         self.execution, execution = self._panel("EXECUTION")
         self.results, results = self._panel("RESULTS")
+        self.results.setVisible(not self._tab_overview)
 
         # Reparent the actual controls; do not duplicate actions or state.
         window.workspace_combo.setMinimumWidth(180)
@@ -136,9 +138,11 @@ class StructuredRunHeader(QWidget):
                         window.config_button, window.history_button):
             self._move(workspace_actions, control)
         workspace_actions.addStretch()
+        window.run_name_stack.setMinimumWidth(90)
+        window.run_name_stack.setMaximumWidth(260)
+        window.run_name_stack.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._move(workspace_actions, window.run_name_stack)
         environment.addLayout(workspace_actions)
-        environment.addStretch()
-        self._move(environment, window.run_name_stack)
 
         window.reader_controls.layout().setContentsMargins(0, 0, 0, 0)
         reader_layout = window.reader_controls.layout()
@@ -206,6 +210,14 @@ class StructuredRunHeader(QWidget):
         layout.addWidget(widget)
         widget.setVisible(not explicitly_hidden)
 
+    def set_tab_overview(self, enabled):
+        if enabled == self._tab_overview:
+            return
+        self._tab_overview = enabled
+        self.results.setVisible(not enabled)
+        self._compact = None
+        self._arrange(False)
+
     def _arrange(self, compact):
         if compact == self._compact:
             return
@@ -214,6 +226,11 @@ class StructuredRunHeader(QWidget):
             self._grid.removeWidget(panel)
         self._grid.addWidget(self.environment, 0, 0)
         self._grid.addWidget(self.execution, 0, 1)
+        if self._tab_overview:
+            self._grid.setColumnStretch(0, 1)
+            self._grid.setColumnStretch(1, 1)
+            self._grid.setColumnStretch(2, 0)
+            return
         if compact:
             self._grid.addWidget(self.results, 1, 0, 1, 2)
         else:

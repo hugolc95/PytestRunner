@@ -156,6 +156,8 @@ def test_detached_run_keeps_same_tree_after_close_and_reopen(window):
     window.run_tabs.detach_current()
     floating = entry.floating
     assert floating.isVisible()
+    assert entry.page.isVisibleTo(floating)
+    assert original_tree.isVisibleTo(floating)
     assert window.run_tabs.current.context is window
     floating.close()
     assert entry.floating is floating
@@ -268,3 +270,36 @@ def test_new_run_button_shows_preparation_and_shares_application_pages(window, q
     assert draft.comparison_page is window.comparison_page
     assert draft.model is not window.model
     assert window.run_tabs.new_button.isEnabled()
+
+
+def test_run_colours_results_and_live_navigation(window, monkeypatch):
+    calls = []
+    fake_start(window, calls, monkeypatch)
+    window.model.set_checked_nodeids(["test_demo.py::test_a"])
+    window.run_selected()
+    active = window.run_tabs.entries[0]
+    draft = window.run_tabs.new_run()
+    assert window.run_tabs.live_button.isVisibleTo(window.run_tabs.panel)
+    running_colour = window.run_tabs.tabs.tabData(0)["colour"]
+    draft.model.set_checked_nodeids(["test_demo.py::test_b"])
+    draft.run_selected()
+    assert window.run_tabs.tabs.tabData(1)["colour"] != running_colour
+    window.run_tabs.live_button.click()
+    assert window.run_tabs.current is active
+    window.service.outcome.emit(Outcome("test_demo.py::test_a", Status.FAILED))
+    window.run_tabs.paused = True
+    window.service.finished.emit([])
+    assert window.run_tabs.state_badge.text().startswith("Failed")
+    assert window.run_tabs.result_labels[Status.FAILED].text() == "1 failed"
+    failed_colour = window.run_tabs.tabs.tabData(0)["colour"]
+    assert failed_colour != running_colour
+    assert not window.run_tabs.detach_button.isVisible()
+
+
+def test_incomplete_run_is_not_presented_as_success(window):
+    entry = window.run_tabs.entries[0]
+    entry.state = "finished"
+    entry.progress = (1, 2)
+    window.model.apply_outcome("test_demo.py::test_a", Status.PASSED, 0)
+    window.run_tabs.refresh_labels()
+    assert window.run_tabs.state_badge.text() == "Incomplete"

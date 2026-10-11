@@ -17,7 +17,13 @@ move it in the queue, remove it from the queue for editing, or close it.
 **Pause queue** lets the current run finish and holds subsequent runs.
 Stopping a run cancels that run; pause the queue to also prevent the next start.
 
-**Detach tab** opens the same tree and results in a separate window. Closing
+The tab cards identify running work in blue, waiting work in amber, successful
+work in green and failed work in red, with explicit text for every state.
+Completed tabs show their overall verdict, including incomplete or stopped
+runs. The selected tab's result counters sit below the tabs and can filter its
+tree. When viewing another tab, **Live** returns to the current execution.
+
+The tab context menu's **Detach tab** opens the same tree and results in a separate window. Closing
 that window hides it; selecting its tab opens it again. **Reattach tab** brings
 it back into the main window. The last selected attached tab remains visible
 behind the detached window.

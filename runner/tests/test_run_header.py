@@ -6,7 +6,10 @@ from runner.ui.main_window import MainWindow
 
 
 @pytest.mark.parametrize("width", [1100, 1600])
-def test_header_reflows_without_overlapping_controls(qtbot, width):
+def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, tmp_path):
+    from PySide6.QtCore import QSettings
+    settings = QSettings(str(tmp_path / "header.ini"), QSettings.IniFormat)
+    monkeypatch.setattr("runner.ui.main_window.QSettings", lambda *_: settings)
     window = MainWindow()
     qtbot.addWidget(window)
     window.resize(width, 900)
@@ -17,23 +20,23 @@ def test_header_reflows_without_overlapping_controls(qtbot, width):
     window.profile_chip.show()
     qtbot.wait(30)
 
-    panels = [window.run_header.environment, window.run_header.execution,
-              window.run_header.results]
+    panels = [window.run_header.environment, window.run_header.execution]
+    assert not window.run_header.results.isVisible()
     for i, panel in enumerate(panels):
         assert window.run_header.rect().contains(panel.geometry())
         for other in panels[i + 1:]:
             assert not panel.geometry().intersects(other.geometry())
     for control in (window.run_button, window.stop_button, window.rerun_button,
                     window.reader_controls, window.workspace_combo,
-                    window.view_failures_button, *window.pills.values()):
+                    ):
         assert control.isVisible()
         assert control.parentWidget().rect().contains(control.geometry())
 
     # A status click must still reach the original filter implementation.
-    window.pills[Status.FAILED].set_value(8)
-    with qtbot.waitSignal(window.pills[Status.FAILED].filter_clicked) as signal:
-        qtbot.mouseClick(window.pills[Status.FAILED], Qt.LeftButton)
-    assert signal.args == [Status.FAILED]
+    window.run_tabs.entries[0].state = "finished"
+    window.run_tabs.refresh_labels()
+    qtbot.mouseClick(window.run_tabs.result_labels[Status.FAILED], Qt.LeftButton)
+    assert window._status_filter == Status.FAILED
 
     window._set_interpreter_alert("Interpreter unavailable")
     qtbot.wait(10)
