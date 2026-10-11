@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
         self.settings = QSettings(ORG, APP)
         self.workspace: Workspace | None = None
         self.service = RunService(self)
-        self.history = history.History()
+        self.history = run_host.history if run_host is not None else history.History()
         # Identifiant du run en cours : partage par tous ses lecteurs,
         # ce qui permet de les retrouver ensemble dans l'historique.
         self._run_id: str | None = None
@@ -264,19 +264,27 @@ class MainWindow(QMainWindow):
         colonne.addWidget(self.split, 1)
 
         self.pages.addWidget(self.workspace_page)
-        profiles_root = Path(QStandardPaths.writableLocation(
-            QStandardPaths.AppDataLocation)) / "profiles"
-        self.profiles_page = ExecutionProfilesPage(ProfileStore(profiles_root), self)
-        self.profiles_page.run_requested.connect(self._load_execution_profile)
-        self.history_page = self._build_history_page()
-        from runner.ui.comparison_page import ComparisonPage
-        self.comparison_page = ComparisonPage(self.history, self)
-        self.history_dashboard.compare_requested.connect(self._open_comparison)
+        if self._run_host is None:
+            profiles_root = Path(QStandardPaths.writableLocation(
+                QStandardPaths.AppDataLocation)) / "profiles"
+            self.profiles_page = ExecutionProfilesPage(ProfileStore(profiles_root), self)
+            self.profiles_page.run_requested.connect(self._load_execution_profile)
+            self.history_page = self._build_history_page()
+            from runner.ui.comparison_page import ComparisonPage
+            self.comparison_page = ComparisonPage(self.history, self)
+            self.history_dashboard.compare_requested.connect(self._open_comparison)
+            self.pages.addWidget(self.profiles_page)
+            self.pages.addWidget(self.history_page)
+            self.pages.addWidget(self.comparison_page)
+        else:
+            # These pages belong to the application, not to each run. Rebuilding
+            # History also recreated its result viewers on every new draft.
+            self.profiles_page = self._run_host.profiles_page
+            self.history_page = self._run_host.history_page
+            self.history_dashboard = self._run_host.history_dashboard
+            self.comparison_page = self._run_host.comparison_page
         self.python_page = self._build_python_page()
         self.yaml_page = self._build_yaml_page()
-        self.pages.addWidget(self.profiles_page)
-        self.pages.addWidget(self.history_page)
-        self.pages.addWidget(self.comparison_page)
         self.pages.addWidget(self.python_page)
         self.pages.addWidget(self.yaml_page)
         racine.addWidget(self.pages, 1)

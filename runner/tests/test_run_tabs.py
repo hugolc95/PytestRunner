@@ -254,3 +254,17 @@ def test_saved_session_does_not_replace_explicitly_loaded_workspace(window):
     window.run_tabs.restore_sessions()
     assert window.model.checked_nodeids() == ["test_demo.py::test_b"]
     assert len(window.run_tabs.entries) == 1
+
+
+def test_new_run_button_shows_preparation_and_shares_application_pages(window, qtbot):
+    window.run_tabs.new_button.click()
+    assert window.run_tabs.new_button.text() == "Preparing…"
+    assert not window.run_tabs.new_button.isEnabled()
+    qtbot.waitUntil(lambda: len(window.run_tabs.entries) == 2)
+    draft = window.run_tabs.current.context
+    assert draft.history is window.history
+    assert draft.history_dashboard is window.history_dashboard
+    assert draft.profiles_page is window.profiles_page
+    assert draft.comparison_page is window.comparison_page
+    assert draft.model is not window.model
+    assert window.run_tabs.new_button.isEnabled()

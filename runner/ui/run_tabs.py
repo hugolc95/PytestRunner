@@ -119,7 +119,7 @@ class RunTabsController(QObject):
         self.tabs.setContextMenuPolicy(Qt.CustomContextMenu)
         tools.addWidget(self.tabs, 1)
         self.new_button = QPushButton("+ New run")
-        self.new_button.clicked.connect(lambda: self.new_run())
+        self.new_button.clicked.connect(self.prepare_new_run)
         tools.addWidget(self.new_button)
         self.pause_button = QPushButton("Pause queue")
         self.pause_button.clicked.connect(self.toggle_pause)
@@ -181,6 +181,20 @@ class RunTabsController(QObject):
         context.model.selection_changed.connect(lambda *_: self.schedule_save())
         context.model.modelReset.connect(self.schedule_save)
         return entry
+
+    def prepare_new_run(self):
+        self.new_button.setEnabled(False)
+        self.new_button.setText("Preparing…")
+        source = self.current.context
+        def create():
+            try:
+                if not self.closing:
+                    self.new_run(source)
+            finally:
+                self.new_button.setText("+ New run")
+                self.new_button.setEnabled(True)
+        # Let Qt paint feedback before assembling the draft's widgets.
+        QTimer.singleShot(30, create)
 
     def new_run(self, source=None):
         from runner.ui.main_window import MainWindow
