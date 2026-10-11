@@ -39,6 +39,50 @@ def fake_start(context, calls, monkeypatch):
     monkeypatch.setattr(context.service, "start", start)
 
 
+def test_new_run_button_follows_last_tab_and_handles_overflow(window, qtbot):
+    controller = window.run_tabs
+    window.resize(1600, 900)
+    controller.new_run()
+    qtbot.wait(20)
+    assert controller.new_button.geometry().left() == (
+        controller.tabs.geometry().right() + controller.tabs.parentWidget().layout().spacing() + 1
+    )
+    assert controller.tabs.tabRect(controller.tabs.count() - 1).right() < controller.tabs.width()
+    old_left = controller.new_button.x()
+    controller.close_tab(1)
+    qtbot.wait(20)
+    assert controller.new_button.x() < old_left
+    for _ in range(6):
+        controller.new_run()
+    window.resize(1100, 900)
+    qtbot.wait(20)
+    assert controller.new_button.isVisible()
+    assert controller.new_button.parentWidget().rect().contains(controller.new_button.geometry())
+    assert not controller.tabs.geometry().intersects(controller.new_button.geometry())
+
+
+def test_new_run_never_shows_temporary_top_level_widgets(window, qtbot):
+    from PySide6.QtCore import QObject, QEvent
+    from PySide6.QtWidgets import QApplication, QWidget
+
+    shown = []
+    class Probe(QObject):
+        def eventFilter(self, obj, event):
+            if event.type() == QEvent.Show and isinstance(obj, QWidget) and obj.isWindow():
+                shown.append(type(obj).__name__)
+            return False
+
+    probe = Probe(window)
+    app = QApplication.instance()
+    app.installEventFilter(probe)
+    try:
+        window.run_tabs.new_run()
+        qtbot.wait(20)
+        assert shown == []
+    finally:
+        app.removeEventFilter(probe)
+
+
 def test_drafts_keep_independent_selection_and_live_results(window, monkeypatch):
     calls = []
     fake_start(window, calls, monkeypatch)

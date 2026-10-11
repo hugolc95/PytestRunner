@@ -3,6 +3,8 @@
 The Run Tests page keeps its existing tree and result panels inside independent
 tabs. Use **+ New run** to prepare a selection while another tab displays live
 results. Each new tab starts with an unchecked copy of the collected tests.
+The **+ New run** button follows the last tab; overflowing tabs remain scrollable.
+Creating a draft shows **Preparing…** without opening temporary native windows.
 Execution profiles can also be loaded into a draft; opening a profile while the
 selected tab is running or waiting creates a new draft automatically.
 

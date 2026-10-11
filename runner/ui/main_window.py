@@ -214,15 +214,15 @@ class MainWindow(QMainWindow):
     # =====================================================================
 
     def _build_ui(self) -> None:
-        central = QWidget()
+        central = QWidget(self)
         racine = QHBoxLayout(central)
         racine.setContentsMargins(0, 0, 0, 0)
         racine.setSpacing(0)
 
         racine.addWidget(self._build_navigation())
 
-        self.pages = QStackedWidget()
-        self.workspace_page = QWidget()
+        self.pages = QStackedWidget(central)
+        self.workspace_page = QWidget(self.pages)
         colonne = QVBoxLayout(self.workspace_page)
         colonne.setContentsMargins(t.SPACE_3, t.SPACE_3, t.SPACE_3, t.SPACE_2)
         colonne.setSpacing(t.SPACE_3)
@@ -254,7 +254,7 @@ class MainWindow(QMainWindow):
         self.run_header = StructuredRunHeader(self, command_bar, run_bar)
         colonne.insertWidget(0, self.run_header)
 
-        self.split = QSplitter(Qt.Horizontal)
+        self.split = QSplitter(Qt.Horizontal, self.workspace_page)
         self.split.setChildrenCollapsible(False)
         self.split.addWidget(self._build_left())
         self.split.addWidget(self._build_right())
@@ -962,7 +962,7 @@ class MainWindow(QMainWindow):
         return barre
 
     def _build_left(self) -> QWidget:
-        panneau = QWidget()
+        panneau = QWidget(self.split)
         colonne = QVBoxLayout(panneau)
         colonne.setContentsMargins(0, 0, 0, 0)
         colonne.setSpacing(t.SPACE_2)
@@ -1141,12 +1141,13 @@ class MainWindow(QMainWindow):
         return bouton
 
     def _build_right(self) -> QWidget:
-        self.results = ResultsPanel()
+        panel = QWidget(self.split)
+        self.results = ResultsPanel(panel)
         self.results.reader_selected.connect(self._on_reader_selected)
         self.results.test_chosen.connect(self._goto_test)
-        self.results_stack = QStackedWidget()
+        self.results_stack = QStackedWidget(panel)
         self.results_stack.addWidget(self.results)
-        self.profile_result_page = QWidget()
+        self.profile_result_page = QWidget(self.results_stack)
         layout = QVBoxLayout(self.profile_result_page)
         layout.setContentsMargins(0, 0, 0, 0)
         self.profile_selection_label = QLabel('Select an execution to inspect its result.')
@@ -1156,7 +1157,7 @@ class MainWindow(QMainWindow):
         context_policy = self.profile_selection_label.sizePolicy()
         context_policy.setRetainSizeWhenHidden(True)
         self.profile_selection_label.setSizePolicy(context_policy)
-        self.profile_results = ResultsPanel()
+        self.profile_results = ResultsPanel(self.profile_result_page)
         self.profile_results.detail.execution_view = True
         self.profile_results.tabs.setTabEnabled(ONGLET_LOGS, False)
         self.profile_results.tabs.setTabToolTip(ONGLET_LOGS, 'Per-execution log files are not available. Console contains the pytest batch for this attempt.')
@@ -1178,7 +1179,6 @@ class MainWindow(QMainWindow):
         self._profile_counts_timer.setSingleShot(True)
         self._profile_counts_timer.setInterval(50)
         self._profile_counts_timer.timeout.connect(self._rafraichir_compteurs)
-        panel = QWidget()
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(0, 0, 0, 0)
         panel_layout.addWidget(self.profile_selection_label)

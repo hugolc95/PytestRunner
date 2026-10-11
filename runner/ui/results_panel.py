@@ -156,7 +156,7 @@ class ReaderViews(QWidget):
         barre.addWidget(self.difference_navigation)
         barre.addWidget(self.compare)
 
-        self.split = QSplitter(orientation)
+        self.split = QSplitter(orientation, self)
         self.split.setChildrenCollapsible(False)
 
         colonne = QVBoxLayout(self)
@@ -170,7 +170,7 @@ class ReaderViews(QWidget):
     # ------------------------------------------------------------- structure
 
     def _add_view(self) -> ConsoleView:
-        vue = ConsoleView(show_lens=self._show_lens)
+        vue = ConsoleView(show_lens=self._show_lens, parent=self.split)
 
         entete = QLabel()
         entete.setVisible(False)
@@ -537,16 +537,16 @@ class ResultsPanel(QWidget):
         self._recent_runs: dict[int, list[bool]] = {}
         self._last_seen: float | None = None
 
-        self.detail = DetailPanel()
+        self.detail = DetailPanel(self)
         self.detail.open_output.connect(self.show_output)
         self.detail.test_chosen.connect(self.test_chosen)
 
-        self.source = SourcePanel()
+        self.source = SourcePanel(self)
 
-        self.output = ReaderViews(Qt.Vertical)
+        self.output = ReaderViews(Qt.Vertical, parent=self)
         self.logs = ReaderViews(
             Qt.Horizontal, sync_scroll=True, show_lens=False,
-            highlight_differences=True, external_open=True)
+            highlight_differences=True, external_open=True, parent=self)
         self.logs.open_file_requested.connect(self._open_log_in_notepad_plus_plus)
 
         # Les trois panneaux suivent le meme lecteur : lire le log de l'un en
@@ -554,7 +554,7 @@ class ResultsPanel(QWidget):
         self.output.reader_selected.connect(self._on_reader, Qt.UniqueConnection)
         self.logs.reader_selected.connect(self._on_reader, Qt.UniqueConnection)
 
-        self.tabs = QTabWidget()
+        self.tabs = QTabWidget(self)
         self.tabs.tabBar().setObjectName("PrimaryTabs")
         self.tabs.addTab(self.detail,
                          icons.icon("mdi.text-box-search-outline", t.TEXT_MUTED),

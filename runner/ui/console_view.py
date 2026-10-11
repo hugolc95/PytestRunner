@@ -90,7 +90,7 @@ class ConsoleView(QWidget):
         self._defile_seul = False   # garde : distinguer nos scrolls des siens
         self._formats: dict[ansi.Style, QTextCharFormat] = {}
 
-        self.view = QPlainTextEdit()
+        self.view = QPlainTextEdit(self)
         self.view.setReadOnly(True)
         self.view.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.view.setUndoRedoEnabled(False)
@@ -118,7 +118,7 @@ class ConsoleView(QWidget):
     # ------------------------------------------------------------- structure
 
     def _build_toolbar(self, show_lens: bool) -> QWidget:
-        barre = QWidget()
+        barre = QWidget(self)
         ligne = QHBoxLayout(barre)
         ligne.setContentsMargins(0, 0, 0, 0)
         ligne.setSpacing(t.SPACE_1)
@@ -126,7 +126,9 @@ class ConsoleView(QWidget):
         # Segmente : trois vues d'une meme chose, dont une seule a la fois.
         # Trois boutons separes auraient laisse croire a trois actions ; colles
         # et sans espace entre eux, ils se lisent comme un seul selecteur.
-        self.lens_bar = QWidget()
+        # Visibility is set before the toolbar layout adopts this widget.
+        # Keep it parented so it cannot flash as a native top-level window.
+        self.lens_bar = QWidget(self)
         rangee = QHBoxLayout(self.lens_bar)
         rangee.setContentsMargins(0, 0, 0, 0)
         rangee.setSpacing(0)

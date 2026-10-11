@@ -16,7 +16,7 @@ from PySide6.QtCore import QObject, QTimer, Qt
 from PySide6.QtGui import QShortcut, QKeySequence
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QMainWindow, QMenu, QPushButton, QStackedWidget,
-    QTabBar, QVBoxLayout, QWidget,
+    QSizePolicy, QTabBar, QVBoxLayout, QWidget,
 )
 
 from runner.domain.execution import Collection
@@ -119,10 +119,12 @@ class RunTabsController(QObject):
         self.tabs.setMovable(True)
         self.tabs.setTabsClosable(True)
         self.tabs.setContextMenuPolicy(Qt.CustomContextMenu)
-        tools.addWidget(self.tabs, 1)
+        self.tabs.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
+        tools.addWidget(self.tabs)
         self.new_button = QPushButton("+ New run")
         self.new_button.clicked.connect(self.prepare_new_run)
         tools.addWidget(self.new_button)
+        tools.addStretch(1)
         self.pause_button = QPushButton("Pause queue")
         self.pause_button.clicked.connect(self.toggle_pause)
         self.detach_button = QPushButton("Detach tab")
@@ -133,10 +135,10 @@ class RunTabsController(QObject):
         self.live_button.setObjectName("Ghost")
         self.live_button.setMaximumWidth(140)
         self.live_button.clicked.connect(lambda: self.show_context(self.active.context) if self.active else None)
-        tools.insertWidget(1, self.live_button)
+        tools.addWidget(self.live_button)
         self.queue_label = QLabel()
-        tools.insertWidget(2, self.queue_label)
-        tools.insertWidget(3, self.pause_button)
+        tools.addWidget(self.queue_label)
+        tools.addWidget(self.pause_button)
         self.stack = QStackedWidget()
         layout.addWidget(self.stack, 1)
         original_page = window.workspace_page
