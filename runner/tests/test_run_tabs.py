@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 from copy import deepcopy
 from dataclasses import replace
 
@@ -37,6 +38,93 @@ def fake_start(context, calls, monkeypatch):
         context.service.started.emit(request)
         return True
     monkeypatch.setattr(context.service, "start", start)
+
+
+def test_each_run_edits_its_own_configuration_and_keeps_source(window, tmp_path, monkeypatch):
+    source = tmp_path / "settings.yaml"
+    source.write_text("# retained comment\nmode: original\n", encoding="utf-8")
+    window.workspace = Workspace.load(str(tmp_path), str(source))
+    window._on_collected(Collection(tuple(window.model._by_nodeid)))
+    first = Path(window.workspace.config_path)
+    draft = window.run_tabs.new_run()
+    second = Path(draft.workspace.config_path)
+    assert first != second and first != source and second != source
+    assert second.read_bytes() == source.read_bytes()
+    from runner.domain.reader_isolation import ENV_CONFIG_SOURCE
+    assert window.run_tabs.configuration_env(draft, {})[ENV_CONFIG_SOURCE] == str(source)
+    second.write_text("mode: second\n", encoding="utf-8")
+    monkeypatch.setattr(draft, "load_workspace", lambda: None)
+    draft._on_yaml_page_saved(str(second))
+    assert draft.workspace.settings["mode"] == "second"
+    assert window.workspace.settings["mode"] == "original"
+    assert source.read_text(encoding="utf-8").endswith("mode: original\n")
+    assert first.read_bytes() == source.read_bytes()
+    assert draft._config_retenue(str(tmp_path)) == str(second)
+    assert window._config_retenue(str(tmp_path)) == str(first)
+    assert window.settings.value("workspace/config_files", {}) == {}
+
+
+def test_draft_configuration_remains_editable_during_another_run(window, monkeypatch):
+    calls = []
+    fake_start(window, calls, monkeypatch)
+    window.run_selected()
+    draft = window.run_tabs.new_run()
+    assert draft.act_config.isEnabled()
+    assert draft.yaml_page.isEnabled()
+    assert not window.config_button.isEnabled()
+    assert not window.yaml_page.isEnabled()
+
+
+def test_configuration_editor_imports_into_run_copy(window, tmp_path, monkeypatch):
+    monkeypatch.setattr(window, "load_workspace", lambda: None)
+    window._refresh_yaml_page(force=True)
+    editor = window.yaml_editor
+    source = tmp_path / "another.yaml"
+    source.write_text("mode: imported\n", encoding="utf-8")
+    editor.file_combo.setCurrentIndex(editor._ajouter_candidat(source))
+    assert editor.path != source
+    editor.raw.setPlainText("mode: edited\n")
+    editor._enregistrer_texte()
+    assert source.read_text(encoding="utf-8") == "mode: imported\n"
+    assert editor.path.read_text(encoding="utf-8") == "mode: edited\n"
+
+
+def test_embedded_profile_initializes_run_copy_and_keeps_subsequent_edits(window):
+    profile = ExecutionProfile(name="Private profile", sequence=["test_demo.py::test_a"],
+                               configuration_name="profile.yaml", configuration_text="mode: profile\n")
+    window._open_collected_profile(profile)
+    path = Path(window.workspace.config_path)
+    assert path.read_text(encoding="utf-8") == "mode: profile\n"
+    path.write_text("mode: edited\n", encoding="utf-8")
+    window._open_collected_profile(profile)
+    assert window._profile_configuration_path(profile) == str(path)
+    assert path.read_text(encoding="utf-8") == "mode: edited\n"
+    window.run_tabs.duplicate(window.run_tabs.entries[0])
+    copy = window.run_tabs.current.context
+    assert copy.workspace.config_path != str(path)
+    assert Path(copy.workspace.config_path).read_text(encoding="utf-8") == "mode: edited\n"
+
+
+def test_serial_runs_use_their_own_yaml_even_when_tests_open_source(window, qtbot, tmp_path):
+    source = tmp_path / "config.yaml"
+    source.write_text("original", encoding="utf-8")
+    (tmp_path / "test_demo.py").write_text(
+        "from pathlib import Path\n"
+        "def test_a(): assert Path('config.yaml').read_text() == 'first'\n"
+        "def test_b(): assert Path('config.yaml').read_text() == 'second'\n", encoding="utf-8")
+    window.workspace = Workspace.load(str(tmp_path), str(source))
+    window._on_collected(Collection(("test_demo.py::test_a", "test_demo.py::test_b")))
+    Path(window.workspace.config_path).write_text("first", encoding="utf-8")
+    draft = window.run_tabs.new_run()
+    Path(draft.workspace.config_path).write_text("second", encoding="utf-8")
+    window.model.set_checked_nodeids(["test_demo.py::test_a"])
+    draft.model.set_checked_nodeids(["test_demo.py::test_b"])
+    window.run_selected()
+    draft.run_selected()
+    qtbot.waitUntil(lambda: all(entry.state == "finished" for entry in window.run_tabs.entries), timeout=20000)
+    assert window.model.statuses_for_nodeid("test_demo.py::test_a")[0] == Status.PASSED
+    assert draft.model.statuses_for_nodeid("test_demo.py::test_b")[0] == Status.PASSED
+    assert source.read_text(encoding="utf-8") == "original"
 
 
 def test_context_menu_renames_target_run_and_updates_detached_title(window, monkeypatch):
@@ -431,6 +519,8 @@ def test_real_runs_execute_serially_and_archive_separately(window, qtbot):
 def test_restart_restores_draft_and_detached_mode_without_starting(window, qtbot):
     draft = window.run_tabs.new_run()
     draft._pending_run_name = "Preserved draft"
+    configuration = Path(draft.workspace.config_path)
+    configuration.write_text("mode: preserved\n", encoding="utf-8")
     from PySide6.QtWidgets import QHeaderView
     draft.tree.header().setStretchLastSection(False)
     draft.tree.header().setSectionResizeMode(0, QHeaderView.Interactive)
@@ -446,6 +536,8 @@ def test_restart_restores_draft_and_detached_mode_without_starting(window, qtbot
         qtbot.waitUntil(lambda: len(reopened.run_tabs.entries) == 2)
         restored = reopened.run_tabs.entries[1]
         assert restored.name == "Preserved draft"
+        assert restored.context.workspace.config_path == str(configuration)
+        assert restored.context.workspace.settings["mode"] == "preserved"
         assert restored.context.model.checked_nodeids() == ["test_demo.py::test_b"]
         assert restored.context.tree.columnWidth(0) == 357
         assert restored.floating is not None

@@ -11,6 +11,14 @@ Its own status footer displays collection/run progress, elapsed time and ATR;
 switching tabs or detaching moves that footer with the run. New drafts inherit
 reader choices, recent environments and panel/column sizes, while test selections
 and verdicts start clean. Panel/column sizes are also saved with each session.
+Every tab owns a persistent YAML copy, including the first tab. **Edit run
+configuration…** in the tab context menu opens its configuration editor. Importing
+another YAML copies it into that run; the source file and other tabs remain
+unchanged. Draft configurations remain editable while another run executes.
+The same copy is used for collection and execution, including tests that read
+the source YAML directly. Copies and their selected environment survive restart.
+Embedded profile YAML initializes the run copy when the profile is opened;
+subsequent edits to that copy are used when the profile runs.
 Keyboard shortcuts work in attached and detached runs: **F5** starts the selected
 run, **Ctrl+R** recollects tests, and **Esc** stops the active execution.
 Execution profiles can also be loaded into a draft; opening a profile while the
@@ -58,4 +66,5 @@ restarting the application never silently starts an execution. Completed
 reports remain available in History.
 
 Reader discovery and ATR hardware polling are suspended during execution.
-Source and shared configuration editing are disabled while a run is active.
+Source editing is disabled while a run is active. Queued and running tabs lock
+their configuration; other drafts can edit their independent copy.

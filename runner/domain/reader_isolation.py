@@ -26,6 +26,7 @@ PLUGIN_MODULE = "runner_reader_isolation"
 
 ENV_READER = "PYTESTRUNNER_READER"
 ENV_CONFIG = "PYTESTRUNNER_READER_CONFIG"
+ENV_CONFIG_SOURCE = "PYTESTRUNNER_CONFIG_SOURCE"
 
 # Le plugin tourne seul dans le processus pytest, sans acces a ce paquet : il
 # doit etre autonome.
@@ -43,6 +44,7 @@ import pytest
 
 _READER = os.environ.get("PYTESTRUNNER_READER", "")
 _CONFIG = os.environ.get("PYTESTRUNNER_READER_CONFIG", "")
+_CONFIG_SOURCE = os.environ.get("PYTESTRUNNER_CONFIG_SOURCE", "")
 
 _LIGNE = re.compile(
     r"^(?P<indent>[ \\t]*)(?P<cle>[A-Za-z_][\\w \\-]*?)(?P<sep>[ \\t]*:[ \\t]*)"
@@ -106,7 +108,7 @@ def _reecrire(brut, lecteur):
 
 def _preparer():
     global _texte, _cible, _erreur
-    if not _READER or not _CONFIG:
+    if not _CONFIG:
         return
     try:
         with open(_CONFIG, "r", encoding="utf-8", newline="") as f:
@@ -114,7 +116,7 @@ def _preparer():
     except OSError as exc:
         _erreur = "cannot read %r: %s" % (_CONFIG, exc)
         return
-    modifie = _reecrire(brut, _READER)
+    modifie = _reecrire(brut, _READER) if _READER else brut
     if modifie is None:
         _erreur = "no Reader key found in %r" % _CONFIG
         return
@@ -126,7 +128,8 @@ def _vise(chemin):
     if _texte is None:
         return False
     try:
-        return os.path.normcase(os.path.abspath(os.fspath(chemin))) == _cible
+        path = os.path.normcase(os.path.abspath(os.fspath(chemin)))
+        return path == _cible or (_CONFIG_SOURCE and path == os.path.normcase(os.path.abspath(_CONFIG_SOURCE)))
     except Exception:
         return False
 

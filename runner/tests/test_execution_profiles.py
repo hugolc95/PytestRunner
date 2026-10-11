@@ -483,7 +483,7 @@ def test_add_tests_tree_can_select_a_folder_and_a_single_test(qapp):
         dialog.close()
 
 
-def test_loading_a_profile_enables_run_without_checking_the_tree(qapp, tmp_path):
+def test_loading_a_profile_enables_run_without_checking_the_tree(qapp, tmp_path, monkeypatch):
     """`Open in Run tests` montre bien le profil, mais rien ne le rend
     cliquable : `_update_actions()` n'activait Run que sur les cases
     cochees de l'arbre, jamais sur un profil charge -- qui a sa propre
@@ -493,6 +493,7 @@ def test_loading_a_profile_enables_run_without_checking_the_tree(qapp, tmp_path)
     from runner.domain.workspace import Workspace
     from runner.ui.main_window import APP, ORG, MainWindow
     from PySide6.QtCore import QSettings
+    monkeypatch.setattr("runner.domain.history.dossier", lambda: tmp_path / "history")
 
     QSettings(ORG, APP).clear()
     nodeids = ["suite/test_a.py::test_one", "suite/test_b.py::test_two"]

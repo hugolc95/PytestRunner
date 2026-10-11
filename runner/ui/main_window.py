@@ -606,6 +606,24 @@ class MainWindow(QMainWindow):
                 self, "Profile is not compatible",
                 f"{missing} sequence step(s) are missing from this workspace.")
             return
+        if self.run_tabs and (profile.configuration_name or profile.configuration_text):
+            from hashlib import sha256
+            signature = sha256((profile.profile_id + profile.configuration_text).encode("utf-8")).hexdigest()
+            if getattr(self, "_configuration_profile", "") != signature:
+                if not self.run_tabs.ensure_configuration(self):
+                    return
+                try:
+                    Path(self.workspace.config_path).write_text(profile.configuration_text, encoding="utf-8")
+                except OSError as exc:
+                    ErrorDialog.show_error(self, "Could not import profile configuration",
+                                           "The run configuration could not be written.", str(exc))
+                    return
+                self.workspace = Workspace.load(self.workspace.path, self.workspace.config_path)
+                self._configuration_profile = signature
+                from runner.domain.execution import Collection
+                self._on_collected(Collection(tuple(self.model._by_nodeid), deepcopy(self._markers_by_nodeid)))
+                self._refresh_yaml_page(force=True)
+                self.run_tabs.schedule_save()
         # Opening a profile is a new inspection context: a previous verdict
         # filter would hide every pending row in the sequence preview.
         self._clear_status_filter()
@@ -682,6 +700,8 @@ class MainWindow(QMainWindow):
         self._update_actions()
 
     def _refresh_yaml_page(self, force: bool = False) -> None:
+        if self.run_tabs and not self.run_tabs.ensure_configuration(self):
+            return
         if self.workspace is None:
             self.yaml_empty.update_text(
                 "No workspace loaded",
@@ -713,7 +733,8 @@ class MainWindow(QMainWindow):
             self.yaml_editor_host,
             candidats=[str(path) for path in fichiers_config(self.workspace.path)],
             workspace_path=self.workspace.path,
-            embedded=True, interpreter=self._effective_interpreter())
+            embedded=True, interpreter=self._effective_interpreter(),
+            configuration_resolver=self._run_configuration_path)
         self.yaml_editor.setWindowFlags(Qt.Widget)
         self.yaml_editor.saved.connect(self._on_yaml_page_saved)
         self.yaml_editor_layout.addWidget(self.yaml_editor, 1)
@@ -1689,7 +1710,8 @@ class MainWindow(QMainWindow):
             self.workspace.config_path,
             [r.name for r in self.workspace.readers], self,
             candidats=[str(c) for c in fichiers_config(racine)],
-            workspace_path=racine, interpreter=self._effective_interpreter())
+            workspace_path=racine, interpreter=self._effective_interpreter(),
+            configuration_resolver=self._run_configuration_path)
         dialogue.exec()
 
         # Le fichier qu'on vient d'editer devient CELUI du workspace : avoir
@@ -1894,6 +1916,8 @@ class MainWindow(QMainWindow):
             return
 
         self.workspace = Workspace.load(chemin, self._config_retenue(chemin))
+        if self.run_tabs and not self.run_tabs.ensure_configuration(self):
+            return
         self._remember_workspace(chemin)
 
         python = self._require_interpreter()
@@ -1918,7 +1942,9 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 0)  # indetermine : la duree est inconnue
 
         self._collector = CollectWorker(
-            self.workspace.path, python, self.workspace.env, self)
+            self.workspace.path, python,
+            self.run_tabs.configuration_env(self, self.workspace.env) if self.run_tabs else self.workspace.env,
+            self)
         self._collector.collected.connect(self._on_collected)
         self._collector.failed.connect(self._on_collect_failed)
         self._collector.start()
@@ -1926,6 +1952,8 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_collected(self, collection) -> None:
+        if self.run_tabs and not self.run_tabs.ensure_configuration(self):
+            return
         environment = (self.workspace.path, self.workspace.config_path,
                        deepcopy(self.workspace.settings), self._effective_interpreter()) if self.workspace else None
         previous_environment = getattr(self, "_collected_environment", None)
@@ -2117,10 +2145,20 @@ class MainWindow(QMainWindow):
         Range par workspace : on passe d'un projet a l'autre, et le fichier
         retenu pour l'un ne veut rien dire pour l'autre.
         """
+        if self.run_tabs:
+            entry = self.run_tabs.entry_for(self)
+            if entry is not None:
+                retained = entry.configurations.get(str(Path(workspace).resolve()))
+                if retained:
+                    return retained
         table = self.settings.value(K_CONFIG, {}) or {}
         return str(table.get(workspace, "")) if isinstance(table, dict) else ""
 
     def _retenir_config(self, workspace: str, chemin: str) -> None:
+        if self.run_tabs and self.run_tabs.entry_for(self) is not None:
+            self.run_tabs.configuration_path(self, workspace, chemin)
+            self.run_tabs.schedule_save()
+            return
         table = dict(self.settings.value(K_CONFIG, {}) or {})
         if not isinstance(table, dict):
             table = {}
@@ -2135,6 +2173,11 @@ class MainWindow(QMainWindow):
             retenu = str(config.resolve())
         table[workspace] = retenu
         self.settings.setValue(K_CONFIG, table)
+
+    def _run_configuration_path(self, path: str) -> str:
+        if self.run_tabs and self.workspace is not None:
+            return self.run_tabs.configuration_path(self, self.workspace.path, path)
+        return path
         self.settings.sync()
 
     def _remember_workspace(self, chemin: str) -> None:
@@ -2188,7 +2231,7 @@ class MainWindow(QMainWindow):
 
     def _profile_configuration_path(self, profile: ExecutionProfile) -> str:
         """Use embedded YAML when present, otherwise the current Run Tests YAML."""
-        if not profile.configuration_name and not profile.configuration_text:
+        if self.run_tabs or not profile.configuration_name and not profile.configuration_text:
             return self.workspace.config_path if self.workspace is not None else ""
         root = Path(QStandardPaths.writableLocation(
             QStandardPaths.AppDataLocation)) / "profile-configurations"

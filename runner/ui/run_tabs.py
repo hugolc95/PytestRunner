@@ -7,7 +7,8 @@ workspace. Requests queued here are snapshots, never callbacks into a draft.
 from __future__ import annotations
 
 from copy import deepcopy
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass, field, replace
+from hashlib import sha256
 import json
 from pathlib import Path
 from uuid import uuid4
@@ -36,6 +37,8 @@ class RunTab:
     floating: QMainWindow | None = None
     placeholder: QWidget | None = None
     progress: tuple[int, int] = (0, 0)
+    configurations: dict[str, str] = field(default_factory=dict)
+    configuration_sources: dict[str, str] = field(default_factory=dict)
 
     @property
     def name(self):
@@ -185,6 +188,58 @@ class RunTabsController(QObject):
     def entry_for(self, context):
         return next((entry for entry in self.entries if entry.context is context), None)
 
+    def configuration_path(self, context, workspace, source=""):
+        """Import a YAML into this tab's persistent copy, preserving its text."""
+        entry = self.entry_for(context)
+        if entry is None:
+            return source
+        key = str(Path(workspace).resolve())
+        folder = sha256(key.encode("utf-8")).hexdigest()[:16]
+        target = context.history.racine / "run-configurations" / entry.identifier / folder / "config.yaml"
+        if source and not Path(source).is_absolute():
+            source = str(Path(workspace) / source)
+        if source and Path(source).resolve() != target.resolve():
+            content = Path(source).read_bytes()
+            target.parent.mkdir(parents=True, exist_ok=True)
+            temporary = target.with_suffix(".tmp")
+            temporary.write_bytes(content)
+            temporary.replace(target)
+            origin = str(Path(source).resolve())
+            for other in self.entries:
+                if other is not entry and other.configurations.get(key) == str(Path(source)):
+                    origin = other.configuration_sources.get(key, "")
+                    break
+            entry.configuration_sources[key] = origin
+        elif not target.exists():
+            import yaml
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(yaml.safe_dump(context.workspace.settings or {}, sort_keys=False), encoding="utf-8")
+        entry.configurations[key] = str(target)
+        return str(target)
+
+    def ensure_configuration(self, context):
+        if context.workspace is None or self.entry_for(context) is None:
+            return True
+        try:
+            path = self.configuration_path(context, context.workspace.path, context.workspace.config_path)
+        except OSError as exc:
+            ErrorDialog.show_error(context, "Could not prepare this run's configuration",
+                                   "The run configuration could not be copied.", str(exc))
+            return False
+        context.workspace = replace(context.workspace, config_path=path)
+        return True
+
+    def configuration_env(self, context, env):
+        from runner.domain.reader_isolation import ENV_CONFIG, ENV_CONFIG_SOURCE, ENV_READER
+        result = dict(env)
+        result.pop(ENV_READER, None)
+        entry = self.entry_for(context)
+        if entry is not None and context.workspace is not None:
+            key = str(Path(context.workspace.path).resolve())
+            result[ENV_CONFIG] = context.workspace.config_path
+            result[ENV_CONFIG_SOURCE] = entry.configuration_sources.get(key, "")
+        return result
+
     def is_locked(self, context):
         entry = self.entry_for(context)
         return bool(entry and entry.state in ("waiting", "running", "finalizing"))
@@ -225,6 +280,8 @@ class RunTabsController(QObject):
     def _register(self, context, page):
         entry = RunTab(context, page, uuid4().hex)
         self.entries.append(entry)
+        if not self._restoring:
+            self.ensure_configuration(context)
         self.stack.addWidget(page)
         self.footer_stack.addWidget(context.statusBar())
         self.window.preferences.attach_context(context)
@@ -264,6 +321,7 @@ class RunTabsController(QObject):
         context.navigation.hide()
         context.menuBar().hide()
         context._interpreter_override = source._interpreter_override
+        context._configuration_profile = getattr(source, "_configuration_profile", "")
         from runner.ui.main_window import K_RECENT
         context.workspace_combo.addItems(self.window.settings.value(K_RECENT, [], type=list))
         if source.workspace is not None:
@@ -332,7 +390,7 @@ class RunTabsController(QObject):
                 ErrorDialog.show_error(context, "Could not queue the run",
                                        "The configuration snapshot could not be saved.", str(exc))
                 return False
-        entry.job = QueuedRun(request, deepcopy(env), deepcopy(profile), snapshot)
+        entry.job = QueuedRun(request, self.configuration_env(context, deepcopy(env)), deepcopy(profile), snapshot)
         if queued:
             entry.state = "waiting"
             self.queue.append(entry)
@@ -450,6 +508,8 @@ class RunTabsController(QObject):
         entry = self.entries[index]
         menu = QMenu(self.tabs)
         menu.addAction("Rename run…", lambda: self.rename(entry))
+        configure = menu.addAction("Edit run configuration…", lambda: self.edit_configuration(entry))
+        configure.setEnabled(entry.context.workspace is not None and not self.is_locked(entry.context))
         menu.addSeparator()
         menu.addAction("Duplicate as a new draft", lambda: self.duplicate(entry))
         menu.addAction("Reattach tab" if entry.floating else "Detach tab",
@@ -476,6 +536,10 @@ class RunTabsController(QObject):
         context.run_name_button.setText(context._pending_run_name or "Run name (optional)")
         self.refresh_labels()
         self.schedule_save()
+
+    def edit_configuration(self, entry):
+        self.show_context(entry.context)
+        entry.context._show_page("yaml")
 
     def move_waiting(self, entry, delta):
         index = self.queue.index(entry)
@@ -591,6 +655,10 @@ class RunTabsController(QObject):
             workspace = context.workspace
             geometry = entry.floating.saveGeometry().toBase64().data().decode("ascii") if entry.floating else ""
             data.append(dict(
+                identifier=entry.identifier,
+                configurations=entry.configurations,
+                configuration_sources=entry.configuration_sources,
+                configuration_profile=getattr(context, "_configuration_profile", ""),
                 workspace=workspace.path if workspace else "",
                 config=workspace.config_path if workspace else "",
                 name=context._pending_run_name,
@@ -632,6 +700,14 @@ class RunTabsController(QObject):
                 if path and not Path(path).is_dir():
                     continue
                 context = self.window if index == 0 else self.new_run(self.window)
+                entry = self.entry_for(context)
+                identifier = item.get("identifier", "")
+                if isinstance(identifier, str) and len(identifier) == 32 and all(c in "0123456789abcdef" for c in identifier):
+                    entry.identifier = identifier
+                for key in ("configurations", "configuration_sources"):
+                    mapping = item.get(key, {})
+                    if isinstance(mapping, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
+                        setattr(entry, key, dict(mapping))
                 if path:
                     context.workspace = Workspace.load(path, item.get("config", ""))
                     context.workspace_combo.setCurrentText(path)
@@ -646,6 +722,7 @@ class RunTabsController(QObject):
                     if isinstance(state, str) and state:
                         widget.restoreState(QByteArray.fromBase64(state.encode("ascii")))
                 context._pending_run_name = item.get("name", "")
+                context._configuration_profile = item.get("configuration_profile", "")
                 context.run_name_button.setText(context._pending_run_name or "Run name (optional)")
                 profile = item.get("profile")
                 if isinstance(profile, dict):
@@ -684,11 +761,12 @@ class RunTabsController(QObject):
         collecting = context._collector is not None and context._collector.isRunning()
         context.browse_button.setEnabled(not locked and not collecting)
         context.load_button.setEnabled(not locked and not collecting)
-        context.config_button.setEnabled(context.workspace is not None and not locked and not self.busy)
-        context.reader_config_button.setEnabled(context.workspace is not None and not locked and not self.busy)
-        context.workspace_config_button.setEnabled(context.workspace is not None and not locked and not self.busy)
-        context.act_config.setEnabled(context.workspace is not None and not locked and not self.busy)
-        context.yaml_page.setEnabled(not locked and not self.busy)
+        editable_configuration = context.workspace is not None and not locked and not collecting
+        context.config_button.setEnabled(editable_configuration)
+        context.reader_config_button.setEnabled(editable_configuration)
+        context.workspace_config_button.setEnabled(editable_configuration)
+        context.act_config.setEnabled(editable_configuration)
+        context.yaml_page.setEnabled(editable_configuration)
         for button in (context.select_all_button, context.select_none_button):
             button.setEnabled(not locked and bool(context.model._by_nodeid)
                               and not context.profile_tree_button.isChecked())

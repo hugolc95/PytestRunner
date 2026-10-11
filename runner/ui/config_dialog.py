@@ -203,9 +203,11 @@ class ConfigDialog(QDialog):
     saved = Signal(str)
 
     def __init__(self, config_path: str, readers_connus=(), parent=None,
-                 candidats=(), workspace_path: str = "", embedded: bool = False, interpreter: str = ''):
+                 candidats=(), workspace_path: str = "", embedded: bool = False, interpreter: str = '',
+                 configuration_resolver=None):
         super().__init__(parent)
         self.path = Path(config_path)
+        self._configuration_resolver = configuration_resolver
         self._embedded = embedded
         self._workspace_path = (Path(workspace_path) if workspace_path
                                 else self.path.parent)
@@ -257,6 +259,10 @@ class ConfigDialog(QDialog):
         self.choose_file_button.setObjectName("Ghost")
         self.choose_file_button.setToolTip(
             "Choose another .yml or .yaml file, including in a subfolder")
+        if self._configuration_resolver is not None:
+            etiquette.setText("Run file")
+            self.choose_file_button.setText("Import YAML…")
+            self.choose_file_button.setToolTip("Copy a YAML into this run without changing the source file")
         self.choose_file_button.clicked.connect(self._choisir_fichier)
 
         rangee.addWidget(etiquette)
@@ -419,6 +425,8 @@ class ConfigDialog(QDialog):
     # ------------------------------------------------------------- chargement
 
     def _libelle_candidat(self, chemin: Path) -> str:
+        if self._configuration_resolver is not None and chemin == self.path:
+            return "Run configuration"
         try:
             return chemin.relative_to(self._workspace_path).as_posix()
         except ValueError:
@@ -455,6 +463,18 @@ class ConfigDialog(QDialog):
             return
 
         perdues = len(self._modifications())
+        if self._configuration_resolver is not None:
+            try:
+                choisi = self._configuration_resolver(choisi)
+            except OSError as exc:
+                self._dire(f"Could not import configuration: {exc}", alerte=True)
+                return
+            position = self.file_combo.findData(choisi)
+            if position < 0:
+                position = self._ajouter_candidat(Path(choisi))
+            self.file_combo.blockSignals(True)
+            self.file_combo.setCurrentIndex(position)
+            self.file_combo.blockSignals(False)
         self.path = Path(choisi)
         self.setWindowTitle(f"Configuration — {self.path.name}")
         self.chemin_label.setText(str(self.path))

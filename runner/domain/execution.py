@@ -14,7 +14,7 @@ import tempfile
 import time
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -221,14 +221,20 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
     Leve RuntimeError avec un message lisible : c'est ce message que
     l'interface affichera, il ne doit pas etre une stacktrace.
     """
-    with marker_probe() as (args_plugin, dossier_plugin, fichier_markers), diagnostics.diagnostic_probe() as (diagnostic_args, diagnostic_dir, diagnostic_file):
+    configuration = (env or {}).get(ENV_CONFIG, "")
+    configuration_plugin = reader_plugin(configuration) if configuration else nullcontext(([], ""))
+    with (
+        marker_probe() as (args_plugin, dossier_plugin, fichier_markers),
+        diagnostics.diagnostic_probe() as (diagnostic_args, diagnostic_dir, diagnostic_file),
+        configuration_plugin as (configuration_args, configuration_dir),
+    ):
         commande = [interpreter, "-m", "pytest", "--collect-only", "-q",
-                    PYTEST_IMPORT_MODE, *args_plugin, *diagnostic_args]
+                    PYTEST_IMPORT_MODE, *args_plugin, *diagnostic_args, *configuration_args]
         environnement = markers.environment(env, fichier_markers)
         environnement[diagnostics.ENV_OUT] = diagnostic_file
         _prepend_pythonpath(
             environnement,
-            [dossier_plugin, diagnostic_dir, *_suite_import_paths(workspace)],
+            [dossier_plugin, diagnostic_dir, *([configuration_dir] if configuration_dir else []), *_suite_import_paths(workspace)],
         )
 
         try:
@@ -323,8 +329,10 @@ class ReaderRun:
             env[ENV_BUILD_NUMBER] = str(self.request.build_number)
         if self.reader.name:
             env[ENV_READER] = self.reader.name
-            if self.request.config_path:
-                env[ENV_CONFIG] = self.request.config_path
+        else:
+            env.pop(ENV_READER, None)
+        if self.request.config_path:
+            env[ENV_CONFIG] = self.request.config_path
         paths = [dossier_plugin]
         if suite_root is not None:
             paths.append(str(suite_root))
@@ -345,7 +353,7 @@ class ReaderRun:
         final_junit = self._junit_path()
         partial_junits: list[str] = []
 
-        with reader_plugin(self.request.config_path if self.reader.name else "") as (
+        with reader_plugin(self.request.config_path) as (
                 plugin_args, plugin_dir):
             for group_index, (suite_root, suite_nodeids) in enumerate(groups):
                 if self._cancelled:

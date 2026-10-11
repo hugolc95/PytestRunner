@@ -306,10 +306,11 @@ def test_a_file_with_no_setting_says_so(qapp, tmp_path):
 # ------------------------------------------------------- place dans la fenetre
 
 @pytest.fixture
-def fenetre(qapp, tmp_path):
+def fenetre(qapp, tmp_path, monkeypatch):
     from PySide6.QtCore import QSettings
 
     from runner.ui.main_window import APP, ORG, MainWindow
+    monkeypatch.setattr("runner.domain.history.dossier", lambda: tmp_path / "history")
 
     QSettings(ORG, APP).clear()
     f = MainWindow()
@@ -332,15 +333,12 @@ def test_the_run_actions_have_a_row_of_their_own(fenetre):
     chemin du workspace -- qu'on ne touche qu'une fois par session. Une rangee
     a eux repond aux deux : a portee, et sans confusion sur ce qui agit.
     """
-    panel = fenetre.run_header.execution.layout()
-    barre = next(panel.itemAt(i).layout() for i in range(panel.count())
-                 if panel.itemAt(i).layout() is not None
-                 and panel.itemAt(i).layout().indexOf(fenetre.run_button) >= 0)
-    dedans = {barre.itemAt(i).widget() for i in range(barre.count())}
-
-    assert {fenetre.run_button, fenetre.stop_button, fenetre.rerun_button} <= dedans
-    assert fenetre.workspace_combo not in dedans
-    assert fenetre.load_button not in dedans
+    column = fenetre.run_button.parentWidget()
+    assert fenetre.run_header.execution.isAncestorOf(column)
+    assert fenetre.stop_button.parentWidget() is column
+    assert fenetre.rerun_button.parentWidget() is column
+    assert not column.isAncestorOf(fenetre.workspace_combo)
+    assert not column.isAncestorOf(fenetre.load_button)
 
 
 def test_workspace_and_run_panels_both_sit_above_the_tree(fenetre):
@@ -349,7 +347,7 @@ def test_workspace_and_run_panels_both_sit_above_the_tree(fenetre):
         assert _hauteur(fenetre, fenetre.workspace_combo) < _hauteur(fenetre, fenetre.search)
         assert _hauteur(fenetre, fenetre.run_button) < _hauteur(fenetre, fenetre.search)
         assert fenetre.workspace_combo.parentWidget() is fenetre.run_header.environment
-        assert fenetre.run_button.parentWidget() is fenetre.run_header.execution
+        assert fenetre.run_header.execution.isAncestorOf(fenetre.run_button)
     finally:
         fenetre.hide()
 
@@ -487,7 +485,7 @@ def test_browse_can_choose_a_yaml_in_a_subfolder(qapp, tmp_path, monkeypatch):
     assert _champ(dialogue, "Reader").depart == "Nested"
 
 
-def test_choosing_the_first_config_remembers_its_relative_subfolder(
+def test_choosing_the_first_config_remembers_an_independent_run_copy(
         fenetre, tmp_path, monkeypatch):
     from runner.domain.workspace import Workspace
 
@@ -507,9 +505,9 @@ def test_choosing_the_first_config_remembers_its_relative_subfolder(
 
     fenetre.open_config_dialog()
 
-    assert fenetre._config_retenue(str(tmp_path)) == str(
-        Path(".Campaign") / "campaign.yml")
-    assert Path(fenetre.workspace.config_path) == config
+    assert fenetre._config_retenue(str(tmp_path)) == fenetre.workspace.config_path
+    assert Path(fenetre.workspace.config_path) != config
+    assert Path(fenetre.workspace.config_path).read_bytes() == config.read_bytes()
     assert recharges == [True]
 
 
