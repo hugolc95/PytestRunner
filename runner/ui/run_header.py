@@ -174,13 +174,14 @@ class StructuredRunHeader(QWidget):
         self.atr_presentation = ResponsiveAtr(window.reader_atr)
         # A full-width compact line keeps long ATRs readable without squeezing
         # the reader name or falling back to the ATR details button.
-        reader_layout.addWidget(self.atr_presentation, 1, 0, 1, 2)
+        reader_layout.addWidget(self.atr_presentation, 1, 1)
         reader_layout.setColumnStretch(0, 0)
         reader_layout.setColumnStretch(1, 2)
         reader_layout.setColumnStretch(2, 0)
         execution_fields = QHBoxLayout()
         execution_fields.setContentsMargins(0, 0, 0, 0)
         execution_fields.setSpacing(t.SPACE_2)
+        execution_fields.setAlignment(Qt.AlignTop)
         window.readers_bar.set_integrated()
         self._move(reader_column, window.readers_bar)
         reader_layout.addWidget(self.reader_fields, 2, 1)
@@ -189,7 +190,7 @@ class StructuredRunHeader(QWidget):
         # the right column in selector / ATR / run-readers order.
         commands = QVBoxLayout()
         commands.setSpacing(t.SPACE_2)
-        commands.addStretch()
+        commands.setAlignment(Qt.AlignTop)
         window.run_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._move(commands, window.run_button)
         secondary = QHBoxLayout()

@@ -39,6 +39,10 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     atr_top = window.run_header.atr_presentation.mapTo(execution, window.run_header.atr_presentation.rect().topLeft()).y()
     readers_top = window.readers_bar.mapTo(execution, window.readers_bar.rect().topLeft()).y()
     assert selector_top < atr_top < readers_top
+    assert window.run_button.mapTo(execution, window.run_button.rect().topLeft()).y() == selector_top
+    selector_left = window.reader_selector.mapTo(execution, window.reader_selector.rect().topLeft()).x()
+    assert window.run_header.atr_presentation.mapTo(execution, window.run_header.atr_presentation.rect().topLeft()).x() == selector_left
+    assert window.readers_bar.mapTo(execution, window.readers_bar.rect().topLeft()).x() == selector_left
     assert window.run_button.mapTo(execution, window.run_button.rect().topRight()).x() < reader_position.x()
     assert abs(window.reader_selector.geometry().right() - window.reader_controls.contentsRect().right()) <= 1
     results = window.run_header.results
