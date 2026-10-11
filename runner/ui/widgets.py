@@ -885,8 +885,11 @@ class ReaderToggle(QPushButton):
     def restyle(self) -> None:
         # Eteinte plutot qu'absente : un lecteur decoche garde sa place et sa
         # couleur en creux, donc on voit d'un coup d'oeil ce qu'on a exclu.
+        compact = (f"min-height: {t.CONTROL_MD - 2 * t.SPACE_1}px;"
+                   f"max-height: {t.CONTROL_MD - 2 * t.SPACE_1}px;"
+                   if getattr(self, "_integrated", False) else "")
         self.setStyleSheet(theme.pill_style(t.reader_color(self._index),
-                                            actif=self.isChecked()))
+                                            actif=self.isChecked()) + compact)
 
 
 class ReaderBar(QWidget):
@@ -944,6 +947,8 @@ class ReaderBar(QWidget):
             if self._integrated:
                 toggle.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
                 toggle.setMinimumWidth(76)
+                toggle.setFixedHeight(t.CONTROL_MD)
+                toggle.restyle()
             toggle.setVisible(not self._integrated or position < 3)
         for toggle in overflow:
             action = self._overflow_menu.addAction(toggle.toolTip())

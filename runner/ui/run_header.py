@@ -123,9 +123,9 @@ class StructuredRunHeader(QWidget):
         environment_fields = QGridLayout()
         environment_fields.setContentsMargins(0, 0, 0, 0)
         environment_fields.setHorizontalSpacing(t.SPACE_3)
-        environment_fields.setVerticalSpacing(t.SPACE_2)
+        environment_fields.setVerticalSpacing(t.SPACE_1)
         workspace_column = QVBoxLayout()
-        workspace_column.setSpacing(t.SPACE_2)
+        workspace_column.setSpacing(t.SPACE_1)
         workspace_column.setAlignment(Qt.AlignTop)
         self.reader_fields = QWidget()
         reader_column = QVBoxLayout(self.reader_fields)
@@ -133,11 +133,10 @@ class StructuredRunHeader(QWidget):
         reader_column.setSpacing(t.SPACE_2)
         reader_column.setAlignment(Qt.AlignTop)
         environment_fields.addLayout(workspace_column, 0, 0, Qt.AlignTop)
-        environment_fields.addWidget(self.reader_fields, 0, 1, Qt.AlignTop)
+        environment_fields.addWidget(self.reader_fields, 1, 0, Qt.AlignTop)
         self.environment_fields = environment_fields
         self._window = window
         environment_fields.setColumnStretch(0, 1)
-        environment_fields.setColumnStretch(1, 1)
         environment.addLayout(environment_fields)
 
         # Reparent the actual controls; do not duplicate actions or state.
@@ -158,6 +157,7 @@ class StructuredRunHeader(QWidget):
         window.run_name_stack.setMinimumWidth(90)
         window.run_name_stack.setMaximumWidth(260)
         window.run_name_stack.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        self._move(workspace_actions, window.run_name_stack)
         workspace_column.addLayout(workspace_actions)
 
         window.reader_controls.layout().setContentsMargins(0, 0, 0, 0)
@@ -181,16 +181,10 @@ class StructuredRunHeader(QWidget):
         self._move(reader_column, window.readers_bar)
         actions = QHBoxLayout()
         actions.setSpacing(t.SPACE_2)
-        for control in (window.run_button, window.stop_button):
+        for control in (window.run_button, window.stop_button, window.rerun_button):
             self._move(actions, control)
         actions.addStretch()
         execution.addLayout(actions)
-        secondary_actions = QHBoxLayout()
-        secondary_actions.setSpacing(t.SPACE_2)
-        self._move(secondary_actions, window.rerun_button)
-        secondary_actions.addStretch()
-        self._move(secondary_actions, window.run_name_stack)
-        execution.addLayout(secondary_actions)
         self._move(execution, window.profile_chip)
         execution.addStretch()
 
@@ -220,7 +214,6 @@ class StructuredRunHeader(QWidget):
     def update_environment(self):
         visible = not self._window.readers_bar.isHidden()
         self.reader_fields.setVisible(visible)
-        self.environment_fields.setColumnStretch(1, 1 if visible else 0)
 
     @staticmethod
     def _panel(title):
@@ -229,7 +222,7 @@ class StructuredRunHeader(QWidget):
         panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
-        layout.setSpacing(t.SPACE_2)
+        layout.setSpacing(t.SPACE_1)
         layout.setAlignment(Qt.AlignTop)
         heading = QLabel(title)
         heading.setObjectName("Faint")
@@ -255,7 +248,7 @@ class StructuredRunHeader(QWidget):
         else:
             self._grid.addWidget(self.results, 0, 2)
         for column in range(3):
-            self._grid.setColumnStretch(column, 2 if column == 0 else 0 if compact and column == 2 else 1)
+            self._grid.setColumnStretch(column, 0 if compact and column == 2 else 1)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

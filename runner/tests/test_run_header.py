@@ -15,6 +15,8 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     window.resize(width, 900)
     window.show()
     window.reader_controls.show()
+    from runner.domain.models import Reader
+    window.readers_bar.set_readers([Reader(index=i, name=f"Reader {i}") for i in range(2)])
     window.run_header.update_environment()
     window.view_failures_button.show()
     window.profile_chip_label.setText("Qualification")
@@ -27,6 +29,9 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     assert window.run_header.execution.isAncestorOf(window.reader_controls)
     assert window.run_header.execution.isAncestorOf(window.reader_selector)
     assert window.run_header.environment.isAncestorOf(window.readers_bar)
+    assert window.readers_bar.mapTo(window.run_header, window.readers_bar.rect().topLeft()).y() > (
+        window.load_button.mapTo(window.run_header, window.load_button.rect().bottomLeft()).y()
+    )
     for i, panel in enumerate(panels):
         assert window.run_header.rect().contains(panel.geometry())
         for other in panels[i + 1:]:
@@ -60,6 +65,7 @@ def test_integrated_readers_overflow_keeps_selection_and_reload(qtbot):
     bar.show()
     qtbot.wait(10)
     visible = [toggle for toggle in bar._toggles if toggle.isVisible()]
+    assert all(toggle.height() == 32 for toggle in visible)
     assert all(not first.geometry().intersects(second.geometry())
                for first, second in zip(visible, visible[1:]))
     assert sum(not toggle.isHidden() for toggle in bar._toggles) == 3
