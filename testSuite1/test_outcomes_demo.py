@@ -28,7 +28,7 @@ def test_toujours_ignore():
     assert False  # jamais execute : le skip intervient avant
 
 
-@pytest.mark.skipif(1 == 1, reason="Condition demo toujours vraie")
+#@pytest.mark.skipif(1 == 1, reason="Condition demo toujours vraie")
 def test_ignore_sous_condition():
     """SKIPPED via une condition evaluee a la collecte, pas un skip brut."""
     assert False  # jamais execute non plus

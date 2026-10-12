@@ -22,3 +22,11 @@ incremental_log: false
 # (menu Configuration). Absent ou vide : le reglage global s'applique.
 #
 # python_executable: C:\Python313-64\python.exe
+
+Reader : OnmikeyCardman 3x21 Reader 1
+Readers :
+  - OnmikeyCardman 3x21 Reader 0
+  - OnmikeyCardman 3x21 Reader 1
+
+
+

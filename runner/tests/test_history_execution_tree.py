@@ -6,6 +6,192 @@ from runner.ui.history_execution_tree import HistoryExecutionModel
 from runner.ui.tree_model import NODEID_ROLE
 
 
+def test_history_parent_header_reserves_space_for_issues(qtbot, tmp_path):
+    from PySide6.QtCore import QPoint
+    from runner.ui.widgets import StatusRibbon
+
+    history = History(tmp_path)
+    for reader in ('Reader A', 'Reader B'):
+        history.add(RunEntry(id='r', timestamp=1, workspace='', reader=reader,
+                            executions=(('suite/test_a.py::test_one', 'FAILED'),)))
+    window = HistoryWindow(history)
+    qtbot.addWidget(window)
+    window.resize(1400, 950)
+    window.show()
+    window.execution_tree.setCurrentIndex(window.execution_model.index(0, 0))
+    detail = window.execution_detail
+    qtbot.waitUntil(lambda: detail.failures.isVisible())
+    assert detail.group_path.isHidden()
+    assert detail.failures_title.isHidden()
+    assert not detail.ribbons_host.findChildren(StatusRibbon)
+    assert detail.group_name.mapTo(detail, QPoint()).y() == detail.group_total.mapTo(detail, QPoint()).y()
+    assert detail.failures.mapTo(detail, QPoint()).y() - detail.group_name.mapTo(detail, QPoint()).y() < 135
+    assert detail.failures.count() == 1
+
+
+def test_group_heading_uses_tab_row_and_returns_when_space_is_limited(qtbot, tmp_path):
+    history = History(tmp_path)
+    history.add(RunEntry(id='r', timestamp=1, workspace='', reader='A',
+                        executions=(('suite/test_a.py::test_one', 'FAILED'),)))
+    window = HistoryWindow(history)
+    qtbot.addWidget(window)
+    window.resize(1800, 950)
+    window.show()
+    root = window.execution_model.index(0, 0)
+    window.execution_tree.setCurrentIndex(root)
+    qtbot.waitUntil(lambda: window.group_corner.isVisible())
+    assert window.group_corner_name.text() == 'suite'
+    assert '1 test' in window.group_corner_total.text()
+    assert window.execution_detail.group_heading.isHidden()
+    window.tabs.setCurrentIndex(1)
+    assert window.group_corner.isHidden()
+    window.tabs.setCurrentIndex(0)
+    assert window.group_corner.isVisible()
+    window.tabs.setFixedWidth(750)
+    qtbot.waitUntil(lambda: window.group_corner.isHidden())
+    assert not window.execution_detail.group_heading.isHidden()
+
+
+def test_parent_summary_counts_tests_once_and_keeps_reader_unknowns(qtbot):
+    from runner.domain.models import Status
+    model = HistoryExecutionModel()
+    good, bad, error = ('suite/security/test_auth.py::TestAuth::test_login[valid]',
+                        'suite/security/test_auth.py::TestAuth::test_login[invalid]',
+                        'suite/test_api.py::test_setup')
+    entries = [RunEntry(id='r', timestamp=1, workspace='', reader='A',
+                        executions=((good, 'PASSED'), (bad, 'FAILED'), (bad, 'PASSED'), (error, 'ERROR'))),
+               RunEntry(id='r', timestamp=1, workspace='', reader='B',
+                        executions=((good, 'PASSED'), (bad, 'PASSED')))]
+    model.set_entries(entries)
+    counts, failures, total, verdicts = model.group_results(model.index(0, 0))
+    assert total == 3
+    assert verdicts == {Status.PASSED: 1, Status.FAILED: 1, Status.ERROR: 1}
+    assert counts[0] == {Status.PASSED: 1, Status.FAILED: 1, Status.ERROR: 1}
+    assert counts[1] == {Status.PASSED: 2, Status.PENDING: 1}
+    assert failures == [(bad, 0), (error, 0)]
+    model.set_entry(entries[0])
+    counts, failures, total, verdicts = model.group_results(model.index(0, 0), 0)
+    assert total == 3
+    assert sum(counts[0].values()) == 4
+    assert failures == [(bad, 0), (error, 0)]
+
+
+def test_history_parent_recap_navigates_directly_to_error_and_back(qtbot, tmp_path):
+    nodeid = 'suite/security/test_auth.py::TestAuth::test_login[invalid]'
+    output = tmp_path / 'output.txt'
+    output.write_text('================ FAILURES ================\n'
+                      '________ TestAuth.test_login[invalid] ________\n'
+                      'E AssertionError: invalid PIN\n', encoding='utf-8')
+    history = History(tmp_path)
+    history.add(RunEntry(id='r', timestamp=1, workspace='', reader='A',
+                         executions=((nodeid, 'FAILED'),), output_file=str(output)))
+    window = HistoryWindow(history)
+    qtbot.addWidget(window)
+    model = window.execution_model
+    root = model.index(0, 0)
+    window.execution_tree.setCurrentIndex(root)
+    detail = window.execution_detail
+    assert detail.group_name.text() == 'suite'
+    assert '1 test' in detail.group_total.text()
+    assert '1 failed' in detail.group_summary.text()
+    assert 'invalid PIN' in detail.failures.item(0).text()
+    window.execution_tree.collapseAll()
+    detail._sur_echec(detail.failures.item(0))
+    assert detail._nodeid == nodeid
+    assert window.execution_tree.currentIndex().data(NODEID_ROLE) == nodeid
+    assert window.execution_tree.isExpanded(root)
+    window._back_to_history_group()
+    assert window.execution_tree.currentIndex() == root
+    assert detail.group_name.text() == 'suite'
+    window.reader_selector.setCurrentIndex(1)
+    assert window._history_parent_index is None
+    window._back_to_history_group()  # A reset model must never reuse an old index.
+
+
+def test_expand_errors_keeps_successful_branches_closed(qtbot, tmp_path):
+    history = History(tmp_path)
+    history.add(RunEntry(id='r', timestamp=1, workspace='', reader='A', executions=(
+        ('suite/security/test_ok.py::test_ok', 'PASSED'),
+        ('suite/api/test_error.py::TestApi::test_error', 'ERROR'))))
+    window = HistoryWindow(history)
+    qtbot.addWidget(window)
+    window._expand_history_failures()
+    model = window.execution_model
+    root = model.index(0, 0)
+    assert window.execution_tree.isExpanded(root)
+    good_branch = model.index(0, 0, root)
+    bad_branch = model.index(1, 0, root)
+    assert not window.execution_tree.isExpanded(good_branch)
+    assert window.execution_tree.isExpanded(bad_branch)
+    assert not window.execution_tree.isExpanded(model.index_for_nodeid('2'))
+
+
+def test_every_parent_level_in_history_has_a_scoped_recap(qtbot, tmp_path):
+    history = History(tmp_path)
+    history.add(RunEntry(id='r', timestamp=1, workspace='', reader='A', executions=(
+        ('suite/cards/test_auth.py::TestAuth::test_login[valid]', 'PASSED'),
+        ('suite/cards/test_auth.py::TestAuth::test_login[invalid]', 'FAILED'))))
+    window = HistoryWindow(history)
+    qtbot.addWidget(window)
+    index = window.execution_model.index(0, 0)
+    for name in ('suite', 'cards', 'test_auth.py', 'TestAuth', 'test_login'):
+        window.execution_tree.setCurrentIndex(index)
+        assert window.execution_detail.group_name.text() == name
+        assert '2 tests' in window.execution_detail.group_total.text()
+        assert '1 passed' in window.execution_detail.group_summary.text()
+        assert '1 failed' in window.execution_detail.group_summary.text()
+        assert window.execution_detail.failures.count() == 1
+        index = window.execution_model.index(0, 0, index)
+
+
+def test_parent_unknown_results_are_not_reported_as_passed(qtbot):
+    from runner.domain.models import Status
+    model = HistoryExecutionModel()
+    model.set_entry(RunEntry(id='old', timestamp=1, workspace='',
+                             nodeids=('suite/test_a.py::test_unknown',)))
+    counts, failures, total, verdicts = model.group_results(model.index(0, 0), 0)
+    assert counts == {0: {Status.PENDING: 1}}
+    assert verdicts == {Status.PENDING: 1}
+    assert total == 1 and not failures
+
+
+def test_history_issues_have_explicit_verdicts_and_filters_without_saved_traces(qtbot, tmp_path):
+    from runner.domain.models import Status
+    from runner.ui.group_issue_delegate import ISSUE_ROLE
+    history = History(tmp_path)
+    history.add(RunEntry(id='r', timestamp=1, workspace='', reader='A', executions=(
+        ('suite/test_a.py::test_failed', 'FAILED'),
+        ('suite/test_a.py::test_error', 'ERROR'),
+        ('suite/test_a.py::test_passed', 'PASSED'))))
+    window = HistoryWindow(history)
+    qtbot.addWidget(window)
+    root = window.execution_model.index(0, 0)
+    window.execution_tree.setCurrentIndex(root)
+    panel = window.execution_detail
+    assert panel.issue_filters.tabText(1) == 'Failed (1)'
+    assert panel.issue_filters.tabText(2) == 'Errors (1)'
+    assert panel.failures.item(0).data(ISSUE_ROLE)[0] is Status.FAILED
+    assert panel.failures.item(1).data(ISSUE_ROLE)[0] is Status.ERROR
+    panel.issue_filters.setCurrentIndex(2)
+    assert panel.failures.item(0).isHidden()
+    assert not panel.failures.item(1).isHidden()
+    panel.issue_filters.setCurrentIndex(1)
+    assert not panel.failures.item(0).isHidden()
+    assert panel.failures.item(1).isHidden()
+    for button in (window.history_expand_failures, window.history_expand_all, window.history_collapse_all):
+        assert button.text() == '' and not button.icon().isNull()
+        assert button.accessibleName()
+    window.history_expand_all.click()
+    assert window.execution_tree.isExpanded(root)
+    window.history_collapse_all.click()
+    assert not window.execution_tree.isExpanded(root)
+    assert window.execution_tree.currentIndex() == root
+    window.resize(1280, 900)
+    window.show()
+    qtbot.waitExposed(window)
+    assert not panel.failures.grab().isNull()  # Exercise the delegate's painting.
+
+
 def test_repeated_profile_executions_keep_separate_results(qtbot, tmp_path):
     results = (('suite/test_a.py::test_one', 'FAILED'),
                ('other/test_b.py::test_two', 'SKIPPED'),

@@ -1,10 +1,125 @@
 from PySide6.QtCore import Qt
 from runner.domain.history import History, RunEntry
 from runner.ui.history_dashboard import group_entries, HistoryWindow
-from runner.ui.comparison_page import ComparisonPage, NODE
+from runner.ui.comparison_page import ComparisonPage, NODE, GROUP_NODES, GROUP_PATH
 
 
 NODEID = 'suite/test_auth.py::TestAuth::test_login'
+
+
+def test_compact_matrix_selection_and_trace_leave_top_tree_unchanged(qtbot, tmp_path):
+    from PySide6.QtCore import QUrl
+    from PySide6.QtWidgets import QHeaderView
+    from runner.domain.failures import Failure
+    history = populate(tmp_path)
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    page._failures[('r1', 'Reader A')] = {NODEID: Failure(
+        NODEID, body='unique trace\nE AssertionError: bad <value>')}
+    parent = find_test(page).parent()
+    page.resize(1450, 1000)
+    page.show()
+    page.tree.setCurrentIndex(parent)
+    assert page.detail_stack.currentWidget() is page.group_matrix
+    assert 'bad <value>' in page.group_preview.toPlainText()
+    page.group_preview.anchorClicked.emit(QUrl('trace:1:0'))
+    assert 'unique trace' in page.group_preview.toPlainText()
+    assert page.tree.currentIndex() == parent
+    assert page.differences.isChecked()
+    page.group_preview.anchorClicked.emit(QUrl('trace:1:0'))
+    assert 'unique trace' not in page.group_preview.toPlainText()
+    for column in range(page.group_table.columnCount()):
+        assert page.group_table.horizontalHeader().sectionResizeMode(column) == QHeaderView.Interactive
+        assert '\n' not in page.group_table.horizontalHeaderItem(column).text()
+    assert 'passed' in page.group_table.horizontalHeaderItem(1).toolTip()
+    assert not page.group_table.grab().isNull()  # Exercise real badge painting.
+
+
+def test_parent_recap_counts_all_tests_and_opens_hidden_failure(qtbot, tmp_path):
+    from PySide6.QtCore import QUrl
+    from runner.domain.failures import Failure
+    stable = 'suite/test_auth.py::TestAuth::test_stable'
+    error = 'suite/test_auth.py::TestAuth::test_setup'
+    outside = 'other/test_other.py::test_other'
+    history = History(tmp_path)
+    for run, status in [('old', 'PASSED'), ('new', 'FAILED')]:
+        history.add(RunEntry(id=run, timestamp=1 if run == 'old' else 2,
+                            workspace='/tests', reader='A', executions=(
+                                (NODEID, status), (NODEID, status),
+                                (stable, 'PASSED'), (error, 'ERROR'), (outside, 'FAILED'))))
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    page._failures[('new', 'A')] = {NODEID: Failure(NODEID, body='E AssertionError: bad <value>')}
+    page._failures[('old', 'A')] = {}
+    parent = find_test(page).parent()
+    page.tree.setCurrentIndex(parent)
+    text = page.group_scope.text() + page.group_preview.toPlainText()
+    assert '3 tests · 2 runs' in text
+    assert '1 test with differences' in text
+    assert page.group_table.item(0, 2).text() == 'FAILED'
+    assert page.group_table.item(1, 1).text() == 'ERROR'
+    assert 'bad <value>' in text
+    assert 'test_other' not in text
+    assert set(parent.data(GROUP_NODES)) == {NODEID, stable, error}
+    assert page._group_links == [NODEID, error]
+    path = tuple(parent.data(GROUP_PATH))
+    page.detail.anchorClicked.emit(QUrl('group-test:1'))
+    assert not page.differences.isChecked()  # The unchanged error was hidden.
+    assert page.tree.currentIndex().data(NODE) == error
+    assert page._test == error
+    assert 'Back to group' in page.detail.toPlainText()
+    page.detail.anchorClicked.emit(QUrl('group-back:'))
+    assert tuple(page.tree.currentIndex().data(GROUP_PATH)) == path
+    assert '3 tests · 2 runs' in page.group_scope.text()
+    page.reference.setCurrentIndex(1)
+    assert tuple(page.tree.currentIndex().data(GROUP_PATH)) == path
+    assert 'Reference' in page.group_table.horizontalHeaderItem(2).text()
+
+
+def test_parent_recap_distinguishes_missing_unknown_and_reader_scope(qtbot, tmp_path):
+    history = History(tmp_path)
+    sibling = 'suite/test_auth.py::TestAuth::test_other'
+    for run, values in [('old', ((NODEID, ''), (sibling, 'SKIPPED'))),
+                        ('new', ((sibling, 'SKIPPED'),))]:
+        history.add(RunEntry(id=run, timestamp=1 if run == 'old' else 2,
+                            workspace='/tests', reader='A', executions=values))
+        history.add(RunEntry(id=run, timestamp=1 if run == 'old' else 2,
+                            workspace='/tests', reader='B', executions=((NODEID, 'ERROR'),)))
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    page.tree.setCurrentIndex(find_test(page).parent())
+    page.reader.setCurrentIndex(page.reader.findData('A'))
+    text = page.group_scope.text() + ' '.join(
+        page.group_table.horizontalHeaderItem(i).text() for i in range(page.group_table.columnCount()))
+    assert '2 tests · 2 runs' in text
+    assert page.group_table.item(0, 1).text() == 'Unknown'
+    assert page.group_table.item(0, 2).text() == 'Not run'
+    assert 'skipped' in page.group_table.horizontalHeaderItem(1).toolTip()
+    assert 'ERROR' not in text
+    assert '1 test with differences' in text
+
+
+def test_parameter_parent_recap_is_scoped_to_its_cases(qtbot, tmp_path):
+    history = History(tmp_path)
+    nodes = [NODEID + '[valid]', NODEID + '[invalid]',
+             'suite/test_auth.py::TestAuth::test_other']
+    for run in range(2):
+        history.add(RunEntry(id=str(run), timestamp=run+1, workspace='/tests', reader='A',
+                            executions=tuple((node, 'PASSED' if run == 0 else 'FAILED') for node in nodes)))
+    page = ComparisonPage(history)
+    qtbot.addWidget(page)
+    page.set_groups(group_entries(history.entries()))
+    parent = page._find_index(NODE, nodes[0]).parent()
+    page.tree.setCurrentIndex(parent)
+    assert set(parent.data(GROUP_NODES)) == set(nodes[:2])
+    text = page.group_scope.text() + ' '.join(page.group_table.item(i, 0).text()
+                                           for i in range(page.group_table.rowCount()))
+    assert '2 tests · 2 runs' in text
+    assert 'test_other' not in text
+    assert 'test_login[valid]' in text and 'test_login[invalid]' in text
 
 
 def test_identical_results_show_explicit_message_and_can_be_revealed(qtbot, tmp_path):

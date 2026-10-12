@@ -122,6 +122,32 @@ class HistoryExecutionModel(TestTreeModel):
     def reader_for_index(self, index):
         return self._contexts.get(index.internalPointer().node.nodeid) if index.isValid() else None
 
+    def group_results(self, index, reader_index=-1):
+        """Summarize tests, stopping before reader/attempt rows in global mode."""
+        counts, verdicts, failures, failure_statuses = {}, {}, [], {}
+
+        def visit(row):
+            nodeid = self._original_ids.get(row.node.nodeid)
+            if nodeid:
+                verdict = self.status_for(row, 0)
+                verdicts[nodeid] = worst((verdicts.get(nodeid, verdict), verdict))
+                results = ([(i, self.status_for(child, 0)) for i, child in enumerate(row.children)]
+                           if reader_index == -1 else [(reader_index, verdict)])
+                for i, status in results:
+                    own = counts.setdefault(i, {})
+                    own[status] = own.get(status, 0) + 1
+                    if status.is_bad:
+                        failures.append((nodeid, i))
+                        failure_statuses[nodeid, i] = worst((failure_statuses.get((nodeid, i), status), status))
+                return
+            for child in row.children:
+                visit(child)
+
+        visit(index.internalPointer())
+        global_counts = Counter(verdicts.values())
+        self.group_failure_statuses = failure_statuses
+        return counts, list(dict.fromkeys(failures)), len(verdicts), dict(global_counts)
+
     def flags(self, index):
         return Qt.ItemIsEnabled | Qt.ItemIsSelectable if index.isValid() else Qt.NoItemFlags
 

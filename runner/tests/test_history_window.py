@@ -324,6 +324,26 @@ def test_rerun_emits_the_whole_group(fenetre, qtbot):
     assert signal.args == [group]
 
 
+def test_history_columns_can_be_resized_and_rename_is_an_icon(fenetre, qtbot):
+    from PySide6.QtWidgets import QHeaderView
+
+    qtbot.addWidget(fenetre)
+    fenetre.show()
+    qtbot.waitUntil(lambda: fenetre.rename_button.isVisible())
+    assert fenetre.rename_button.text() == ""
+    assert not fenetre.rename_button.icon().isNull()
+    assert fenetre.rename_button.geometry().left() >= fenetre.detail_title.geometry().right()
+    assert abs(fenetre.rename_button.geometry().center().y()
+               - fenetre.detail_title.geometry().center().y()) < 8
+    for header in (fenetre.execution_tree.header(), fenetre.issues_table.horizontalHeader()):
+        for column in range(header.count()):
+            assert header.sectionResizeMode(column) == QHeaderView.Interactive
+            header.resizeSection(column, 180 + column * 40)
+            assert header.sectionSize(column) == 180 + column * 40
+    fenetre.rename_button.click()
+    assert fenetre.rename_edit.isVisible()
+
+
 def test_main_window_rerun_restores_tests_and_readers(historique):
     from runner.ui.main_window import MainWindow
 

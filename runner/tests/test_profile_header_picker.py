@@ -72,6 +72,28 @@ def test_header_profiles_preview_compatibility_and_run_target(qtbot, monkeypatch
     assert launches == ['Smoke', ['test_a.py::test_a']]
 
 
+def test_run_columns_remain_adjustable_in_both_tree_modes(qtbot, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QHeaderView
+    from runner.domain.models import Reader
+
+    window = make_window(qtbot, monkeypatch, tmp_path)
+    window.model.set_tree(build_tree(['test_a.py::test_a']))
+    window.model.set_readers((Reader('Reader A', 0), Reader('Reader B', 1)))
+    window._size_reader_columns()
+    window._load_execution_profile(ExecutionProfile(
+        name='Profile', sequence=['test_a.py::test_a'],
+        configuration_name='', configuration_text=''))
+    window.show()
+    for profile_mode in (False, True):
+        window._set_profile_tree_visible(profile_mode)
+        tree = window.profile_tree if profile_mode else window.tree
+        header = tree.header()
+        for column in range(header.count()):
+            assert header.sectionResizeMode(column) == QHeaderView.Interactive
+        header.resizeSection(0, 360)
+        assert window.tree_view_switch.width() == 354
+
+
 def test_profiles_cannot_replace_the_active_run(qtbot, monkeypatch, tmp_path):
     window = make_window(qtbot, monkeypatch, tmp_path)
     window.model.set_tree(build_tree(['test_a']))

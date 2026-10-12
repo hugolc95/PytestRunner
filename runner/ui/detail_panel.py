@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStackedWidget,
+    QTabBar,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -41,6 +42,7 @@ from runner.domain.models import Reader, Status
 from runner.domain.stress import MODE_UNTIL_FAIL, StressAttempt, StressSummary
 from runner.ui import icons, theme
 from runner.ui import tokens as t
+from runner.ui.group_issue_delegate import GroupIssueDelegate, ISSUE_ROLE
 from runner.ui.widgets import (
     EmptyState,
     ReaderBadge,
@@ -370,10 +372,18 @@ class DetailPanel(QWidget):
         self.group_name.setWordWrap(True)
         self.group_total = QLabel()
         self.group_total.setObjectName("Muted")
+        self.group_summary = QLabel()
+        self.group_summary.setWordWrap(True)
 
         colonne.addWidget(self.group_path)
-        colonne.addWidget(self.group_name)
-        colonne.addWidget(self.group_total)
+        self.group_heading = QWidget()
+        title_row = QHBoxLayout(self.group_heading)
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(t.SPACE_2)
+        title_row.addWidget(self.group_name, 1)
+        title_row.addWidget(self.group_total)
+        colonne.addWidget(self.group_heading)
+        colonne.addWidget(self.group_summary)
 
         # Une barre par lecteur, empilees : c'est en les superposant qu'on voit
         # que l'un est plus rouge que l'autre.
@@ -386,9 +396,17 @@ class DetailPanel(QWidget):
         self.failures_title = QLabel()
         self.failures_title.setObjectName("Muted")
         colonne.addWidget(self.failures_title)
+        self.issue_filters = QTabBar()
+        self.issue_filters.setExpanding(False)
+        self.issue_filters.addTab("All")
+        self.issue_filters.addTab("Failed")
+        self.issue_filters.addTab("Errors")
+        self.issue_filters.currentChanged.connect(self._filter_group_issues)
+        colonne.addWidget(self.issue_filters)
 
         self.failures = QListWidget()
         self.failures.setObjectName("Failures")
+        self.failures.setItemDelegate(GroupIssueDelegate(self.failures))
         self.failures.itemActivated.connect(self._sur_echec)
         self.failures.itemClicked.connect(self._sur_echec)
         colonne.addWidget(self.failures, 1)
@@ -555,40 +573,59 @@ class DetailPanel(QWidget):
 
     def show_group(self, path: str, name: str, readers: tuple[Reader, ...],
                    counts: dict, failures: list,
-                   durations: dict[int, float | None] | None = None) -> None:
+                   durations: dict[int, float | None] | None = None,
+                   test_count: int | None = None, overall_counts: dict | None = None,
+                   failure_details: dict | None = None, failure_statuses: dict | None = None) -> None:
         """Fiche d'un dossier, d'un fichier ou d'un test parametre.
 
         `counts` donne, par index de lecteur, le nombre de tests par statut.
         `failures` liste des couples (nodeid, index du lecteur). `durations`
         est la somme des tentatives connues sous ce noeud, par lecteur.
         """
-        self._dernier_groupe = (path, name, readers, counts, failures, durations)
+        self._dernier_groupe = (path, name, readers, counts, failures, durations,
+                               test_count, overall_counts, failure_details, failure_statuses)
         self._nodeid = ""
         self.stack.setCurrentIndex(self.PAGE_GROUPE)
 
         self.group_path.setText(path)
         # La racine n'a pas d'ancetre : l'etiquette vide prendrait quand meme
         # sa hauteur et decalerait le titre sans rien dire.
-        self.group_path.setVisible(bool(path))
+        compact = test_count is not None
+        self.group_path.setVisible(bool(path) and not compact)
         self.group_name.setText(name)
+        self.group_name.setToolTip(f"{path} / {name}" if path else name)
+        self.group_name.setWordWrap(not compact)
+        self.stack.widget(self.PAGE_GROUPE).layout().setSpacing(
+            t.SPACE_1 if compact else t.SPACE_2)
 
         total = sum(sum(c.values()) for c in counts.values()) or 0
-        tests = total // max(1, len(readers) or 1)
+        tests = test_count if test_count is not None else total // max(1, len(readers) or 1)
         texte = (f"{tests} test{'s' if tests > 1 else ''}"
                 + (f" × {len(readers)} readers" if len(readers) > 1 else ""))
+        if test_count is not None:
+            texte += f" · {total} results"
         duree = self._texte_duree(readers or (Reader("", 0),), durations or {})
         if duree:
             texte += f"   ·   {duree}"
         self.group_total.setText(texte)
-        self._remplir_rubans(readers, counts)
-        self._remplir_echecs(readers, failures)
+        self.group_summary.hide()
+        self.group_summary.setText(" · ".join(
+            f"{number} {('unknown' if status is Status.PENDING else status.name.lower())}"
+            for status, number in (overall_counts or {}).items() if number))
+        self._remplir_rubans(readers, counts, compact=compact)
+        self._remplir_echecs(readers, failures, failure_details, failure_statuses)
+        self.failures_title.setVisible(not compact)
 
-    def _remplir_rubans(self, readers, counts: dict) -> None:
+    def _remplir_rubans(self, readers, counts: dict, compact: bool = False) -> None:
         while self._ribbons.count():
             element = self._ribbons.takeAt(0)
             widget = element.widget()
             if widget is not None:
                 widget.deleteLater()
+
+        self._ribbons.setContentsMargins(0, 0 if compact else t.SPACE_2,
+                                        0, 0 if compact else t.SPACE_2)
+        self._ribbons.setSpacing(t.SPACE_1 if compact else t.SPACE_3)
 
         for lecteur in readers or (Reader("", 0),):
             propres = counts.get(lecteur.index, {})
@@ -605,9 +642,10 @@ class DetailPanel(QWidget):
             entete.addWidget(self._chiffres(propres))
             ligne.addLayout(entete)
 
-            ruban = StatusRibbon()
-            ruban.set_counts(propres)
-            ligne.addWidget(ruban)
+            if not compact:
+                ruban = StatusRibbon()
+                ruban.set_counts(propres)
+                ligne.addWidget(ruban)
             self._ribbons.addWidget(bloc)
 
     def _chiffres(self, propres: dict) -> QLabel:
@@ -632,8 +670,10 @@ class DetailPanel(QWidget):
             f"font-size: {t.TEXT_SM}px; background: transparent;")
         return etiquette
 
-    def _remplir_echecs(self, readers, failures: list) -> None:
+    def _remplir_echecs(self, readers, failures: list, details: dict | None = None,
+                       statuses: dict | None = None) -> None:
         self.failures.clear()
+        self.issue_filters.setVisible(details is not None and bool(failures))
         noms = {r.index: r.short_name for r in readers}
 
         if not failures:
@@ -663,10 +703,41 @@ class DetailPanel(QWidget):
             if len(readers) > 1:
                 suffixe = "   —   " + ", ".join(noms[i] for i in lecteurs)
             item = QListWidgetItem(court + suffixe)
+            if details is not None:
+                messages = list(dict.fromkeys(
+                    strip_ansi(details[(nodeid, i)].headline).splitlines()[0] for i in lecteurs
+                    if details.get((nodeid, i)) is not None))
+                item.setText(item.text() + "\n" + (" · ".join(messages) or "No saved error details."))
             item.setToolTip(nodeid)
             item.setData(Qt.UserRole, nodeid)
-            item.setForeground(QColor(t.status_color(Status.FAILED)))
+            status = Status.ERROR if details is not None and any(
+                details.get((nodeid, i)) is not None and details[nodeid, i].kind == "error"
+                for i in lecteurs) else Status.FAILED
+            if statuses is not None:
+                from runner.domain.models import worst
+                status = worst(statuses.get((nodeid, i), Status.FAILED) for i in lecteurs)
+            if details is not None:
+                message = " · ".join(messages) or "No saved error details."
+                item.setData(ISSUE_ROLE, (status, court, ", ".join(noms[i] for i in lecteurs), message))
+                item.setToolTip(nodeid + "\n" + ", ".join(noms[i] for i in lecteurs) + "\n" + message)
+            item.setForeground(QColor(t.status_color(status)))
             self.failures.addItem(item)
+        if details is not None:
+            counts = {Status.FAILED: 0, Status.ERROR: 0}
+            for i in range(self.failures.count()):
+                counts[self.failures.item(i).data(ISSUE_ROLE)[0]] += 1
+            self.failures_title.setText("Tests with issues")
+            for i, text in enumerate((f"All ({combien})", f"Failed ({counts[Status.FAILED]})",
+                                      f"Errors ({counts[Status.ERROR]})")):
+                self.issue_filters.setTabText(i, text)
+            self._filter_group_issues(self.issue_filters.currentIndex())
+
+    def _filter_group_issues(self, tab):
+        status = (None, Status.FAILED, Status.ERROR)[max(0, tab)]
+        for i in range(self.failures.count()):
+            item = self.failures.item(i)
+            data = item.data(ISSUE_ROLE)
+            item.setHidden(bool(data and status is not None and data[0] is not status))
 
     def _sur_echec(self, item) -> None:
         """Cliquer un echec y emmene : c'est le geste suivant, une fois sur

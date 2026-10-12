@@ -182,6 +182,13 @@ class HistoryTabBar(QTabBar):
         return self.tabSizeHint(index)
 
 
+class _GroupCorner(QWidget):
+    preferred_width = 0
+
+    def sizeHint(self):
+        return QSize(self.preferred_width, max(36, super().sizeHint().height()))
+
+
 def _history_tabs() -> QTabWidget:
     tabs = QTabWidget()
     bar = HistoryTabBar()
@@ -717,12 +724,19 @@ class HistoryWindow(QDialog):
         self.detail_subtitle.setObjectName("Muted")
         names = QVBoxLayout()
         names.setSpacing(0)
-        names.addWidget(self.detail_title)
-        names.addWidget(self.detail_subtitle)
-        self.rename_button = QPushButton("Rename")
-        self.rename_button.setObjectName("Ghost")
+        title_row = QHBoxLayout()
+        title_row.setSpacing(t.SPACE_2)
+        title_row.addWidget(self.detail_title)
+        self.rename_button = QPushButton()
+        self.rename_button.setObjectName("IconSm")
+        self.rename_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
+        self.rename_button.setToolTip("Rename run")
+        self.rename_button.setAccessibleName("Rename run")
         self.rename_button.clicked.connect(self._begin_rename)
-        names.addWidget(self.rename_button)
+        title_row.addWidget(self.rename_button)
+        title_row.addStretch()
+        names.addLayout(title_row)
+        names.addWidget(self.detail_subtitle)
         self.rename_edit = QLineEdit()
         self.rename_edit.setMaxLength(100)
         self.rename_edit.setPlaceholderText("Run name (optional)")
@@ -836,6 +850,20 @@ class HistoryWindow(QDialog):
         self.configuration_view = QPlainTextEdit()
         self.configuration_view.setReadOnly(True)
         self.tabs.addTab(self.configuration_view, "Configuration")
+        self.group_corner = _GroupCorner()
+        corner_layout = QHBoxLayout(self.group_corner)
+        corner_layout.setContentsMargins(t.SPACE_2, 0, 0, 0)
+        self.group_corner_name = QLabel()
+        self.group_corner_name.setObjectName("Title")
+        self.group_corner_name.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.group_corner_total = QLabel()
+        self.group_corner_total.setObjectName("Muted")
+        corner_layout.addWidget(self.group_corner_name, 1)
+        corner_layout.addWidget(self.group_corner_total)
+        self.tabs.setCornerWidget(self.group_corner, Qt.TopRightCorner)
+        self.group_corner.hide()
+        self.tabs.currentChanged.connect(self._sync_group_corner)
+        self.tabs.installEventFilter(self)
 
         self.flaky_button = QPushButton("Unstable tests")
         self.flaky_button.setObjectName("Ghost")
@@ -873,12 +901,33 @@ class HistoryWindow(QDialog):
         self.execution_tree.setAnimated(False)
         self.execution_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.execution_tree.header().setStretchLastSection(False)
-        self.execution_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.execution_tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.execution_tree.header().setSectionResizeMode(QHeaderView.Interactive)
+        self.execution_tree.header().setMinimumSectionSize(48)
+        self.execution_tree.setColumnWidth(0, 240)
         self.execution_tree.setColumnWidth(1, 110)
         left = QVBoxLayout()
         left.setContentsMargins(0, 0, 0, 0)
-        left.addWidget(self.execution_title)
+        self.execution_title.setWordWrap(True)
+        actions = QHBoxLayout()
+        actions.addWidget(self.execution_title, 1)
+        def tree_action(glyph, tooltip, slot):
+            button = QPushButton()
+            button.setObjectName("Icon")
+            button.setIcon(icons.icon(glyph, t.TEXT_MUTED))
+            button.setToolTip(tooltip)
+            button.setAccessibleName(tooltip)
+            button.clicked.connect(slot)
+            return button
+        self.history_parent_back = tree_action("mdi.arrow-left", "Back to group", self._back_to_history_group)
+        self.history_parent_back.hide()
+        self.history_expand_failures = tree_action("mdi.filter-outline", "Expand failing branches", self._expand_history_failures)
+        self.history_expand_all = tree_action("mdi.unfold-more-horizontal", "Expand all", self.execution_tree.expandAll)
+        self.history_collapse_all = tree_action("mdi.unfold-less-horizontal", "Collapse all", self.execution_tree.collapseAll)
+        actions.addWidget(self.history_parent_back)
+        actions.addWidget(self.history_expand_failures)
+        actions.addWidget(self.history_expand_all)
+        actions.addWidget(self.history_collapse_all)
+        left.addLayout(actions)
         left.addWidget(self.execution_tree, 1)
 
         tree_panel = QWidget()
@@ -886,6 +935,7 @@ class HistoryWindow(QDialog):
         self.execution_detail = DetailPanel()
         self.execution_detail.body.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.execution_detail.open_output.connect(lambda: self.tabs.setCurrentIndex(2))
+        self.execution_detail.test_chosen.connect(self._choose_history_failure)
         self.execution_tree.selectionModel().currentChanged.connect(self._show_execution_detail)
         split = QSplitter(Qt.Horizontal)
         split.addWidget(tree_panel)
@@ -906,8 +956,9 @@ class HistoryWindow(QDialog):
         table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
         table.horizontalHeader().setStretchLastSection(False)
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        table.horizontalHeader().setMinimumSectionSize(48)
+        table.setColumnWidth(0, 420)
         table.setColumnWidth(1, 220)
         return table
 
@@ -943,6 +994,12 @@ class HistoryWindow(QDialog):
 
     def _restyle_local(self) -> None:
         self._style_result_counts()
+        self.rename_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
+        for button, glyph in ((self.history_parent_back, "mdi.arrow-left"),
+                              (self.history_expand_failures, "mdi.filter-outline"),
+                              (self.history_expand_all, "mdi.unfold-more-horizontal"),
+                              (self.history_collapse_all, "mdi.unfold-less-horizontal")):
+            button.setIcon(icons.icon(glyph, t.TEXT_MUTED))
 
     # --------------------------------------------------------------- donnees
 
@@ -1130,11 +1187,30 @@ class HistoryWindow(QDialog):
         self._update_compare_action()
 
     def eventFilter(self, watched, event):
+        if (watched is getattr(self, 'tabs', None)
+                and event.type() in (QEvent.Resize, QEvent.Show)):
+            QTimer.singleShot(0, self._sync_group_corner)
         if (watched is self.run_list.viewport()
                 and event.type() in (QEvent.Resize, QEvent.Show)):
             # Wait until Qt has laid out the newly visible viewport.
             self._cards_timer.start(0)
         return super().eventFilter(watched, event)
+
+    def _sync_group_corner(self, *_):
+        """Use the empty tab-row space, with a fallback for narrow windows."""
+        detail = self.execution_detail
+        available = self.tabs.width() - self.tabs.tabBar().sizeHint().width() - t.SPACE_3
+        visible = (self.tabs.currentIndex() == 0
+                   and detail.stack.currentIndex() == detail.PAGE_GROUPE
+                   and available >= 300)
+        if visible:
+            self.group_corner.preferred_width = available
+            self.group_corner.updateGeometry()
+            self.group_corner_name.setText(detail.group_name.text())
+            self.group_corner_name.setToolTip(detail.group_name.toolTip())
+            self.group_corner_total.setText(detail.group_total.text())
+        self.group_corner.setVisible(visible)
+        detail.group_heading.setVisible(not visible)
 
     def _materialize_cards(self) -> None:
         """Ne construit que les cartes proches de la zone visible.
@@ -1294,7 +1370,10 @@ class HistoryWindow(QDialog):
         self.reader_selector.setCurrentIndex(index + 1)
         self.reader_selector.blockSignals(False)
         self._result_filter = None
+        self._history_parent_index = None
+        self.history_parent_back.hide()
         self.execution_detail.clear()
+        self._sync_group_corner()
         self.execution_tree.setUpdatesEnabled(False)
         try:
             if index == -1:
@@ -1358,7 +1437,26 @@ class HistoryWindow(QDialog):
             return
         nodeid = index.data(NODEID_ROLE)
         if not nodeid:
-            self.execution_detail.clear()
+            self._history_parent_index = index
+            self.history_parent_back.hide()
+            counts, problems, total, overall = self.execution_model.group_results(
+                index, self._selected_execution_reader)
+            group = self._execution_group
+            readers = tuple(Reader(group.entries[i].reader or "No reader", i) for i in counts)
+            details = {}
+            for node, i in problems:
+                if i not in self._history_failure_indexes:
+                    self._history_failure_indexes[i] = index_failures(group.entries[i].output())
+                details[node, i] = failure_for(self._history_failure_indexes[i], node)
+            ancestors, parent = [], index.parent()
+            while parent.isValid():
+                ancestors.insert(0, parent.data())
+                parent = parent.parent()
+            self.execution_detail.show_group(" / ".join(ancestors), index.data(), readers,
+                                             counts, problems, test_count=total,
+                                             overall_counts=overall, failure_details=details,
+                                             failure_statuses=dict(self.execution_model.group_failure_statuses))
+            self._sync_group_corner()
             return
         group = self._execution_group
         reader_index = self._selected_execution_reader
@@ -1378,6 +1476,44 @@ class HistoryWindow(QDialog):
                 self._history_failure_indexes[i] = index_failures(entry.output())
             failures[i] = failure_for(self._history_failure_indexes[i], nodeid)
         self.execution_detail.show_test(nodeid, tuple(readers), statuses, failures)
+        self._sync_group_corner()
+
+    def _choose_history_failure(self, nodeid):
+        if self._result_filter is not None:
+            self._filter_results(self._result_filter)
+        for key, original in self.execution_model._original_ids.items():
+            if original != nodeid:
+                continue
+            index = self.execution_model.index_for_nodeid(key)
+            if not index.isValid():
+                continue
+            parent = index.parent()
+            while parent.isValid():
+                self.execution_tree.expand(parent)
+                parent = parent.parent()
+            self.execution_tree.setCurrentIndex(index)
+            self.execution_tree.scrollTo(index)
+            self.history_parent_back.setVisible(True)
+            return
+
+    def _back_to_history_group(self):
+        index = getattr(self, "_history_parent_index", None)
+        if index is not None and index.isValid():
+            self.execution_tree.setCurrentIndex(index)
+            self.execution_tree.scrollTo(index)
+
+    def _expand_history_failures(self):
+        self.execution_tree.collapseAll()
+        def visit(parent):
+            for row in range(self.execution_model.rowCount(parent)):
+                index = self.execution_model.index(row, 0, parent)
+                if not self.execution_model.status_for(index.internalPointer(), 0).is_bad:
+                    continue
+                if not index.data(NODEID_ROLE):
+                    self.execution_tree.expand(index)
+                    visit(index)
+        from PySide6.QtCore import QModelIndex
+        visit(QModelIndex())
 
     def _fill_output(self, group: RunGroup) -> None:
         readers = tuple(Reader(entry.reader or "No reader", index)

@@ -5,13 +5,14 @@ import json
 from pathlib import Path
 
 import yaml
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QStandardItem, QStandardItemModel, QTextDocument
+from PySide6.QtCore import Qt, QUrl, QRect, QTimer
+from PySide6.QtGui import QColor, QDesktopServices, QStandardItem, QStandardItemModel, QTextDocument, QPainter
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
     QCheckBox, QTreeView, QSplitter, QTextBrowser, QTabWidget, QDialog,
     QListWidget, QListWidgetItem, QDialogButtonBox, QLineEdit, QHeaderView,
     QFileDialog, QMessageBox, QStackedWidget, QSizePolicy, QLayout,
+    QTableWidget, QTableWidgetItem, QStyledItemDelegate, QStyleOptionViewItem, QStyle,
 )
 from runner.domain.models import Status, worst
 from runner.domain.tree import build_tree
@@ -22,6 +23,38 @@ from runner.ui import icons, tokens as t
 from runner.ui.comparison_export import export_comparison_xlsx
 
 NODE = Qt.UserRole + 31
+GROUP_NODES = Qt.UserRole + 32
+GROUP_PATH = Qt.UserRole + 33
+RESULT = Qt.UserRole + 34
+
+
+class ComparisonStatusDelegate(QStyledItemDelegate):
+    """Aligned status badges, including a neutral badge for missing results."""
+    def paint(self, painter, option, index):
+        if index.column() == 0:
+            return super().paint(painter, option, index)
+        background = QStyleOptionViewItem(option)
+        self.initStyleOption(background, index)
+        background.text = ''
+        option.widget.style().drawControl(QStyle.CE_ItemViewItem, background, painter, option.widget)
+        status = Status.__members__.get(index.data(RESULT))
+        color = t.TEXT_MUTED if status is None else t.status_color(status)
+        label = index.data(Qt.DisplayRole) or ''
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setFont(option.font)
+        width = min(option.rect.width() - 16, option.fontMetrics.horizontalAdvance(label) + 38)
+        rect = QRect(option.rect.left() + 8, option.rect.center().y() - 13, max(0, width), 26)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(t.blend(color, t.BG_RAISED, 0.15)))
+        painter.drawRoundedRect(rect, 5, 5)
+        icon = icons.icon('mdi.minus-circle-outline', color) if status is None else icons.status_icon(status)
+        icon.paint(painter, QRect(rect.left() + 7, rect.top() + 6, 14, 14))
+        painter.setPen(QColor(color))
+        text_rect = rect.adjusted(26, 0, -6, 0)
+        painter.drawText(text_rect, Qt.AlignVCenter,
+                         option.fontMetrics.elidedText(label, Qt.ElideRight, max(0, text_rect.width())))
+        painter.restore()
 
 
 def records_by_reader(group):
@@ -69,6 +102,9 @@ class ComparisonPage(QWidget):
         self._records = []
         self._failures = {}
         self._test = ''
+        self._group_path = None
+        self._return_group_path = None
+        self._group_links = []
         self._expanded_traces = set()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(t.SPACE_4, t.SPACE_4, t.SPACE_4, t.SPACE_4)
@@ -136,9 +172,46 @@ class ComparisonPage(QWidget):
         self.detail.setOpenExternalLinks(False)
         self.detail.setOpenLinks(False)
         self.detail.anchorClicked.connect(self._toggle_trace)
+        self.detail_stack = QStackedWidget()
+        self.detail_stack.addWidget(self.detail)
+        self.group_matrix = QWidget()
+        group_layout = QVBoxLayout(self.group_matrix)
+        group_layout.setContentsMargins(8, 8, 8, 0)
+        group_layout.setSpacing(6)
+        self.group_title = QLabel()
+        self.group_title.setObjectName('Title')
+        self.group_title.setWordWrap(True)
+        self.group_scope = QLabel()
+        self.group_scope.setObjectName('Muted')
+        self.group_scope.setWordWrap(True)
+        group_layout.addWidget(self.group_title)
+        group_layout.addWidget(self.group_scope)
+        self.group_table = QTableWidget()
+        self.group_table.setEditTriggers(QTreeView.NoEditTriggers)
+        self.group_table.setSelectionBehavior(QTreeView.SelectRows)
+        self.group_table.setSelectionMode(QTreeView.SingleSelection)
+        self.group_table.verticalHeader().hide()
+        self.group_table.verticalHeader().setDefaultSectionSize(38)
+        self.group_table.horizontalHeader().setStretchLastSection(False)
+        self.group_table.horizontalHeader().setMinimumSectionSize(110)
+        self.group_table.setItemDelegate(ComparisonStatusDelegate(self.group_table))
+        self.group_table.setMinimumHeight(100)
+        self.group_table.currentCellChanged.connect(self._select_group_row)
+        self.group_preview = QTextBrowser()
+        self.group_preview.setOpenLinks(False)
+        self.group_preview.setOpenExternalLinks(False)
+        self.group_preview.setMinimumHeight(100)
+        self.group_preview.anchorClicked.connect(lambda url: self._toggle_trace(url, self.group_preview))
+        group_split = QSplitter(Qt.Vertical)
+        group_split.addWidget(self.group_table)
+        group_split.addWidget(self.group_preview)
+        group_split.setStretchFactor(0, 3)
+        group_split.setStretchFactor(1, 2)
+        group_layout.addWidget(group_split, 1)
+        self.detail_stack.addWidget(self.group_matrix)
         split = QSplitter(Qt.Vertical)
         split.addWidget(self.tree)
-        split.addWidget(self.detail)
+        split.addWidget(self.detail_stack)
         split.setStretchFactor(0, 2)
         split.setStretchFactor(1, 2)
         self.results_stack = QStackedWidget()
@@ -348,6 +421,8 @@ class ComparisonPage(QWidget):
         self.model.clear()
         self.config_model.clear()
         self.detail.clear()
+        self.group_preview.clear()
+        self.detail_stack.setCurrentWidget(self.detail)
         self.results_stack.setCurrentIndex(0)
         self.empty_results.setStyleSheet(
             f'QWidget#ComparisonEmpty {{background:{t.BG_SURFACE};border:1px solid {t.BORDER};border-radius:8px;}}'
@@ -366,9 +441,21 @@ class ComparisonPage(QWidget):
         nodes = list(dict.fromkeys(node for record in self._records for tests in record.values() for node in tests))
         visible = [node for node in nodes if not self.differences.isChecked()
                    or len({self.signature(i, node) for i in range(len(self.groups))}) > 1]
-        def fill(parent, node):
+        full_scopes = {}
+        def collect_scope(node, path=()):
+            path = path + (node.name,)
+            full_scopes[path] = tuple(leaf.nodeid for leaf in node.leaves())
+            for child in node.children:
+                collect_scope(child, path)
+        for root in build_tree(nodes):
+            collect_scope(root)
+
+        def fill(parent, node, path=()):
+            path = path + (node.name,)
             label = QStandardItem(node.name)
             label.setData(node.nodeid, NODE)
+            label.setData(full_scopes[path], GROUP_NODES)
+            label.setData(path, GROUP_PATH)
             label.setToolTip(node.nodeid or node.name)
             label.setIcon(icons.kind_icon(node.kind))
             leaves = [leaf.nodeid for leaf in node.leaves()]
@@ -390,7 +477,7 @@ class ComparisonPage(QWidget):
                 row.append(item)
             parent.appendRow(row)
             for child in node.children:
-                fill(label, child)
+                fill(label, child, path)
         for root in build_tree(visible):
             fill(self.model.invisibleRootItem(), root)
         self.tree.setColumnWidth(0, 340)
@@ -400,7 +487,7 @@ class ComparisonPage(QWidget):
             self.tree.header().setSectionResizeMode(i + 1, QHeaderView.Stretch)
         self.tree.expandToDepth(1)
         self.summary.setText(f'{len(visible)} / {len(nodes)} tests · {len(self.groups)} runs · '
-                             'Compare the same test across columns; select it for reader details.')
+                             'Select a parent for its recap, or a test for reader details.')
         self._build_config(headers, base)
         if not visible:
             self.results_stack.setCurrentWidget(self.empty_results)
@@ -427,7 +514,11 @@ class ComparisonPage(QWidget):
             self.empty_icon.setPixmap(icons.icon('mdi.equal' if complete else 'mdi.information-outline', t.ACCENT).pixmap(32, 32))
             self.show_all_results.setVisible(bool(nodes) and self.differences.isChecked())
             self.summary.setText(f'{len(scoped_nodes)} tests compared · {len(self.groups)} runs · {title}')
-        if self._test in visible:
+        if self._group_path:
+            index = self._find_index(GROUP_PATH, self._group_path)
+            if index.isValid():
+                self.tree.setCurrentIndex(index)
+        elif self._test in visible:
             self._show_detail(self._test)
 
     def _build_config(self, headers, base):
@@ -452,14 +543,166 @@ class ComparisonPage(QWidget):
             self.config_tree.setColumnWidth(i, 280 if i == 0 else 210)
 
     def _select_test(self, index, *_):
+        if not index.isValid():
+            return
         node = index.siblingAtColumn(0).data(NODE)
         if node:
+            self._group_path = None
             self._test = node
             self._show_detail(node)
         else:
-            self.detail.clear()
+            self._test = ''
+            self._group_path = tuple(index.siblingAtColumn(0).data(GROUP_PATH) or ())
+            self._show_group(index.siblingAtColumn(0))
 
-    def _show_detail(self, node):
+    def _find_index(self, role, value):
+        from PySide6.QtCore import QModelIndex
+        def visit(parent=QModelIndex()):
+            for row in range(self.model.rowCount(parent)):
+                index = self.model.index(row, 0, parent)
+                if index.data(role) == value:
+                    return index
+                found = visit(index)
+                if found.isValid():
+                    return found
+            return QModelIndex()
+        return visit()
+
+    def _show_group(self, index):
+        nodes = tuple(index.data(GROUP_NODES) or ())
+        base = max(0, self.reference.currentIndex())
+        changed_nodes = {node for node in nodes if any(
+            self.signature(run, node) != self.signature(base, node)
+            for run in range(len(self.groups)))}
+        issues = [node for node in nodes if node in changed_nodes or any(
+            (status := verdict(self.values(run, node))) is not None and status.is_bad
+            for run in range(len(self.groups)))]
+        self._group_links = issues
+        self.detail_stack.setCurrentWidget(self.group_matrix)
+        self.group_title.setText(' / '.join(index.data(GROUP_PATH) or ()))
+        self.group_scope.setText(
+            f'{len(nodes)} tests · {len(self.groups)} runs · {self.reader.currentText()} · '
+            f'{len(changed_nodes)} test{"s" if len(changed_nodes) != 1 else ""} with differences')
+        headers = ['Test']
+        header_details = []
+        for run, group in enumerate(self.groups):
+            counts = Counter(verdict(self.values(run, node)) for node in nodes)
+            labels = [f'{counts[status]} {self._status_label(status).lower()}'
+                      for status in (Status.PASSED, Status.FAILED, Status.ERROR,
+                                     Status.SKIPPED, Status.PENDING, None) if counts[status]]
+            counters = ' · '.join(labels)
+            reference = ' · Reference' if run == base else ''
+            headers.append(f'{group.display_name}{reference}')
+            header_details.append(counters)
+        self.group_table.blockSignals(True)
+        self.group_table.clear()
+        self.group_table.setRowCount(len(issues))
+        self.group_table.setColumnCount(len(headers))
+        self.group_table.setHorizontalHeaderLabels(headers)
+        for column, text in enumerate(header_details, 1):
+            self.group_table.horizontalHeaderItem(column).setToolTip(text)
+        for row, node in enumerate(issues):
+            item = QTableWidgetItem(node.split('::', 1)[-1].replace('::', ' › '))
+            item.setData(NODE, node)
+            item.setToolTip(node)
+            self.group_table.setItem(row, 0, item)
+            for run in range(len(self.groups)):
+                values = self.values(run, node)
+                status = verdict(values)
+                item = QTableWidgetItem(self._status_label(status))
+                item.setData(RESULT, status.name if status is not None else 'NOT_RUN')
+                item.setToolTip(', '.join(f'{self._status_label(s)}: {n}'
+                                         for s, n in Counter(values).items()) or 'Test not recorded in this run')
+                self.group_table.setItem(row, run + 1, item)
+        header = self.group_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        header.resizeSection(0, 330)
+        for column in range(1, len(headers)):
+            header.resizeSection(column, 200)
+        QTimer.singleShot(0, self._size_group_columns)
+        self.group_table.blockSignals(False)
+        if issues:
+            self.group_table.setCurrentCell(0, 0)
+        else:
+            self.group_preview.setPlainText('No differences or failing tests in this group.')
+
+    @staticmethod
+    def _status_label(status):
+        return 'Not run' if status is None else 'Unknown' if status is Status.PENDING else status.label
+
+    def _select_group_row(self, row, *_):
+        item = self.group_table.item(row, 0) if row >= 0 else None
+        if item is None:
+            return
+        self._test = item.data(NODE)
+        self._show_group_test(self._test)
+
+    def _size_group_columns(self):
+        width = self.group_table.viewport().width()
+        runs = self.group_table.columnCount() - 1
+        if runs < 1:
+            return
+        first = max(220, min(420, int(width * 0.38)))
+        self.group_table.setColumnWidth(0, first)
+        for column in range(1, runs + 1):
+            self.group_table.setColumnWidth(column, max(160, (width - first) // runs))
+
+    def _show_group_test(self, node):
+        base = max(0, self.reference.currentIndex())
+        reader = self.reader.currentData()
+        cards = []
+        for run, group in enumerate(self.groups):
+            status = verdict(self.values(run, node))
+            color = t.TEXT_MUTED if status is None else t.status_color(status)
+            parts = []
+            for entry_index, entry in enumerate(group.entries):
+                if reader is not None and reader != entry.reader:
+                    continue
+                values = self._records[run].get(entry.reader, {}).get(node, ())
+                if not values:
+                    continue
+                key = (group.id, entry.reader)
+                if key not in self._failures:
+                    self._failures[key] = index_failures(entry.output())
+                failure = failure_for(self._failures[key], node)
+                result = ' → '.join(self._status_label(value) for value in values)
+                entry_status = verdict(values)
+                entry_color = t.status_color(entry_status)
+                body = [f'<b>{escape(entry.reader or "No reader")}</b>'
+                        f'<br><span style="color:{entry_color}">{escape(result)}</span>']
+                if failure:
+                    body.append(escape(failure.body if failure.kind == 'skip' else failure.headline))
+                    if failure.kind != 'skip' and failure.body:
+                        expanded = (node, group.id, entry_index) in self._expanded_traces
+                        body.append(f'<a href="trace:{run}:{entry_index}" style="color:{t.ACCENT}">'
+                                     f'{"Hide" if expanded else "Show"} traceback</a>')
+                        if expanded:
+                            body.append(f'<pre style="white-space:pre-wrap">{escape(failure.body)}</pre>')
+                parts.append(f'<table width="100%" cellspacing="0" cellpadding="9" '
+                             f'style="background-color:{t.BG_RAISED}"><tr><td>'
+                             f'{"<br>".join(body)}</td></tr></table>')
+            if not parts:
+                parts.append('No recorded result for this test.')
+            tag = ' · Reference' if run == base else ''
+            cards.append(f'<td valign="top" style="background-color:{t.BG_SURFACE};padding:10px;'
+                         f'border-top:3px solid {color}"><b>{escape(group.display_name)}</b>'
+                         f'<span style="color:{t.TEXT_MUTED}">{tag}</span>'
+                         f'<p style="color:{color}"><b>{escape(self._status_label(status))}</b></p>'
+                         f'{"<br>".join(parts)}</td>')
+        short = node.split('::', 1)[-1].replace('::', ' › ')
+        columns = min(3, max(1, self.group_preview.viewport().width() // 350))
+        rows = ''.join('<tr>' + ''.join(card.replace('<td valign=',
+                       f'<td width="{100 // columns}%" valign=', 1)
+                       for card in cards[start:start + columns]) + '</tr>'
+                       for start in range(0, len(cards), columns))
+        self.group_preview.setHtml(
+            f'<body style="font-family:Segoe UI;font-size:{t.TEXT_SM}px;color:{t.TEXT};">'
+            f'<b>{escape(short)}</b><table width="100%" cellspacing="12">{rows}</table></body>')
+
+    def _show_detail(self, node, browser=None):
+        browser = browser if browser is not None else self.detail
+        if browser is self.detail:
+            self.detail_stack.setCurrentWidget(self.detail)
         reader = self.reader.currentData()
         base = max(0, self.reference.currentIndex())
         baseline = self.signature(base, node)
@@ -470,7 +713,7 @@ class ComparisonPage(QWidget):
             icon = '' if status is None else f'<img src="status:{status.name}" width="14" height="14"> '
             return f'<span style="color:{color};font-weight:600">{icon}{escape(label)}</span>'
         for status in Status:
-            self.detail.document().addResource(QTextDocument.ImageResource, QUrl(f'status:{status.name}'),
+            browser.document().addResource(QTextDocument.ImageResource, QUrl(f'status:{status.name}'),
                                                icons.status_icon(status).pixmap(16, 16).toImage())
         transitions = []
         columns = []
@@ -516,14 +759,39 @@ class ComparisonPage(QWidget):
                            f'style="background-color:{background};border-left:3px solid {border};padding:14px">'
                            f'<b>{escape(group.display_name)}</b> &nbsp;{tag}'
                            f'{"".join(parts) or "<p>Reader not present in this run.</p>"}</td>')
-        self.detail.setHtml(
+        browser.setHtml(
             f'<body style="font-family:Segoe UI;font-size:{t.TEXT_SM}px;color:{t.TEXT};">'
+            + ('<p><a href="group-back">← Back to group</a></p>' if self._return_group_path else '') +
             f'<p style="color:{t.TEXT_MUTED}">TEST DETAILS</p><h3>{escape(node)}</h3>'
             f'{"".join(f"<p>{change}</p>" for change in transitions)}'
             f'<table width="100%" cellspacing="10"><tr>'
             f'{"".join(columns)}</tr></table></body>')
 
-    def _toggle_trace(self, url):
+    def _toggle_trace(self, url, browser=None):
+        browser = browser if browser is not None else self.detail
+        if url.scheme() == 'group-test':
+            try:
+                node = self._group_links[int(url.path())]
+            except (ValueError, IndexError):
+                return
+            self._return_group_path = self._group_path
+            index = self._find_index(NODE, node)
+            if not index.isValid():
+                self.differences.setChecked(False)
+                index = self._find_index(NODE, node)
+            if index.isValid():
+                parent = index.parent()
+                while parent.isValid():
+                    self.tree.expand(parent)
+                    parent = parent.parent()
+                self.tree.setCurrentIndex(index)
+                self.tree.scrollTo(index)
+            return
+        if url.scheme() == 'group-back':
+            index = self._find_index(GROUP_PATH, self._return_group_path)
+            if index.isValid():
+                self.tree.setCurrentIndex(index)
+            return
         if url.scheme() != 'trace' or not self._test:
             return
         try:
@@ -537,9 +805,12 @@ class ComparisonPage(QWidget):
             self._expanded_traces.remove(key)
         else:
             self._expanded_traces.add(key)
-        scroll = self.detail.verticalScrollBar().value()
-        self._show_detail(self._test)
-        self.detail.verticalScrollBar().setValue(scroll)
+        scroll = browser.verticalScrollBar().value()
+        if browser is self.group_preview:
+            self._show_group_test(self._test)
+        else:
+            self._show_detail(self._test, browser)
+        browser.verticalScrollBar().setValue(scroll)
 
     def restyle(self):
         self.rebuild()

@@ -39,4 +39,5 @@ class TreeModeHeader(QWidget):
     def _place(self, *_):
         if self._header is not None:
             self.setGeometry(self._header.sectionViewportPosition(0), 0,
-                             self._header.sectionSize(0), self._header.viewport().height())
+                             max(0, self._header.sectionSize(0) - 6),
+                             self._header.viewport().height())

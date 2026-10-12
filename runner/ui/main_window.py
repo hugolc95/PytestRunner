@@ -1110,7 +1110,9 @@ class MainWindow(QMainWindow):
 
         entete = self.tree.header()
         entete.setStretchLastSection(False)
-        entete.setSectionResizeMode(0, QHeaderView.Stretch)
+        entete.setSectionResizeMode(QHeaderView.Interactive)
+        entete.setMinimumSectionSize(48)
+        entete.resizeSection(0, 420)
 
         self.tree_empty = EmptyState(
             "mdi.folder-search-outline",
@@ -1134,7 +1136,9 @@ class MainWindow(QMainWindow):
         self.profile_tree.setAnimated(False)
         self.profile_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.profile_tree.header().setStretchLastSection(False)
-        self.profile_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.profile_tree.header().setSectionResizeMode(QHeaderView.Interactive)
+        self.profile_tree.header().setMinimumSectionSize(48)
+        self.profile_tree.header().resizeSection(0, 420)
         self.profile_tree.selectionModel().currentChanged.connect(self._select_profile_execution)
         self.left_stack.addWidget(self.profile_tree)
         self.tree_view_switch.attach(self.tree.header())
@@ -2130,7 +2134,8 @@ class MainWindow(QMainWindow):
     def _size_reader_columns(self, tree=None, model=None) -> None:
         """Chaque colonne de lecteur prend la largeur de son titre, UNE fois.
 
-        La largeur est calculee ici et figee, au lieu d'etre confiee a
+        La largeur initiale est calculee ici, puis ajustable a la souris,
+        au lieu d'etre confiee a
         `ResizeToContents`. Ce mode reclame a Qt de re-mesurer chaque ligne de
         la colonne a chaque `dataChanged` -- donc a chaque test qui se termine.
         Mesure sur une suite de 2000 tests : 291 ms par resultat contre 22 ms
@@ -2157,7 +2162,7 @@ class MainWindow(QMainWindow):
                 titre = model.headerData(colonne, Qt.Horizontal, Qt.DisplayRole) or ""
                 # De quoi loger le titre, sa marge de section, et l'icone de statut.
                 largeur = max(metriques.horizontalAdvance(str(titre)) + t.SPACE_8, 72)
-            entete.setSectionResizeMode(colonne, QHeaderView.Fixed)
+            entete.setSectionResizeMode(colonne, QHeaderView.Interactive)
             entete.resizeSection(colonne, largeur)
 
     def _config_retenue(self, workspace: str) -> str:
@@ -3621,6 +3626,10 @@ class MainWindow(QMainWindow):
         colonnes = self.settings.value(K_TREE_COLS)
         if colonnes is not None:
             self.tree.header().restoreState(colonnes)
+            # Older saved layouts used stretched/fixed sections. Keep their
+            # widths, while enabling manual resizing after restoration.
+            self.tree.header().setStretchLastSection(False)
+            self.tree.header().setSectionResizeMode(QHeaderView.Interactive)
 
         self._interpreter_override = self.settings.value(K_INTERPRETER, "", type=str)
         self.apply_theme(self.settings.value(K_THEME, "dark", type=str))
