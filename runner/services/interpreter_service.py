@@ -17,13 +17,14 @@ class ProbeWorker(QThread):
 
     done = Signal(object)  # InterpreterInfo
 
-    def __init__(self, path: str, parent=None):
+    def __init__(self, path: str, parent=None, timeout: float = 15.0):
         super().__init__(parent)
         self._path = path
+        self._timeout = timeout
 
     def run(self) -> None:  # pragma: no cover - execute dans un thread Qt
         # use_cache=False : un "Test" demande par l'utilisateur doit refleter
         # l'etat reel maintenant (pytest vient peut-etre d'etre installe). Le
         # resultat alimente quand meme le cache partage, donc le prochain
         # lancement de tests reste instantane.
-        self.done.emit(interpreter.probe(self._path, use_cache=False))
+        self.done.emit(interpreter.probe(self._path, timeout=self._timeout, use_cache=False))

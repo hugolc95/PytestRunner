@@ -61,6 +61,12 @@ def dash(couleur: str) -> str:
     return _ecrire("dash.svg", _svg(trace), couleur)
 
 
+def plus(couleur: str) -> str:
+    trace = (f'<path d="M3 7 L11 7 M7 3 L7 11" fill="none" stroke="{couleur}" '
+             'stroke-width="1.8" stroke-linecap="round"/>')
+    return _ecrire("plus.svg", _svg(trace), couleur)
+
+
 def chevron_down(couleur: str) -> str:
     trace = (f'<path d="M3.5 5.5 L7 9 L10.5 5.5" fill="none" stroke="{couleur}" '
              'stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>')

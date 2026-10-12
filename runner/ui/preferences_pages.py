@@ -15,14 +15,16 @@ from PySide6.QtGui import QFont, QTextCursor
 from PySide6.QtWidgets import (
     QApplication, QAbstractButton, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QLabel, QLineEdit, QListWidget, QMainWindow, QPlainTextEdit, QPushButton,
-    QScrollArea, QSlider, QStackedWidget, QVBoxLayout, QWidget,
+    QScrollArea, QSlider, QSpinBox, QStackedWidget, QVBoxLayout, QWidget,
 )
 from runner.ui import icons, theme, tokens as t
+from runner.ui import timeouts
 
 DEFAULTS = dict(font_size=13, compact_header=False, atr_bottom=False,
                 tree_density="Normal", default_tab="Detail", follow_test=False,
                 actions=True, commands=True, output=True, errors=True,
                 timestamps=True, auto_scroll=True, limit=1000, notify_end=True)
+DEFAULTS.update(timeouts.DEFAULTS)
 GROUPS = (
     ("Interface", "Appearance and space", (
         ("theme", "Theme", "Keep the existing dark, light and accessible palettes.",
@@ -35,6 +37,12 @@ GROUPS = (
         ("tree_density", "Row spacing", "Choose how much space each test occupies.", ("Compact", "Normal", "Comfortable")),
         ("default_tab", "Default detail tab", "Open this tab when selecting another test.", ("Detail", "Source", "Output", "Logs")),
         ("follow_test", "Follow the running test", "Bring the executing test into view.", bool),
+    )),
+    ("Timeouts", "Maximum waiting times • seconds • used by the next operation", (
+        ("collection_timeout", "Test collection", "Stop collection if pytest has not finished within this time. Default: 120 s.", (1, 86400)),
+        ("interpreter_timeout", "Python interpreter check", "Maximum time to check Python and its pytest installation. Default: 15 s.", (1, 86400)),
+        ("reader_discovery_timeout", "Reader discovery", "Maximum time to list HubReader devices, here and in workspace configuration. Default: 10 s.", (1, 86400)),
+        ("atr_startup_timeout", "ATR monitor startup", "Maximum wait for the first card status from the ATR monitor. Default: 10 s.", (1, 86400)),
     )),
     ("Console", "Recorded events", (
         ("actions", "Interface actions", "Record clicks, selections and navigation.", bool),
@@ -350,6 +358,14 @@ class PreferencesPanel(QWidget):
                     control = QCheckBox("Enabled")
                     control.setChecked(controller.values[key])
                     control.toggled.connect(lambda value, k=key: self.update_value(k, value))
+                elif key in timeouts.DEFAULTS:
+                    control = QSpinBox()
+                    control.setObjectName("TimeoutInput")
+                    control.setAlignment(Qt.AlignCenter)
+                    control.setRange(timeouts.MIN_SECONDS, timeouts.MAX_SECONDS)
+                    control.setValue(controller.values[key])
+                    control.setMinimumWidth(160)
+                    control.valueChanged.connect(lambda value, k=key: self.update_value(k, value))
                 elif key == "font_size":
                     control = QSlider(Qt.Horizontal)
                     control.setRange(*choices)
@@ -364,9 +380,15 @@ class PreferencesPanel(QWidget):
                     control.setCurrentIndex(max(0, control.findData(value)))
                     control.setMinimumWidth(160)
                     control.currentIndexChanged.connect(lambda _, k=key, c=control: self.update_value(k, c.currentData()))
-                control.setAccessibleName(title)
+                control.setAccessibleName(title + " (seconds)" if key in timeouts.DEFAULTS else title)
                 self.controls[key] = control
                 row.addWidget(control)
+                if key in timeouts.DEFAULTS:
+                    unit = QLabel("s")
+                    unit.setObjectName("Muted")
+                    unit.setToolTip("Seconds")
+                    unit.setMinimumWidth(14)
+                    row.addWidget(unit)
                 layout.addLayout(row)
                 line = QFrame()
                 line.setObjectName("PreferencesDivider")
@@ -412,7 +434,7 @@ class PreferencesPanel(QWidget):
             value = self.controller.values.get(key, t.current_theme())
             if isinstance(control, QCheckBox):
                 control.setChecked(value)
-            elif isinstance(control, QSlider):
+            elif isinstance(control, (QSlider, QSpinBox)):
                 control.setValue(value)
             else:
                 control.setCurrentIndex(control.findData(value))
@@ -439,6 +461,8 @@ class PreferencesController(QObject):
         self.values.update({key: value for key, value in stored.items()
                             if key in DEFAULTS and type(value) is type(DEFAULTS[key])})
         self.values["font_size"] = min(16, max(12, self.values["font_size"]))
+        for key in timeouts.DEFAULTS:
+            self.values[key] = min(timeouts.MAX_SECONDS, max(timeouts.MIN_SECONDS, self.values[key]))
         for key, choices in (("tree_density", ("Compact", "Normal", "Comfortable")),
                              ("default_tab", ("Detail", "Source", "Output", "Logs")),
                              ("limit", (250, 1000, 5000))):
@@ -456,7 +480,7 @@ class PreferencesController(QObject):
         self.console = DiagnosticConsole(self)
         self.bus.event.connect(self.console.append)
         self.settings_panel = PreferencesPanel(self)
-        self.settings_page = DetachablePage(window, "Settings", "Personal preferences for the interface — live preview, applied per user", self.settings_panel)
+        self.settings_page = DetachablePage(window, "Settings", "Personal preferences and operation timeouts — applied per user", self.settings_panel)
         self.console_page = DetachablePage(window, "Console", "Actual commands, interface actions, process output and tracebacks", self.console)
         window.pages.addWidget(self.settings_page)
         window.pages.addWidget(self.console_page)

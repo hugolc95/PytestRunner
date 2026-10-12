@@ -139,6 +139,102 @@ def test_apply_cancel_and_persistence(window):
     assert controller.values["tree_density"] == "Comfortable"
 
 
+def test_timeouts_cancel_save_and_restore_on_restart(window, qtbot):
+    from runner.ui.timeouts import DEFAULTS
+
+    panel = window.preferences.settings_panel
+    for key, default in DEFAULTS.items():
+        assert panel.controls[key].value() == default
+        panel.controls[key].setValue(default + 7)
+    panel.cancel()
+    assert all(panel.controls[key].value() == value for key, value in DEFAULTS.items())
+    for key, default in DEFAULTS.items():
+        panel.controls[key].setValue(default + 7)
+    window.preferences.save()
+    window.close()
+    reopened = MainWindow()
+    qtbot.addWidget(reopened)
+    try:
+        for key, default in DEFAULTS.items():
+            assert reopened.preferences.values[key] == default + 7
+            assert reopened.preferences.settings_panel.controls[key].value() == default + 7
+    finally:
+        reopened.close()
+
+
+def test_collection_and_python_checks_use_settings(window, tmp_path, monkeypatch):
+    import subprocess
+    from runner.domain import execution, interpreter
+    from runner.services.run_service import CollectWorker
+    from runner.services.interpreter_service import ProbeWorker
+
+    window.preferences.settings_panel.controls["collection_timeout"].setValue(321)
+    window.preferences.settings_panel.controls["interpreter_timeout"].setValue(27)
+    monkeypatch.setattr(window, "_require_interpreter", lambda: sys.executable)
+    monkeypatch.setattr(interpreter, "cached_probe", lambda _: None)
+    monkeypatch.setattr(CollectWorker, "start", lambda _: None)
+    monkeypatch.setattr(ProbeWorker, "start", lambda _: None)
+    window.workspace_combo.setCurrentText(str(tmp_path))
+    window.load_workspace()
+
+    calls = []
+    def expired(command, **kwargs):
+        calls.append(kwargs["timeout"])
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+    monkeypatch.setattr(execution.subprocess, "run", expired)
+    errors = []
+    window._collector.failed.disconnect()
+    window._collector.failed.connect(errors.append)
+    window._collector.run()
+    assert calls == [321]
+    assert "Collection timed out after 321s" in errors[0]
+    window._interpreter_prober.run()
+    assert calls == [321, 27]
+    window.python_editor.test_now()
+    window.python_editor._probe.run()
+    assert calls == [321, 27, 27]
+
+
+def test_reader_operations_expire_at_configured_deadlines(window, tmp_path, monkeypatch, qtbot):
+    from runner.domain import reader_discovery
+    from runner.ui.config_dialog import ConfigDialog
+    from runner.ui.timeouts import seconds
+    from PySide6.QtCore import QProcess
+
+    panel = window.preferences.settings_panel
+    panel.controls["reader_discovery_timeout"].setValue(1)
+    panel.controls["atr_startup_timeout"].setValue(1)
+    monkeypatch.setattr(reader_discovery, "PROBE", "import time; time.sleep(90)")
+    monkeypatch.setattr(reader_discovery, "PROBE_MONITOR", "import time; time.sleep(90)")
+    selector = window.reader_selector
+    selector.setEnabled(True)
+    selector.set_context(str(tmp_path), sys.executable, "Reader A")
+    qtbot.waitUntil(lambda: selector._timeout.isActive())
+    assert selector._timeout.interval() == 1000
+    qtbot.waitUntil(lambda: "timed out" in selector.toolTip(), timeout=5000)
+    qtbot.waitUntil(lambda: selector._process.state() == QProcess.NotRunning)
+
+    path = tmp_path / "config.yml"
+    path.write_text("Reader: Reader A\n", encoding="utf-8")
+    dialog = ConfigDialog(str(path), interpreter=sys.executable, parent=window)
+    qtbot.addWidget(dialog)
+    qtbot.waitUntil(lambda: dialog._reader_timeout.isActive())
+    assert dialog._reader_timeout.interval() == 1000
+    qtbot.waitUntil(lambda: dialog._reader_process.state() == QProcess.NotRunning, timeout=5000)
+    assert "timed out" in dialog.reader_discovery_status.text().lower()
+
+    window.reader_atr.set_context(str(tmp_path), sys.executable, "Reader A")
+    assert window.reader_atr._startup.interval() == 1000
+    qtbot.waitUntil(lambda: window.reader_atr._process.state() == QProcess.NotRunning, timeout=5000)
+    assert not window.reader_atr._startup.isActive()
+    # All run tabs share the host's preferences.
+    from PySide6.QtWidgets import QWidget
+    context = QWidget(window)
+    context._run_host = window
+    child = QWidget(context)
+    assert seconds(child, "collection_timeout") == window.preferences.values["collection_timeout"]
+
+
 def test_actual_subprocess_command_is_recorded(window):
     import subprocess
     subprocess.run([sys.executable, "-c", "print('trace probe')"], capture_output=True, check=True)

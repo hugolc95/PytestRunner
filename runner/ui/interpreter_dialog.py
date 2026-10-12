@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from runner.domain.interpreter import InterpreterInfo, default
 from runner.services.interpreter_service import ProbeWorker
+from runner.ui.timeouts import seconds as timeout_seconds
 from runner.ui import theme
 from runner.ui import tokens as t
 
@@ -153,7 +154,8 @@ class InterpreterDialog(QDialog):
 
         if self._probe is not None and self._probe.isRunning():
             return
-        self._probe = ProbeWorker(chemin, self)
+        self._probe = ProbeWorker(
+            chemin, self, timeout=timeout_seconds(self, "interpreter_timeout"))
         self._probe.done.connect(self._on_probed)
         self._probe.start()
 

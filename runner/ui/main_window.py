@@ -68,6 +68,7 @@ from runner.domain.workspace import (
     fichiers_config,
 )
 from runner.services.interpreter_service import ProbeWorker
+from runner.ui.timeouts import seconds as timeout_seconds
 from runner.services.run_service import CollectWorker, RunService
 from runner.services.stress_service import StressRunWorker
 from runner.ui import icons, theme
@@ -1949,7 +1950,8 @@ class MainWindow(QMainWindow):
         # longtemps que ce sondage, le cache est pret bien avant le premier
         # "Run tests".
         if interpreter_mod.cached_probe(python) is None:
-            self._interpreter_prober = ProbeWorker(python, self)
+            self._interpreter_prober = ProbeWorker(
+                python, self, timeout=timeout_seconds(self, "interpreter_timeout"))
             self._interpreter_prober.done.connect(self._on_interpreter_probed)
             self._interpreter_prober.start()
         else:
@@ -1963,7 +1965,7 @@ class MainWindow(QMainWindow):
         self._collector = CollectWorker(
             self.workspace.path, python,
             self.run_tabs.configuration_env(self, self.workspace.env) if self.run_tabs else self.workspace.env,
-            self)
+            self, timeout=timeout_seconds(self, "collection_timeout"))
         self._collector.collected.connect(self._on_collected)
         self._collector.failed.connect(self._on_collect_failed)
         self._collector.start()

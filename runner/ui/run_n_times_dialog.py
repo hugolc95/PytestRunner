@@ -29,7 +29,7 @@ class RunNTimesDialog(QDialog):
         self.compte = QSpinBox()
         self.compte.setRange(1, 1000)
         self.compte.setValue(defaut)
-        self.compte.setSuffix(" times")
+        self.compte.setAccessibleName("Number of repetitions")
 
         raccourcis = QHBoxLayout()
         raccourcis.setSpacing(t.SPACE_2)
@@ -60,7 +60,10 @@ class RunNTimesDialog(QDialog):
 
         colonne = QVBoxLayout(self)
         colonne.setSpacing(t.SPACE_3)
-        colonne.addWidget(self.compte)
+        count_row = QHBoxLayout()
+        count_row.addWidget(self.compte, 1)
+        count_row.addWidget(QLabel("times"))
+        colonne.addLayout(count_row)
         colonne.addLayout(raccourcis)
         colonne.addStretch(1)
         colonne.addLayout(boutons)

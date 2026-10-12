@@ -374,7 +374,8 @@ class ConfigDialog(QDialog):
         self._reader_timed_out = False
         self.reader_discovery_status.setText('Looking for HubReader devices…')
         self._reader_process.start(self._reader_interpreter, ['-u', '-c', PROBE])
-        self._reader_timeout.start(10000)
+        from runner.ui.timeouts import seconds
+        self._reader_timeout.start(seconds(self, "reader_discovery_timeout") * 1000)
 
     def _reader_discovery_timeout(self):
         self._reader_timed_out = True

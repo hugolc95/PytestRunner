@@ -27,16 +27,18 @@ class CollectWorker(QThread):
     collected = Signal(object)
     failed = Signal(str)
 
-    def __init__(self, workspace: str, interpreter: str, env: dict, parent=None):
+    def __init__(self, workspace: str, interpreter: str, env: dict, parent=None,
+                 timeout: float = 120.0):
         super().__init__(parent)
         self._workspace = workspace
         self._interpreter = interpreter
         self._env = env
+        self._timeout = timeout
 
     def run(self) -> None:  # pragma: no cover - execute dans un thread Qt
         try:
             collection = execution.collect(self._workspace, self._interpreter,
-                                           self._env)
+                                           self._env, timeout=self._timeout)
         except Exception as exc:
             self.failed.emit(str(exc))
             return

@@ -500,6 +500,48 @@ QLineEdit#ReaderAtr[bottomBar="true"] {{
     max-height: 20px;
 }}
 QLineEdit:focus, QComboBox:focus {{ border-color: {t.ACCENT}; }}
+/* Shared numeric controls: integers, decimals and repetition counts. */
+QAbstractSpinBox {{
+    qproperty-alignment: AlignCenter;
+    min-width: 100px;
+    background-color: {t.BG_INPUT};
+    color: {t.TEXT};
+    border: 1px solid {t.BORDER_STRONG};
+    border-radius: {t.RADIUS_LG}px;
+    min-height: 38px;
+    padding: 0 40px;
+    font-weight: 600;
+    selection-background-color: {t.ACCENT_SOFT};
+    selection-color: {t.TEXT};
+}}
+QAbstractSpinBox:hover {{ border-color: {t.TEXT_MUTED}; }}
+QAbstractSpinBox:focus {{ border-color: {t.ACCENT}; }}
+QAbstractSpinBox QLineEdit {{
+    background: transparent;
+    border: none;
+    padding: 0;
+    min-height: 0;
+}}
+QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{
+    subcontrol-origin: border;
+    width: 28px;
+    height: 28px;
+    border: none;
+    border-radius: {t.RADIUS_MD}px;
+    background-color: {t.BG_RAISED};
+}}
+QAbstractSpinBox::up-button {{ subcontrol-position: center right; right: 6px; }}
+QAbstractSpinBox::down-button {{ subcontrol-position: center left; left: 6px; }}
+QAbstractSpinBox::up-button:hover, QAbstractSpinBox::down-button:hover {{
+    background-color: {t.ACCENT_SOFT};
+}}
+QAbstractSpinBox::up-button:pressed, QAbstractSpinBox::down-button:pressed {{
+    background-color: {t.BG_HOVER};
+}}
+QAbstractSpinBox::up-arrow {{ image: url({glyphs.plus(t.TEXT)}); width: 14px; height: 14px; }}
+QAbstractSpinBox::down-arrow {{ image: url({glyphs.dash(t.TEXT)}); width: 14px; height: 14px; }}
+QAbstractSpinBox::up-arrow:disabled {{ image: url({glyphs.plus(t.TEXT_FAINT)}); }}
+QAbstractSpinBox::down-arrow:disabled {{ image: url({glyphs.dash(t.TEXT_FAINT)}); }}
 /* Une expression que pytest refuserait : le champ le dit avant qu'on lance. */
 QLineEdit[invalid="true"] {{ border-color: {t.status_color(Status.FAILED)}; }}
 

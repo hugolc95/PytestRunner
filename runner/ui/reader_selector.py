@@ -84,7 +84,8 @@ class ReaderSelector(QComboBox):
         self._expired = False
         self.setToolTip("Looking for HubReader devices… Manual entry remains available.")
         self._process.start(interpreter, ["-u", "-c", reader_discovery.PROBE])
-        self._timeout.start(10000)
+        from runner.ui.timeouts import seconds
+        self._timeout.start(seconds(self, "reader_discovery_timeout") * 1000)
 
     def _finished(self, code, *_):
         self._timeout.stop()
@@ -137,7 +138,6 @@ class ReaderAtrField(QLineEdit):
 
     NO_CARD = "No card in reader"
     INTERVALLE_S = 2.0
-    DEMARRAGE_MS = 10000
     # Pastille d'etat devant le texte : verte avec une carte, rouge sans.
     # `PADDING` reprend le retrait du texte de la liste au-dessus (feuille de
     # style), pour que pastille et nom du lecteur partent du meme bord.
@@ -230,7 +230,8 @@ class ReaderAtrField(QLineEdit):
         self._got_event = False
         self._process.start(interpreter, ["-u", "-c", reader_discovery.PROBE_MONITOR,
                                           reader, str(self.INTERVALLE_S)])
-        self._startup.start(self.DEMARRAGE_MS)
+        from runner.ui.timeouts import seconds
+        self._startup.start(seconds(self, "atr_startup_timeout") * 1000)
 
     def stop(self):
         # Tue net, sans l'attendre : attendre figerait l'interface au moment
