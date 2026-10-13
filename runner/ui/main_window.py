@@ -57,7 +57,7 @@ from app_icon import APP_ICON_RELATIVE_PATH, resource_path
 from runner.domain.duration import format_duration
 from runner.domain import history, failures as failures_mod
 from runner.domain import interpreter as interpreter_mod
-from runner.domain.execution_profile import ExecutionProfile, ProfileStore
+from runner.domain.execution_profile import ExecutionProfile, ProfileStore, ProfileValidationError
 from runner.domain.models import Kind, Reader, RunRequest, Status
 from runner.domain.source import path_of as source_path
 from runner.domain.stress import MODE_N_TIMES, MODE_UNTIL_FAIL, StressAttempt, StressSummary
@@ -2308,11 +2308,15 @@ class MainWindow(QMainWindow):
         if self.run_tabs:
             self.run_tabs.submit(self, request, self.workspace.env, profile)
         else:
-            self.service.start_profile(
-                request, self.workspace.env, profile.sequence,
-                repetitions=profile.execution.repetitions,
-                rerun_failures=profile.execution.rerun_failures,
-                stop_after_failure=profile.execution.stop_after_failure)
+            try:
+                self.service.start_profile(
+                    request, self.workspace.env, profile.sequence,
+                    repetitions=profile.execution.repetitions,
+                    rerun_failures=profile.execution.rerun_failures,
+                    stop_after_failure=profile.execution.stop_after_failure,
+                    step_overrides=profile.step_overrides)
+            except (OSError, UnicodeError, ProfileValidationError) as exc:
+                ErrorDialog.show_error(self, "Could not prepare profile parameters", str(exc))
 
     @Slot()
     def rerun_failed(self) -> None:

@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt
 from runner.domain.tree import group_hierarchically
 from runner.domain.execution_profile import ProfileStore
 from runner.ui.execution_profiles_page import AddTestsDialog, ExecutionProfilesPage
+from runner.ui.tree_model import NODEID_ROLE
 
 
 def test_picker_keeps_click_order_for_test_folder_test_folder(qtbot):
@@ -34,5 +35,5 @@ def test_interleaved_folders_remain_ordered_after_rebuild(qtbot, tmp_path):
     assert page._flatten_sequence() == ids
     page._rebuild_sequence(ids)
     assert page._flatten_sequence() == ids
-    assert any(item.childCount() for item, _, _ in page._sequence_ranges()[1]
-               if item.parent() is not None)
+    assert page.sequence_list.topLevelItemCount() == len(ids)
+    assert all(item.data(0, NODEID_ROLE) for item in page._step_items())

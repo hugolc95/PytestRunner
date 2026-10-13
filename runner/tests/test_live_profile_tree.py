@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = pytest.mark.usefixtures("isolated_run_state")
+
 from PySide6.QtCore import Qt
 from runner.domain.execution_profile import ExecutionProfile, ExecutionOptions
 from runner.domain.models import Reader, ReaderReport, RunRequest, Status

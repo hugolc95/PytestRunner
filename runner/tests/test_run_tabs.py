@@ -245,7 +245,7 @@ def test_draft_collection_footer_follows_tabs_and_detachment(window, qtbot, monk
     class Collector(QObject):
         collected = Signal(object)
         failed = Signal(str)
-        def __init__(self, path, python, env, parent):
+        def __init__(self, path, python, env, parent, timeout=120):
             super().__init__(parent)
             self.running = False
         def start(self):
@@ -425,6 +425,7 @@ def test_profile_sequence_and_options_are_captured(window, qtbot, monkeypatch):
     draft = window.run_tabs.new_run()
     profile = ExecutionProfile("Ordered profile", ["test_demo.py::test_b", "test_demo.py::test_a", "test_demo.py::test_b"], "", "")
     profile.execution.repetitions = 2
+    profile.step_overrides = [{"protocol": "T0"}, {}, {"protocol": "T1"}]
     draft._load_execution_profile(profile)
     launched = []
     def start(request, env, sequence, **options):
@@ -435,10 +436,12 @@ def test_profile_sequence_and_options_are_captured(window, qtbot, monkeypatch):
     draft.run_selected()
     profile.sequence.clear()
     profile.execution.repetitions = 99
+    profile.step_overrides[0]["protocol"] = "changed after queuing"
     window.service.finished.emit([])
     qtbot.waitUntil(lambda: bool(launched))
     assert launched[0][1] == ["test_demo.py::test_b", "test_demo.py::test_a", "test_demo.py::test_b"]
     assert launched[0][2]["repetitions"] == 2
+    assert launched[0][2]["step_overrides"] == [{"protocol": "T0"}, {}, {"protocol": "T1"}]
 
 
 def test_detached_run_keeps_same_tree_after_close_and_reopen(window):

@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = pytest.mark.usefixtures("isolated_run_state")
+
 from types import SimpleNamespace
 
 from runner.domain.execution_profile import ExecutionProfile
@@ -18,7 +22,7 @@ def test_background_archive_keeps_profile_name_then_classic_origin(qtbot, tmp_pa
     window = MainWindow()
     qtbot.addWidget(window)
     window.history = History(tmp_path / "history")
-    window.workspace = SimpleNamespace(path=str(tmp_path), log_root=tmp_path)
+    window.workspace = SimpleNamespace(path=str(tmp_path), log_root=tmp_path, config_path="")
     monkeypatch.setattr(window, "_update_actions", lambda: None)
     profile = ExecutionProfile(name="Smoke", sequence=["test_a"],
                                configuration_name="", configuration_text="")
@@ -52,7 +56,7 @@ def test_background_archive_keeps_profile_name_then_classic_origin(qtbot, tmp_pa
 def test_configless_profile_uses_current_local_configuration():
     profile = ExecutionProfile(name="Smoke", sequence=["test_a"],
                                configuration_name="", configuration_text="")
-    window = SimpleNamespace(workspace=SimpleNamespace(config_path="chosen.yaml"))
+    window = SimpleNamespace(workspace=SimpleNamespace(config_path="chosen.yaml"), run_tabs=None)
     assert MainWindow._profile_configuration_path(window, profile) == "chosen.yaml"
     window.workspace.config_path = "other.yaml"
     assert MainWindow._profile_configuration_path(window, profile) == "other.yaml"
