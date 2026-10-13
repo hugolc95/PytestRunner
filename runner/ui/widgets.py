@@ -787,7 +787,10 @@ class ErrorDialog(QDialog):
             self.toggle.toggled.connect(self._on_toggled)
             colonne.addWidget(self.toggle, alignment=Qt.AlignLeft)
 
-            self.detail_view = QPlainTextEdit(detail)
+            from runner.ui.trace_browser import TraceBrowser
+            self.detail_view = TraceBrowser()
+            self.detail_view.setPlainText(detail)
+            self.detail_view.source_requested.connect(self._open_source)
             self.detail_view.setReadOnly(True)
             self.detail_view.setVisible(False)
             self.detail_view.setMinimumHeight(180)
@@ -816,6 +819,16 @@ class ErrorDialog(QDialog):
         self.toggle.setText("Hide details" if ouvert else "Show details")
         self.adjustSize()
 
+    def _open_source(self, location, external):
+        parent = self.parentWidget()
+        while parent is not None:
+            handler = getattr(parent, "_open_source_reference", None)
+            if handler is not None:
+                if handler(location, external):
+                    self.accept()
+                return
+            parent = parent.parentWidget()
+
     @staticmethod
     def _copier(texte: str) -> None:
         from PySide6.QtWidgets import QApplication
@@ -828,11 +841,13 @@ class ErrorDialog(QDialog):
 
     @classmethod
     def show_diagnostics(cls, parent, title: str, errors: str, show_console=None,
-                         *, summary: str = "") -> None:
+                         *, summary: str = "", workspace: str = "") -> None:
         """Display all error summaries immediately in a bounded, scrollable view."""
         dialog = cls(title, summary or title, errors, parent)
         dialog.resize(680, 420)
         if dialog.detail_view is not None:
+            dialog.detail_view.default_workspace = workspace
+            dialog.detail_view.setPlainText(errors)
             dialog.toggle.setChecked(True)
             dialog.toggle.hide()
         for button in dialog.findChildren(QPushButton):

@@ -19,11 +19,13 @@ from PySide6.QtWidgets import (
 )
 from runner.ui import icons, theme, tokens as t
 from runner.ui import timeouts
+from runner.ui.trace_browser import TraceBrowser
 
 DEFAULTS = dict(font_size=13, compact_header=False, atr_bottom=False,
                 tree_density="Normal", default_tab="Detail", follow_test=False,
                 actions=True, commands=True, output=True, errors=True,
-                timestamps=True, auto_scroll=True, limit=1000, notify_end=True)
+                timestamps=True, auto_scroll=True, limit=1000, notify_end=True,
+                external_editor="Automatic", vscode_path="", pycharm_path="")
 DEFAULTS.update(timeouts.DEFAULTS)
 GROUPS = (
     ("Interface", "Appearance and space", (
@@ -55,6 +57,11 @@ GROUPS = (
     )),
     ("Notifications", "Run completion", (
         ("notify_end", "Notify when a run ends", "Enable the existing desktop completion notification.", bool),
+    )),
+    ("External editor", "Source links • Ctrl+click always opens the external editor", (
+        ("external_editor", "Preferred editor", "Automatic tries VS Code, then PyCharm. The other editor is used if the preferred one is unavailable.", ("Automatic", "VS Code", "PyCharm")),
+        ("vscode_path", "VS Code executable", "Leave empty for automatic detection, or select your installation.", "executable"),
+        ("pycharm_path", "PyCharm executable", "Leave empty for automatic detection, or select your installation.", "executable"),
     )),
 )
 
@@ -222,9 +229,12 @@ class DiagnosticConsole(QWidget):
             button.clicked.connect(slot)
             actions.addWidget(button)
         root.addLayout(actions)
-        self.text = QPlainTextEdit()
+        self.text = TraceBrowser()
+        self.text.require_context = True
+        self.text.source_requested.connect(lambda location, external: controller.window._open_source_reference(
+            location, external, on_return=lambda: controller.window._show_page("console")))
         self.text.setReadOnly(True)
-        self.text.setLineWrapMode(QPlainTextEdit.NoWrap)
+        self.text.setLineWrapMode(TraceBrowser.NoWrap)
         font = QFont("DejaVu Sans Mono")
         font.setPointSize(10)
         self.text.setFont(font)
@@ -278,13 +288,15 @@ class DiagnosticConsole(QWidget):
                 cursor.beginEditBlock()
                 if dropped:
                     cursor.setPosition(0)
-                    chars = sum(len(line) + 1 for line in previous[:dropped])
+                    # Qt cursor offsets are UTF-16 units, including emoji in
+                    # test names and console messages.
+                    chars = sum(len(line.encode("utf-16-le")) // 2 + 1 for line in previous[:dropped])
                     cursor.setPosition(chars, QTextCursor.KeepAnchor)
                     cursor.removeSelectedText()
                 cursor.movePosition(QTextCursor.End)
                 added = lines[len(previous) - dropped:]
                 if added:
-                    cursor.insertText("\n" + "\n".join(added))
+                    self.text.insert_trace_text(cursor, "\n" + "\n".join(added))
                 cursor.endEditBlock()
             else:
                 self.text.setPlainText("\n".join(lines))
@@ -358,6 +370,11 @@ class PreferencesPanel(QWidget):
                     control = QCheckBox("Enabled")
                     control.setChecked(controller.values[key])
                     control.toggled.connect(lambda value, k=key: self.update_value(k, value))
+                elif choices == "executable":
+                    control = QLineEdit(controller.values[key])
+                    control.setPlaceholderText("Automatic detection")
+                    control.setMinimumWidth(180)
+                    control.textChanged.connect(lambda value, k=key: self.update_value(k, value))
                 elif key in timeouts.DEFAULTS:
                     control = QSpinBox()
                     control.setObjectName("TimeoutInput")
@@ -383,6 +400,10 @@ class PreferencesPanel(QWidget):
                 control.setAccessibleName(title + " (seconds)" if key in timeouts.DEFAULTS else title)
                 self.controls[key] = control
                 row.addWidget(control)
+                if choices == "executable":
+                    browse = QPushButton("Browse…")
+                    browse.clicked.connect(lambda _, c=control: self.browse_editor(c))
+                    row.addWidget(browse)
                 if key in timeouts.DEFAULTS:
                     unit = QLabel("s")
                     unit.setObjectName("Muted")
@@ -426,6 +447,11 @@ class PreferencesPanel(QWidget):
         self.controller.apply()
         self.notice.setText("Unsaved preview • click Apply settings to keep it")
 
+    def browse_editor(self, control):
+        path, _ = QFileDialog.getOpenFileName(self, "Choose editor executable", control.text(), "All files (*)")
+        if path:
+            control.setText(path)
+
     def cancel(self):
         self.controller.preview_timer.stop()
         self.controller.values = dict(self.controller.saved)
@@ -436,6 +462,8 @@ class PreferencesPanel(QWidget):
                 control.setChecked(value)
             elif isinstance(control, (QSlider, QSpinBox)):
                 control.setValue(value)
+            elif isinstance(control, QLineEdit):
+                control.setText(value)
             else:
                 control.setCurrentIndex(control.findData(value))
             control.blockSignals(False)
@@ -464,6 +492,7 @@ class PreferencesController(QObject):
         for key in timeouts.DEFAULTS:
             self.values[key] = min(timeouts.MAX_SECONDS, max(timeouts.MIN_SECONDS, self.values[key]))
         for key, choices in (("tree_density", ("Compact", "Normal", "Comfortable")),
+                             ("external_editor", ("Automatic", "VS Code", "PyCharm")),
                              ("default_tab", ("Detail", "Source", "Output", "Logs")),
                              ("limit", (250, 1000, 5000))):
             if self.values[key] not in choices:
@@ -513,6 +542,9 @@ class PreferencesController(QObject):
         self.apply_context(context)
 
     def context_record(self, context, kind, message):
+        workspace = getattr(context, "workspace", None)
+        if workspace is not None and (kind == "errors" or message.startswith("Collection ")):
+            message = f"Workspace: {workspace.path}\n{message}"
         if context is not self.window:
             entry = context.run_tabs.entry_for(context) if context.run_tabs else None
             message = f"[{entry.name if entry else 'New run'}] {message}"

@@ -541,6 +541,7 @@ class HistoryWindow(QDialog):
 
     rerun_requested = Signal(object)
     compare_requested = Signal(object)
+    source_requested = Signal(object, bool, str)
 
     def __init__(self, history: History, parent=None):
         super().__init__(parent)
@@ -939,6 +940,7 @@ class HistoryWindow(QDialog):
         tree_panel = QWidget()
         tree_panel.setLayout(left)
         self.execution_detail = DetailPanel()
+        self.execution_detail.source_requested.connect(self._open_history_source)
         self.execution_detail.body.setLineWrapMode(QTextEdit.LineWrapMode.WidgetWidth)
         self.execution_detail.open_output.connect(lambda: self.tabs.setCurrentIndex(2))
         self.execution_detail.test_chosen.connect(self._choose_history_failure)
@@ -1373,6 +1375,12 @@ class HistoryWindow(QDialog):
             self.reader_selector.addItem(_short_reader(entry.reader), index)
         self.reader_selector.setCurrentIndex(0)
         self.reader_selector.blockSignals(False)
+
+    def _open_history_source(self, location, external):
+        from dataclasses import replace
+        group = getattr(self, "_execution_group", None)
+        self.source_requested.emit(replace(location, workspace=group.workspace if group else "",
+                                           context_required=True), external, self.execution_detail._nodeid)
 
     def _select_execution_reader(self, index: int) -> None:
         group = getattr(self, '_execution_group', None)

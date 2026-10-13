@@ -1,5 +1,33 @@
 # Pytest Runner GUI
 
+## Navigation dans les erreurs — v1.2.0
+
+Les références fichier/ligne sont cliquables dans **Detail**, l’historique,
+**Console** et les détails des erreurs de collection. Un fichier Python du
+workspace ouvert s’affiche dans **Source**, à la ligne et à la colonne indiquées.
+Le bouton **Back to traceback** retourne à la vue d’origine. Le saut dans un
+fichier déjà affiché conserve son édition ; une sauvegarde échouée empêche de
+remplacer le fichier en cours.
+
+Les dépendances, fichiers externes et projets historiques qui ne sont plus
+chargés s’ouvrent dans un IDE. **Ctrl+clic** force cette ouverture. Le menu du
+clic droit propose aussi **Copy file:line** et **Locate file…** pour retrouver
+un fichier déplacé sans modifier les anciens résultats.
+
+Dans **Settings → External editor**, choisir **Automatic**, **VS Code** ou
+**PyCharm**, et éventuellement renseigner les exécutables. En automatique,
+VS Code est essayé avant PyCharm ; un éditeur préféré absent laisse place à
+l’autre. Si aucun éditeur n’est trouvé ou qu’un chemin configuré est invalide,
+une erreur visible indique comment corriger le réglage.
+
+L’IDE reçoit le projet et le fichier avec sa ligne : ses mécanismes habituels
+réutilisent le projet ouvert. VS Code reconnaît aussi les fichiers
+`.code-workspace` correspondants, y compris avec plusieurs dossiers.
+Les politiques de fenêtres propres à l’IDE restent applicables.
+Une référence ambiguë ou provenant d’un autre ordinateur est signalée plutôt
+que résolue uniquement par le nom du fichier ; une ligne disparue est signalée
+dans Source.
+
 Application de bureau **PyQt5** permettant de charger un workspace, découvrir ses tests pytest, sélectionner des tests complets ou un seul cas paramétré, lancer/arrêter l'exécution, consulter les résultats et exécuter des campagnes YAML.
 
 ## Deux Python indépendants

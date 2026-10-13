@@ -49,6 +49,7 @@ class SourcePanel(QWidget):
         self._file = SourceFile()
         self._dirty = False
         self._loading = False
+        self._return_to_trace = None
 
         self.empty = EmptyState(
             "mdi.file-code-outline",
@@ -99,8 +100,14 @@ class SourcePanel(QWidget):
         self.edit_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
         self.edit_button.toggled.connect(self.set_editable)
 
+        self.back_button = QPushButton("Back to traceback")
+        self.back_button.setObjectName("Ghost")
+        self.back_button.clicked.connect(self._go_back)
+        self.back_button.hide()
+
         barre.addWidget(self.path_label, 1)
         barre.addWidget(self.status_label)
+        barre.addWidget(self.back_button)
         barre.addWidget(self.edit_button)
         colonne.addLayout(barre)
 
@@ -111,24 +118,28 @@ class SourcePanel(QWidget):
 
     # ------------------------------------------------------------ chargement
 
-    def show_file(self, chemin: Path | None, nodeid: str = "") -> None:
+    def show_file(self, chemin: Path | None, nodeid: str = "") -> bool:
         """Charge un fichier et saute a la definition du test.
 
         Change de fichier en enregistrant d'abord : une frappe en attente ne
         doit jamais disparaitre parce qu'on a clique ailleurs.
         """
-        self.save()
+        if not self.save():
+            return False
+        self._return_to_trace = None
+        self.back_button.hide()
 
         if chemin is None:
             self.clear()
-            return
+            return False
 
         fichier = read_source(chemin)
         if not fichier.loaded:
+            self._say(fichier.warning, erreur=True)
             self.empty.update_text("Could not open this file", fichier.warning)
             self.stack.setCurrentWidget(self.empty)
             self._file = SourceFile()
-            return
+            return False
 
         self._file = fichier
         self._dirty = False
@@ -152,8 +163,41 @@ class SourcePanel(QWidget):
         self._refresh_button()
 
         self.editor.goto_line(function_line(fichier.text, nodeid))
+        return True
+
+    def open_location(self, path: Path, line: int, column: int = 1, on_return=None) -> bool:
+        """Jump in the existing buffer, preserving edits when the file is unchanged."""
+        same = self.path() is not None and self.path().resolve() == path.resolve()
+        if not same and not self.show_file(path):
+            return False
+        from PySide6.QtGui import QTextCursor
+        count = self.editor.document().blockCount()
+        target = min(max(1, line), count)
+        self.editor.goto_line(target - 1)
+        cursor = self.editor.textCursor()
+        cursor.movePosition(QTextCursor.StartOfBlock)
+        cursor.movePosition(QTextCursor.Right, QTextCursor.MoveAnchor,
+                            min(max(0, column - 1), max(0, cursor.block().length() - 1)))
+        self.editor.setTextCursor(cursor)
+        self.editor.highlight_current_line()
+        self.editor.setFocus()
+        if target != line:
+            self._say(f"Line {line} no longer exists — showing line {target}. The file may have changed.", erreur=True)
+        elif not self._dirty:
+            self._refresh_button()
+        self._return_to_trace = on_return
+        self.back_button.setVisible(on_return is not None)
+        return True
+
+    def _go_back(self):
+        if self._return_to_trace is not None:
+            self._return_to_trace()
 
     def clear(self) -> None:
+        if not self.save():
+            return
+        self._return_to_trace = None
+        self.back_button.hide()
         self._file = SourceFile()
         self._dirty = False
         self.empty.update_text(

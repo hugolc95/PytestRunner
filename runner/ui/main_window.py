@@ -451,6 +451,9 @@ class MainWindow(QMainWindow):
         self.history_dashboard = HistoryWindow(self.history, page)
         self.history_dashboard.setWindowFlags(Qt.Widget)
         self.history_dashboard.rerun_requested.connect(self._rerun_history)
+        self.history_dashboard.source_requested.connect(lambda location, external, nodeid:
+            self._open_source_reference(location, external, nodeid=nodeid,
+                                        on_return=lambda: self._show_page("history")))
         layout.addWidget(self.history_dashboard, 1)
         return page
 
@@ -1204,6 +1207,9 @@ class MainWindow(QMainWindow):
         context_policy.setRetainSizeWhenHidden(True)
         self.profile_selection_label.setSizePolicy(context_policy)
         self.profile_results = ResultsPanel(self.profile_result_page)
+        for result_panel in (self.results, self.profile_results):
+            result_panel.detail.source_requested.connect(lambda location, external, p=result_panel:
+                self._open_source_reference(location, external, panel=p))
         self.profile_results.detail.execution_view = True
         layout.addWidget(self.profile_results, 1)
         self.results_stack.addWidget(self.profile_result_page)
@@ -1230,6 +1236,78 @@ class MainWindow(QMainWindow):
         panel_layout.addWidget(self.results_stack, 1)
         self.profile_selection_label.hide()
         return panel
+
+    def _open_source_reference(self, location, external=False, *, workspace="", nodeid="",
+                               panel=None, on_return=None) -> bool:
+        """Navigate using the trace's project, never a coincidentally named file."""
+        from runner.domain.trace_locations import SourceNavigationError, resolve_location
+        from runner.domain.source import MAX_BYTES
+        from runner.ui.external_editor import open_external
+        host = self._run_host or self
+        preferences = getattr(host, "preferences", None)
+        root = location.workspace or workspace
+        if not root and not location.context_required and self.workspace is not None:
+            root = self.workspace.path
+        if panel is not None:
+            nodeid = nodeid or panel.detail._nodeid
+            if (not nodeid and panel.detail.stack.currentIndex() == panel.detail.PAGE_STRESS
+                    and panel.detail._dernier_stress is not None):
+                nodeid = panel.detail._dernier_stress[0]
+        try:
+            path = resolve_location(location, root, nodeid)
+            contexts = [self]
+            if host.run_tabs is not None:
+                contexts.extend(entry.context for entry in host.run_tabs.entries if entry.context is not self)
+                if panel is None:
+                    active = host.run_tabs.current.context
+                    contexts = [active] + [ctx for ctx in contexts if ctx is not active]
+            if not root:
+                known = [ctx for ctx in contexts if ctx.workspace is not None
+                         and path.is_relative_to(Path(ctx.workspace.path).resolve())]
+                if known:
+                    root = max(known, key=lambda ctx: len(Path(ctx.workspace.path).parts)).workspace.path
+            context = next((ctx for ctx in contexts if ctx.workspace is not None and root
+                            and Path(ctx.workspace.path).resolve() == Path(root).resolve()), None)
+            if context is not self:
+                panel = None
+            if context is not None and panel is None:
+                panel = context.profile_results if context.profile_tree_button.isChecked() else context.results
+            inside = bool(root and path.is_relative_to(Path(root).resolve()))
+            dependency = any(part.lower() in (".venv", "venv", "site-packages", "dist-packages")
+                             for part in path.parts)
+            supported = (path.suffix.lower() in (".py", ".pyw") and path.stat().st_size <= MAX_BYTES)
+            if not external and context is not None and inside and not dependency and supported:
+                if not panel.source.open_location(path, location.line, location.column,
+                                                  on_return or (lambda: panel.show_tab(0))):
+                    raise SourceNavigationError(panel.source.status_label.text()
+                                                or "Could not open the source file.")
+                if context.service.busy or panel is context.profile_results:
+                    panel.source.set_editable(False)
+                    panel.source.edit_button.setEnabled(False)
+                if host.run_tabs is not None:
+                    host.run_tabs.show_context(context)
+                else:
+                    context._show_page("workspace")
+                context.results_stack.setCurrentWidget(context.profile_result_page
+                    if panel is context.profile_results else context.results)
+                panel.show_tab(ONGLET_SOURCE)
+                panel.source.editor.setFocus()
+                return True
+            if context is not None:
+                for result_panel in (context.results, context.profile_results):
+                    source = result_panel.source
+                    if source.path() is not None and source.path().resolve() == path and not source.save():
+                        raise SourceNavigationError(source.status_label.text())
+            editor = open_external(location, path, root, preferences.values if preferences else {})
+            self.status_label.setText(f"Opened in {editor}: {path.name}:{location.line}")
+            if preferences is not None:
+                preferences.context_record(self, "actions", f"Opened in {editor}: {path}:{location.line}:{location.column}")
+            return True
+        except (SourceNavigationError, OSError, ValueError) as exc:
+            if preferences is not None:
+                preferences.context_record(self, "errors", f"Source navigation failed: {exc}")
+            ErrorDialog.show_error(self, "Could not open source", str(exc))
+            return False
 
     def _on_profile_output(self, position, count, attempt, reader, text):
         active = self._profile_batch_output.get(reader)
@@ -2156,7 +2234,8 @@ class MainWindow(QMainWindow):
         ErrorDialog.show_diagnostics(
             self, "Collection failed", details,
             preferences.show_errors if preferences is not None else None,
-            summary=headline)
+            summary=headline, workspace=getattr(failure, "workspace", "") or
+                (self.workspace.path if self.workspace else ""))
         self._update_actions()
 
     def _size_reader_columns(self, tree=None, model=None) -> None:

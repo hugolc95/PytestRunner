@@ -15,6 +15,8 @@ dossier qu'on venait de cliquer.
 
 from __future__ import annotations
 
+from runner.ui.trace_browser import TraceBrowser, linked_line
+
 import time
 from html import escape
 
@@ -232,6 +234,7 @@ class DetailPanel(QWidget):
     """
 
     open_output = Signal()
+    source_requested = Signal(object, bool)
     test_chosen = Signal(str)   # un echec clique dans la fiche de groupe
 
     PAGE_VIDE, PAGE_TEST, PAGE_GROUPE, PAGE_STRESS = 0, 1, 2, 3
@@ -335,7 +338,8 @@ class DetailPanel(QWidget):
         self.results_row = ReaderResultsTable()
         colonne.addWidget(self.results_row)
 
-        self.body = QTextEdit()
+        self.body = TraceBrowser()
+        self.body.source_requested.connect(self.source_requested)
         self.body.setReadOnly(True)
         self.body.setLineWrapMode(QTextEdit.NoWrap)
         colonne.addWidget(self.body, 1)
@@ -460,7 +464,8 @@ class DetailPanel(QWidget):
         self.stress_failures.itemClicked.connect(self._sur_tentative_ratee)
         colonne.addWidget(self.stress_failures)
 
-        self.stress_body = QTextEdit()
+        self.stress_body = TraceBrowser()
+        self.stress_body.source_requested.connect(self.source_requested)
         self.stress_body.setReadOnly(True)
         self.stress_body.setLineWrapMode(QTextEdit.NoWrap)
         colonne.addWidget(self.stress_body, 1)
@@ -948,7 +953,7 @@ class DetailPanel(QWidget):
             nature = classify_line(ligne)
             teinte = _teinte(nature)
             gras = "font-weight:600;" if nature == "exception" else ""
-            nue = escape(strip_ansi(ligne)) or "&nbsp;"
+            nue = linked_line(strip_ansi(ligne)) or "&nbsp;"
             lignes.append(f'<span style="color:{teinte};{gras}">{nue}</span>')
 
         return (
