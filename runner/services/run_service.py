@@ -8,11 +8,17 @@ donc jamais remonter jusqu'a un slot.
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import copy
+import yaml
 
 from PySide6.QtCore import QObject, QThread, Signal
 
 from runner.domain import execution
 from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest, Status
+from runner.domain.execution_profile import merge_configuration, validate_step_overrides, ProfileValidationError
+from runner.domain.reader_isolation import ENV_CONFIG_SOURCE
 
 
 class CollectWorker(QThread):
@@ -203,7 +209,8 @@ class RunService(QObject):
 
     def start_profile(self, request: RunRequest, env: dict, sequence: list[str],
                       repetitions: int = 1, rerun_failures: int = 0,
-                      stop_after_failure: bool = False) -> bool:
+                      stop_after_failure: bool = False,
+                      step_overrides: list[dict] | None = None) -> bool:
         """Run an ordered sequence, preserving duplicates and retries.
 
         Each sequence occurrence is a separate pytest invocation. This is the
@@ -212,6 +219,31 @@ class RunService(QObject):
         """
         if self.busy or not sequence:
             return False
+        patches = copy.deepcopy([] if step_overrides is None else step_overrides)
+        validate_step_overrides(patches, len(sequence))
+        self._profile_config_directory = None
+        self._profile_config_paths = {}
+        if any(patches):
+            if not request.config_path:
+                raise ProfileValidationError("Choose a YAML configuration before using step parameters.")
+            try:
+                base = yaml.safe_load(Path(request.config_path).read_text(encoding="utf-8-sig"))
+            except yaml.YAMLError as exc:
+                raise ProfileValidationError(f"The YAML configuration is invalid: {exc}") from exc
+            if not isinstance(base, dict):
+                raise ProfileValidationError("The YAML configuration must contain a mapping.")
+            # Snapshot every effective configuration before starting any worker.
+            directory = TemporaryDirectory(prefix="runner_step_config_")
+            try:
+                for index, patch in enumerate(patches):
+                    path = Path(directory.name) / f"step-{index + 1}.yaml"
+                    path.write_text(yaml.safe_dump(merge_configuration(base, patch),
+                                                  allow_unicode=True, sort_keys=False), encoding="utf-8")
+                    self._profile_config_paths[index] = str(path)
+            except Exception:
+                directory.cleanup()
+                raise
+            self._profile_config_directory = directory
         expanded = list(sequence) * max(1, int(repetitions))
         self._profile_sequence_length = len(sequence)
         self._profile_repetitions = max(1, int(repetitions))
@@ -222,6 +254,8 @@ class RunService(QObject):
         self._profile_queue = expanded
         self._profile_request = request
         self._profile_env = dict(env)
+        if self._profile_config_directory:
+            self._profile_env[ENV_CONFIG_SOURCE] = env.get(ENV_CONFIG_SOURCE) or request.config_path
         self._profile_attempt = 0
         self._profile_reruns = max(0, int(rerun_failures))
         self._profile_stop_after_failure = bool(stop_after_failure)
@@ -253,7 +287,7 @@ class RunService(QObject):
         what keeps two occurrences of the same step in the sequence as two
         genuinely distinct executions.
         """
-        if self._profile_reruns or self._profile_stop_after_failure:
+        if self._profile_reruns or self._profile_stop_after_failure or getattr(self, "_profile_config_directory", None):
             return self._profile_queue[:1]
         vus: set[str] = set()
         batch: list[str] = []
@@ -273,6 +307,9 @@ class RunService(QObject):
         self._emit_profile_detail(-1, self._current_batch[0], preparing=True)
         request = replace(
             self._profile_request,
+            config_path=self._profile_config_paths.get(
+                (self._profile_expanded_length - len(self._profile_queue)) % self._profile_sequence_length,
+                self._profile_request.config_path),
             nodeids=tuple(self._current_batch),
             # Per-step JUnit files would overwrite one another. The aggregate
             # history remains available through ReaderReport.
@@ -352,6 +389,10 @@ class RunService(QObject):
         reports = sorted(self._profile_reports.values(), key=lambda r: r.reader.index)
         self._profile_active = False
         self._profile_queue = []
+        directory = getattr(self, "_profile_config_directory", None)
+        if directory:
+            directory.cleanup()
+            self._profile_config_directory = None
         for report in reports:
             self.reader_finished.emit(report)
         self.finished.emit(reports)

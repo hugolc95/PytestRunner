@@ -23,6 +23,7 @@ def capture_profile(request, profile=None, name="") -> dict | None:
     captured = ExecutionProfile(
         name=name or (profile.name if profile else "Recorded run"),
         sequence=list(profile.sequence if profile else request.nodeids),
+        step_overrides=profile.step_overrides if profile else [],
         configuration_name=config_name, configuration_text=config_text,
         execution=profile.execution if profile else ExecutionOptions(),
         reports=profile.reports if profile else ReportOptions(),
@@ -38,6 +39,7 @@ def profile_from_entry(entry, name="", configuration_path=None) -> ExecutionProf
                 name=name or saved["name"], sequence=list(saved["sequence"]),
                 configuration_name=saved["configuration_name"],
                 configuration_text=saved["configuration_text"],
+                step_overrides=saved.get("step_overrides", []),
                 execution=ExecutionOptions(**saved["execution"]),
                 reports=report_options_from_dict(saved["reports"]),
             )

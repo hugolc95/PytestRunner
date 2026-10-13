@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = pytest.mark.usefixtures("isolated_run_state")
+
 from types import SimpleNamespace
 
 from runner.domain.execution import Collection
@@ -22,6 +26,8 @@ def test_open_profile_collects_first_then_opens_without_running(qtbot, monkeypat
     window._load_execution_profile(profile)
     assert calls == ['collect']
     assert window._active_execution_profile is None
+    # The real collector has finished before its collected signal is handled.
+    window._collector = None
     window._on_collected(Collection(nodeids=tuple(profile.sequence)))
     qtbot.waitUntil(lambda: window._active_execution_profile is profile)
     assert window.pages.currentWidget() is window.workspace_page

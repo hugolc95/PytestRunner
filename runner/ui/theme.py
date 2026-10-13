@@ -176,6 +176,8 @@ QLabel#ProfileSectionTitle {{
     font-size: {t.TEXT_XS}px;
     font-weight: 700;
 }}
+QLabel#ProfileParameterError {{ color: {t.status_color(Status.FAILED)}; }}
+QTreeWidget#ProfileSequence {{ background-color: transparent; border: none; }}
 QListWidget#ProfileLibrary, QListWidget#ProfileSequence {{
     background-color: transparent;
     border: none;

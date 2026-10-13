@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from runner.domain.execution import Collection
 from runner.domain.models import Status
+from runner.domain.execution_profile import ProfileValidationError
 from runner.ui.run_tabs_strip import RunTabBar, RunTabClose
 from runner.ui import icons, tokens as t
 from runner.ui.widgets import ErrorDialog
@@ -416,11 +417,16 @@ class RunTabsController(QObject):
             accepted = context.service.start(job.request, job.env)
         else:
             execution = job.profile.execution
-            accepted = context.service.start_profile(
-                job.request, job.env, list(job.profile.sequence),
-                repetitions=execution.repetitions,
-                rerun_failures=execution.rerun_failures,
-                stop_after_failure=execution.stop_after_failure)
+            try:
+                accepted = context.service.start_profile(
+                    job.request, job.env, list(job.profile.sequence),
+                    repetitions=execution.repetitions,
+                    rerun_failures=execution.rerun_failures,
+                    stop_after_failure=execution.stop_after_failure,
+                    step_overrides=job.profile.step_overrides)
+            except (OSError, UnicodeError, ProfileValidationError) as exc:
+                accepted = False
+                ErrorDialog.show_error(context, "Could not prepare profile parameters", str(exc))
         if not accepted:
             self.active = None
             entry.state = "draft"

@@ -1,3 +1,7 @@
+import pytest
+
+pytestmark = pytest.mark.usefixtures("isolated_run_state")
+
 from types import SimpleNamespace
 
 from runner.domain.execution_profile import ExecutionProfile, ProfileStore

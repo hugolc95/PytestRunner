@@ -12,6 +12,7 @@ import json
 import re
 import uuid
 import zipfile
+import copy
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -33,6 +34,46 @@ _NODEID = re.compile(r"^[^\x00\r\n]+::[^\x00\r\n]+$")
 
 class ProfileValidationError(ValueError):
     """Raised when an imported profile is invalid, unsafe or unsupported."""
+
+
+def validate_step_overrides(overrides, count: int) -> None:
+    if not isinstance(overrides, list) or (overrides and len(overrides) != count):
+        raise ProfileValidationError("Configuration overrides must match the sequence length.")
+
+    def check(value, depth=0):
+        if depth > 30:
+            raise ProfileValidationError("Configuration overrides are nested too deeply.")
+        if isinstance(value, dict):
+            if not all(isinstance(key, str) and key and "\x00" not in key for key in value):
+                raise ProfileValidationError("Configuration override keys must be non-empty text.")
+            for child in value.values():
+                check(child, depth + 1)
+        elif isinstance(value, list):
+            for child in value:
+                check(child, depth + 1)
+        elif value is not None and type(value) not in (str, int, float, bool):
+            raise ProfileValidationError("Unsupported configuration override value.")
+    for patch in overrides:
+        if not isinstance(patch, dict):
+            raise ProfileValidationError("Each configuration override must be a mapping.")
+        check(patch)
+    try:
+        encoded = json.dumps(overrides, allow_nan=False).encode("utf-8")
+    except (ValueError, OverflowError) as exc:
+        raise ProfileValidationError("Invalid configuration override value.") from exc
+    if len(encoded) > MAX_MANIFEST_BYTES:
+        raise ProfileValidationError("Configuration overrides are too large.")
+
+
+def merge_configuration(base: dict, patch: dict) -> dict:
+    """Apply a patch to a fresh copy, keeping unrelated nested parameters."""
+    result = copy.deepcopy(base)
+    for key, value in patch.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = merge_configuration(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
 
 
 @dataclass
@@ -67,6 +108,8 @@ class ExecutionProfile:
     execution: ExecutionOptions = field(default_factory=ExecutionOptions)
     reports: ReportOptions = field(default_factory=ReportOptions)
     source: str = "local"
+    # One patch per occurrence, never keyed by nodeid (duplicates are distinct).
+    step_overrides: list[dict] = field(default_factory=list)
 
     @property
     def total_executions(self) -> int:
@@ -134,9 +177,10 @@ _NO_CONFIG_ENTRY = "_none.yaml"
 
 
 def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
+    customized = any(profile.step_overrides)
     return {
         "format": FORMAT,
-        "format_version": FORMAT_VERSION,
+        "format_version": 2 if customized else FORMAT_VERSION,
         "profile": {
             "id": profile.profile_id,
             "name": profile.name,
@@ -147,7 +191,9 @@ def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
             "sha256": checksum,
         },
         "sequence": [
-            {"step_id": f"step-{index:05d}", "test": nodeid}
+            {"step_id": f"step-{index:05d}", "test": nodeid,
+             **({"configuration_overrides": profile.step_overrides[index - 1]}
+                if customized else {})}
             for index, nodeid in enumerate(profile.sequence, 1)
         ],
         "execution": asdict(profile.execution),
@@ -177,6 +223,7 @@ def validate_profile(profile: ExecutionProfile) -> None:
     if not profile.sequence or len(profile.sequence) > MAX_STEPS:
         raise ProfileValidationError(
             f"A profile must contain between 1 and {MAX_STEPS} steps.")
+    validate_step_overrides(profile.step_overrides, len(profile.sequence))
     for nodeid in profile.sequence:
         if not isinstance(nodeid, str) or not _NODEID.match(nodeid):
             raise ProfileValidationError(f"Invalid pytest test identifier: {nodeid!r}")
@@ -202,6 +249,8 @@ def export_profile(profile: ExecutionProfile, destination: str | Path) -> Path:
     checksum = hashlib.sha256(config).hexdigest()
     manifest = json.dumps(
         _manifest(profile, checksum), ensure_ascii=False, indent=2).encode("utf-8")
+    if len(manifest) > MAX_MANIFEST_BYTES:
+        raise ProfileValidationError("The profile manifest is too large.")
     entry_name = profile.configuration_name or _NO_CONFIG_ENTRY
     with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("manifest.json", manifest)
@@ -248,7 +297,7 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
                 raise ProfileValidationError("The manifest is not valid JSON.") from exc
             if not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
                 raise ProfileValidationError("This is not a Pytest Runner profile.")
-            if manifest.get("format_version") != FORMAT_VERSION:
+            if type(manifest.get("format_version")) is not int or manifest.get("format_version") not in (1, 2):
                 raise ProfileValidationError(
                     f"Unsupported profile version: {manifest.get('format_version')!r}.")
             allowed = {"format", "format_version", "profile", "configuration",
@@ -278,15 +327,20 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
         raise ProfileValidationError("The execution settings are invalid.")
     report_options = report_options_from_dict(reports)
     nodeids: list[str] = []
+    overrides: list[dict] = []
     step_ids: set[str] = set()
     for step in steps:
-        if not isinstance(step, dict) or set(step) != {"step_id", "test"}:
+        keys = {"step_id", "test"}
+        if manifest["format_version"] == 2:
+            keys.add("configuration_overrides")
+        if not isinstance(step, dict) or set(step) != keys:
             raise ProfileValidationError("A sequence step is invalid.")
         step_id = _safe_name(step["step_id"], "Step identifier", 120)
         if step_id in step_ids:
             raise ProfileValidationError("Sequence step identifiers must be unique.")
         step_ids.add(step_id)
         nodeids.append(step["test"])
+        overrides.append(step.get("configuration_overrides", {}))
     try:
         config_text = config.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -306,6 +360,7 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
         ),
         reports=report_options,
         source="imported",
+        step_overrides=overrides if manifest["format_version"] == 2 else [],
     )
     validate_profile(profile)
     available = set(available_nodeids)

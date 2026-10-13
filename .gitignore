@@ -10,6 +10,9 @@ __pycache__/
 # Etat / rapports generes a l'execution, pas du code source
 campaign_state.txt
 rapport_*.html
+/report_*.html
+/pytest_comparison.xlsx
+/run_*.pytest-profile
 
 # Logs APDU generes par utils.log du SmartcardFramework
 apdu_log.log
