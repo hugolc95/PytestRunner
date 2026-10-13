@@ -1984,7 +1984,7 @@ class MainWindow(QMainWindow):
             self.run_tabs.configuration_env(self, self.workspace.env) if self.run_tabs else self.workspace.env,
             self, timeout=timeout_seconds(self, "collection_timeout"))
         self._collector.collected.connect(self._on_collected)
-        self._collector.failed.connect(self._on_collect_failed)
+        getattr(self._collector, "diagnostic_failed", self._collector.failed).connect(self._on_collect_failed)
         self._collector.start()
         self._refresh_primary_reader()
 
@@ -2132,8 +2132,12 @@ class MainWindow(QMainWindow):
         for index, path in self._tree_paths():
             self.tree.setExpanded(index, path in expanded)
 
-    @Slot(str)
-    def _on_collect_failed(self, message: str) -> None:
+    @Slot(object)
+    def _on_collect_failed(self, failure) -> None:
+        from runner.domain.diagnostics import CollectionError
+        message = str(failure) or "Unknown error"
+        details = failure.details if isinstance(failure, CollectionError) else message
+        headline = failure.headline if isinstance(failure, CollectionError) else message
         self._pending_history_run = None
         self._pending_execution_profile = None
         self.progress.setVisible(False)
@@ -2141,7 +2145,18 @@ class MainWindow(QMainWindow):
         self.load_button.setEnabled(True)
         self.status_label.setText("Collection failed")
 
-        ErrorDialog.show_diagnostics(self, "Collection failed", message or "Unknown error")
+        preferences = (getattr(self, "preferences", None)
+                       or getattr(self._run_host, "preferences", None))
+        if preferences is not None:
+            preferences.context_record(self, "errors", "Collection failed\n" + details)
+            if isinstance(failure, CollectionError):
+                for name, text in (("stdout", failure.stdout), ("stderr", failure.stderr)):
+                    if text.strip():
+                        preferences.context_record(self, "output", f"Collection {name}:\n{text}")
+        ErrorDialog.show_diagnostics(
+            self, "Collection failed", details,
+            preferences.show_errors if preferences is not None else None,
+            summary=headline)
         self._update_actions()
 
     def _size_reader_columns(self, tree=None, model=None) -> None:

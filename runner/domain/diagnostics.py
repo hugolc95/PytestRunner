@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shlex
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
@@ -30,7 +31,8 @@ def _write(kind, nodeid, phase, detail):
     crash = getattr(detail, "reprcrash", None)
     payload = dict(kind=kind, nodeid=nodeid, phase=phase,
                    message=str(getattr(crash, "message", "") or detail),
-                   body=str(detail))
+                   body=str(detail), path=str(getattr(crash, "path", "") or ""),
+                   lineno=getattr(crash, "lineno", None))
     try:
         with open(target, "a", encoding="utf-8") as stream:
             stream.write(json.dumps(payload, ensure_ascii=True) + "\n")
@@ -87,6 +89,69 @@ def format_errors(items: list[dict]) -> str:
             fallback_error(item["body"], 2) if item["message"] == item["body"]
             and item["kind"] == "collection" else item["message"])
         for item in items))
+
+
+def diagnostic_location(item: dict) -> str:
+    """Prefer the broken source's location over pytest's SyntaxError wrapper."""
+    if "SyntaxError" in item["body"]:
+        matches = list(re.finditer(r'File "([^"]+)", line (\d+)', item["body"]))
+        if matches:
+            return f"{matches[-1][1]}:{matches[-1][2]}"
+    path = item.get("path") or item["nodeid"]
+    line = item.get("lineno")
+    return f"{path}:{line}" if path and isinstance(line, int) else path
+
+
+def _text(value) -> str:
+    return value.decode("utf-8", errors="replace") if isinstance(value, bytes) else str(value or "")
+
+
+class CollectionError(RuntimeError):
+    """Readable summary plus complete diagnostics from the failed subprocess."""
+    def __init__(self, message: str, *, workspace: str, interpreter: str,
+                 command=(), configuration: str = "", exit_code: int | None = None,
+                 stdout="", stderr="", reports=(), traceback_text: str = ""):
+        super().__init__(message)
+        self.workspace = workspace
+        self.interpreter = interpreter
+        self.command = tuple(command)
+        self.configuration = configuration
+        self.exit_code = exit_code
+        self.stdout, self.stderr = _text(stdout), _text(stderr)
+        self.reports = tuple(reports)
+        self.traceback_text = traceback_text
+
+    @property
+    def headline(self) -> str:
+        if not self.reports:
+            return "\n".join(str(self).splitlines()[:2])
+        first = self.reports[0]
+        count = len(self.reports)
+        message = format_errors([first]).splitlines()[-1]
+        return (f"{count} collection error{'s' if count != 1 else ''}\n"
+                f"{diagnostic_location(first)}\n{message}")
+
+    @property
+    def details(self) -> str:
+        sections = [str(self)]
+        for number, item in enumerate(self.reports, 1):
+            sections.append(f"Error {number} — {diagnostic_location(item)}\n"
+                            f"Traceback:\n{strip_ansi(item['body'])}")
+        if not self.reports:
+            for name, output in (("Pytest stdout", self.stdout), ("Pytest stderr", self.stderr)):
+                if output.strip():
+                    sections.append(f"{name}:\n{strip_ansi(output)}")
+        if self.traceback_text:
+            sections.append(self.traceback_text)
+        context = [f"Workspace: {self.workspace}", f"Python: {self.interpreter}"]
+        if self.configuration:
+            context.append(f"Configuration: {self.configuration}")
+        if self.command:
+            context.append(f"Command: {shlex.join(str(part) for part in self.command)}")
+        if self.exit_code is not None:
+            context.append(f"Exit code: {self.exit_code}")
+        sections.append("Collection context:\n" + "\n".join(context))
+        return "\n\n".join(sections)
 
 
 def fallback_error(output: str, code: int) -> str:

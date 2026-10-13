@@ -26,6 +26,7 @@ class CollectWorker(QThread):
     # test, releves pendant le meme passage de pytest.
     collected = Signal(object)
     failed = Signal(str)
+    diagnostic_failed = Signal(object)
 
     def __init__(self, workspace: str, interpreter: str, env: dict, parent=None,
                  timeout: float = 120.0):
@@ -40,7 +41,13 @@ class CollectWorker(QThread):
             collection = execution.collect(self._workspace, self._interpreter,
                                            self._env, timeout=self._timeout)
         except Exception as exc:
-            self.failed.emit(str(exc))
+            from runner.domain.diagnostics import CollectionError
+            import traceback
+            failure = exc if isinstance(exc, CollectionError) else CollectionError(
+                f"{type(exc).__name__}: {exc}", workspace=self._workspace,
+                interpreter=self._interpreter, traceback_text=traceback.format_exc())
+            self.diagnostic_failed.emit(failure)
+            self.failed.emit(str(failure))
             return
         self.collected.emit(collection)
 
