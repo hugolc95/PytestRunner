@@ -378,6 +378,29 @@ def test_all_normal_logs_of_a_build_are_found(tmp_path):
     assert find_logs_for_build(tmp_path, 42, "Reader A") == [a, b]
 
 
+def test_history_can_open_a_root_that_is_already_the_run_folder(tmp_path):
+    from runner.domain.logs import history_log_directories
+    folder = tmp_path / "20261013" / "Run_0414"
+    ecrire(folder / "Reader A", "test_card")
+    assert history_log_directories(folder, 414, time.time()) == [folder]
+
+
+def test_incremental_history_can_open_a_root_that_is_already_the_dated_folder(tmp_path):
+    from runner.domain.logs import history_log_directories
+    folder = tmp_path / "20261013"
+    ecrire(folder / "Reader A", "test_card_B0414_001")
+    assert history_log_directories(folder, 414, time.time()) == [folder]
+
+
+def test_normal_history_under_a_dated_root_opens_only_the_selected_run(tmp_path):
+    from runner.domain.logs import history_log_directories
+    root = tmp_path / "20261013"
+    selected = root / "Run_0414"
+    ecrire(selected / "Reader A", "test_card")
+    ecrire(root / "Run_0415" / "Reader A", "other_run")
+    assert history_log_directories(root, 414, time.time()) == [selected]
+
+
 def test_all_incremental_logs_of_a_build_are_found(tmp_path):
     dossier = tmp_path / "20260819" / "Reader A" / "suite"
     a = ecrire(dossier, "test_a_B0042_001")

@@ -2453,11 +2453,14 @@ class MainWindow(QMainWindow):
         profile = self._running_execution_profile
         from runner.domain.profile_logs import ProfileLogIndex
         self._profile_logs = None
-        if profile is not None and self.workspace is not None:
+        self._archive_log_root = None
+        if self.workspace is not None:
             log_root = self.workspace.log_root
             if request.config_path:
                 log_root = Workspace.load(request.workspace, request.config_path).log_root
-            self._profile_logs = ProfileLogIndex(log_root, request.build_number)
+            self._archive_log_root = log_root
+            if profile is not None:
+                self._profile_logs = ProfileLogIndex(log_root, request.build_number)
         self._profile_count_statuses = {} if profile is not None else None
         self._profile_verdict_counts = Counter()
         self._profile_execution_total = request.total_tests
@@ -2761,7 +2764,7 @@ class MainWindow(QMainWindow):
                 timestamp=time.time(),
                 workspace=self.workspace.path,
                 build_number=self._build_number,
-                log_root=str(self.workspace.log_root),
+                log_root=str(getattr(self, "_archive_log_root", None) or self.workspace.log_root),
                 reader=rapport.reader.name,
                 duration=rapport.duration,
                 exit_code=rapport.exit_code,

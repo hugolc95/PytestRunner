@@ -74,7 +74,7 @@ def install() -> None:
                 timestamp=now,
                 workspace=self.workspace.path,
                 build_number=self._build_number,
-                log_root=str(self.workspace.log_root),
+                log_root=str(getattr(self, "_archive_log_root", None) or self.workspace.log_root),
                 reader=report.reader.name,
                 duration=report.duration,
                 exit_code=report.exit_code,

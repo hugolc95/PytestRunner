@@ -391,6 +391,26 @@ def find_logs_for_build(log_root: Path, build_number: int,
     return sorted(set(trouves), key=lambda path: str(path).lower())
 
 
+def history_log_roots(entry) -> list[Path]:
+    """Use the launch YAML for old entries with an incorrectly recorded root."""
+    from runner.domain.workspace import Workspace
+    import yaml
+
+    roots = []
+    text = entry.configuration_text()
+    if text is not None:
+        try:
+            settings = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            settings = None
+        if isinstance(settings, dict):
+            roots.append(Workspace(entry.workspace, settings=settings).log_root)
+    if entry.log_root:
+        root = Path(entry.log_root)
+        roots.append(root if root.is_absolute() else Path(entry.workspace) / root)
+    return list(dict.fromkeys(roots))
+
+
 def history_log_directories(log_root: Path, build_number: int,
                             timestamp: float, duration: float = 0,
                             reader: str = "") -> list[Path]:
@@ -405,8 +425,12 @@ def history_log_directories(log_root: Path, build_number: int,
         return []
     run_name = f"Run_{build_number:04d}"
     candidates = set(root.rglob(run_name))
+    if root.name == run_name:
+        candidates.add(root)
     candidates = {path for path in candidates if path.is_dir()}
     for log in find_logs_for_build(root, build_number, reader):
+        if _DATE.fullmatch(root.name) and run_name not in log.parts:
+            candidates.add(root)
         for parent in log.resolve().parents:
             if parent == root or root not in parent.parents:
                 break
@@ -420,6 +444,9 @@ def history_log_directories(log_root: Path, build_number: int,
     if not candidates:
         candidates.update(path.parent for path in
                           root.glob(f"*/build_{build_number:04d}*.json"))
+        if _DATE.fullmatch(root.name):
+            candidates.update(path.parent for path in
+                              root.glob(f"build_{build_number:04d}*.json"))
     if len(candidates) <= 1:
         return sorted(candidates)
 
@@ -428,8 +455,6 @@ def history_log_directories(log_root: Path, build_number: int,
     matched = []
     for path in candidates:
         for parent in (path, *path.parents):
-            if parent == root:
-                break
             match = _DATE.fullmatch(parent.name)
             if match:
                 try:
@@ -439,6 +464,8 @@ def history_log_directories(log_root: Path, build_number: int,
                     break
                 if start <= day <= end:
                     matched.append(path)
+                break
+            if parent == root:
                 break
     return sorted(matched)
 

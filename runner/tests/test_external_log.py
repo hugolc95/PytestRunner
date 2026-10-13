@@ -1,10 +1,49 @@
 """Tests de l'ouverture du log sans dependance vers l'ancienne interface."""
 
+import pytest
+
 from runner.ui.external_log import (
     find_notepad_plus_plus,
     open_in_notepad_plus_plus,
 )
 from runner.ui.widgets import ErrorDialog
+
+
+def test_windows_log_folder_uses_explorer_with_complete_path(tmp_path, monkeypatch):
+    from runner.ui import external_log
+    folder = tmp_path / "logs with spaces" / "Run_0414"
+    folder.mkdir(parents=True)
+    opened = []
+    monkeypatch.setattr(external_log.sys, "platform", "win32")
+    monkeypatch.setattr(external_log.os, "startfile",
+                        lambda path, verb: opened.append((path, verb)), raising=False)
+    monkeypatch.setattr(external_log.QDesktopServices, "openUrl",
+                        lambda *_: pytest.fail("Native Explorer opening should suffice"))
+    external_log.open_log_folder(folder)
+    assert opened == [(str(folder), "explore")]
+
+
+def test_windows_folder_open_falls_back_to_qt_and_reports_both_failures(tmp_path, monkeypatch):
+    from runner.ui import external_log
+    monkeypatch.setattr(external_log.sys, "platform", "win32")
+    def fail_native(*_):
+        raise OSError("Explorer access denied")
+    monkeypatch.setattr(external_log.os, "startfile", fail_native, raising=False)
+    opened = []
+    monkeypatch.setattr(external_log.QDesktopServices, "openUrl",
+                        lambda url: opened.append(url.toLocalFile()) or True)
+    external_log.open_log_folder(tmp_path)
+    assert opened == [str(tmp_path)]
+    monkeypatch.setattr(external_log.QDesktopServices, "openUrl", lambda *_: False)
+    with pytest.raises(OSError, match="Explorer access denied"):
+        external_log.open_log_folder(tmp_path)
+
+
+def test_folder_removed_before_opening_reports_its_path(tmp_path):
+    from runner.ui.external_log import open_log_folder
+    missing = tmp_path / "Run_0414"
+    with pytest.raises(FileNotFoundError, match="Run_0414"):
+        open_log_folder(missing)
 
 
 def test_notepad_plus_plus_is_found_in_program_files(tmp_path, monkeypatch):

@@ -11,8 +11,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, QUrl, Signal
-from PySide6.QtGui import QActionGroup, QColor, QDesktopServices
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
+from PySide6.QtGui import QActionGroup, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -57,6 +57,8 @@ from runner.ui.tree_model import NODEID_ROLE
 from runner.domain.failures import index_failures, failure_for
 from runner.ui.results_panel import ReaderViews
 from runner.ui.widgets import EmptyState, StatusRibbon
+from runner.ui.external_log import open_log_folder
+from runner.ui.runtime_polish import InlineNotice
 
 
 def _when(timestamp: float, with_date: bool = True) -> str:
@@ -707,12 +709,16 @@ class HistoryWindow(QDialog):
 
         self.status = QLabel()
         self.status.setObjectName("Muted")
+        self.status.setWordWrap(True)
+        self.status.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.logs_notice = InlineNotice(self)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(t.SPACE_4, t.SPACE_4,
                                   t.SPACE_4, t.SPACE_3)
         layout.setSpacing(t.SPACE_3)
         layout.addLayout(header)
+        layout.addWidget(self.logs_notice)
         layout.addLayout(body, 1)
         layout.addWidget(self.status)
 
@@ -1306,6 +1312,7 @@ class HistoryWindow(QDialog):
         self._update_compare_action()
 
     def _show_group(self, group: RunGroup) -> None:
+        self.logs_notice.hide_notice()
         self.detail_stack.setCurrentWidget(self.detail)
         entry = group.entries[0] if group.entries else None
         self.detail_title.setText(group.display_name)
@@ -1325,7 +1332,13 @@ class HistoryWindow(QDialog):
         self._fill_export_menu(group)
         self.rerun_button.setEnabled(bool(group.nodeids))
         self.logs_button.setEnabled(
-            group.build_number is not None and bool(group.log_root))
+            group.build_number is not None and any(
+                entry.log_root or entry.configuration_file
+                or (entry.replay_profile or {}).get("configuration_name")
+                for entry in group.entries))
+        self.logs_button.setToolTip(
+            "Open this run's log folder" if self.logs_button.isEnabled()
+            else "No build number or log path was recorded for this run")
         self.delete_button.setEnabled(True)
 
     @staticmethod
@@ -1629,27 +1642,52 @@ class HistoryWindow(QDialog):
             self.tabs.setCurrentIndex(2)
 
     def open_logs(self) -> None:
+        self.logs_notice.hide_notice()
         group = self._current_group()
-        if group is None or group.build_number is None or not group.log_root:
+        if group is None:
+            self._logs_error("Select a run to open its logs.")
             return
-        root = Path(group.log_root)
-        if not root.is_absolute():
-            root = Path(group.workspace) / root
-        try:
-            folders = logs.history_log_directories(
-                root, group.build_number, group.timestamp, group.duration,
-                self._filter_reader)
-        except OSError as exc:
-            self._say(f"Could not access logs: {exc}", True)
+        if group.build_number is None:
+            self._logs_error("No build number was recorded for this run.")
             return
+        folders, errors = [], []
+        searched = {}
+        for entry in group.entries:
+            if self._filter_reader and entry.reader != self._filter_reader:
+                continue
+            for root in logs.history_log_roots(entry):
+                if root not in searched:
+                    try:
+                        searched[root] = logs.history_log_directories(
+                            root, group.build_number, group.timestamp, group.duration,
+                            self._filter_reader)
+                    except OSError as exc:
+                        searched[root] = []
+                        errors.append(f"{root}: {exc}")
+                if searched[root]:
+                    folders.extend(searched[root])
+                    break
+        folders = list(dict.fromkeys(folders))
         if not folders:
-            self._say(f"No log folder found for build #{group.build_number:04d} "
-                      f"from {_when(group.timestamp)} in {root}.", True)
+            detail = "Looked in:\n" + "\n".join(str(root) for root in searched)
+            if errors:
+                detail += "\n\n" + "\n".join(errors)
+            self._logs_error(
+                f"No log folder found for build #{group.build_number:04d} "
+                f"from {_when(group.timestamp)}.", detail)
             return
         for folder in folders:
-            if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder))):
-                self._say(f"Could not open log folder: {folder}", True)
+            try:
+                open_log_folder(folder)
+            except OSError as exc:
+                self._logs_error(f"Could not open log folder: {folder}", str(exc))
                 return
+        self._say("Opened log folder" + ("s" if len(folders) > 1 else "")
+                  + ": " + "; ".join(str(folder) for folder in folders))
+
+    def _logs_error(self, message: str, detail: str = "") -> None:
+        self._say(message, True)
+        self.logs_notice.show_error("Logs unavailable", message, detail)
 
     def rerun(self) -> None:
         group = self._current_group()

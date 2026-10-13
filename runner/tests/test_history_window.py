@@ -101,7 +101,7 @@ def test_a_group_exposes_the_shared_build_number(tmp_path):
 
 def test_history_shows_the_build_and_opens_its_log_folder(
         qapp, tmp_path, monkeypatch):
-    import runner.ui.history_dashboard as dashboard
+    from runner.ui import external_log
 
     run_folder = tmp_path / "logs" / "20260819" / "Run_0042"
     log_file = run_folder / "Reader A" / "suite" / "test.log"
@@ -114,7 +114,7 @@ def test_history_shows_the_build_and_opens_its_log_folder(
 
     assert "Build #0042" in window.detail_meta.text()
     opened = []
-    monkeypatch.setattr(dashboard.QDesktopServices, "openUrl",
+    monkeypatch.setattr(external_log.QDesktopServices, "openUrl",
                         lambda url: opened.append(url) or True)
     window.open_logs()
 
@@ -123,7 +123,7 @@ def test_history_shows_the_build_and_opens_its_log_folder(
 
 def test_history_logs_follow_the_selected_run_date(qapp, tmp_path, monkeypatch):
     from datetime import datetime
-    import runner.ui.history_dashboard as dashboard
+    from runner.ui import external_log
 
     history = History(tmp_path / "history")
     folders = []
@@ -136,7 +136,7 @@ def test_history_logs_follow_the_selected_run_date(qapp, tmp_path, monkeypatch):
                             build_number=42, log_root="logs"))
     window = HistoryWindow(history)
     opened = []
-    monkeypatch.setattr(dashboard.QDesktopServices, "openUrl",
+    monkeypatch.setattr(external_log.QDesktopServices, "openUrl",
                         lambda url: opened.append(Path(url.toLocalFile())) or True)
     select_run(window, 0)
     window.open_logs()
@@ -146,16 +146,89 @@ def test_history_logs_follow_the_selected_run_date(qapp, tmp_path, monkeypatch):
 
 
 def test_history_reports_a_folder_open_failure(qapp, tmp_path, monkeypatch):
-    import runner.ui.history_dashboard as dashboard
+    from runner.ui import external_log
 
     folder = tmp_path / "Run_0042"
     folder.mkdir()
     history = History(tmp_path / "history")
     ajoute(history, "run", build_number=42, log_root=str(tmp_path))
     window = HistoryWindow(history)
-    monkeypatch.setattr(dashboard.QDesktopServices, "openUrl", lambda url: False)
+    monkeypatch.setattr(external_log.QDesktopServices, "openUrl", lambda url: False)
     window.open_logs()
     assert "Could not open log folder" in window.status.text()
+    assert not window.logs_notice.isHidden()
+    assert str(folder) in window.logs_notice.message_label.text()
+
+
+def test_logs_button_recovers_the_archived_yaml_path_and_confirms_opening(qapp, tmp_path, monkeypatch):
+    import runner.ui.history_dashboard as dashboard
+    # An old entry may point to a valid but unrelated workspace log folder.
+    actual = tmp_path / "profile logs" / "20261013" / "Run_0414"
+    actual.mkdir(parents=True)
+    stale = tmp_path / "workspace logs" / "20261013" / "Run_0414"
+    stale.mkdir(parents=True)
+    history = History(tmp_path / "history")
+    history.add(RunEntry(id="profile", workspace=str(tmp_path), timestamp=time.time(),
+                        build_number=414, log_root="workspace logs",
+                        replay_profile={"configuration_name": "profile.yaml",
+                                        "configuration_text": "LOG_PATH: profile logs\n"}))
+    window = HistoryWindow(history)
+    opened = []
+    monkeypatch.setattr(dashboard, "open_log_folder", lambda path: opened.append(path))
+    window.logs_button.click()
+    assert opened == [actual]
+    assert "Opened log folder" in window.status.text()
+    assert str(actual) in window.status.text()
+    assert window.logs_notice.isHidden()
+
+
+def test_missing_history_logs_show_a_notice_in_history_with_searched_paths(qapp, tmp_path):
+    history = History(tmp_path / "history")
+    ajoute(history, "missing", build_number=414, workspace=str(tmp_path), log_root="missing logs")
+    window = HistoryWindow(history)
+    window.logs_button.click()
+    assert not window.logs_notice.isHidden()
+    assert "#0414" in window.logs_notice.message_label.text()
+    assert str(tmp_path / "missing logs") in window.logs_notice.detail_view.toPlainText()
+
+
+def test_history_logs_remain_accessible_with_only_an_archived_configuration(qapp, tmp_path, monkeypatch):
+    import runner.ui.history_dashboard as dashboard
+    folder = tmp_path / "logs" / "Run_0414"
+    folder.mkdir(parents=True)
+    history = History(tmp_path / "history")
+    history.add(RunEntry(id="old", workspace=str(tmp_path), timestamp=time.time(),
+                        build_number=414, replay_profile={"configuration_name": "config.yaml",
+                                                         "configuration_text": "LOG_PATH: logs\n"}))
+    window = HistoryWindow(history)
+    opened = []
+    monkeypatch.setattr(dashboard, "open_log_folder", lambda path: opened.append(path))
+    assert window.logs_button.isEnabled()
+    window.logs_button.click()
+    assert opened == [folder]
+
+
+def test_history_falls_back_to_recorded_root_if_saved_yaml_is_invalid(qapp, tmp_path, monkeypatch):
+    import runner.ui.history_dashboard as dashboard
+    folder = tmp_path / "Run_0414"
+    folder.mkdir()
+    history = History(tmp_path / "history")
+    history.add(RunEntry(id="old", workspace=str(tmp_path), timestamp=time.time(),
+                        build_number=414, log_root=str(folder),
+                        replay_profile={"configuration_name": "broken.yaml",
+                                        "configuration_text": "bad: [\n"}))
+    window = HistoryWindow(history)
+    opened = []
+    monkeypatch.setattr(dashboard, "open_log_folder", lambda path: opened.append(path))
+    window.logs_button.click()
+    assert opened == [folder]
+
+
+def test_logs_without_a_current_run_have_an_explicit_notice(qapp, tmp_path):
+    window = HistoryWindow(History(tmp_path / "history"))
+    window.open_logs()
+    assert not window.logs_notice.isHidden()
+    assert "Select a run" in window.logs_notice.message_label.text()
 
 
 def test_runs_are_listed_newest_first(fenetre):

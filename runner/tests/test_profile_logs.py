@@ -142,6 +142,32 @@ def test_retry_batch_without_collected_tests_does_not_attach_a_previous_log(wind
     assert "unrelated execution" not in window.profile_results.logs.views[0].text()
 
 
+@pytest.mark.parametrize("background", [False, True])
+def test_history_archives_launch_log_root_even_after_yaml_and_workspace_change(
+        window, qtbot, tmp_path, monkeypatch, background):
+    from runner.domain.models import Outcome
+    if background:
+        from runner.ui import end_run_feedback
+        for name in ("_on_run_started", "_on_outcome", "_on_progress", "_on_run_finished"):
+            monkeypatch.setattr(MainWindow, name, getattr(MainWindow, name))
+        end_run_feedback.install()
+    config = tmp_path / "launch.yaml"
+    config.write_text("LOG_PATH: launch-logs\n")
+    window._run_id = "recorded-log-root"
+    window._build_number = 414
+    start_inspection(window, repetitions=1, config=str(config))
+    window._on_outcome(Outcome(NODE, Status.PASSED, READER.index))
+    # Editable run settings must not change the already-launched run's metadata.
+    config.write_text("LOG_PATH: changed-logs\n")
+    window.workspace = Workspace(str(tmp_path), settings={"LOG_PATH": "other-logs"})
+    monkeypatch.setattr(window, "_notifier_fin_de_run", lambda *_: None)
+    window._on_run_finished([ReaderReport(READER, counts={Status.PASSED: 1})])
+    if background:
+        qtbot.waitUntil(lambda: window._archive_worker is None)
+    entry = window.history.find("recorded-log-root")
+    assert entry.log_root == str(tmp_path / "launch-logs")
+
+
 def test_real_profile_keeps_all_four_logs_generated_by_workspace_logging(window, qtbot, tmp_path, monkeypatch):
     # Use the repository's actual exclusive file naming, with real pytest
     # invocations: a duplicate nodeid starts a separate batch each time.
