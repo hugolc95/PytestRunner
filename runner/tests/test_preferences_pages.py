@@ -183,7 +183,7 @@ def test_collection_and_python_checks_use_settings(window, tmp_path, monkeypatch
         raise subprocess.TimeoutExpired(command, kwargs["timeout"])
     monkeypatch.setattr(execution.subprocess, "run", expired)
     errors = []
-    window._collector.failed.disconnect()
+    window._collector.diagnostic_failed.disconnect()
     window._collector.failed.connect(errors.append)
     window._collector.run()
     assert calls == [321]

@@ -527,6 +527,7 @@ class ResultsPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._log_root: Path | None = None
+        self._log_files: dict[int, Path | None] | None = None
         self._readers: tuple[Reader, ...] = ()
         self._sorties: dict[int, str] = {}
         self._index_echecs: dict[int, dict] = {}
@@ -748,6 +749,10 @@ class ResultsPanel(QWidget):
     def set_log_root(self, racine: Path | None) -> None:
         self._log_root = racine
 
+    def set_log_files(self, files: dict[int, Path | None] | None) -> None:
+        """Use files recorded for an execution; None restores latest-test lookup."""
+        self._log_files = dict(files) if files is not None else None
+
     def show_logs_for(self, nodeid: str, readers: tuple[Reader, ...]) -> None:
         """Charge le .log de ce test, un par lecteur."""
         if not nodeid or self._log_root is None:
@@ -755,7 +760,8 @@ class ResultsPanel(QWidget):
 
         cibles = readers or (Reader("", 0),)
         for lecteur in cibles:
-            chemin = logs.find_test_log(self._log_root, nodeid, lecteur.name)
+            chemin = (self._log_files.get(lecteur.index) if self._log_files is not None
+                      else logs.find_test_log(self._log_root, nodeid, lecteur.name))
             if chemin is None:
                 self.logs.set_text(lecteur.index,
                                    self._rien_trouve(lecteur),
@@ -791,6 +797,10 @@ class ResultsPanel(QWidget):
         ou = logs.places_searched(self._log_root)
         lignes = ["No log found for this test"
                   + (f" on {lecteur.name}." if lecteur.name else ".")]
+
+        if self._log_files is not None:
+            lignes += ["", "No log was recorded for this profile execution yet.",
+                       "Logs are available when its pytest batch finishes."]
 
         if not ou:
             lignes += ["", f"The log folder does not exist yet:",

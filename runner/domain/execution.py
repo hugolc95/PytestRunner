@@ -12,6 +12,7 @@ import json
 import subprocess
 import tempfile
 import time
+import traceback
 import xml.etree.ElementTree as ET
 from collections.abc import Callable
 from contextlib import contextmanager, nullcontext
@@ -218,8 +219,8 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
             timeout: float = 120.0) -> Collection:
     """Nodeids de la suite et leurs markers, relatifs au workspace.
 
-    Leve RuntimeError avec un message lisible : c'est ce message que
-    l'interface affichera, il ne doit pas etre une stacktrace.
+    Leve CollectionError (RuntimeError) avec un resume lisible et la trace
+    complete du processus, pour le diagnostic et la console de l'interface.
     """
     configuration = (env or {}).get(ENV_CONFIG, "")
     configuration_plugin = reader_plugin(configuration) if configuration else nullcontext(([], ""))
@@ -229,7 +230,10 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
         configuration_plugin as (configuration_args, configuration_dir),
     ):
         commande = [interpreter, "-m", "pytest", "--collect-only", "-q",
-                    PYTEST_IMPORT_MODE, *args_plugin, *diagnostic_args, *configuration_args]
+                    "--tb=long", "--color=no", PYTEST_IMPORT_MODE,
+                    *args_plugin, *diagnostic_args, *configuration_args]
+        context = dict(workspace=workspace, interpreter=interpreter,
+                       command=commande, configuration=configuration)
         environnement = markers.environment(env, fichier_markers)
         environnement[diagnostics.ENV_OUT] = diagnostic_file
         _prepend_pythonpath(
@@ -244,27 +248,38 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
                 creationflags=creation_flags(),
             )
         except FileNotFoundError as exc:
-            raise RuntimeError(f"Python interpreter not found: {interpreter}") from exc
+            raise diagnostics.CollectionError(
+                f"Python interpreter not found: {interpreter}",
+                traceback_text=traceback.format_exc(), **context) from exc
         except subprocess.TimeoutExpired as exc:
-            raise RuntimeError(
+            raise diagnostics.CollectionError(
                 f"Collection timed out after {timeout:.0f}s. "
-                "A conftest that connects to hardware at import time can hang here."
+                "A conftest that connects to hardware at import time can hang here.",
+                stdout=exc.stdout, stderr=exc.stderr,
+                traceback_text=traceback.format_exc(), **context,
             ) from exc
         except OSError as exc:
-            raise RuntimeError(f"Could not start {interpreter}: {exc}") from exc
+            raise diagnostics.CollectionError(
+                f"Could not start {interpreter}: {exc}",
+                traceback_text=traceback.format_exc(), **context) from exc
 
         # 5 = aucun test collecte. Ce n'est pas une erreur, juste un dossier vide.
         if process.returncode not in (0, 5):
             sortie = "\n".join(filter(None, (process.stdout, process.stderr)))
             if "No module named pytest" in sortie:
-                raise RuntimeError(
+                raise diagnostics.CollectionError(
                     f"pytest is not installed in the test interpreter:\n  {interpreter}\n\n"
-                    f'Install it with:\n  "{interpreter}" -m pip install pytest'
+                    f'Install it with:\n  "{interpreter}" -m pip install pytest',
+                    exit_code=process.returncode, stdout=process.stdout,
+                    stderr=process.stderr, **context,
                 )
             errors = diagnostics.read_diagnostics(diagnostic_file)
             errors = [d for d in errors if d["kind"] == "collection"] or errors
-            raise RuntimeError(diagnostics.format_errors(errors) if errors else
-                               diagnostics.fallback_error(sortie, process.returncode))
+            raise diagnostics.CollectionError(
+                diagnostics.format_errors(errors) if errors else
+                diagnostics.fallback_error(sortie, process.returncode),
+                reports=errors, stdout=process.stdout, stderr=process.stderr,
+                exit_code=process.returncode, **context)
 
         nodeids = parsing.parse_collect_only(process.stdout)
         par_nodeid, descriptions = read_probe(fichier_markers)

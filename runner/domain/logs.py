@@ -210,8 +210,16 @@ def from_manifest(log_root: Path, nodeid: str) -> Path | None:
     return None
 
 
+def _belongs_to_build(path: Path, build_number: int) -> bool:
+    build = f"{int(build_number):04d}"
+    return (f"run_{build}" in (part.lower() for part in path.parts)
+            or f"_b{build}_" in path.name.lower())
+
+
 def _meilleur_sous(zone: Path, exiges: list[str], cherches: list[str],
-                   parametre: str = "", lecteur: str = "") -> Path | None:
+                   parametre: str = "", lecteur: str = "", *,
+                   build_number: int | None = None,
+                   excluded: frozenset[Path] = frozenset()) -> Path | None:
     """Meilleur fichier de log sous ce dossier, ou None.
 
     Le rapprochement porte sur le chemin RELATIF au dossier de run, pas sur le
@@ -233,6 +241,10 @@ def _meilleur_sous(zone: Path, exiges: list[str], cherches: list[str],
             continue
         examines += 1
 
+        if fichier in excluded or (build_number is not None
+                                   and not _belongs_to_build(fichier, build_number)):
+            continue
+
         if lecteur and not _porte_le_composant(fichier, lecteur):
             continue
 
@@ -248,7 +260,11 @@ def _meilleur_sous(zone: Path, exiges: list[str], cherches: list[str],
         nom = cle(fichier.stem)
         score = sum(1 for t in cherches if t in chemin)
         score += sum(1 for t in cherches if t in nom)
-        if parametre and (nom.endswith(parametre) or chemin.endswith(parametre)):
+        # Repeated profile steps add _002, _003, or _B0042_002. Those
+        # counters must not make the first parameterized log score higher.
+        identity = re.sub(r"(?:_B\d+)?_\d{3,}$", "", fichier.stem,
+                          flags=re.IGNORECASE)
+        if parametre and (cle(identity).endswith(parametre) or chemin.endswith(parametre)):
             score += PRIME_PARAMETRE
 
         candidat = (score, _date_de(fichier), fichier)
@@ -258,7 +274,9 @@ def _meilleur_sous(zone: Path, exiges: list[str], cherches: list[str],
     return meilleur[2] if meilleur else None
 
 
-def by_search(log_root: Path, nodeid: str, reader: str = "") -> Path | None:
+def by_search(log_root: Path, nodeid: str, reader: str = "", *,
+              build_number: int | None = None,
+              excluded: frozenset[Path] = frozenset()) -> Path | None:
     """Cherche le .log dans l'arborescence, sans manifeste.
 
     C'est le cas de la plupart des workspaces, dont le conftest se contente
@@ -287,13 +305,22 @@ def by_search(log_root: Path, nodeid: str, reader: str = "") -> Path | None:
     parametre = cle(morceaux[-1]) if str(nodeid).strip().endswith("]") else ""
 
     for zone in run_directories(racine) + [racine]:
-        trouve = _meilleur_sous(zone, exiges, cherches, parametre, cle_lecteur)
+        # Look directly in this build before older runs can consume the scan
+        # budget. Incremental logs remain under the dated folder.
+        if build_number is not None:
+            build_folder = zone / f"Run_{build_number:04d}"
+            if build_folder.is_dir():
+                zone = build_folder
+        trouve = _meilleur_sous(zone, exiges, cherches, parametre, cle_lecteur,
+                               build_number=build_number, excluded=excluded)
         if trouve is not None:
             return trouve
     return None
 
 
-def find_test_log(log_root: Path, nodeid: str, reader: str = "") -> Path | None:
+def find_test_log(log_root: Path, nodeid: str, reader: str = "", *,
+                  build_number: int | None = None,
+                  excluded: frozenset[Path] = frozenset()) -> Path | None:
     """Fichier .log du dernier run pour ce test, ou None.
 
     Le manifeste passe en premier quand il existe : il est exact et immediat.
@@ -303,16 +330,21 @@ def find_test_log(log_root: Path, nodeid: str, reader: str = "") -> Path | None:
     log par test : quand il en donne un qui n'est pas celui du lecteur demande,
     on repasse par la recherche plutot que de rendre le log d'un autre lecteur
     sous son nom.
+
+    `build_number` limite la recherche au run demande. `excluded` ecarte les
+    fichiers deja lies a une autre occurrence d'un profil.
     """
     if not nodeid or log_root is None:
         return None
 
     depuis_manifeste = from_manifest(Path(log_root), nodeid)
-    if depuis_manifeste is not None:
+    if (depuis_manifeste is not None and depuis_manifeste not in excluded
+            and (build_number is None or _belongs_to_build(depuis_manifeste, build_number))):
         if not reader or _porte_le_composant(depuis_manifeste, cle(reader)):
             return depuis_manifeste
 
-    return by_search(Path(log_root), nodeid, reader)
+    return by_search(Path(log_root), nodeid, reader,
+                     build_number=build_number, excluded=excluded)
 
 
 def find_logs_for_build(log_root: Path, build_number: int,
@@ -359,6 +391,26 @@ def find_logs_for_build(log_root: Path, build_number: int,
     return sorted(set(trouves), key=lambda path: str(path).lower())
 
 
+def history_log_roots(entry) -> list[Path]:
+    """Use the launch YAML for old entries with an incorrectly recorded root."""
+    from runner.domain.workspace import Workspace
+    import yaml
+
+    roots = []
+    text = entry.configuration_text()
+    if text is not None:
+        try:
+            settings = yaml.safe_load(text) or {}
+        except yaml.YAMLError:
+            settings = None
+        if isinstance(settings, dict):
+            roots.append(Workspace(entry.workspace, settings=settings).log_root)
+    if entry.log_root:
+        root = Path(entry.log_root)
+        roots.append(root if root.is_absolute() else Path(entry.workspace) / root)
+    return list(dict.fromkeys(roots))
+
+
 def history_log_directories(log_root: Path, build_number: int,
                             timestamp: float, duration: float = 0,
                             reader: str = "") -> list[Path]:
@@ -373,8 +425,12 @@ def history_log_directories(log_root: Path, build_number: int,
         return []
     run_name = f"Run_{build_number:04d}"
     candidates = set(root.rglob(run_name))
+    if root.name == run_name:
+        candidates.add(root)
     candidates = {path for path in candidates if path.is_dir()}
     for log in find_logs_for_build(root, build_number, reader):
+        if _DATE.fullmatch(root.name) and run_name not in log.parts:
+            candidates.add(root)
         for parent in log.resolve().parents:
             if parent == root or root not in parent.parents:
                 break
@@ -388,6 +444,9 @@ def history_log_directories(log_root: Path, build_number: int,
     if not candidates:
         candidates.update(path.parent for path in
                           root.glob(f"*/build_{build_number:04d}*.json"))
+        if _DATE.fullmatch(root.name):
+            candidates.update(path.parent for path in
+                              root.glob(f"build_{build_number:04d}*.json"))
     if len(candidates) <= 1:
         return sorted(candidates)
 
@@ -396,8 +455,6 @@ def history_log_directories(log_root: Path, build_number: int,
     matched = []
     for path in candidates:
         for parent in (path, *path.parents):
-            if parent == root:
-                break
             match = _DATE.fullmatch(parent.name)
             if match:
                 try:
@@ -407,6 +464,8 @@ def history_log_directories(log_root: Path, build_number: int,
                     break
                 if start <= day <= end:
                     matched.append(path)
+                break
+            if parent == root:
                 break
     return sorted(matched)
 

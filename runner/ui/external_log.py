@@ -9,9 +9,30 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
+
 from runner.ui.widgets import ErrorDialog
+
+
+def open_log_folder(path: Path) -> None:
+    """Open the exact folder, using Explorer's native API on Windows."""
+    path = Path(path).resolve()
+    if not path.is_dir():
+        raise FileNotFoundError(f"Log folder no longer exists: {path}")
+    native_error = ""
+    if sys.platform == "win32":
+        try:
+            os.startfile(str(path), "explore")
+            return
+        except OSError as exc:
+            native_error = str(exc)
+    if not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path))):
+        detail = f" ({native_error})" if native_error else ""
+        raise OSError(f"The system file explorer could not open {path}{detail}")
 
 
 def find_notepad_plus_plus() -> Path | None:

@@ -664,6 +664,7 @@ class MainWindow(QMainWindow):
             self._profile_selection_timer.stop()
             self._profile_selected_key = None
             self._profile_reports.clear()
+            self._profile_logs = None
             self._profile_batch_output.clear()
             self._profile_pending_console.clear()
             self.profile_model.prepare(profile, self._readers_to_run())
@@ -1204,11 +1205,10 @@ class MainWindow(QMainWindow):
         self.profile_selection_label.setSizePolicy(context_policy)
         self.profile_results = ResultsPanel(self.profile_result_page)
         self.profile_results.detail.execution_view = True
-        self.profile_results.tabs.setTabEnabled(ONGLET_LOGS, False)
-        self.profile_results.tabs.setTabToolTip(ONGLET_LOGS, 'Per-execution log files are not available. Console contains the pytest batch for this attempt.')
         layout.addWidget(self.profile_results, 1)
         self.results_stack.addWidget(self.profile_result_page)
         self._profile_reports = {}
+        self._profile_logs = None
         self._profile_selected_key = None
         self._profile_selection_timer = QTimer(self)
         self._profile_selection_timer.setSingleShot(True)
@@ -1349,7 +1349,13 @@ class MainWindow(QMainWindow):
 
     def _on_profile_batch_report(self, position, count, attempt, report) -> None:
         for current in range(position, position + count):
-            self._profile_reports[(self.profile_model.key(current, attempt), report.reader.index)] = report
+            key = self.profile_model.key(current, attempt)
+            self._profile_reports[(key, report.reader.index)] = report
+            if self._profile_logs is not None and key in self.profile_model.locations:
+                nodeid = self.profile_model.locations[key][2]
+                status = self.profile_model.statuses_for_nodeid(key).get(report.reader.index, Status.PENDING)
+                executed = status is not Status.PENDING
+                self._profile_logs.capture(key, nodeid, report.reader, executed)
         if self._profile_selected_key:
             selected_position, selected_attempt, _ = self.profile_model.locations[self._profile_selected_key]
             if selected_attempt == attempt and position <= selected_position < position + count:
@@ -1365,6 +1371,7 @@ class MainWindow(QMainWindow):
             self.profile_selection_label.setText(str(index.siblingAtColumn(0).data()))
             self.profile_results.set_readers(self.profile_model.readers)
             self.profile_results.output.clear()
+            self.profile_results.logs.clear()
             return
         self._profile_selected_key = key
         self._refresh_profile_selection()
@@ -1383,6 +1390,12 @@ class MainWindow(QMainWindow):
             f'Step {position % size + 1}/{size} · Execution {position + 1}{suffix}')
         self.profile_results.set_readers(self.profile_model.readers)
         self.profile_results.output.clear()
+        self.profile_results.set_log_root(
+            self._profile_logs.root if self._profile_logs is not None
+            else self.workspace.log_root if self.workspace else None)
+        self.profile_results.set_log_files(
+            self._profile_logs.for_execution(key, self.profile_model.readers)
+            if self._profile_logs is not None else {})
         self.profile_results.show_test(nodeid, self.profile_model.statuses_for_nodeid(key),
                                        self.workspace.path if self.workspace else '')
         self.profile_results.source.edit_button.setEnabled(False)
@@ -1971,7 +1984,7 @@ class MainWindow(QMainWindow):
             self.run_tabs.configuration_env(self, self.workspace.env) if self.run_tabs else self.workspace.env,
             self, timeout=timeout_seconds(self, "collection_timeout"))
         self._collector.collected.connect(self._on_collected)
-        self._collector.failed.connect(self._on_collect_failed)
+        getattr(self._collector, "diagnostic_failed", self._collector.failed).connect(self._on_collect_failed)
         self._collector.start()
         self._refresh_primary_reader()
 
@@ -2119,8 +2132,12 @@ class MainWindow(QMainWindow):
         for index, path in self._tree_paths():
             self.tree.setExpanded(index, path in expanded)
 
-    @Slot(str)
-    def _on_collect_failed(self, message: str) -> None:
+    @Slot(object)
+    def _on_collect_failed(self, failure) -> None:
+        from runner.domain.diagnostics import CollectionError
+        message = str(failure) or "Unknown error"
+        details = failure.details if isinstance(failure, CollectionError) else message
+        headline = failure.headline if isinstance(failure, CollectionError) else message
         self._pending_history_run = None
         self._pending_execution_profile = None
         self.progress.setVisible(False)
@@ -2128,7 +2145,18 @@ class MainWindow(QMainWindow):
         self.load_button.setEnabled(True)
         self.status_label.setText("Collection failed")
 
-        ErrorDialog.show_diagnostics(self, "Collection failed", message or "Unknown error")
+        preferences = (getattr(self, "preferences", None)
+                       or getattr(self._run_host, "preferences", None))
+        if preferences is not None:
+            preferences.context_record(self, "errors", "Collection failed\n" + details)
+            if isinstance(failure, CollectionError):
+                for name, text in (("stdout", failure.stdout), ("stderr", failure.stderr)):
+                    if text.strip():
+                        preferences.context_record(self, "output", f"Collection {name}:\n{text}")
+        ErrorDialog.show_diagnostics(
+            self, "Collection failed", details,
+            preferences.show_errors if preferences is not None else None,
+            summary=headline)
         self._update_actions()
 
     def _size_reader_columns(self, tree=None, model=None) -> None:
@@ -2442,6 +2470,16 @@ class MainWindow(QMainWindow):
         self._profile_selected_key = None
         self._profile_reports = {}
         profile = self._running_execution_profile
+        from runner.domain.profile_logs import ProfileLogIndex
+        self._profile_logs = None
+        self._archive_log_root = None
+        if self.workspace is not None:
+            log_root = self.workspace.log_root
+            if request.config_path:
+                log_root = Workspace.load(request.workspace, request.config_path).log_root
+            self._archive_log_root = log_root
+            if profile is not None:
+                self._profile_logs = ProfileLogIndex(log_root, request.build_number)
         self._profile_count_statuses = {} if profile is not None else None
         self._profile_verdict_counts = Counter()
         self._profile_execution_total = request.total_tests
@@ -2745,7 +2783,7 @@ class MainWindow(QMainWindow):
                 timestamp=time.time(),
                 workspace=self.workspace.path,
                 build_number=self._build_number,
-                log_root=str(self.workspace.log_root),
+                log_root=str(getattr(self, "_archive_log_root", None) or self.workspace.log_root),
                 reader=rapport.reader.name,
                 duration=rapport.duration,
                 exit_code=rapport.exit_code,

@@ -597,7 +597,19 @@ class PreferencesController(QObject):
         context = context or self.window
         self.context_record(context, "commands", f"Reader {report.reader.index} finished • exit code {report.exit_code}")
         if report.exit_code not in (0, 5) or report.issues:
-            self.context_record(context, "errors", report.output)
+            detail = "\n\n".join(filter(None, ("\n".join(report.issues), report.output)))
+            self.context_record(context, "errors", detail or f"Process exited with code {report.exit_code}.")
+
+    def show_errors(self):
+        """Open the diagnostic console with the error trace immediately visible."""
+        self.console.search.clear()
+        self.console.kind.setCurrentIndex(self.console.kind.findData("errors"))
+        self.console.pause.setChecked(False)
+        self.console.set_paused(False)
+        self.console.refresh()
+        self.window._show_page("console")
+        if self.console_page.detached_window:
+            self.console_page.show_detached()
 
     def apply_font(self):
         key = (t.current_theme(), self.values["font_size"])

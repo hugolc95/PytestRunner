@@ -827,9 +827,10 @@ class ErrorDialog(QDialog):
         cls(titre, message, detail, parent).exec()
 
     @classmethod
-    def show_diagnostics(cls, parent, title: str, errors: str, show_console=None) -> None:
+    def show_diagnostics(cls, parent, title: str, errors: str, show_console=None,
+                         *, summary: str = "") -> None:
         """Display all error summaries immediately in a bounded, scrollable view."""
-        dialog = cls(title, title, errors, parent)
+        dialog = cls(title, summary or title, errors, parent)
         dialog.resize(680, 420)
         if dialog.detail_view is not None:
             dialog.toggle.setChecked(True)
