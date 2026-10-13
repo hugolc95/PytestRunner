@@ -210,8 +210,16 @@ def from_manifest(log_root: Path, nodeid: str) -> Path | None:
     return None
 
 
+def _belongs_to_build(path: Path, build_number: int) -> bool:
+    build = f"{int(build_number):04d}"
+    return (f"run_{build}" in (part.lower() for part in path.parts)
+            or f"_b{build}_" in path.name.lower())
+
+
 def _meilleur_sous(zone: Path, exiges: list[str], cherches: list[str],
-                   parametre: str = "", lecteur: str = "") -> Path | None:
+                   parametre: str = "", lecteur: str = "", *,
+                   build_number: int | None = None,
+                   excluded: frozenset[Path] = frozenset()) -> Path | None:
     """Meilleur fichier de log sous ce dossier, ou None.
 
     Le rapprochement porte sur le chemin RELATIF au dossier de run, pas sur le
@@ -233,6 +241,10 @@ def _meilleur_sous(zone: Path, exiges: list[str], cherches: list[str],
             continue
         examines += 1
 
+        if fichier in excluded or (build_number is not None
+                                   and not _belongs_to_build(fichier, build_number)):
+            continue
+
         if lecteur and not _porte_le_composant(fichier, lecteur):
             continue
 
@@ -248,7 +260,11 @@ def _meilleur_sous(zone: Path, exiges: list[str], cherches: list[str],
         nom = cle(fichier.stem)
         score = sum(1 for t in cherches if t in chemin)
         score += sum(1 for t in cherches if t in nom)
-        if parametre and (nom.endswith(parametre) or chemin.endswith(parametre)):
+        # Repeated profile steps add _002, _003, or _B0042_002. Those
+        # counters must not make the first parameterized log score higher.
+        identity = re.sub(r"(?:_B\d+)?_\d{3,}$", "", fichier.stem,
+                          flags=re.IGNORECASE)
+        if parametre and (cle(identity).endswith(parametre) or chemin.endswith(parametre)):
             score += PRIME_PARAMETRE
 
         candidat = (score, _date_de(fichier), fichier)
@@ -258,7 +274,9 @@ def _meilleur_sous(zone: Path, exiges: list[str], cherches: list[str],
     return meilleur[2] if meilleur else None
 
 
-def by_search(log_root: Path, nodeid: str, reader: str = "") -> Path | None:
+def by_search(log_root: Path, nodeid: str, reader: str = "", *,
+              build_number: int | None = None,
+              excluded: frozenset[Path] = frozenset()) -> Path | None:
     """Cherche le .log dans l'arborescence, sans manifeste.
 
     C'est le cas de la plupart des workspaces, dont le conftest se contente
@@ -287,13 +305,22 @@ def by_search(log_root: Path, nodeid: str, reader: str = "") -> Path | None:
     parametre = cle(morceaux[-1]) if str(nodeid).strip().endswith("]") else ""
 
     for zone in run_directories(racine) + [racine]:
-        trouve = _meilleur_sous(zone, exiges, cherches, parametre, cle_lecteur)
+        # Look directly in this build before older runs can consume the scan
+        # budget. Incremental logs remain under the dated folder.
+        if build_number is not None:
+            build_folder = zone / f"Run_{build_number:04d}"
+            if build_folder.is_dir():
+                zone = build_folder
+        trouve = _meilleur_sous(zone, exiges, cherches, parametre, cle_lecteur,
+                               build_number=build_number, excluded=excluded)
         if trouve is not None:
             return trouve
     return None
 
 
-def find_test_log(log_root: Path, nodeid: str, reader: str = "") -> Path | None:
+def find_test_log(log_root: Path, nodeid: str, reader: str = "", *,
+                  build_number: int | None = None,
+                  excluded: frozenset[Path] = frozenset()) -> Path | None:
     """Fichier .log du dernier run pour ce test, ou None.
 
     Le manifeste passe en premier quand il existe : il est exact et immediat.
@@ -303,16 +330,21 @@ def find_test_log(log_root: Path, nodeid: str, reader: str = "") -> Path | None:
     log par test : quand il en donne un qui n'est pas celui du lecteur demande,
     on repasse par la recherche plutot que de rendre le log d'un autre lecteur
     sous son nom.
+
+    `build_number` limite la recherche au run demande. `excluded` ecarte les
+    fichiers deja lies a une autre occurrence d'un profil.
     """
     if not nodeid or log_root is None:
         return None
 
     depuis_manifeste = from_manifest(Path(log_root), nodeid)
-    if depuis_manifeste is not None:
+    if (depuis_manifeste is not None and depuis_manifeste not in excluded
+            and (build_number is None or _belongs_to_build(depuis_manifeste, build_number))):
         if not reader or _porte_le_composant(depuis_manifeste, cle(reader)):
             return depuis_manifeste
 
-    return by_search(Path(log_root), nodeid, reader)
+    return by_search(Path(log_root), nodeid, reader,
+                     build_number=build_number, excluded=excluded)
 
 
 def find_logs_for_build(log_root: Path, build_number: int,
