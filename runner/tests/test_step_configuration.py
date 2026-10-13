@@ -117,6 +117,10 @@ def test_each_step_reloads_conftest_getters_and_session_fixtures(qtbot, tmp_path
                          (Reader("A", 0), Reader("B", 1)), str(config))
     service = RunService()
     finished = []
+    batches = []
+    service.profile_batch_report.connect(
+        lambda position, count, attempt, report: batches.append(
+            (position, attempt, report.reader.name, report.exit_code, report.counts)))
     service.finished.connect(finished.extend)
     try:
         assert service.start_profile(request, dict(os.environ), [nodeid] * 3, repetitions=2, rerun_failures=1,
@@ -127,7 +131,7 @@ def test_each_step_reloads_conftest_getters_and_session_fixtures(qtbot, tmp_path
         service.wait(5000)
         for reader in ("A", "B"):
             rows = [json.loads(row) for row in (tmp_path / f"{reader}.jsonl").read_text().splitlines()]
-            assert [row[0] for row in rows] == ["T0", "T1", "T1", "DEFAULT", "T0", "T1", "DEFAULT"]
+            assert [row[0] for row in rows] == ["T0", "T1", "T1", "DEFAULT", "T0", "T1", "DEFAULT"], batches
             assert len({row[1] for row in rows}) == 7
         assert all(report.counts == {Status.PASSED: 6} for report in finished)
         assert config.read_text(encoding="utf-8") == original
