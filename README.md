@@ -1,5 +1,20 @@
 # Pytest Runner GUI
 
+## Lecture de l’ATR — v1.3.1
+
+Une erreur d’ouverture ou de lecture du lecteur s’affiche comme **ATR unavailable**,
+avec le motif technique, plutôt que comme **No card in reader**. Lorsque
+`IsCardPresent()` indique toujours une carte, une lecture échouée est réessayée
+avec un délai croissant (2, 4, 8, 16, puis 30 secondes), jusqu’à récupération ou
+retrait. Les tentatives cessent dès qu’un ATR a été lu. La surveillance reste
+suspendue pendant les exécutions et la collecte.
+
+Les changements d’état et les erreurs figurent dans **Console**, avec le lecteur,
+l’interpréteur Python et le workspace interrogés. **No card in reader** signifie
+que `IsCardPresent()` indique une absence ; si HubReader affiche simultanément
+un ATR, comparer ces informations et le détail technique pour identifier une
+différence de lecteur, un accès occupé ou une différence de bibliothèque.
+
 ## Navigation dans les erreurs — v1.2.0
 
 Les références fichier/ligne sont cliquables dans **Detail**, l’historique,

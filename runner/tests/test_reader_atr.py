@@ -150,18 +150,74 @@ def test_an_empty_reader_is_never_opened(moniteur, tmp_path):
     assert _journal(tmp_path) == []
 
 
-def test_a_present_card_whose_atr_cannot_be_read_is_no_card_and_released(moniteur, tmp_path):
+def test_a_present_card_whose_atr_cannot_be_read_is_unavailable_and_released(moniteur, tmp_path):
     corps = HUB_REEL.replace("return self.readerName == ", "return True or self.readerName == ")
     m = moniteur(lecteur=VIDE, corps=corps)
     etat, _, detail, _ = m.suivant()
-    assert etat == ATR_NO_CARD and "Failed to get ATR" in detail
+    assert etat == ATR_UNAVAILABLE and "Failed to get ATR" in detail
     assert _journal(tmp_path) == [f"open {VIDE}", f"close {VIDE}"]
 
 
-def test_an_empty_atr_means_no_card(moniteur):
+def test_an_empty_atr_of_a_present_card_is_unavailable(moniteur):
     corps = HUB_REEL.replace(f"return bytes.fromhex({ATR_CARTE!r})", 'return b""')
     m = moniteur(corps=corps)
+    assert m.suivant()[0] == ATR_UNAVAILABLE
+
+
+def test_a_temporary_read_failure_recovers_without_removing_the_card(moniteur, tmp_path):
+    corps = HUB_REEL.replace('    def GetATR(self) -> bytes:', '''    def GetATR(self) -> bytes:
+        marker = pathlib.Path('first_read_failed')
+        if not marker.exists():
+            marker.touch()
+            raise RuntimeError('Reader is busy')''')
+    m = moniteur(corps=corps)
+    assert m.suivant()[0] == ATR_UNAVAILABLE
+    assert m.suivant(delai=3)[:2] == (ATR_OK, ATR_CARTE)
+    assert m.rien_pendant(0.3)
+    assert _journal(tmp_path) == [f'open {CARTE}', f'close {CARTE}'] * 2
+
+
+def test_persistent_read_errors_do_not_flood_events_and_release_reader(moniteur, tmp_path):
+    corps = HUB_REEL.replace(f'return bytes.fromhex({ATR_CARTE!r})',
+                            'raise RuntimeError("Reader is busy")')
+    m = moniteur(corps=corps)
+    assert m.suivant()[0] == ATR_UNAVAILABLE
+    assert m.rien_pendant(0.5)
+    calls = _journal(tmp_path)
+    assert len(calls) >= 4
+    assert calls.count(f'open {CARTE}') == calls.count(f'close {CARTE}')
+
+
+def test_removal_after_read_error_is_confirmed_then_insertion_recovers(moniteur, tmp_path):
+    corps = HUB_REEL.replace(f'return bytes.fromhex({ATR_CARTE!r})', f'''
+            if pathlib.Path('read_blocked').exists():
+                raise RuntimeError('Reader is busy')
+            return bytes.fromhex({ATR_CARTE!r})''')
+    (tmp_path / 'read_blocked').touch()
+    m = moniteur(corps=corps)
+    assert m.suivant()[0] == ATR_UNAVAILABLE
+    (tmp_path / 'retiree').touch()
     assert m.suivant()[0] == ATR_NO_CARD
+    (tmp_path / 'read_blocked').unlink()
+    (tmp_path / 'retiree').unlink()
+    assert m.suivant()[:2] == (ATR_OK, ATR_CARTE)
+
+
+def test_openreader_failure_keeps_its_real_code_and_closes(moniteur, tmp_path):
+    corps = HUB_REEL.replace('        return 0', '        return 17')
+    m = moniteur(corps=corps)
+    state, _, detail, _ = m.suivant()
+    assert state == ATR_UNAVAILABLE
+    assert 'OpenReader failed with return code 17' in detail
+    assert _journal(tmp_path) == [f'open {CARTE}', f'close {CARTE}']
+
+
+def test_invalid_atr_is_reported_without_crashing_the_monitor(moniteur):
+    corps = HUB_REEL.replace(f'return bytes.fromhex({ATR_CARTE!r})', 'return "not an ATR"')
+    m = moniteur(corps=corps)
+    state, _, detail, _ = m.suivant()
+    assert state == ATR_UNAVAILABLE and 'ValueError' in detail
+    assert m.proc.poll() is None
 
 
 def test_a_failing_iscardpresent_reads_once_and_stops(moniteur, tmp_path):
@@ -205,6 +261,8 @@ def test_unrelated_lines_are_ignored():
     assert parse_atr_line("Traceback (most recent call last):") is None
     assert parse_atr_line("HUBATR_JSON:{not json") is None
     assert parse_atr_line('HUBATR_JSON:{"state": "weird"}') is None
+    assert parse_atr_line('HUBATR_JSON:[]') is None
+    assert parse_atr_line('HUBATR_JSON:null') is None
 
 
 # ------------------------------------------------------------------ fenetre
@@ -273,6 +331,21 @@ def test_the_refresh_button_reads_the_card_again(fenetre, qtbot, tmp_path):
     bouton.trigger()
     qtbot.waitUntil(lambda: len(_journal(tmp_path)) == 4, timeout=15000)
     assert fenetre.reader_atr.state == ATR_OK
+
+
+def test_the_field_recovers_from_busy_reader_and_records_reason(fenetre, qtbot, tmp_path):
+    corps = HUB_REEL.replace('    def GetATR(self) -> bytes:', '''    def GetATR(self) -> bytes:
+        marker = pathlib.Path('first_read_failed')
+        if not marker.exists():
+            marker.touch()
+            raise RuntimeError('Reader is busy')''')
+    _faux_hub(tmp_path, corps)
+    _pret(fenetre, qtbot, tmp_path)
+    assert fenetre.reader_atr.text() == ATR_CARTE
+    errors = [message for _, kind, message in fenetre.preferences.console.events if kind == 'errors']
+    assert any('Reader is busy' in message and CARTE in message for message in errors)
+    assert sys.executable in fenetre.reader_atr.toolTip()
+    assert _journal(tmp_path) == [f'open {CARTE}', f'close {CARTE}'] * 2
 
 
 def test_nothing_touches_the_reader_during_a_run(fenetre, qtbot, tmp_path, monkeypatch):

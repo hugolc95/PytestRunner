@@ -874,6 +874,7 @@ class MainWindow(QMainWindow):
         # l'absence de carte -- savoir d'un coup d'oeil sur quoi le run va
         # tourner, sans sortir de l'appli.
         self.reader_atr = ReaderAtrField()
+        self.reader_atr.diagnostic_changed.connect(self._on_atr_diagnostic)
         reader_layout.addWidget(self.reader_atr, 1, 1, 1, 2)
         self.reader_config_button = QPushButton()
         self.reader_config_button.setObjectName("NavigationUtilityIcon")
@@ -3295,6 +3296,12 @@ class MainWindow(QMainWindow):
             return None
 
         return find(self.workspace.settings or {}) if self.workspace else None
+
+    def _on_atr_diagnostic(self, state, detail):
+        preferences = getattr(self._run_host or self, "preferences", None)
+        if preferences is not None:
+            preferences.context_record(self, "errors" if state == "unavailable" else "actions",
+                                       f"Card status: {state}\n{detail}")
 
     def _refresh_primary_reader(self, busy=False):
         setting = self._primary_reader_setting()

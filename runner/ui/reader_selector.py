@@ -130,13 +130,15 @@ class ReaderAtrField(QLineEdit):
     Suivi par PROBE_MONITOR, un processus unique qui tourne dans
     l'interpreteur des tests -- PyHubReader n'est utilisable que la, et
     l'interface ne l'attend jamais. Il demande `IsCardPresent()` toutes les
-    `INTERVALLE_S` secondes et ne lit l'ATR qu'a l'arrivee d'une carte ; un
-    retrait s'affiche sans rien lire. Le bouton de la fin du champ relance la
+    `INTERVALLE_S` secondes et lit l'ATR a l'arrivee d'une carte ; les lectures
+    echouees sont reessayees avec un delai croissant. Un retrait s'affiche sans
+    rien lire. Le bouton de la fin du champ relance la
     surveillance, donc une lecture. Aucun appel au lecteur pendant un run : le
     processus est arrete, puis relance a la fin.
     """
 
     NO_CARD = "No card in reader"
+    diagnostic_changed = Signal(str, str)
     INTERVALLE_S = 2.0
     # Pastille d'etat devant le texte : verte avec une carte, rouge sans.
     # `PADDING` reprend le retrait du texte de la liste au-dessus (feuille de
@@ -264,6 +266,8 @@ class ReaderAtrField(QLineEdit):
             text, tooltip = self.NO_CARD, detail or "No card could be read in this reader."
         else:
             text, tooltip = "ATR unavailable", detail
+        context = self._context or ("", "", "")
+        tooltip += f"\n\nReader: {context[2]}\nPython: {context[1]}\nWorkspace: {context[0]}"
         self._show(state, text, f"{tooltip}\n\n{note}" if note else tooltip)
 
     def _finished(self, *_):
@@ -306,6 +310,8 @@ class ReaderAtrField(QLineEdit):
         self.setText(text)
         self.setCursorPosition(0)
         self.setToolTip(tooltip)
+        if state in (reader_discovery.ATR_OK, reader_discovery.ATR_NO_CARD, reader_discovery.ATR_UNAVAILABLE):
+            self.diagnostic_changed.emit(state, tooltip)
         # L'etat pilote la couleur depuis la feuille de style : elle suit ainsi
         # la bascule de theme sans rien repeindre a la main.
         self.setProperty("state", state)

@@ -21,7 +21,9 @@ print('HUBREADERS_JSON:' + json.dumps(list(method()), ensure_ascii=True))
 #
 # Un seul processus, qui reste ouvert : il demande `IsCardPresent()` toutes
 # les `interval` secondes et ne lit l'ATR -- une fois -- que quand une carte
-# apparait ; quand elle disparait, il le dit sans rien lire. Si
+# apparait ; une lecture echouee est reessayee avec un delai croissant,
+# sans confondre erreur de lecture et absence de carte. Quand elle disparait,
+# il le dit sans rien lire. Si
 # `IsCardPresent()` echoue, il lit l'ATR une fois et s'arrete : il ne reste
 # alors que le bouton de relecture.
 #
@@ -58,7 +60,9 @@ def read_atr():
     # CloseReader toujours, meme en cas d'echec : les tests auront besoin
     # du lecteur.
     try:
-        hub.OpenReader()
+        opened = hub.OpenReader()
+        if type(opened) is int and opened != 0:
+            raise RuntimeError(f'OpenReader failed with return code {opened}')
         atr = hub.GetATR()
     except Exception as exc:
         atr, error = None, exc
@@ -70,28 +74,50 @@ def read_atr():
         except Exception:
             pass
     if error is not None:
-        return dict(state='nocard', detail=describe(error))
-    if isinstance(atr, (bytes, bytearray, list, tuple)):
-        text = ''.join(f'{int(b) & 0xFF:02X}' for b in atr)
-    else:
-        text = str(atr or '').replace(' ', '').upper()
-    if not text:
-        return dict(state='nocard', detail='The reader returned an empty ATR.')
+        return dict(state='unavailable', detail=describe(error))
+    try:
+        if isinstance(atr, (bytes, bytearray, list, tuple)):
+            text = ''.join(f'{int(b) & 0xFF:02X}' for b in atr)
+        else:
+            text = ''.join(str(atr or '').split()).upper()
+        if not text:
+            raise ValueError('The reader returned an empty ATR.')
+        bytes.fromhex(text)
+    except (ValueError, TypeError) as exc:
+        return dict(state='unavailable', detail=describe(exc))
     return dict(state='atr', atr=text)
 
 last = None
+last_event = None
+retry_at = 0.0
+failures = 0
+
+def publish(event):
+    global last_event
+    if event != last_event:
+        out(**event)
+        last_event = event
+
 while True:
     try:
         present = bool(hub.IsCardPresent())
     except Exception as exc:
         out(monitoring=False, presence_error=describe(exc), **read_atr())
         raise SystemExit(0)
-    if present != last:
-        last = present
-        if present:
-            out(**read_atr())
+    if present and (present != last or (failures and time.monotonic() >= retry_at)):
+        event = read_atr()
+        if event['state'] == 'atr':
+            failures = 0
         else:
-            out(state='nocard', detail='No card detected in the reader.')
+            failures = min(failures + 1, 10)
+            retry_at = time.monotonic() + min(30.0, interval * 2 ** (failures - 1))
+            event['detail'] = ('The reader reports a card, but its ATR could not be read.\n'
+                               + event['detail'] + '\nRetrying automatically while idle.')
+        publish(event)
+    elif not present and present != last:
+        failures = 0
+        publish(dict(state='nocard', detail='No card detected in the reader.'))
+    last = present
     time.sleep(interval)
 '''
 
@@ -107,6 +133,8 @@ def parse_atr_line(line: str):
     try:
         data = json.loads(line.split(":", 1)[1])
     except ValueError:
+        return None
+    if not isinstance(data, dict):
         return None
     state = data.get("state")
     if state not in (ATR_OK, ATR_NO_CARD, ATR_UNAVAILABLE):
