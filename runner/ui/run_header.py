@@ -195,6 +195,8 @@ class StructuredRunHeader(QWidget):
         commands.setAlignment(Qt.AlignTop)
         window.run_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._move(commands, window.run_button)
+        window.pause_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._move(commands, window.pause_button)
         secondary = QHBoxLayout()
         secondary.setSpacing(t.SPACE_1)
         for control in (window.stop_button, window.rerun_button):

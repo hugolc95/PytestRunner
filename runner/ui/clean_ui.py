@@ -259,7 +259,9 @@ def pytest_runtest_logstart(nodeid, location):
 
         timer.timeout.connect(flush_live)
         self._live_output_timer = timer
+        self._flush_live_output = flush_live
         self.service.started.connect(self._on_run_started)
+        self.service.pause_changed.connect(self._on_pause_changed)
 
         def live_line(reader_index: int, texte: str) -> None:
             brut = texte.strip()

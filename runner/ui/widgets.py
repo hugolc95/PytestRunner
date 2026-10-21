@@ -392,6 +392,7 @@ class LiveDot(QWidget):
         super().__init__(parent)
         self.setFixedSize(9, 9)
         self._couleur = t.ACCENT
+        self._paused = False
 
         self._effet = QGraphicsOpacityEffect(self)
         self.setGraphicsEffect(self._effet)
@@ -411,8 +412,17 @@ class LiveDot(QWidget):
         self.update()
 
     def start(self) -> None:
+        self._paused = False
         self.setVisible(True)
         self._anim.start()
+        self.update()
+
+    def pause(self) -> None:
+        self._anim.stop()
+        self._effet.setOpacity(1.0)
+        self._paused = True
+        self.setVisible(True)
+        self.update()
 
     def stop(self) -> None:
         self._anim.stop()
@@ -421,6 +431,9 @@ class LiveDot(QWidget):
 
     def paintEvent(self, event) -> None:
         peintre = QPainter(self)
+        if self._paused:
+            icons.icon('mdi.pause', self._couleur).paint(peintre, self.rect())
+            return
         peintre.setRenderHint(QPainter.Antialiasing)
         peintre.setPen(Qt.NoPen)
         peintre.setBrush(QColor(self._couleur))

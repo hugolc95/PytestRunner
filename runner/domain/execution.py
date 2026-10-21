@@ -305,9 +305,12 @@ class ReaderRun:
         self._env = dict(env)
         self._process: subprocess.Popen | None = None
         self._cancelled = False
+        from runner.domain.run_pause import RunPause
+        self.pause_control = RunPause()
 
     def cancel(self) -> None:
         self._cancelled = True
+        self.pause_control.cancel()
         process = self._process
         if process is not None and process.poll() is None:
             try:
@@ -340,6 +343,8 @@ class ReaderRun:
         # pas un remplacement de l'environnement du poste.
         env = dict(os.environ)
         env.update(self._env)
+        from runner.domain.run_pause import ENV_PAUSE
+        env[ENV_PAUSE] = str(self.pause_control.path)
         if self.request.build_number is not None:
             env[ENV_BUILD_NUMBER] = str(self.request.build_number)
         if self.reader.name:
@@ -358,6 +363,12 @@ class ReaderRun:
 
     def run(self, on_line: Callable[[str], None],
             on_outcome: Callable[[Outcome], None]) -> ReaderReport:
+        try:
+            return self._execute(on_line, on_outcome)
+        finally:
+            self.pause_control.close()
+
+    def _execute(self, on_line, on_outcome):
         """Run one logical reader run, isolating each TestSuite in its own pytest."""
         start = time.monotonic()
         report = ReaderReport(reader=self.reader, counts={})
@@ -371,6 +382,7 @@ class ReaderRun:
         with reader_plugin(self.request.config_path) as (
                 plugin_args, plugin_dir):
             for group_index, (suite_root, suite_nodeids) in enumerate(groups):
+                self.pause_control.wait()
                 if self._cancelled:
                     break
 
@@ -399,6 +411,7 @@ class ReaderRun:
                     _prepend_pythonpath(environment, [diagnostic_dir])
                     output_start = len(output)
                     try:
+                        self.pause_control.clear_workers()
                         self._process = subprocess.Popen(
                             command, cwd=self.request.workspace,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

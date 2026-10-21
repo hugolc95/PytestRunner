@@ -279,7 +279,8 @@ def reader_plugin(config_path: str):
     """
     dossier = tempfile.mkdtemp(prefix="runner_reader_")
     try:
-        (Path(dossier) / f"{PLUGIN_MODULE}.py").write_text(_SOURCE, encoding="utf-8")
+        from runner.domain.run_pause import PLUGIN_SOURCE
+        (Path(dossier) / f"{PLUGIN_MODULE}.py").write_text(_SOURCE + PLUGIN_SOURCE, encoding="utf-8")
         yield ["-p", PLUGIN_MODULE], dossier
     finally:
         shutil.rmtree(dossier, ignore_errors=True)

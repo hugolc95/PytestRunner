@@ -967,6 +967,11 @@ class MainWindow(QMainWindow):
         self.stop_button.setIcon(icons.icon("mdi.stop", t.TEXT_MUTED))
         self.stop_button.setToolTip("Stop the current run  (Esc)")
         self.stop_button.clicked.connect(self.stop_run)
+        self.pause_button = QPushButton('Pause')
+        self.pause_button.setObjectName('Pause')
+        self.pause_button.setIcon(icons.icon('mdi.pause', t.status_color(Status.SKIPPED)))
+        self.pause_button.setToolTip('Pause after the current test finishes; its setup, execution and teardown complete normally.')
+        self.pause_button.clicked.connect(self._toggle_run_pause)
 
         self.profile_chip = QFrame()
         self.profile_chip.setObjectName("ProfileChip")
@@ -986,6 +991,7 @@ class MainWindow(QMainWindow):
         self.profile_chip.hide()
 
         ligne.addWidget(self.run_button)
+        ligne.addWidget(self.pause_button)
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.profile_chip)
         ligne.addWidget(self.rerun_button)
@@ -1959,6 +1965,7 @@ class MainWindow(QMainWindow):
                 ("mdi.stop", self.stop_button)):
             bouton.setIcon(icons.icon(glyphe, t.TEXT_MUTED))
         self.run_button.setIcon(icons.icon("mdi.play", t.ON_RUN))
+        self._style_pause_button()
 
         for glyphe, bouton in (
                 ("mdi.checkbox-multiple-marked-outline", self.select_all_button),
@@ -2013,6 +2020,7 @@ class MainWindow(QMainWindow):
         self.service.progress.connect(self._on_progress)
         self.service.reader_finished.connect(self.results.set_report)
         self.service.finished.connect(self._on_run_finished)
+        self.service.pause_changed.connect(self._on_pause_changed)
 
     # =====================================================================
     # Workspace
@@ -2518,9 +2526,47 @@ class MainWindow(QMainWindow):
         if self.service.busy:
             self.service.cancel()
             self.status_label.setText("Stopping…")
+            self._update_actions()
         elif self._stress_worker is not None:
             self._arreter_stress()
             self.status_label.setText("Stopping…")
+
+    def _toggle_run_pause(self):
+        if self.service.pause_state == 'running':
+            self.service.request_pause()
+        else:
+            self.service.resume()
+
+    def _style_pause_button(self):
+        state = self.service.pause_state
+        self.pause_button.setObjectName('Run' if state == 'paused' else 'Pause')
+        self.pause_button.style().unpolish(self.pause_button)
+        self.pause_button.style().polish(self.pause_button)
+        self.pause_button.setIcon(icons.icon('mdi.play' if state == 'paused' else
+                                            'mdi.undo-variant' if state == 'pending' else 'mdi.pause',
+                                            t.ON_RUN if state == 'paused' else t.status_color(Status.SKIPPED)))
+
+    def _on_pause_changed(self, state):
+        self.pause_button.setText('Resume' if state == 'paused' else
+                                  'Cancel pause' if state == 'pending' else 'Pause')
+        self._style_pause_button()
+        self.pause_button.setToolTip('Continue with the next test in this run.' if state == 'paused' else
+                                    'Cancel the pause request and keep running.' if state == 'pending' else
+                                    'Pause after the current test finishes; its setup, execution and teardown complete normally.')
+        if not self.service.busy or self.service._stopping:
+            return
+        if state == 'paused':
+            if hasattr(self, '_flush_live_output'):
+                self._flush_live_output()
+                self.model.clear_running_tests()
+            self._set_status_live(f'Paused · {len(self._archive_run_nodeids)} tests')
+            self.live_dot.pause()
+            self._elapsed.stop()
+        elif state == 'pending':
+            self._set_status_live('Pause requested — waiting for the current test to finish')
+        else:
+            self._set_status_live(f'Running {len(self._archive_run_nodeids)} tests…')
+            self._elapsed.start()
 
     def _set_status_live(self, texte: str) -> None:
         """Style "en cours" du label de statut : couleur pleine et gras au
@@ -3746,6 +3792,9 @@ class MainWindow(QMainWindow):
         self.profile_picker.setToolTip('Profile selection is locked while a run is active.' if occupe else 'Choose a saved execution profile')
         self.run_button.setEnabled(charge and a_lancer and not occupe and cible)
         self.stop_button.setEnabled(occupe)
+        self.pause_button.setEnabled(self.service.busy and not self.service._stopping)
+        self.pause_button.setVisible(self.service.busy)
+        self.run_button.setVisible(not self.service.busy)
         self.act_run.setEnabled(self.run_button.isEnabled())
         self.act_stop.setEnabled(occupe)
         rejouable = (charge and not occupe and cible
