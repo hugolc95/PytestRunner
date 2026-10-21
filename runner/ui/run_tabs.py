@@ -400,6 +400,8 @@ class RunTabsController(QObject):
         entry = self.entry_for(context)
         if self.closing or entry is None or self.is_locked(context):
             return False
+        if not context.disabled_tests.check_launch(request.nodeids, request.workspace, strict=True):
+            return False
         queued = self.busy or self.paused or bool(self.queue)
         snapshot = None
         if queued and request.config_path:
@@ -429,6 +431,14 @@ class RunTabsController(QObject):
         if job is None or self.closing:
             return False
         context = entry.context
+        if not context.disabled_tests.check_launch(job.request.nodeids, job.request.workspace, strict=True):
+            entry.state = 'draft'
+            self.release_snapshot(entry)
+            self.paused = bool(self.queue)
+            context.status_label.setText('Run blocked by disabled tests. Review it before running again.')
+            self.refresh()
+            self.schedule_save()
+            return False
         self.active = entry
         entry.state = "running"
         context._run_id = job.request.run_id

@@ -91,6 +91,9 @@ class TestTreeModel(QAbstractItemModel):
         self._search_index: tuple[tuple[str, str], ...] = ()
         self._readers: tuple[Reader, ...] = ()
         self.selection_locked = False
+        self._disabled = {}
+        self._blocked_rows = set()
+        self._activation_targets = {}
         self._badges: list[str] = []
         # Decompte par statut des cases (test, lecteur) deja rendues. Tenu au
         # fil de l'eau : le recalculer a chaque resultat reparcourrait tout
@@ -116,6 +119,9 @@ class TestTreeModel(QAbstractItemModel):
         # allocations repetees etaient visibles dans le fil de l'interface.
         self._search_index = tuple(
             (nodeid, nodeid.casefold()) for nodeid in self._by_nodeid)
+        self._activation_targets = {row: self._target_for_row(row)
+                                    for root in self._roots for row in [root, *root.descendants()]}
+        self._rebuild_disabled_rows()
         self.endResetModel()
         self._emit_selection()
 
@@ -188,11 +194,95 @@ class TestTreeModel(QAbstractItemModel):
             return int(Qt.AlignCenter)
         return None
 
+    def _leaf_nodeid(self, row):
+        return row.node.nodeid
+
+    def _target_for_row(self, row):
+        if row.is_leaf:
+            return self._leaf_nodeid(row)
+        leaf = next(row.leaves(), None)
+        if leaf is None:
+            return ''
+        nodeid = self._leaf_nodeid(leaf)
+        path = nodeid.split('::', 1)[0]
+        if row.node.kind is Kind.MODULE:
+            return path
+        if row.node.kind is Kind.FOLDER:
+            return '/'.join(path.split('/')[:self._folder_depth(row)])
+        if row.node.kind is Kind.TEST:
+            from runner.domain.disabled_tests import parameter_base
+            return parameter_base(nodeid)
+        if row.node.kind is Kind.CLASS:
+            from runner.domain.disabled_tests import parameter_base
+            below = 0
+            parent = leaf.parent
+            while parent is not None and parent is not row:
+                if parent.node.kind is Kind.CLASS:
+                    below += 1
+                parent = parent.parent
+            parts = parameter_base(nodeid).split('::')
+            return '::'.join(parts[:len(parts) - 1 - below])
+        return ''
+
+    def _folder_depth(self, row):
+        depth = 1
+        parent = row.parent
+        while parent:
+            if parent.node.kind is Kind.FOLDER:
+                depth += 1
+            parent = parent.parent
+        return depth
+
+    def activation_target(self, index):
+        return self._activation_targets.get(index.internalPointer(), '') if index.isValid() else ''
+
+    def activation_targets(self):
+        return list(dict.fromkeys(self._activation_targets.values()))
+
+    def set_disabled_tests(self, records: dict) -> None:
+        self._disabled = dict(records)
+        self._rebuild_disabled_rows()
+        for row in self._by_nodeid.values():
+            if row in self._blocked_rows:
+                row.checked = False
+        self._emit_layout_changed()
+        self._emit_selection()
+
+    def _rebuild_disabled_rows(self):
+        from runner.domain.disabled_tests import matching_record
+        self._blocked_rows = set()
+        def visit(row):
+            if row.children:
+                blocked = all([visit(child) for child in row.children])
+            else:
+                blocked = bool(matching_record(self._disabled, self._leaf_nodeid(row)))
+            if blocked:
+                self._blocked_rows.add(row)
+                row.checked = False
+            row.check_cache = None
+            return blocked
+        for root in self._roots:
+            visit(root)
+
+    def disabled_data(self, nodeid, role):
+        from runner.domain.disabled_tests import matching_record
+        record = matching_record(self._disabled, nodeid)
+        if not record:
+            return None
+        if role == Qt.DecorationRole:
+            return icons.icon('mdi.cancel', t.status_color(Status.SKIPPED))
+        if role == Qt.ForegroundRole:
+            return QColor(t.TEXT_MUTED)
+        if role == Qt.ToolTipRole:
+            return f"Disabled — {record['reason'] or 'No reason provided'}\n{record['author']} · {record['date']}"
+        return None
+
     def flags(self, index: QModelIndex):
         if not index.isValid():
             return Qt.NoItemFlags
         drapeaux = Qt.ItemIsEnabled | Qt.ItemIsSelectable
-        if index.column() == 0 and not self.selection_locked:
+        if (index.column() == 0 and not self.selection_locked
+                and index.internalPointer() not in self._blocked_rows):
             drapeaux |= Qt.ItemIsUserCheckable
         return drapeaux
 
@@ -206,6 +296,9 @@ class TestTreeModel(QAbstractItemModel):
         return self._data_colonne_statut(ligne, index.column() - 1, role)
 
     def _data_colonne_nom(self, ligne: _Row, role):
+        disabled = self.disabled_data(self._activation_targets.get(ligne, ligne.node.nodeid), role)
+        if disabled is not None:
+            return disabled
         if role == Qt.BackgroundRole:
             return self._fond_divergent(ligne)
         annotee = (self._stress_annotation is not None
@@ -279,7 +372,8 @@ class TestTreeModel(QAbstractItemModel):
 
     def setData(self, index: QModelIndex, value, role=Qt.CheckStateRole) -> bool:
         if (self.selection_locked or not index.isValid()
-                or role != Qt.CheckStateRole or index.column() != 0):
+                or role != Qt.CheckStateRole or index.column() != 0
+                or index.internalPointer() in self._blocked_rows):
             return False
 
         ligne: _Row = index.internalPointer()
@@ -299,11 +393,13 @@ class TestTreeModel(QAbstractItemModel):
     # ------------------------------------------------------------- selection
 
     def _check_state(self, ligne: _Row):
+        if ligne in self._blocked_rows:
+            return Qt.Unchecked
         if ligne.is_leaf:
             return Qt.Checked if ligne.checked else Qt.Unchecked
         if ligne.check_cache is not None:
             return ligne.check_cache
-        etats = {self._check_state(e) for e in ligne.children}
+        etats = {self._check_state(e) for e in ligne.children if e not in self._blocked_rows}
         if etats == {Qt.Checked}:
             ligne.check_cache = Qt.Checked
         elif etats == {Qt.Unchecked}:
@@ -333,11 +429,11 @@ class TestTreeModel(QAbstractItemModel):
         Le reporter au prochain tour de boucle d'evenements laisse la vue
         terminer son propre clic avant que le modele ne bouge sous elle.
         """
-        ligne.checked = coche
-        ligne.check_cache = Qt.Checked if coche else Qt.Unchecked
+        ligne.checked = coche and ligne not in self._blocked_rows
+        ligne.check_cache = Qt.Checked if ligne.checked else Qt.Unchecked
         for descendant in ligne.descendants():
-            descendant.checked = coche
-            descendant.check_cache = ligne.check_cache
+            descendant.checked = coche and descendant not in self._blocked_rows
+            descendant.check_cache = Qt.Checked if descendant.checked else Qt.Unchecked
         parent = ligne.parent
         while parent is not None:
             parent.check_cache = None
@@ -381,9 +477,9 @@ class TestTreeModel(QAbstractItemModel):
         if self.selection_locked:
             return
         for racine in self._roots:
-            racine.checked = coche
+            racine.checked = coche and racine not in self._blocked_rows
             for ligne in racine.descendants():
-                ligne.checked = coche
+                ligne.checked = coche and ligne not in self._blocked_rows
         self._emit_layout_changed()
         self._emit_selection()
 
@@ -418,7 +514,7 @@ class TestTreeModel(QAbstractItemModel):
         retenus = set(nodeids)
         for nodeid in retenus:
             ligne = self._by_nodeid.get(nodeid)
-            if ligne is not None:
+            if ligne is not None and ligne not in self._blocked_rows:
                 ligne.checked = True
         self._emit_layout_changed()
         self._emit_selection()
@@ -428,7 +524,7 @@ class TestTreeModel(QAbstractItemModel):
         retenus = []
         for racine in self._roots:
             for feuille in racine.leaves():
-                if feuille.checked:
+                if feuille.checked and feuille not in self._blocked_rows:
                     retenus.append(feuille.node.nodeid)
         return retenus
 

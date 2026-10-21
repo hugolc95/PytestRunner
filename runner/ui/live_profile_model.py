@@ -11,6 +11,12 @@ from runner.ui.tree_model import TestTreeModel, _Row, NODEID_ROLE
 
 
 class LiveProfileModel(TestTreeModel):
+    def _leaf_nodeid(self, row):
+        return self.locations.get(row.node.nodeid, (0, 0, row.node.nodeid))[2]
+
+    def _folder_depth(self, row):
+        return max(0, super()._folder_depth(row) - 1)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.locations = {}
@@ -126,6 +132,11 @@ class LiveProfileModel(TestTreeModel):
         if not index.isValid() or role == Qt.CheckStateRole:
             return None
         row = index.internalPointer()
+        if index.column() == 0:
+            nodeid = self.locations.get(row.node.nodeid, (0, 0, ''))[2]
+            disabled = self.disabled_data(nodeid, role)
+            if disabled is not None:
+                return disabled
         if role == NODEID_ROLE:
             return self.locations.get(row.node.nodeid, (0, 0, ''))[2]
         if index.column() > 0:

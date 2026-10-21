@@ -69,12 +69,12 @@ def _menu_pour(fenetre, nodeid: str) -> QMenu:
 
 # ------------------------------------------------------------- un test seul
 
-def test_a_test_node_offers_the_six_actions(fenetre):
+def test_a_test_node_offers_run_source_and_activation_actions(fenetre):
     menu = _menu_pour(fenetre, NODEIDS[0])
     libelles = [a.text() for a in menu.actions() if not a.isSeparator()]
     assert libelles == ["Run only this test", "Run until it fails…",
                         "Run N times…", "Copy nodeid",
-                        "Copy failure trace", "Open file"]
+                        "Copy failure trace", "Open file", "Deactivate test…"]
 
 
 def test_run_only_this_test_starts_a_normal_run(fenetre, monkeypatch):
@@ -145,7 +145,7 @@ def _menu_groupe_pour(fenetre, nodeid_temoin: str) -> QMenu:
 def test_a_module_file_offers_run_only_this_and_open_file(fenetre):
     menu, _ = _menu_groupe_pour(fenetre, NODEIDS[0])
     libelles = [a.text() for a in menu.actions() if not a.isSeparator()]
-    assert libelles == ["Run only this", "Open file"]
+    assert libelles == ["Run only this", "Deactivate group…", "Open file"]
 
 
 def test_a_folder_does_not_offer_open_file(fenetre):
@@ -157,7 +157,7 @@ def test_a_folder_does_not_offer_open_file(fenetre):
     fenetre._construire_menu_groupe(menu, index_dossier)
 
     libelles = [a.text() for a in menu.actions() if not a.isSeparator()]
-    assert libelles == ["Run only this"]
+    assert libelles == ["Run only this", "Deactivate group…"]
 
 
 def test_run_only_this_on_a_module_runs_every_test_beneath_it(fenetre, monkeypatch):
