@@ -1,5 +1,38 @@
 # Pytest Runner GUI
 
+## Désactivation des tests (version d’essai)
+
+Dans **Run Tests**, clic droit sur un test → **Deactivate test…**, ou sur un dossier,
+un fichier, une classe ou un test paramétré → **Deactivate group…**. La raison est
+optionnelle. Pour un cas paramétré, on peut désactiver ce cas seul ou tous les
+cas du test, y compris les futurs paramètres. Le symbole ⊘ remplace l’icône du
+test, sans ajouter de colonne. Les tests désactivés restent visibles et ne
+peuvent plus être cochés.
+
+Un bouton ⊘ dans la barre d’outils de l’arbre apparaît uniquement lorsqu’il
+existe des désactivations. Il ouvre **Deactivated tests**, avec le motif, la date,
+une case d’activation directe et **Deactivate a test or group…**. L’auteur reste disponible
+dans les détails et les infobulles. Les décisions sont enregistrées localement
+dans le dossier utilisateur de l’application, par workspace, indépendamment du
+YAML et de l’onglet de run ; aucun fichier de test n’est modifié.
+
+Les profils contenant une étape désactivée sont bloqués et les runs en attente
+sont revérifiés avant leur démarrage. Les tests désactivés sont exclus avant
+exécution, sans créer de faux verdict pytest « skipped ». La désactivation ne
+concerne que les lancements depuis cette application. Arrêter les exécutions
+du workspace avant d’en changer les désactivations ; la réactivation est
+manuelle et n’entraîne pas de nouvelle sélection automatique.
+Une règle de groupe couvre aussi les futurs tests de ce groupe. Réactiver le
+groupe conserve les désactivations individuelles déjà enregistrées séparément.
+Un test ou sous-groupe peut être réactivé seul dans un groupe désactivé : cette
+exception est conservée au redémarrage et les autres tests restent désactivés.
+La fenêtre présente les membres des groupes avec leur case d’activation. Ses
+boutons **Activate all** et **Deactivate all** agissent sur tous les éléments de la
+liste, y compris ceux qui viennent d’être réactivés tant que la fenêtre reste ouverte.
+Cette fenêtre conserve les niveaux fichier `.py`, classe et test paramétré avant
+les cas individuels. Cocher un groupe y réactive tous ses éléments ; une case
+avec un tiret indique une activation partielle.
+
 ## Navigation dans les erreurs — v1.2.0
 
 Les références fichier/ligne sont cliquables dans **Detail**, l’historique,

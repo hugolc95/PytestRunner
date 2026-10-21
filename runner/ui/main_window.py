@@ -209,6 +209,8 @@ class MainWindow(QMainWindow):
             self.preferences = PreferencesController(self)
             from runner.ui.run_tabs import RunTabsController
             self.run_tabs = RunTabsController(self)
+        from runner.ui.disabled_tests import DisabledTestsController
+        self.disabled_tests = DisabledTestsController(self)
 
     # =====================================================================
     # Construction
@@ -1477,6 +1479,8 @@ class MainWindow(QMainWindow):
             if self._profile_logs is not None else {})
         self.profile_results.show_test(nodeid, self.profile_model.statuses_for_nodeid(key),
                                        self.workspace.path if self.workspace else '')
+        if hasattr(self, 'disabled_tests'):
+            self.disabled_tests.show_details(nodeid, self.profile_results)
         self.profile_results.source.edit_button.setEnabled(False)
         self.profile_results.source.edit_button.setToolTip('Switch to All tests to edit the source.')
         readers = self.profile_model.readers or (Reader('', 0),)
@@ -1995,6 +1999,13 @@ class MainWindow(QMainWindow):
         # lui dire que tout a change.
         self.model.layoutChanged.emit()
 
+        contexts = [self]
+        if self._run_host is None and self.run_tabs:
+            contexts.extend(entry.context for entry in self.run_tabs.entries if entry.context is not self)
+        for context in contexts:
+            if hasattr(context, 'disabled_tests'):
+                context.disabled_tests.restyle()
+
     def _connect_service(self) -> None:
         self.service.started.connect(self._on_run_started)
         self.service.line.connect(self.results.append_output)
@@ -2112,7 +2123,11 @@ class MainWindow(QMainWindow):
         if not same_workspace:
             self._clear_status_filter()
             self.remaining_pill.setVisible(False)
+        if not same_workspace:
+            self.model.set_disabled_tests({})
         self.model.set_tree(collapse_single_class(build_tree(nodeids)))
+        if hasattr(self, 'disabled_tests'):
+            self.disabled_tests.refresh()
         self._stress_counts = None
         self._refresh_profile_picker()
         self.tree_view_switch.setVisible(self.workspace is not None)
@@ -2378,6 +2393,8 @@ class MainWindow(QMainWindow):
         if (self.workspace is None or self.service.busy
                 or self.run_tabs and self.run_tabs.is_locked(self)):
             return
+        if not self.disabled_tests.check_launch(profile.sequence, strict=True):
+            return
         missing = [nodeid for nodeid in profile.sequence
                    if nodeid not in getattr(self.model, "_by_nodeid", {})]
         if missing:
@@ -2437,6 +2454,9 @@ class MainWindow(QMainWindow):
     def _start(self, nodeids: list) -> None:
         if (self.workspace is None or not nodeids or self.service.busy
                 or self.run_tabs and self.run_tabs.is_locked(self)):
+            return
+        nodeids = self.disabled_tests.check_launch(nodeids)
+        if not nodeids:
             return
 
         # Une correction encore dans le tampon de l'editeur ferait relancer la
@@ -2917,6 +2937,8 @@ class MainWindow(QMainWindow):
                 self.workspace.path if self.workspace else "",
                 self._markers_by_nodeid.get(nodeid, ()),
                 self._recent_runs_for(nodeid), self.history.last_seen(nodeid))
+            if hasattr(self, 'disabled_tests'):
+                self.disabled_tests.show_details(nodeid)
             return
 
         compteurs, echecs = self.model.subtree_summary(premiere)
@@ -2925,6 +2947,8 @@ class MainWindow(QMainWindow):
         nodeids = self.model.leaf_nodeids_under(premiere)
         self.results.show_group(chemin, nom, self.model.readers,
                                 compteurs, echecs, source, saut, nodeids)
+        if hasattr(self, 'disabled_tests'):
+            self.disabled_tests.show_details(self.model.activation_target(premiere))
 
     def _recent_runs_for(self, nodeid: str) -> dict[int, list[Status]]:
         """Mini-tendance de ce test, par lecteur -- absente des lecteurs qui
@@ -3039,6 +3063,10 @@ class MainWindow(QMainWindow):
         menu.addSeparator()
         menu.addAction(icons.icon("mdi.file-outline"), "Open file",
                        lambda: self.results.show_tab(ONGLET_SOURCE))
+        self.disabled_tests.add_menu_action(menu, nodeid)
+        if self.model._by_nodeid.get(nodeid) in self.model._blocked_rows:
+            for action in (action_run, action_until, action_n_fois):
+                action.setEnabled(False)
 
     def _construire_menu_groupe(self, menu: QMenu, index: QModelIndex) -> None:
         occupe = self.service.busy or self._stress_worker is not None
@@ -3047,6 +3075,11 @@ class MainWindow(QMainWindow):
             icons.icon("mdi.play"), "Run only this",
             lambda: self._start(nodeids))
         action_run.setEnabled(not occupe and bool(nodeids))
+        target = self.model.activation_target(index)
+        if target:
+            self.disabled_tests.add_menu_action(menu, target, group=True)
+        if index.internalPointer() in self.model._blocked_rows:
+            action_run.setEnabled(False)
 
         noeud = self.model.data(index, NODE_ROLE)
         if noeud is not None and noeud.kind is not Kind.FOLDER:
@@ -3080,6 +3113,8 @@ class MainWindow(QMainWindow):
         if (self.workspace is None or self.service.busy
                 or self._stress_worker is not None
                 or self.run_tabs and (self.run_tabs.busy or self.run_tabs.is_locked(self))):
+            return
+        if not self.disabled_tests.check_launch([nodeid], strict=True):
             return
 
         # Meme garde qu'un run normal : une correction encore dans l'editeur
