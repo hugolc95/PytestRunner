@@ -1,5 +1,20 @@
 # Pytest Runner GUI
 
+## Pause et reprise d’un run (version d’essai)
+
+Pendant un run, **Pause** prend la place du bouton Run. Le statut existant
+affiche **Pause requested — waiting for the current test to finish** : chaque test déjà démarré
+termine son exécution et son nettoyage. Quand tous les lecteurs attendent,
+le statut devient **Paused · N tests**, avec une icône pause fixe, et **Resume** reprend au prochain test dans le
+même run, sans réexécuter les précédents ni recréer la session pytest.
+**Cancel pause** permet d’annuler la demande avant la pause effective.
+
+Les profils conservent leur étape, répétition et tentative. La configuration
+et la sélection restent verrouillées, la file d’attente attend, et **Stop**
+reste disponible. Le compteur de temps affiché est suspendu pendant la pause.
+La reprise nécessite de garder l’application ouverte. Les lancements de
+stress conservent leurs commandes habituelles.
+
 ## Désactivation des tests (version d’essai)
 
 Dans **Run Tests**, clic droit sur un test → **Deactivate test…**, ou sur un dossier,

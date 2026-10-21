@@ -311,6 +311,24 @@ QPushButton#Run:disabled {{
     background-color: transparent; color: {t.TEXT_FAINT}; border-color: {t.BORDER};
 }}
 
+QPushButton#Pause {{
+    background-color: {t.rgba(t.status_color(Status.SKIPPED), 0.12)};
+    color: {t.status_color(Status.SKIPPED)};
+    border: 1px solid {t.rgba(t.status_color(Status.SKIPPED), 0.55)};
+    font-weight: 600;
+    padding: 0 {t.SPACE_4}px;
+}}
+QPushButton#Pause:hover {{
+    background-color: {t.rgba(t.status_color(Status.SKIPPED), 0.22)};
+    border-color: {t.status_color(Status.SKIPPED)};
+}}
+QPushButton#Pause:pressed {{
+    background-color: {t.rgba(t.status_color(Status.SKIPPED), 0.30)};
+}}
+QPushButton#Pause:disabled {{
+    background-color: transparent; color: {t.TEXT_FAINT}; border-color: {t.BORDER};
+}}
+
 /* Ghost : rien tant qu'on ne le survole pas. Un bouton rare ne doit pas peser
    autant qu'une action courante. */
 QPushButton#Ghost {{

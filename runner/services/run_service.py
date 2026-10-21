@@ -13,7 +13,7 @@ from tempfile import TemporaryDirectory
 import copy
 import yaml
 
-from PySide6.QtCore import QObject, QThread, Signal
+from PySide6.QtCore import QObject, QThread, Signal, QTimer
 
 from runner.domain import execution
 from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest, Status
@@ -122,6 +122,7 @@ class RunService(QObject):
     profile_output = Signal(int, int, int, int, str)
     reader_finished = Signal(object)  # ReaderReport
     finished = Signal(list)           # list[ReaderReport]
+    pause_changed = Signal(str)       # running, pending, paused
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -145,6 +146,52 @@ class RunService(QObject):
         self._profile_completed = 0
         self._profile_total = 0
         self._profile_reports: dict[int, ReaderReport] = {}
+        self._pause_requested = False
+        self.pause_state = 'running'
+        self._stopping = False
+        self._pause_timer = QTimer(self)
+        self._pause_timer.setInterval(100)
+        self._pause_timer.timeout.connect(self._poll_pause)
+
+    def _set_pause_state(self, state):
+        if self.pause_state != state:
+            self.pause_state = state
+            self.pause_changed.emit(state)
+
+    def _reset_pause(self):
+        self._pause_requested = False
+        self._pause_timer.stop()
+        self._stopping = False
+        self._set_pause_state('running')
+
+    def request_pause(self):
+        if not self.busy or self._stopping or self._pause_requested:
+            return
+        self._pause_requested = True
+        for worker in self._workers:
+            if worker.isRunning() or worker in self._en_attente:
+                worker._run.pause_control.request()
+        self._set_pause_state('pending')
+        self._pause_timer.start()
+
+    def resume(self):
+        if not self._pause_requested or self._stopping:
+            return
+        self._pause_requested = False
+        for worker in self._workers:
+            worker._run.pause_control.resume()
+        self._pause_timer.stop()
+        self._set_pause_state('running')
+
+    def _poll_pause(self):
+        if not self._pause_requested or self.pause_state == 'paused':
+            return
+        active = [worker for worker in self._workers if worker.isRunning()]
+        if active and all(worker._run.pause_control.paused for worker in active):
+            # Acknowledgement is final for this request. Only Resume, Stop or
+            # run completion can leave the paused state, never another IO poll.
+            self._set_pause_state('paused')
+            self._pause_timer.stop()
 
     @property
     def busy(self) -> bool:
@@ -164,7 +211,7 @@ class RunService(QObject):
         """
         if self.busy:
             return False
-
+        self._reset_pause()
         return self._start_request(request, env, emit_started=True)
 
     def _start_request(self, request: RunRequest, env: dict,
@@ -186,6 +233,8 @@ class RunService(QObject):
 
         for lecteur in lecteurs:
             worker = _ReaderWorker(request, lecteur, env, parent=self)
+            if self._pause_requested:
+                worker._run.pause_control.request()
             worker.line.connect(self._on_live_line)
             worker.outcome.connect(self._on_outcome)
             worker.done.connect(self._on_reader_done)
@@ -219,6 +268,7 @@ class RunService(QObject):
         """
         if self.busy or not sequence:
             return False
+        self._reset_pause()
         patches = copy.deepcopy([] if step_overrides is None else step_overrides)
         validate_step_overrides(patches, len(sequence))
         self._profile_config_directory = None
@@ -389,6 +439,7 @@ class RunService(QObject):
         reports = sorted(self._profile_reports.values(), key=lambda r: r.reader.index)
         self._profile_active = False
         self._profile_queue = []
+        self._reset_pause()
         directory = getattr(self, "_profile_config_directory", None)
         if directory:
             directory.cleanup()
@@ -405,6 +456,8 @@ class RunService(QObject):
         """Demande l'arret. Les fils se terminent d'eux-memes ensuite."""
         # La file d'abord : sinon l'arret du lecteur en cours declencherait le
         # depart du suivant, et Stop ne s'arreterait jamais.
+        self._stopping = True
+        self._pause_timer.stop()
         self._en_attente = []
         if self._profile_active:
             self._profile_cancelled = True
@@ -455,4 +508,5 @@ class RunService(QObject):
             if self._profile_active:
                 self._finish_profile_step()
             else:
+                self._reset_pause()
                 self.finished.emit(list(self._reports))
