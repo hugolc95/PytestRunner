@@ -761,6 +761,7 @@ class MainWindow(QMainWindow):
             configuration_resolver=self._run_configuration_path)
         self.yaml_editor.setWindowFlags(Qt.Widget)
         self.yaml_editor.saved.connect(self._on_yaml_page_saved)
+        self.yaml_editor.file_changed.connect(self._on_yaml_page_saved)
         self.yaml_editor_layout.addWidget(self.yaml_editor, 1)
         self._yaml_editor_signature = self._yaml_file_signature(
             self.workspace.config_path)

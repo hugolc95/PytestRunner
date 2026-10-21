@@ -527,16 +527,80 @@ def test_switching_file_reloads_the_form(qapp, deux_fichiers):
     assert _champ(dialogue, "LOG_PATH").depart == "ailleurs"
 
 
-def test_switching_file_says_what_it_dropped(qapp, deux_fichiers):
-    """Les emporter vers l'autre fichier ecrirait des reglages la ou ils
-    n'appartiennent pas ; les perdre en silence est pire encore."""
+def test_switching_file_saves_and_restores_form_changes(qapp, deux_fichiers):
     dialogue = _dialogue_deux(qapp, deux_fichiers)
     _champ(dialogue, "timeout").widget.setValue(999)
 
     dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("config.yaml"))
 
-    assert "unsaved change was dropped" in dialogue.status.text()
-    assert charger(deux_fichiers / "campagne.yml")["timeout"] == 30
+    assert charger(deux_fichiers / "campagne.yml")["timeout"] == 999
+    dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("campagne.yml"))
+    assert _champ(dialogue, "timeout").widget.value() == 999
+
+
+def test_switching_file_saves_raw_yaml(qapp, deux_fichiers):
+    dialogue = _dialogue_deux(qapp, deux_fichiers)
+    dialogue.tabs.setCurrentIndex(ONGLET_YAML)
+    text = "# Edited YAML\ntimeout: 123\n"
+    dialogue.raw.setPlainText(text)
+    dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("config.yaml"))
+    assert (deux_fichiers / "campagne.yml").read_text(encoding="utf-8") == text
+    dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("campagne.yml"))
+    assert dialogue.raw.toPlainText() == text
+
+
+def test_invalid_yaml_blocks_file_switch_without_losing_edits(qapp, deux_fichiers):
+    dialogue = _dialogue_deux(qapp, deux_fichiers)
+    dialogue.tabs.setCurrentIndex(ONGLET_YAML)
+    dialogue.raw.setPlainText("timeout: [")
+    dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("config.yaml"))
+    assert dialogue.path == deux_fichiers / "campagne.yml"
+    assert dialogue.file_combo.currentData() == str(dialogue.path)
+    assert dialogue.raw.toPlainText() == "timeout: ["
+    assert dialogue.state_badge.text() == "YAML error"
+    assert charger(dialogue.path)["timeout"] == 30
+
+
+def test_failed_save_blocks_file_switch(qapp, deux_fichiers, monkeypatch):
+    dialogue = _dialogue_deux(qapp, deux_fichiers)
+    _champ(dialogue, "timeout").widget.setValue(999)
+    monkeypatch.setattr("runner.ui.config_dialog.config_file.ecrire",
+                        lambda *_: (False, "Permission denied"))
+    dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("config.yaml"))
+    assert dialogue.path == deux_fichiers / "campagne.yml"
+    assert dialogue.file_combo.currentData() == str(dialogue.path)
+    assert _champ(dialogue, "timeout").widget.value() == 999
+    assert "Permission denied" in dialogue.status.text()
+
+
+def test_switch_does_not_drop_changes_in_inactive_view(qapp, deux_fichiers):
+    dialogue = _dialogue_deux(qapp, deux_fichiers)
+    _champ(dialogue, "timeout").widget.setValue(999)
+    dialogue.tabs.setCurrentIndex(ONGLET_YAML)
+    dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("config.yaml"))
+    assert charger(deux_fichiers / "campagne.yml")["timeout"] == 999
+
+
+def test_conflicting_views_block_switch(qapp, deux_fichiers):
+    dialogue = _dialogue_deux(qapp, deux_fichiers)
+    _champ(dialogue, "timeout").widget.setValue(999)
+    dialogue.tabs.setCurrentIndex(ONGLET_YAML)
+    dialogue.raw.setPlainText("timeout: 123\n")
+    dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("config.yaml"))
+    assert dialogue.path == deux_fichiers / "campagne.yml"
+    assert _champ(dialogue, "timeout").widget.value() == 999
+    assert dialogue.raw.toPlainText() == "timeout: 123\n"
+    assert charger(dialogue.path)["timeout"] == 30
+
+
+def test_windows_line_endings_do_not_block_form_autosave(qapp, deux_fichiers):
+    config = deux_fichiers / "campagne.yml"
+    config.write_bytes(b"# Windows file\r\ntimeout: 30\r\n")
+    dialogue = _dialogue_deux(qapp, deux_fichiers)
+    _champ(dialogue, "timeout").widget.setValue(999)
+    dialogue.file_combo.setCurrentIndex(dialogue.file_combo.findText("config.yaml"))
+    assert dialogue.path.name == "config.yaml"
+    assert config.read_bytes() == b"# Windows file\r\ntimeout: 999\r\n"
 
 
 # ------------------------------------------- ajouter et retirer un lecteur

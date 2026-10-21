@@ -40,6 +40,7 @@ class RunTab:
     progress: tuple[int, int] = (0, 0)
     configurations: dict[str, str] = field(default_factory=dict)
     configuration_sources: dict[str, str] = field(default_factory=dict)
+    configuration_copies: dict[str, str] = field(default_factory=dict)
 
     @property
     def name(self):
@@ -197,26 +198,46 @@ class RunTabsController(QObject):
             return source
         key = str(Path(workspace).resolve())
         folder = sha256(key.encode("utf-8")).hexdigest()[:16]
-        target = context.history.racine / "run-configurations" / entry.identifier / folder / "config.yaml"
+        root = context.history.racine / "run-configurations" / entry.identifier / folder
         if source and not Path(source).is_absolute():
             source = str(Path(workspace) / source)
-        if source and Path(source).resolve() != target.resolve():
+        # Adopt the active copy from older saved sessions before switching.
+        active = entry.configurations.get(key, "")
+        origin = entry.configuration_sources.get(key, "")
+        if active and origin:
+            entry.configuration_copies.setdefault(origin, active)
+        if not source:
+            source = active
+        own_origin = next((name for name, path in entry.configuration_copies.items()
+                           if source and Path(path).resolve() == Path(source).resolve()), None)
+        if own_origin is not None or (source and active and
+                                     Path(source).resolve() == Path(active).resolve()):
+            origin = own_origin or origin
+            target = Path(source)
+        elif source:
+            origin = str(Path(source).resolve())
+            for other in self.entries:
+                if other is not entry and other.configurations.get(key) == str(Path(source)):
+                    origin = other.configuration_sources.get(key, "") or origin
+                    break
+            target = Path(entry.configuration_copies.get(origin) or
+                          root / sha256(origin.encode("utf-8")).hexdigest()[:16] / "config.yaml")
+        else:
+            target = root / "config.yaml"
+        if source and not target.exists():
             content = Path(source).read_bytes()
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_suffix(".tmp")
             temporary.write_bytes(content)
             temporary.replace(target)
-            origin = str(Path(source).resolve())
-            for other in self.entries:
-                if other is not entry and other.configurations.get(key) == str(Path(source)):
-                    origin = other.configuration_sources.get(key, "")
-                    break
-            entry.configuration_sources[key] = origin
         elif not target.exists():
             import yaml
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(yaml.safe_dump(context.workspace.settings or {}, sort_keys=False), encoding="utf-8")
         entry.configurations[key] = str(target)
+        if origin:
+            entry.configuration_sources[key] = origin
+            entry.configuration_copies[origin] = str(target)
         return str(target)
 
     def ensure_configuration(self, context):
@@ -676,6 +697,7 @@ class RunTabsController(QObject):
                 identifier=entry.identifier,
                 configurations=entry.configurations,
                 configuration_sources=entry.configuration_sources,
+                configuration_copies=entry.configuration_copies,
                 configuration_profile=getattr(context, "_configuration_profile", ""),
                 workspace=workspace.path if workspace else "",
                 config=workspace.config_path if workspace else "",
@@ -722,7 +744,7 @@ class RunTabsController(QObject):
                 identifier = item.get("identifier", "")
                 if isinstance(identifier, str) and len(identifier) == 32 and all(c in "0123456789abcdef" for c in identifier):
                     entry.identifier = identifier
-                for key in ("configurations", "configuration_sources"):
+                for key in ("configurations", "configuration_sources", "configuration_copies"):
                     mapping = item.get(key, {})
                     if isinstance(mapping, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in mapping.items()):
                         setattr(entry, key, dict(mapping))

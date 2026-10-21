@@ -40,6 +40,59 @@ def fake_start(context, calls, monkeypatch):
     monkeypatch.setattr(context.service, "start", start)
 
 
+def test_yaml_switch_keeps_each_run_copy_and_updates_active_configuration(window, tmp_path, monkeypatch):
+    from runner.ui.config_dialog import ONGLET_YAML
+    first = tmp_path / "first.yml"
+    second = tmp_path / "second.yml"
+    first.write_text("timeout: 10\n", encoding="utf-8")
+    second.write_text("timeout: 20\n", encoding="utf-8")
+    controller = window.run_tabs
+    first_copy = controller.configuration_path(window, str(tmp_path), str(first))
+    window.workspace = Workspace.load(str(tmp_path), first_copy)
+    window._refresh_yaml_page(force=True)
+    monkeypatch.setattr(window, "load_workspace", lambda: None)
+    editor = window.yaml_editor
+    editor.tabs.setCurrentIndex(ONGLET_YAML)
+    editor.raw.setPlainText("# First edited\ntimeout: 11\n")
+    editor.file_combo.setCurrentIndex(editor.file_combo.findData(str(second)))
+    second_copy = str(editor.path)
+    assert second_copy != first_copy
+    assert window.workspace.config_path == second_copy
+    editor.raw.setPlainText("timeout: 22\n")
+    editor.file_combo.setCurrentIndex(editor.file_combo.findData(str(first)))
+    assert str(editor.path) == first_copy
+    assert editor.raw.toPlainText() == "# First edited\ntimeout: 11\n"
+    assert window.workspace.settings["timeout"] == 11
+    assert Path(second_copy).read_text(encoding="utf-8") == "timeout: 22\n"
+    assert first.read_text(encoding="utf-8") == "timeout: 10\n"
+    assert second.read_text(encoding="utf-8") == "timeout: 20\n"
+    from runner.domain.reader_isolation import ENV_CONFIG_SOURCE
+    assert controller.configuration_env(window, {})[ENV_CONFIG_SOURCE] == str(first)
+
+
+def test_restart_retains_inactive_yaml_copies(window, tmp_path, qtbot):
+    first = tmp_path / "first.yml"
+    second = tmp_path / "second.yml"
+    first.write_text("timeout: 10\n", encoding="utf-8")
+    second.write_text("timeout: 20\n", encoding="utf-8")
+    controller = window.run_tabs
+    first_copy = controller.configuration_path(window, str(tmp_path), str(first))
+    Path(first_copy).write_text("timeout: 11\n", encoding="utf-8")
+    second_copy = controller.configuration_path(window, str(tmp_path), str(second))
+    window.workspace = Workspace.load(str(tmp_path), second_copy)
+    window.close()
+    reopened = MainWindow()
+    qtbot.addWidget(reopened)
+    try:
+        qtbot.waitUntil(lambda: reopened.workspace is not None)
+        restored = reopened.run_tabs.configuration_path(reopened, str(tmp_path), str(first))
+        assert restored == first_copy
+        assert Path(restored).read_text(encoding="utf-8") == "timeout: 11\n"
+        assert reopened.run_tabs.configuration_path(reopened, str(tmp_path), str(second)) == second_copy
+    finally:
+        reopened.close()
+
+
 def test_each_run_edits_its_own_configuration_and_keeps_source(window, tmp_path, monkeypatch):
     source = tmp_path / "settings.yaml"
     source.write_text("# retained comment\nmode: original\n", encoding="utf-8")

@@ -201,6 +201,7 @@ class ConfigDialog(QDialog):
     """Le fichier de configuration du workspace, editable sans quitter l'outil."""
 
     saved = Signal(str)
+    file_changed = Signal(str)
 
     def __init__(self, config_path: str, readers_connus=(), parent=None,
                  candidats=(), workspace_path: str = "", embedded: bool = False, interpreter: str = '',
@@ -453,21 +454,28 @@ class ConfigDialog(QDialog):
         self.file_combo.setCurrentIndex(position)
 
     def _changer_de_fichier(self, _index: int) -> None:
-        """Bascule sur un autre YAML du workspace.
-
-        Les modifications non enregistrees du fichier courant sont perdues :
-        on le dit, plutot que de les emporter silencieusement vers un fichier
-        auquel elles n'appartiennent pas.
-        """
+        """Save the current configuration before selecting another file."""
         choisi = self.file_combo.currentData()
         if not choisi or Path(choisi) == self.path:
             return
 
-        perdues = len(self._modifications())
+        form_changed = bool(self._modifications())
+        raw_changed = self._has_raw_changes()
+        if form_changed and raw_changed:
+            self._restore_file_selection()
+            self._dire("Changes in both Settings and YAML — save the version you want "
+                       "to keep before switching files.", alerte=True)
+            return
+        if form_changed or raw_changed:
+            save = self._enregistrer_texte if raw_changed else self._enregistrer_formulaire
+            if not save(notify=False):
+                self._restore_file_selection()
+                return
         if self._configuration_resolver is not None:
             try:
                 choisi = self._configuration_resolver(choisi)
             except OSError as exc:
+                self._restore_file_selection()
                 self._dire(f"Could not import configuration: {exc}", alerte=True)
                 return
             position = self.file_combo.findData(choisi)
@@ -480,10 +488,12 @@ class ConfigDialog(QDialog):
         self.setWindowTitle(f"Configuration — {self.path.name}")
         self.chemin_label.setText(str(self.path))
         self.reload()
-        if perdues:
-            quoi = ("1 unsaved change was" if perdues == 1
-                    else f"{perdues} unsaved changes were")
-            self._dire(f"Switched file — {quoi} dropped.", alerte=True)
+        self.file_changed.emit(str(self.path))
+
+    def _restore_file_selection(self) -> None:
+        self.file_combo.blockSignals(True)
+        self.file_combo.setCurrentIndex(self.file_combo.findData(str(self.path)))
+        self.file_combo.blockSignals(False)
 
     def reload(self) -> None:
         """Relit le fichier et rebatit les deux vues."""
@@ -492,6 +502,7 @@ class ConfigDialog(QDialog):
         texte = config_file.lire_texte(self.path)
         self._loaded_raw = texte if texte is not None else ""
         self.raw.setPlainText(self._loaded_raw)
+        self._loaded_raw = self.raw.toPlainText()
         self._batir(donnees)
         self._dire("")
         self._tracking_changes = True
@@ -733,23 +744,25 @@ class ConfigDialog(QDialog):
         else:
             self._enregistrer_formulaire()
 
-    def _enregistrer_formulaire(self) -> None:
+    def _enregistrer_formulaire(self, *, notify: bool = True) -> bool:
         changements = self._modifications()
         if not changements:
             self._dire("Nothing to save.")
-            return
+            return True
 
         ok, message = config_file.ecrire(self.path, changements)
         if not ok:
             self._dire(f"Could not write: {message}", alerte=True)
-            return
+            return False
 
         self.reload()
         combien = len(changements)
         self._dire(f"Saved {combien} setting{'s' if combien > 1 else ''}.")
-        self.saved.emit(str(self.path))
+        if notify:
+            self.saved.emit(str(self.path))
+        return True
 
-    def _enregistrer_texte(self) -> None:
+    def _enregistrer_texte(self, *, notify: bool = True) -> bool:
         texte = self.raw.toPlainText()
         valide, probleme = config_file.valider(texte)
         if not valide:
@@ -769,17 +782,19 @@ class ConfigDialog(QDialog):
                 self.raw.setTextCursor(cursor)
                 self.raw.centerCursor()
                 self.raw.setFocus()
-            return
+            return False
 
         ok, message = config_file.ecrire_texte(self.path, texte)
         if not ok:
             self._dire(f"Could not write: {message}", alerte=True)
-            return
+            return False
 
         self.reload()
         self.tabs.setCurrentIndex(ONGLET_YAML)
         self._dire("Saved.")
-        self.saved.emit(str(self.path))
+        if notify:
+            self.saved.emit(str(self.path))
+        return True
 
     def _dire(self, message: str, alerte: bool = False) -> None:
         from runner.domain.models import Status
