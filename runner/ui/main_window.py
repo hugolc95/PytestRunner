@@ -211,6 +211,10 @@ class MainWindow(QMainWindow):
             self.run_tabs = RunTabsController(self)
         from runner.ui.disabled_tests import DisabledTestsController
         self.disabled_tests = DisabledTestsController(self)
+        from runner.ui.tree_results import TreeResultsController
+        self.tree_results = TreeResultsController(self)
+        from runner.ui.tree_toolbar import TreeToolbarController
+        self.tree_tools = TreeToolbarController(self)
 
     # =====================================================================
     # Construction
@@ -973,6 +977,15 @@ class MainWindow(QMainWindow):
         self.pause_button.setToolTip('Pause after the current test finishes; its setup, execution and teardown complete normally.')
         self.pause_button.clicked.connect(self._toggle_run_pause)
 
+        self.markers = MarkerFilter()
+        self.markers.filter_changed.connect(self._on_marker_filter)
+        self.filter_label = QLabel('')
+        self.filter_label.setTextFormat(Qt.PlainText)
+        self.filter_label.hide()
+        self.filter_clear = self._quiet('mdi.close', 'Clear the marker filter', self.clear_marker_filter)
+        self.filter_clear.setObjectName('IconSm')
+        self.filter_clear.hide()
+
         self.profile_chip = QFrame()
         self.profile_chip.setObjectName("ProfileChip")
         profile_layout = QHBoxLayout(self.profile_chip)
@@ -1066,18 +1079,8 @@ class MainWindow(QMainWindow):
         self.collapse_button = self._quiet("mdi.unfold-less-horizontal", "Collapse all",
                                            lambda: self._visible_test_tree().collapseAll())
 
-        self.markers = MarkerFilter()
-        self.markers.filter_changed.connect(self._on_marker_filter)
-
         outils.addWidget(self.search, 1)
-        # Le filtre par marker rejoint la rangee d'icones : il selectionne, tout
-        # comme « tout cocher » -- et il ne prend qu'un carre, quel que soit le
-        # nombre de markers de la suite.
-        outils.addSpacing(t.SPACE_2)
-        outils.addWidget(self.markers)
-        # Groupes par intention : cocher d'un cote, deplier de l'autre. Quatre
-        # icones alignees a intervalle egal ne disaient pas lesquelles vont
-        # ensemble.
+        # Controllers group the tree tools after adding their own actions.
         outils.addSpacing(t.SPACE_2)
         outils.addWidget(self.select_all_button)
         outils.addWidget(self.select_none_button)
@@ -1157,9 +1160,7 @@ class MainWindow(QMainWindow):
         self.tree_view_switch.attach(self.tree.header())
         colonne.addWidget(self.left_stack, 1)
 
-        # Le compte de selection et le filtre qui l'explique, sur la meme
-        # ligne : le resultat se lit la ou le resultat vivait deja, et le
-        # filtre ne prend aucune place tant qu'il n'y en a pas.
+        # The marker expression now lives with the execution controls.
         pied = QHBoxLayout()
         pied.setContentsMargins(0, 0, 0, 0)
         pied.setSpacing(t.SPACE_2)
@@ -1167,21 +1168,8 @@ class MainWindow(QMainWindow):
         self.selection_label = QLabel("")
         self.selection_label.setObjectName("Faint")
 
-        self.filter_label = QLabel("")
-        self.filter_label.setVisible(False)
-
-        self.filter_clear = QPushButton()
-        self.filter_clear.setObjectName("IconSm")
-        self.filter_clear.setIcon(icons.icon("mdi.close", t.TEXT_MUTED))
-        self.filter_clear.setToolTip("Clear the marker filter")
-        self.filter_clear.setCursor(Qt.PointingHandCursor)
-        self.filter_clear.setVisible(False)
-        self.filter_clear.clicked.connect(self.clear_marker_filter)
-
         pied.addWidget(self.selection_label)
         pied.addStretch(1)
-        pied.addWidget(self.filter_label)
-        pied.addWidget(self.filter_clear)
         self.selection_footer = QWidget()
         self.selection_footer.setLayout(pied)
         footer_policy = self.selection_footer.sizePolicy()
@@ -1195,6 +1183,7 @@ class MainWindow(QMainWindow):
         bouton.setObjectName("Icon")
         bouton.setIcon(icons.icon(glyph, t.TEXT_MUTED))
         bouton.setToolTip(infobulle)
+        bouton.setAccessibleName(infobulle)
         bouton.clicked.connect(slot)
         return bouton
 
@@ -1975,6 +1964,8 @@ class MainWindow(QMainWindow):
             bouton.setIcon(icons.icon(glyphe, t.TEXT_MUTED))
 
         self.filter_clear.setIcon(icons.icon("mdi.close", t.TEXT_MUTED))
+        if hasattr(self, 'tree_tools'):
+            self.tree_tools.restyle()
 
     def _restyle(self) -> None:
         """Rejoue les couleurs qui ne viennent pas de la feuille globale."""
@@ -2108,6 +2099,7 @@ class MainWindow(QMainWindow):
         checked = self.model.checked_nodeids() if same_workspace else None
         statuses = {nodeid: dict(row.statuses) for nodeid, row in
                     self.model._by_nodeid.items()} if same_readers else {}
+        retained = self.model._retained if same_readers else None
         expanded = self._expanded_tree_paths() if same_workspace else None
         scroll = (self.tree.horizontalScrollBar().value(),
                   self.tree.verticalScrollBar().value())
@@ -2163,6 +2155,8 @@ class MainWindow(QMainWindow):
         for nodeid, reader_statuses in statuses.items():
             for reader_index, status in reader_statuses.items():
                 self.model.apply_outcome(nodeid, status, reader_index)
+        if hasattr(self, 'tree_results'):
+            self.tree_results.collected(same_workspace, retained)
         if same_workspace and not profile_visible:
             self._on_search(self.search.field.text(), reveal=False)
             self._apply_status_filter()
@@ -2646,10 +2640,15 @@ class MainWindow(QMainWindow):
         self.view_failures_button.hide()
         self.view_differences_button.hide()
         self._profile_progress_done = 0 if self._running_execution_profile else None
-        self.model.clear_statuses()
+        if hasattr(self, 'tree_results'):
+            self.tree_results.start_run(request)
+        else:
+            self.model.clear_statuses()
         self.model.clear_stress_annotation()
         self._stress_counts = None
         self.results.begin_run()
+        if hasattr(self, 'tree_results') and not self.profile_tree_button.isChecked():
+            self._select_test(self.tree.currentIndex())
 
         self.progress.setVisible(True)
         self.progress.setRange(0, max(1, request.total_tests))
@@ -2827,7 +2826,7 @@ class MainWindow(QMainWindow):
         if self._stress_counts is not None:
             return sum(self._stress_counts.values())
         value = getattr(self, "_profile_progress_done", None)
-        return self.model.done() if value is None else value
+        return sum(self._run_status_counts().values()) if value is None else value
 
     def _run_status_counts(self) -> dict:
         """Shared snapshot for the result counters and completion notification."""
@@ -2835,6 +2834,8 @@ class MainWindow(QMainWindow):
             return dict(self._profile_verdict_counts)
         if self._stress_counts is not None:
             return dict(self._stress_counts)
+        if getattr(self, '_cleared_run_counts', None) is not None:
+            return dict(self._cleared_run_counts)
         return self.model.status_counts()
 
     @Slot(list)
@@ -2979,12 +2980,14 @@ class MainWindow(QMainWindow):
         nodeid = self.model.data(premiere, NODEID_ROLE)
         if nodeid:
             self.results.show_test(
-                nodeid, self.model.statuses_for_nodeid(nodeid),
+                nodeid, self.model.display_statuses_for_nodeid(nodeid),
                 self.workspace.path if self.workspace else "",
                 self._markers_by_nodeid.get(nodeid, ()),
                 self._recent_runs_for(nodeid), self.history.last_seen(nodeid))
             if hasattr(self, 'disabled_tests'):
                 self.disabled_tests.show_details(nodeid)
+            if hasattr(self, 'tree_results'):
+                self.tree_results.show_origin([nodeid])
             return
 
         compteurs, echecs = self.model.subtree_summary(premiere)
@@ -2993,6 +2996,8 @@ class MainWindow(QMainWindow):
         nodeids = self.model.leaf_nodeids_under(premiere)
         self.results.show_group(chemin, nom, self.model.readers,
                                 compteurs, echecs, source, saut, nodeids)
+        if hasattr(self, 'tree_results'):
+            self.tree_results.show_origin(nodeids)
         if hasattr(self, 'disabled_tests'):
             self.disabled_tests.show_details(self.model.activation_target(premiere))
 
@@ -3060,21 +3065,29 @@ class MainWindow(QMainWindow):
 
     def _menu_contextuel_arbre(self, point) -> None:
         index = self.tree.indexAt(point)
-        if not index.isValid():
-            return
         # Meme geste qu'un clic : la fiche affichee suit le noeud sur lequel
         # on vient de faire un clic droit, pas celui d'avant.
-        self.tree.setCurrentIndex(index)
+        if index.isValid():
+            self.tree.setCurrentIndex(index)
+        menu = self._tree_context_menu(index)
+        if menu.actions():
+            menu.exec_(self.tree.viewport().mapToGlobal(point))
+
+    def _tree_context_menu(self, index) -> QMenu:
         premiere = index.siblingAtColumn(0)
         nodeid = self.model.data(premiere, NODEID_ROLE)
 
         menu = QMenu(self)
         if nodeid:
             self._construire_menu_test(menu, nodeid)
-        else:
+        elif index.isValid():
             self._construire_menu_groupe(menu, premiere)
-        if menu.actions():
-            menu.exec_(self.tree.viewport().mapToGlobal(point))
+        if hasattr(self, 'tree_results'):
+            if menu.actions():
+                menu.addSeparator()
+            self.tree_results.refresh()
+            menu.addAction(self.tree_results.action)
+        return menu
 
     def _construire_menu_test(self, menu: QMenu, nodeid: str) -> None:
         entry = self.run_tabs.entry_for(self) if self.run_tabs else None
@@ -3193,6 +3206,9 @@ class MainWindow(QMainWindow):
         self._stress_passed = 0
         self._stress_failed = []
         self._stress_id = history.nouvel_identifiant()
+        if hasattr(self, 'tree_results'):
+            from dataclasses import replace
+            self.tree_results.start_run(replace(requete, run_id=self._stress_id))
         self._stress_aggregate: dict[int, dict] = {}
         self._stress_counts = {}
 
@@ -3309,6 +3325,8 @@ class MainWindow(QMainWindow):
 
     def _sur_fin_stress(self, resume: StressSummary) -> None:
         self._stress_worker = None
+        if hasattr(self, 'tree_results'):
+            self.tree_results.completed()
         nodeid = self._stress_nodeid
         court = nodeid.split("::", 1)[-1].replace("::", " › ")
 
@@ -3453,8 +3471,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _open_markers(self) -> None:
-        if not self.markers.isHidden():
-            self.markers.toggle_popup()
+        context = self._selected_run_context()
+        if not context.markers.isHidden() and context.markers.isEnabled():
+            context.markers.toggle_popup()
 
     @Slot()
     def _on_marker_filter(self) -> None:
@@ -3488,11 +3507,13 @@ class MainWindow(QMainWindow):
         POURQUOI une partie de l'arbre est decochee.
         """
         expression = self.markers.expression()
-        self.filter_label.setText(expression)
+        self.filter_label.setText(f'Marker filter: {expression}')
         self.filter_label.setToolTip(f"Marker filter: {expression}")
-        self.filter_label.setStyleSheet(theme.pill_style(t.ACCENT))
+        self.filter_label.setStyleSheet(theme.faint())
         self.filter_label.setVisible(bool(expression))
         self.filter_clear.setVisible(bool(expression))
+        if hasattr(self, 'run_header'):
+            self.run_header.marker_filter_row.setVisible(bool(expression))
 
     @Slot()
     def clear_marker_filter(self) -> None:
@@ -3806,11 +3827,20 @@ class MainWindow(QMainWindow):
         # sous-dossier. Le griser empechait precisement de reparer ce cas.
         editable = charge
         self.act_config.setEnabled(editable)
+        markers_editable = (charge and not occupe and not self.profile_tree_button.isChecked()
+                            and not (self.run_tabs and self.run_tabs.is_locked(self)))
+        self.markers.setEnabled(markers_editable)
+        self.filter_clear.setEnabled(markers_editable)
+        self.act_markers.setEnabled(markers_editable and not self.markers.isHidden())
+        if not markers_editable:
+            self.markers.popup.hide()
         self.config_button.setEnabled(editable)
         self.workspace_config_button.setEnabled(editable)
         if self.run_tabs:
             self.run_tabs.apply_context_actions(self)
             self.run_tabs.refresh_labels()
+        if hasattr(self, 'tree_results'):
+            self.tree_results.refresh()
 
     def _restore(self) -> None:
         geometrie = self.settings.value(K_GEOMETRY)

@@ -975,6 +975,8 @@ class DetailPanel(QWidget):
         if any(s is Status.PENDING for s in vus):
             return self._html_note("Waiting for results from the remaining readers.")
         if all(s is Status.SKIPPED for s in vus):
+            if getattr(self, 'retained_view', False):
+                return self._html_note('Retained result: skipped on every reader.')
             return self._html_note("This execution was skipped on every reader." if getattr(self, 'execution_view', False)
                                    else "Skipped everywhere in the last run.")
 
@@ -998,6 +1000,8 @@ class DetailPanel(QWidget):
         else:
             pluriel = "every reader" if len(cibles) > 1 else "the last run"
             verdict = f"Passed on {pluriel}."
+            if getattr(self, 'retained_view', False):
+                verdict = 'Retained result: passed.' if len(cibles) == 1 else 'Displayed results: passed on every reader.'
             if getattr(self, 'execution_view', False):
                 verdict = 'This execution passed on every reader.' if len(cibles) > 1 else 'This execution passed.'
         sous_ligne = ""

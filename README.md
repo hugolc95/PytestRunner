@@ -1,5 +1,33 @@
 # Pytest Runner GUI
 
+## Résultats conservés dans l’arbre (version d’essai)
+
+**Settings → Tree & details → Keep previous results in the test tree** permet
+de conserver le dernier verdict connu de chaque test et lecteur. Les icônes
+du dernier run sont pleines ; celles des résultats précédents sont en contour
+et de couleur atténuée. Le survol indique le statut et la date du résultat.
+Le panneau de détail signale explicitement un résultat provenant d’un autre run.
+Les compteurs, la progression et les rapports du run ne comptent que les tests
+réellement exécutés pendant ce run.
+
+La petite gomme **Clear tree results** dans la barre de l’arbre efface ces
+résultats sans supprimer History ni changer la sélection ou les désactivations.
+Les compteurs du dernier run restent affichés. La gomme est inactive pendant
+une exécution ou lorsque l’onglet est dans la file d’attente. Cette action est
+aussi accessible par clic droit dans l’arbre et par le menu **More tree actions**.
+
+La barre de l’arbre regroupe recherche, désactivations, sélection et affichage.
+**Markers** se trouve dans **Execution**, avec l’expression active sous les
+commandes. Il sélectionne les tests correspondants, comme auparavant ; retirer
+le filtre conserve cette sélection. Le bouton et **Ctrl+M** sont verrouillés
+pendant l’exécution et la mise en attente. Le bouton des désactivations affiche
+leur nombre et disparaît quand il n’y en a aucune.
+
+La préférence est enregistrée avec **Apply settings**. Les résultats sont
+conservés localement par workspace et nom de lecteur, entre onglets et après
+redémarrage. Lorsque l’option est désactivée, chaque nouveau run remet l’arbre
+à zéro, comme auparavant.
+
 ## Pause et reprise d’un run (version d’essai)
 
 Pendant un run, **Pause** prend la place du bouton Run. Le statut existant

@@ -25,7 +25,7 @@ DEFAULTS = dict(font_size=13, compact_header=False, atr_bottom=False,
                 tree_density="Normal", default_tab="Detail", follow_test=False,
                 actions=True, commands=True, output=True, errors=True,
                 timestamps=True, auto_scroll=True, limit=1000, notify_end=True,
-                external_editor="Automatic", vscode_path="", pycharm_path="")
+                external_editor="Automatic", vscode_path="", pycharm_path="", retain_tree_results=True)
 DEFAULTS.update(timeouts.DEFAULTS)
 GROUPS = (
     ("Interface", "Appearance and space", (
@@ -36,6 +36,7 @@ GROUPS = (
         ("atr_bottom", "ATR in the bottom bar", "Keep the full, selectable ATR and refresh action below Run.", bool),
     )),
     ("Tree & details", "Browsing tests", (
+        ("retain_tree_results", "Keep previous results in the test tree", "Outline icons keep older results; filled icons belong to the latest run. Clear results resets the tree, not History.", bool),
         ("tree_density", "Row spacing", "Choose how much space each test occupies.", ("Compact", "Normal", "Comfortable")),
         ("default_tab", "Default detail tab", "Open this tab when selecting another test.", ("Detail", "Source", "Output", "Logs")),
         ("follow_test", "Follow the running test", "Bring the executing test into view.", bool),
@@ -700,6 +701,8 @@ class PreferencesController(QObject):
         values = self.values
         previous = getattr(window, "_applied_run_preferences", {})
         changed = {key for key, value in values.items() if previous.get(key) != value}
+        if 'retain_tree_results' in changed and hasattr(window, 'tree_results'):
+            window.tree_results.apply_preference()
         if "compact_header" in changed:
             for panel in (window.run_header.environment, window.run_header.execution, window.run_header.results):
                 layout = panel.layout()

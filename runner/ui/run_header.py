@@ -214,11 +214,23 @@ class StructuredRunHeader(QWidget):
         heading = execution.takeAt(0).widget()
         self.execution_heading.addWidget(heading)
         self.execution_heading.addStretch()
+        self._move(self.execution_heading, window.markers)
         execution.insertLayout(0, self.execution_heading)
         self.run_config_button = window.reader_config_button
         self.run_config_button.setToolTip("Open this run’s independent YAML configuration")
         self._reader_mode = None
         execution.addLayout(execution_fields)
+        self.marker_filter_row = QWidget()
+        marker_filter = QHBoxLayout(self.marker_filter_row)
+        marker_filter.setContentsMargins(0, 0, 0, 0)
+        marker_filter.setSpacing(t.SPACE_1)
+        window.filter_label.setMinimumWidth(0)
+        window.filter_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self._move(marker_filter, window.filter_label)
+        marker_filter.setStretch(0, 1)
+        self._move(marker_filter, window.filter_clear)
+        execution.addWidget(self.marker_filter_row)
+        self.marker_filter_row.hide()
         execution.addStretch()
 
         progress = QHBoxLayout()

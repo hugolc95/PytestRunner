@@ -284,7 +284,11 @@ class RunTabsController(QObject):
         context._profile_batch_output.clear()
         context._profile_pending_console.clear()
         context._stress_counts = None
-        context.model.clear_statuses()
+        retain = (hasattr(context, 'tree_results') and context.tree_results.enabled
+                  and context.workspace is not None
+                  and context.workspace.path == getattr(context, '_tree_workspace', None))
+        context.model.begin_run(retain=retain)
+        context._cleared_run_counts = None
         context._clear_status_filter()
         for panel in (context.results, context.profile_results):
             panel._statuses = {}

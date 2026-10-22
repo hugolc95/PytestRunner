@@ -354,7 +354,7 @@ def test_thirty_markers_do_not_widen_the_toolbar(qapp):
 
     b.set_markers(BEAUCOUP)
     assert b.sizeHint().width() == etroit
-    assert b.sizeHint().width() < 80  # un carre, pas une rangee qui s'etale
+    assert b.sizeHint().width() < 150  # a short label in the execution card
 
 
 def test_clicking_the_button_actually_opens_the_popup(bouton):
@@ -464,12 +464,12 @@ def test_the_button_says_when_a_filter_is_on(bouton):
     assert "smoke, perso" in bouton.toolTip()
 
 
-def test_the_button_stays_a_square_whatever_it_shows(bouton):
-    """Un libelle qui s'allonge affamerait le champ de recherche voisin."""
+def test_marker_button_width_does_not_depend_on_expression(bouton):
+    """The execution button stays compact even for a long expression."""
     avant = bouton.sizeHint()
     bouton.popup.field.setText("gpki and not slow or prepersonalisation")
     assert bouton.sizeHint() == avant
-    assert bouton.text() == ""
+    assert bouton.text() == "Markers"
 
 
 def test_a_custom_expression_is_signalled_on_the_button(bouton):

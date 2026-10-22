@@ -78,11 +78,16 @@ def _icon(nom: str, couleur: str) -> QIcon:
         return QIcon()
 
 
-def status_icon(status: Status, group: bool = False) -> QIcon:
-    """Icone d'un statut. `group` donne la variante evidee des regroupements."""
-    table = STATUS_GLYPHS_GROUP if group else STATUS_GLYPHS
+def status_icon(status: Status, group: bool = False, previous: bool = False) -> QIcon:
+    """Outline for aggregates outside the tree, or retained previous results."""
+    table = STATUS_GLYPHS_GROUP if group or previous else STATUS_GLYPHS
     couleur = t.status_color(status)
-    if group:
+    if previous:
+        # Historical verdicts remain identifiable, but give visual priority
+        # to the saturated, filled icons from the latest run in both themes.
+        couleur = t.blend(couleur, t.TEXT_FAINT, 0.55)
+        couleur = t.blend(couleur, t.BG_SURFACE, 0.82)
+    elif group:
         # Un agregat ne doit pas peser autant qu'un resultat : meme teinte,
         # moins d'encre. La couleur est COMPOSEE en opaque, pas exprimee en
         # `rgba()` : cette forme est valide en QSS mais pas comme QColor, et

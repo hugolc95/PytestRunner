@@ -8,6 +8,9 @@ dessine que la partie visible.
 
 from __future__ import annotations
 
+from collections import Counter
+from datetime import datetime
+
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 
@@ -99,6 +102,10 @@ class TestTreeModel(QAbstractItemModel):
         # fil de l'eau : le recalculer a chaque resultat reparcourrait tout
         # l'arbre, ce qui redonnerait le gel quadratique deja corrige.
         self._tally: dict[Status, int] = {}
+        self._retained = {}
+        self._run_meta = {}
+        self._aggregate_counts = {}
+        self._fresh_counts = {}
         # Le nodeid stress-teste, et le texte court a coller sur sa ligne --
         # voir `set_stress_annotation`.
         self._stress_annotation: tuple[str, str] | None = None
@@ -108,6 +115,9 @@ class TestTreeModel(QAbstractItemModel):
     def set_tree(self, roots: list[TestNode]) -> None:
         self.beginResetModel()
         self._tally.clear()
+        self._retained = {}
+        self._aggregate_counts.clear()
+        self._fresh_counts.clear()
         self._roots = [_Row(n, None, i) for i, n in enumerate(roots)]
         self._by_nodeid = {}
         for racine in self._roots:
@@ -361,7 +371,17 @@ class TestTreeModel(QAbstractItemModel):
             return self._fond_divergent(ligne)
         statut = self.status_for(ligne, reader_index)
         if role == Qt.DecorationRole and statut is not Status.PENDING:
-            return icons.status_icon(statut, group=not ligne.is_leaf)
+            return icons.status_icon(statut, previous=self.is_previous(ligne, reader_index))
+        if role == Qt.ToolTipRole and self.is_previous(ligne, reader_index):
+            source = self.result_source(ligne.node.nodeid, reader_index) or {}
+            date = source.get('at', '')
+            if date:
+                try:
+                    date = datetime.fromisoformat(date).strftime('%d/%m/%Y %H:%M')
+                except (TypeError, ValueError):
+                    date = ''
+            when = f' · {date}' if date else ''
+            return f'Previous run · {statut.label}{when}\nNot executed in the latest run.'
         # Pas de ToolTipRole ici : la couleur et la forme de l'icone disent
         # deja le statut, et le clic qui selectionne la ligne l'affiche en
         # toutes lettres dans le panneau Detail -- une bulle en plus ne fait
@@ -556,7 +576,10 @@ class TestTreeModel(QAbstractItemModel):
         parcours complet du sous-arbre y etait refait a chaque fois.
         """
         if ligne.is_leaf:
-            return ligne.statuses.get(reader_index, Status.PENDING)
+            if reader_index in ligne.statuses:
+                return ligne.statuses[reader_index]
+            entry = self._retained.get(ligne.node.nodeid, {}).get(reader_index)
+            return Status[entry['status']] if entry else Status.PENDING
 
         retenu = ligne.agg.get(reader_index)
         if retenu is None:
@@ -581,6 +604,7 @@ class TestTreeModel(QAbstractItemModel):
         # un test rejoue, ou pour une erreur de setup suivie d'un verdict. Le
         # compteur derivait alors du contenu reel de l'arbre.
         ancien = ligne.statuses.get(reader_index)
+        old_display = self.status_for(ligne, reader_index)
         if ancien is status:
             # Rien n'a change : le decompte serait de toute facon juste (on
             # retirerait puis remettrait le meme statut), mais tout le chemin
@@ -599,18 +623,22 @@ class TestTreeModel(QAbstractItemModel):
 
         # Les parents montrent le pire de leurs enfants : leur cellule change
         # aussi, sans qu'aucune donnee ne leur soit propre. Leur agregat est
-        # mis a jour ici plutot qu'invalide : un resultat ne peut qu'aggraver
-        # le pire connu, puisque tout repart de PENDING a chaque run
-        # (`clear_statuses`). Recalculer aurait signifie reparcourir le
-        # sous-arbre a chaque test qui se termine.
+        # tenu par compteurs : remplacer un ancien rouge par un vert doit
+        # aussi pouvoir ameliorer le regroupement, sans reparcourir tout
+        # le sous-arbre a chaque resultat.
         parent = ligne.parent
         while parent is not None:
-            connu = parent.agg.get(reader_index)
-            parent.agg[reader_index] = (status if connu is None
-                                        else worst((connu, status)))
-            if parent.agg[reader_index] != connu:
-                index_parent = self.createIndex(parent.row, colonne, parent)
-                self.dataChanged.emit(index_parent, index_parent, [Qt.DecorationRole])
+            counts = self._aggregate_counts.setdefault((parent, reader_index), Counter())
+            if old_display is not Status.PENDING:
+                counts[old_display] -= 1
+            counts[status] += 1
+            fresh = self._fresh_counts.setdefault((parent, reader_index), Counter())
+            if ancien is not None:
+                fresh[ancien] -= 1
+            fresh[status] += 1
+            parent.agg[reader_index] = worst(s for s, count in counts.items() if count > 0)
+            index_parent = self.createIndex(parent.row, colonne, parent)
+            self.dataChanged.emit(index_parent, index_parent, [Qt.DecorationRole, Qt.ToolTipRole])
             parent = parent.parent
         return True
 
@@ -635,6 +663,9 @@ class TestTreeModel(QAbstractItemModel):
         tests. Seules les cellules de statut changent, on ne signale qu'elles.
         """
         self._tally.clear()
+        self._retained.clear()
+        self._aggregate_counts.clear()
+        self._fresh_counts.clear()
         for racine in self._roots:
             for ligne in [racine, *racine.descendants()]:
                 ligne.statuses.clear()
@@ -643,6 +674,62 @@ class TestTreeModel(QAbstractItemModel):
                 ligne.agg.clear()
 
         self._emit_layout_changed()
+
+    def export_results(self):
+        result = {nodeid: {i: dict(entry) for i, entry in entries.items()}
+                  for nodeid, entries in self._retained.items()}
+        for nodeid, row in self._by_nodeid.items():
+            for reader, status in row.statuses.items():
+                if status.is_final:
+                    result.setdefault(nodeid, {})[reader] = dict(status=status.name, meta=dict(self._run_meta))
+        return result
+
+    def begin_run(self, retain=False, meta=None):
+        previous = self.export_results() if retain else {}
+        self.clear_statuses()
+        self._run_meta = dict(meta or {})
+        self.set_retained_results(previous)
+
+    def set_retained_results(self, records):
+        self._retained = {nodeid: {reader: dict(entry) for reader, entry in entries.items()
+                                  if Status[entry['status']].is_final}
+                          for nodeid, entries in records.items() if nodeid in self._by_nodeid}
+        self._aggregate_counts.clear()
+        self._fresh_counts.clear()
+        for root in self._roots:
+            for row in [root, *root.descendants()]:
+                row.agg.clear()
+        for nodeid, row in self._by_nodeid.items():
+            entries = self._retained.get(nodeid, {})
+            for reader in set(entries) | set(row.statuses):
+                status = self.status_for(row, reader)
+                parent = row.parent
+                while parent:
+                    self._aggregate_counts.setdefault((parent, reader), Counter())[status] += 1
+                    if reader in row.statuses:
+                        self._fresh_counts.setdefault((parent, reader), Counter())[status] += 1
+                    parent = parent.parent
+        self._emit_layout_changed()
+
+    def is_previous(self, row, reader):
+        status = self.status_for(row, reader)
+        if status is Status.PENDING:
+            return False
+        if row.is_leaf:
+            return reader not in row.statuses
+        if not self._retained:
+            return False
+        return not self._fresh_counts.get((row, reader), {}).get(status, 0)
+
+    def display_statuses_for_nodeid(self, nodeid):
+        row = self._by_nodeid.get(nodeid)
+        return {i: self.status_for(row, i) for i in ([r.index for r in self._readers] or [0])} if row else {}
+
+    def result_source(self, nodeid, reader):
+        row = self._by_nodeid.get(nodeid)
+        if row and reader in row.statuses:
+            return self._run_meta
+        return self._retained.get(nodeid, {}).get(reader, {}).get('meta', {})
 
     def subtree_summary(self, index: QModelIndex) -> tuple[dict, list]:
         """Bilan de ce que contient ce noeud : compteurs et echecs.
@@ -661,7 +748,7 @@ class TestTreeModel(QAbstractItemModel):
 
         for feuille in ligne.leaves():
             for i in indices:
-                statut = feuille.statuses.get(i, Status.PENDING)
+                statut = self.status_for(feuille, i)
                 compteurs[i][statut] = compteurs[i].get(statut, 0) + 1
                 if statut.is_bad:
                     echecs.append((feuille.node.nodeid, i))

@@ -679,6 +679,8 @@ class SearchBar(QWidget):
         if scope == self._scope:
             return
         self._scope = scope
+        self.tests_button.setChecked(scope == SCOPE_TESTS)
+        self.failures_button.setChecked(scope == SCOPE_FAILURES)
         self.field.setPlaceholderText(
             "Find a test…" if scope == SCOPE_TESTS
             else "Search in failure output…")

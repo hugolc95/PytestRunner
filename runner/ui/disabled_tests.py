@@ -251,9 +251,10 @@ class DisabledTestsController(QObject):
         self.error = ''
         self.detail_pages = {}
         self.button = window._quiet('mdi.cancel', 'Deactivated tests', self.open_manager)
+        self.button.setObjectName('Ghost')
         self.button.hide()
         toolbar = window.tree_toolbar.layout()
-        toolbar.insertWidget(toolbar.indexOf(window.markers) + 1, self.button)
+        toolbar.insertWidget(toolbar.indexOf(window.select_all_button), self.button)
         self.refresh()
 
     @property
@@ -281,6 +282,9 @@ class DisabledTestsController(QObject):
         self.window.model.set_disabled_tests(model_records)
         self.window.profile_model.set_disabled_tests(model_records)
         rule_count = sum(not record.get('enabled', False) for record in self.records.values())
+        count = sum(row.is_leaf for row in self.window.model._blocked_rows)
+        self.button.setText(str(count or rule_count))
+        self.button.setAccessibleName(f'Manage deactivated tests ({count} tests)')
         self.button.setVisible(bool(rule_count) or bool(self.error))
         self.button.setIcon(icons.icon('mdi.cancel', t.status_color(Status.SKIPPED)))
         self.button.setToolTip(self.error or f'Deactivated tests and groups ({rule_count} rules)')

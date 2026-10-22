@@ -7,11 +7,9 @@ un ordre de grandeur banal pour une suite de cartes -- cette rangee reclamait
 moignons d'un caractere (`d`, `al`, `l3`), la largeur minimale du panneau
 gauche suivait, et le panneau de droite se retrouvait ecrase.
 
-Un filtre est une intention passagere, pas un affichage permanent. Il ne doit
-donc rien couter en place fixe : un bouton dans la rangee d'outils qui existe
-deja, et un panneau qui s'ouvre par-dessus. Ce qui reste visible en
-permanence, c'est le RESULTAT -- combien de tests sont retenus, et par quelle
-expression -- la ou le compte de selection vit deja.
+Le bouton nomme vit dans Execution et ouvre un panneau flottant. L'expression
+active reste visible sous les commandes ; le compte de selection reste pres
+de l'arbre. Le nombre de markers ne change pas la largeur du bouton.
 
 Le champ d'expression reste la SEULE verite ; les cases du panneau ne sont
 qu'une facon de l'ecrire sans clavier. Deux etats concurrents auraient oblige
@@ -63,11 +61,9 @@ class MarkerFilter(QPushButton):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        # Sans libelle, carre comme ses voisins de la rangee : « Markers »
-        # ecrit en toutes lettres affamait le champ de recherche, reduit a
-        # « Find a... ». Ce que fait le filtre se lit dans son infobulle, dans
-        # le menu Select, et surtout dans l'etiquette du pied de panneau.
-        self.setObjectName("Icon")
+        self.setObjectName("Ghost")
+        self.setText("Markers")
+        self.setAccessibleName("Filter the selection by marker")
         self.setCursor(Qt.PointingHandCursor)
         self.setIcon(icons.icon("mdi.tag-multiple-outline", t.TEXT_MUTED))
 
@@ -134,6 +130,7 @@ class MarkerFilter(QPushButton):
         """
         noms = self.active_names()
         actif = bool(self.expression())
+        self.setText("Markers")
 
         if not actif:
             self.setToolTip("Filter the selection by marker  (Ctrl+M)")
