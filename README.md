@@ -16,9 +16,12 @@ Les compteurs du dernier run restent affichés. La gomme est inactive pendant
 une exécution ou lorsque l’onglet est dans la file d’attente. Cette action est
 aussi accessible par clic droit dans l’arbre et par le menu **More tree actions**.
 
-La barre de l’arbre regroupe recherche, désactivations, sélection et affichage.
-**Markers** se trouve dans **Execution**, avec l’expression active sous les
-commandes. Il sélectionne les tests correspondants, comme auparavant ; retirer
+La barre de l’arbre regroupe recherche, markers, désactivations, sélection et
+affichage, avec de petits espacements entre les groupes. L’icône **Markers**
+se trouve près de la recherche. L’expression active partage la ligne de sélection
+sous l’arbre ; son texte complet reste accessible au survol et dans le panneau.
+Le filtre n’ajoute aucune ligne au bandeau d’exécution. Il sélectionne les tests
+correspondants, comme auparavant ; retirer
 le filtre conserve cette sélection. Le bouton et **Ctrl+M** sont verrouillés
 pendant l’exécution et la mise en attente. Le bouton des désactivations affiche
 leur nombre et disparaît quand il n’y en a aucune.

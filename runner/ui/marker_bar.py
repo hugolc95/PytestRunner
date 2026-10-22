@@ -7,9 +7,9 @@ un ordre de grandeur banal pour une suite de cartes -- cette rangee reclamait
 moignons d'un caractere (`d`, `al`, `l3`), la largeur minimale du panneau
 gauche suivait, et le panneau de droite se retrouvait ecrase.
 
-Le bouton nomme vit dans Execution et ouvre un panneau flottant. L'expression
-active reste visible sous les commandes ; le compte de selection reste pres
-de l'arbre. Le nombre de markers ne change pas la largeur du bouton.
+Le bouton compact vit pres de la recherche et ouvre un panneau flottant.
+L'expression active partage le pied de l'arbre avec le compte de selection.
+Le nombre de markers ne change pas la largeur du bouton.
 
 Le champ d'expression reste la SEULE verite ; les cases du panneau ne sont
 qu'une facon de l'ecrire sans clavier. Deux etats concurrents auraient oblige
@@ -19,6 +19,7 @@ a inventer une regle de priorite, fausse une fois sur deux.
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, Qt, Signal
+from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import (
     QCheckBox,
     QFrame,
@@ -61,6 +62,7 @@ class MarkerFilter(QPushButton):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._compact = False
         self.setObjectName("Ghost")
         self.setText("Markers")
         self.setAccessibleName("Filter the selection by marker")
@@ -112,6 +114,11 @@ class MarkerFilter(QPushButton):
         self._refresh_label()
         self.popup.restyle()
 
+    def set_compact(self, compact=True):
+        self._compact = compact
+        self.setObjectName('MarkerFilter' if compact else 'Ghost')
+        self._refresh_label()
+
     def toggle_popup(self) -> None:
         if self.popup.isVisible():
             self.popup.hide()
@@ -130,7 +137,7 @@ class MarkerFilter(QPushButton):
         """
         noms = self.active_names()
         actif = bool(self.expression())
-        self.setText("Markers")
+        self.setText("" if self._compact else "Markers")
 
         if not actif:
             self.setToolTip("Filter the selection by marker  (Ctrl+M)")
@@ -145,6 +152,16 @@ class MarkerFilter(QPushButton):
         self.setProperty("active", actif)
         self.style().unpolish(self)
         self.style().polish(self)
+
+
+class MarkerExpressionLabel(QLabel):
+    """Keep the full expression available while eliding it within the footer."""
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        text = self.fontMetrics().elidedText(self.text(), Qt.ElideRight, self.contentsRect().width())
+        painter.drawText(self.contentsRect(), Qt.AlignLeft | Qt.AlignVCenter, text)
 
 
 class MarkerPopup(QFrame):

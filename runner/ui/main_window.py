@@ -75,7 +75,7 @@ from runner.ui import icons, theme
 from runner.ui import tokens as t
 from runner.ui.execution_profiles_page import ExecutionProfilesPage
 from runner.ui.interpreter_dialog import InterpreterDialog
-from runner.ui.marker_bar import MarkerFilter
+from runner.ui.marker_bar import MarkerFilter, MarkerExpressionLabel
 from runner.ui.profile_progress import ProfileProgressLabel
 from runner.ui.live_profile_model import LiveProfileModel
 from runner.ui.tree_mode_header import TreeModeHeader, ProfilePicker
@@ -979,11 +979,13 @@ class MainWindow(QMainWindow):
 
         self.markers = MarkerFilter()
         self.markers.filter_changed.connect(self._on_marker_filter)
-        self.filter_label = QLabel('')
+        self.filter_label = MarkerExpressionLabel('')
         self.filter_label.setTextFormat(Qt.PlainText)
+        self.filter_label.setMinimumWidth(0)
+        self.filter_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self.filter_label.hide()
         self.filter_clear = self._quiet('mdi.close', 'Clear the marker filter', self.clear_marker_filter)
-        self.filter_clear.setObjectName('IconSm')
+        self.filter_clear.setObjectName('MarkerFilterClear')
         self.filter_clear.hide()
 
         self.profile_chip = QFrame()
@@ -1160,7 +1162,7 @@ class MainWindow(QMainWindow):
         self.tree_view_switch.attach(self.tree.header())
         colonne.addWidget(self.left_stack, 1)
 
-        # The marker expression now lives with the execution controls.
+        # Active markers share the existing selection line, without another row.
         pied = QHBoxLayout()
         pied.setContentsMargins(0, 0, 0, 0)
         pied.setSpacing(t.SPACE_2)
@@ -1169,7 +1171,8 @@ class MainWindow(QMainWindow):
         self.selection_label.setObjectName("Faint")
 
         pied.addWidget(self.selection_label)
-        pied.addStretch(1)
+        pied.addWidget(self.filter_label, 1)
+        pied.addWidget(self.filter_clear)
         self.selection_footer = QWidget()
         self.selection_footer.setLayout(pied)
         footer_policy = self.selection_footer.sizePolicy()
@@ -3512,8 +3515,6 @@ class MainWindow(QMainWindow):
         self.filter_label.setStyleSheet(theme.faint())
         self.filter_label.setVisible(bool(expression))
         self.filter_clear.setVisible(bool(expression))
-        if hasattr(self, 'run_header'):
-            self.run_header.marker_filter_row.setVisible(bool(expression))
 
     @Slot()
     def clear_marker_filter(self) -> None:

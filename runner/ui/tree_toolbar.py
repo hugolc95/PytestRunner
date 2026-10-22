@@ -1,6 +1,6 @@
 """Compact tree actions grouped by search, selection and presentation."""
 from PySide6.QtCore import QEvent, QObject, Qt
-from PySide6.QtWidgets import QFrame, QMenu
+from PySide6.QtWidgets import QHBoxLayout, QMenu, QSizePolicy, QWidget
 
 from runner.ui import icons, tokens as t
 
@@ -16,18 +16,15 @@ class TreeToolbarController(QObject):
         while layout.count():
             layout.takeAt(0)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(t.SPACE_1)
+        layout.setSpacing(t.SPACE_2)
         layout.addWidget(window.search, 1)
-        self.separator(layout)
-        layout.addWidget(window.disabled_tests.button)
-        self.separator(layout, window.disabled_tests.button)
-        layout.addWidget(window.select_all_button)
-        layout.addWidget(window.select_none_button)
-        self.selection_separator = self.separator(layout)
-        layout.addWidget(window.expand_button)
-        layout.addWidget(window.collapse_button)
-        layout.addWidget(window.tree_results.button)
-        layout.addWidget(self.button)
+        window.markers.set_compact(True)
+        self._groups = []
+        self._add_group(layout, window.markers, window.disabled_tests.button)
+        self._add_group(layout, window.select_all_button, window.select_none_button)
+        self._add_group(layout, window.expand_button, window.collapse_button)
+        self._add_group(layout, window.tree_results.button, self.button)
+        self._refresh_groups()
         window.tree_toolbar.installEventFilter(self)
         # The search counter only occupies space when there is a query.
         window.search.counter.setVisible(bool(window.search.field.text().strip()))
@@ -46,26 +43,29 @@ class TreeToolbarController(QObject):
         window.profile_tree.setContextMenuPolicy(Qt.CustomContextMenu)
         window.profile_tree.customContextMenuRequested.connect(self.profile_menu)
 
-    def separator(self, layout, follows=None):
-        line = QFrame()
-        line.setObjectName('Separator')
-        line.setFrameShape(QFrame.VLine)
-        line.setFixedHeight(18)
-        layout.addWidget(line)
-        if follows is not None:
-            # Conditional deactivation action must not leave an empty group.
-            follows.installEventFilter(self)
-            self.conditional_separator = line
-            self.conditional_button = follows
-            line.setVisible(not follows.isHidden())
-        return line
+    def _add_group(self, layout, *buttons):
+        # Whitespace groups related controls without drawing extra chrome.
+        group = QWidget()
+        group.setObjectName('TreeActionGroup')
+        group.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
+        row = QHBoxLayout(group)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(2)
+        for button in buttons:
+            row.addWidget(button)
+            button.installEventFilter(self)
+        self._groups.append((group, buttons))
+        layout.addWidget(group)
+
+    def _refresh_groups(self):
+        for group, buttons in self._groups:
+            group.setVisible(any(not button.isHidden() for button in buttons))
 
     def eventFilter(self, watched, event):
         if watched is self.window.tree_toolbar and event.type() == QEvent.Resize:
             self.adapt(event.size().width())
-        if watched is getattr(self, 'conditional_button', None):
-            if event.type() in (QEvent.Show, QEvent.Hide, QEvent.ShowToParent, QEvent.HideToParent):
-                self.conditional_separator.setVisible(not watched.isHidden())
+        if event.type() in (QEvent.Show, QEvent.Hide, QEvent.ShowToParent, QEvent.HideToParent):
+            self._refresh_groups()
         return super().eventFilter(watched, event)
 
     def search_visibility(self, text):
@@ -79,7 +79,7 @@ class TreeToolbarController(QObject):
             button.setVisible(width >= 620)
         for button in (w.select_all_button, w.select_none_button):
             button.setVisible(width >= 430)
-        self.selection_separator.setVisible(width >= 430)
+        self._refresh_groups()
 
     def populate_menu(self):
         w = self.window

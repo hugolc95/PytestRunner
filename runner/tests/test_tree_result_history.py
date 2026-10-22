@@ -133,18 +133,23 @@ def test_clear_action_is_shared_by_toolbar_and_all_tree_context_menus(window):
     assert not action.isEnabled()
 
 
-def test_markers_live_in_execution_and_shortcut_respects_queue_lock(window):
+def test_markers_share_tree_toolbar_and_shortcut_respects_queue_lock(window, qtbot):
     window._on_collected(Collection(tuple(NODES), {
         NODES[0]: ('smoke',), NODES[1]: ('destructive',), NODES[2]: ()}))
-    assert window.run_header.execution.isAncestorOf(window.markers)
-    assert window.run_header.execution.isAncestorOf(window.filter_label)
-    assert window.tree_toolbar.layout().indexOf(window.markers) == -1
+    assert window.tree_toolbar.isAncestorOf(window.markers)
+    assert window.selection_footer.isAncestorOf(window.filter_label)
+    assert window.markers.text() == ''
+    qtbot.wait(20)
+    header_height = window.run_header.height()
     window.markers.popup.field.setText('not destructive')
     assert window.model.checked_nodeids() == [NODES[0], NODES[2]]
-    assert not window.run_header.marker_filter_row.isHidden()
+    assert not window.filter_label.isHidden()
+    assert window.markers.property('active')
+    qtbot.wait(20)
+    assert window.run_header.height() == header_height
     window.clear_marker_filter()
     assert window.model.checked_nodeids() == [NODES[0], NODES[2]]
-    assert window.run_header.marker_filter_row.isHidden()
+    assert window.filter_label.isHidden()
     entry = window.run_tabs.entry_for(window)
     entry.state = 'waiting'
     window.run_tabs.queue.append(entry)
@@ -159,6 +164,33 @@ def test_markers_live_in_execution_and_shortcut_respects_queue_lock(window):
         window.run_tabs.queue.remove(entry)
         entry.state = 'draft'
         window._update_actions()
+
+
+def test_long_marker_expression_and_narrow_toolbar_keep_search_usable(window, qtbot):
+    from runner.ui.theme import app_stylesheet
+    window._on_collected(Collection(tuple(NODES), {NODES[0]: ('smoke',)}))
+    window.setStyleSheet(app_stylesheet())
+    window.resize(1200, 800)
+    window.split.setSizes([390, 500])
+    qtbot.wait(20)
+    before = window.tree_toolbar.width()
+    expression = ' or '.join(f'marker_{i}' for i in range(100))
+    window.markers.popup.field.setText(expression)
+    qtbot.wait(20)
+    assert window.tree_toolbar.width() == before
+    assert window.search.field.width() >= 120
+    assert window.tree_toolbar.width() < 430
+    for button in (window.markers, window.tree_results.button, window.tree_tools.button):
+        assert button.isVisible()
+        left = button.mapTo(window.tree_toolbar, button.rect().topLeft()).x()
+        assert 0 <= left and left + button.width() <= window.tree_toolbar.width()
+    assert expression in window.filter_label.toolTip()
+    window.markers.click()
+    assert window.markers.popup.isVisible()
+    assert window.markers.popup.field.text() == expression
+    window.markers.popup.hide()
+    window.tree_tools.populate_menu()
+    assert any(a.text() == window.select_all_button.toolTip() for a in window.tree_tools.menu.actions())
 
 
 def test_compact_search_toggle_returns_to_names_and_menu_follows_scope(window):

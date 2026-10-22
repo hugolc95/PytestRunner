@@ -395,6 +395,27 @@ QPushButton#Icon {{
 QPushButton#Icon:hover {{ background-color: {t.BG_HOVER}; }}
 QPushButton#Icon:checked {{ background-color: {t.rgba(t.ACCENT, 0.16)}; }}
 
+QWidget#TreeActionGroup {{ background: transparent; }}
+QPushButton#MarkerFilter {{
+    background: transparent;
+    border-color: transparent;
+    padding: 0;
+    min-width: {t.ICON_BUTTON}px;
+    max-width: {t.ICON_BUTTON}px;
+    min-height: {t.ICON_BUTTON}px;
+    max-height: {t.ICON_BUTTON}px;
+}}
+QPushButton#MarkerFilter:hover {{ background-color: {t.BG_HOVER}; }}
+QPushButton#MarkerFilter[active="true"] {{ background-color: {t.rgba(t.ACCENT, 0.12)}; }}
+QPushButton#MarkerFilterClear {{
+    background: transparent;
+    border-color: transparent;
+    padding: 0;
+    min-width: 20px; max-width: 20px;
+    min-height: 20px; max-height: 20px;
+}}
+QPushButton#MarkerFilterClear:hover {{ background-color: {t.BG_HOVER}; }}
+
 /* Variante courte, pour les rangees d'outils secondaires : dans une meme
    rangee, deux hauteurs differentes se voient tout de suite. */
 QPushButton#IconSm {{
