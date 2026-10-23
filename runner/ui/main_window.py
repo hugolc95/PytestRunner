@@ -2453,7 +2453,7 @@ class MainWindow(QMainWindow):
             return
         self._start(echecs)
 
-    def _start(self, nodeids: list) -> None:
+    def _start(self, nodeids: list, *, preserve_results: bool = False) -> None:
         if (self.workspace is None or not nodeids or self.service.busy
                 or self.run_tabs and self.run_tabs.is_locked(self)):
             return
@@ -2490,6 +2490,8 @@ class MainWindow(QMainWindow):
             junit_dir=str(self.history.racine),
             build_number=self._build_number,
         )
+        # Bind the context-menu intent to this request, including queued runs.
+        self._preserve_results_run_id = requete.run_id if preserve_results else ""
         if self.run_tabs:
             self.run_tabs.submit(self, requete, self.workspace.env)
         else:
@@ -2598,6 +2600,9 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_run_started(self, request: RunRequest) -> None:
+        preserve_results = (getattr(self, '_preserve_results_run_id', '') == request.run_id
+                            and bool(request.run_id))
+        self._preserve_results_run_id = ''
         from runner.domain.history_profile import capture_profile
         self._archive_replay_profile = capture_profile(
             request, self._running_execution_profile,
@@ -2641,12 +2646,16 @@ class MainWindow(QMainWindow):
         self.view_differences_button.hide()
         self._profile_progress_done = 0 if self._running_execution_profile else None
         if hasattr(self, 'tree_results'):
-            self.tree_results.start_run(request)
+            self.tree_results.start_run(request, preserve_results=preserve_results)
         else:
             self.model.clear_statuses()
         self.model.clear_stress_annotation()
         self._stress_counts = None
-        self.results.begin_run()
+        self.results.begin_run(preserve_results=preserve_results,
+                               nodeids=tuple(self.model._by_nodeid))
+        self.results.select_run_readers(request.readers)
+        if profile is not None:
+            self.profile_results.select_run_readers(request.readers)
         if hasattr(self, 'tree_results') and not self.profile_tree_button.isChecked():
             self._select_test(self.tree.currentIndex())
 
@@ -2680,7 +2689,8 @@ class MainWindow(QMainWindow):
 
         self._refresh_live_counts()
         self.results.update_statuses(outcome.nodeid,
-                                     self.model.display_statuses_for_nodeid(outcome.nodeid))
+                                     self.model.display_statuses_for_nodeid(outcome.nodeid),
+                                     reader_index=outcome.reader_index)
         if hasattr(self, 'tree_results') and outcome.nodeid == self.results._nodeid:
             self.tree_results.show_origin([outcome.nodeid])
 
@@ -3097,7 +3107,7 @@ class MainWindow(QMainWindow):
                   or entry is not None and entry.state == "running")
         action_run = menu.addAction(
             icons.icon("mdi.play"), "Run only this test",
-            lambda: self._start([nodeid]))
+            lambda: self._start([nodeid], preserve_results=True))
         action_run.setEnabled(not occupe)
 
         action_until = menu.addAction(
@@ -3134,7 +3144,7 @@ class MainWindow(QMainWindow):
         nodeids = self.model.leaf_nodeids_under(index)
         action_run = menu.addAction(
             icons.icon("mdi.play"), "Run only this",
-            lambda: self._start(nodeids))
+            lambda: self._start(nodeids, preserve_results=True))
         action_run.setEnabled(not occupe and bool(nodeids))
         target = self.model.activation_target(index)
         if target:

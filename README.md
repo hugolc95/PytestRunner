@@ -1,5 +1,21 @@
 # Pytest Runner GUI
 
+## Relances ciblées et lecteur affiché
+
+**Run only this test / Run only this** dans le menu contextuel relance le test
+ou le groupe sans changer les cases cochées. Les verdicts des autres tests
+et lecteurs restent visibles, même si la conservation entre runs est désactivée
+dans Settings. Leurs traces d’échec et durées restent consultables pendant
+la session ; les nouveaux résultats remplacent ceux des tests effectivement
+réexécutés. La file d’attente conserve ce comportement. History et les compteurs
+du run continuent de ne contenir que les exécutions de ce run.
+
+Au lancement, **Logs** et **Output** affichent un lecteur utilisé par ce run.
+Si un seul lecteur est lancé, il devient le lecteur affiché et la comparaison
+se ferme. Avec plusieurs lecteurs, le lecteur affiché est conservé s’il fait
+partie de l’exécution. L’onglet principal et le test sélectionné restent en place.
+Les profils conservent également le lecteur affiché entre les étapes.
+
 ## Recherche dans les logs
 
 Dans **Logs**, une barre **Find in log…** au-dessus de chaque log permet de

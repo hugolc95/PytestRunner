@@ -79,12 +79,12 @@ def test_a_test_node_offers_run_source_and_activation_actions(fenetre):
 
 def test_run_only_this_test_starts_a_normal_run(fenetre, monkeypatch):
     appels = []
-    monkeypatch.setattr(fenetre, "_start", lambda nodeids: appels.append(nodeids))
+    monkeypatch.setattr(fenetre, "_start", lambda nodeids, **options: appels.append((nodeids, options)))
     menu = _menu_pour(fenetre, NODEIDS[0])
 
     _action(menu, "Run only this test").trigger()
 
-    assert appels == [[NODEIDS[0]]]
+    assert appels == [([NODEIDS[0]], {"preserve_results": True})]
 
 
 def test_copy_nodeid_puts_it_on_the_clipboard(fenetre):
@@ -162,12 +162,13 @@ def test_a_folder_does_not_offer_open_file(fenetre):
 
 def test_run_only_this_on_a_module_runs_every_test_beneath_it(fenetre, monkeypatch):
     appels = []
-    monkeypatch.setattr(fenetre, "_start", lambda nodeids: appels.append(nodeids))
+    monkeypatch.setattr(fenetre, "_start", lambda nodeids, **options: appels.append((nodeids, options)))
     menu, _ = _menu_groupe_pour(fenetre, NODEIDS[0])
 
     _action(menu, "Run only this").trigger()
 
-    assert sorted(appels[0]) == sorted(NODEIDS[:2])
+    assert sorted(appels[0][0]) == sorted(NODEIDS[:2])
+    assert appels[0][1] == {"preserve_results": True}
 
 
 def _rapport_avec_sortie(sortie: str):

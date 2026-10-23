@@ -399,3 +399,111 @@ def test_real_partial_rerun_does_not_pollute_archived_statuses(window, qtbot):
     assert len(archived) >= 2
     window.tree_results.clear()
     assert window.history.entries() == archived
+
+
+@pytest.mark.parametrize('retain', [False, True])
+@pytest.mark.parametrize('group', [False, True])
+@pytest.mark.parametrize('queued', [False, True])
+def test_context_run_keeps_verdicts_and_checks_even_if_retention_is_off(
+        window, monkeypatch, retain, group, queued):
+    outside = 'test_other.py::test_outside'
+    window._on_collected(Collection(tuple(NODES + [outside])))
+    start(window, NODES + [outside])
+    for nodeid in NODES + [outside]:
+        deliver(window, nodeid, Status.FAILED)
+    window.model.set_checked_nodeids([NODES[2]])
+    before = {nodeid: window.model.index_for_nodeid(nodeid).data(Qt.CheckStateRole)
+              for nodeid in NODES + [outside]}
+    window.preferences.values['retain_tree_results'] = retain
+    requests = []
+    def launch(request, env):
+        requests.append(request)
+        window.service.started.emit(request)
+        return True
+    monkeypatch.setattr(window.service, 'start', launch)
+    window.run_tabs.paused = queued
+    target = window.model.index_for_nodeid(NODES[0])
+    if group:
+        target = target.parent()
+    menu = window._tree_context_menu(target)
+    next(a for a in menu.actions() if a.text().startswith('Run only this')).trigger()
+    if queued:
+        assert not requests
+        assert window.model.checked_nodeids() == [NODES[2]]
+        window.run_tabs.paused = False
+        window.run_tabs.start_next()
+    assert requests[0].nodeids == (tuple(NODES) if group else (NODES[0],))
+    assert window.model.display_statuses_for_nodeid(outside)[0] is Status.FAILED
+    assert window.model.checked_nodeids() == [NODES[2]]
+    assert before == {nodeid: window.model.index_for_nodeid(nodeid).data(Qt.CheckStateRole)
+                      for nodeid in NODES + [outside]}
+    assert window.model.status_counts() == {}
+    deliver(window, NODES[0], Status.PASSED)
+    assert window.model.status_counts() == {Status.PASSED: 1}
+    assert window.model.display_statuses_for_nodeid(outside)[0] is Status.FAILED
+    window.run_tabs.complete(window.run_tabs.entry_for(window), [])
+    assert window.model.checked_nodeids() == [NODES[2]]
+    # The override belongs to the context request, not the next normal run.
+    window._start([NODES[0]])
+    expected = Status.FAILED if retain else Status.PENDING
+    assert window.model.display_statuses_for_nodeid(outside)[0] is expected
+    assert window.model.checked_nodeids() == [NODES[2]]
+    window.run_tabs.complete(window.run_tabs.entry_for(window), [])
+
+
+def test_real_context_rerun_keeps_other_failure_details_checks_and_history(window, qtbot):
+    from pathlib import Path
+    Path(window.workspace.path, 'test_card.py').write_text(
+        'def test_read(): pass\ndef test_pin(): assert False, "old failure kept"\n'
+        'def test_serial(): pass\n')
+    window._start(NODES)
+    qtbot.waitUntil(lambda: not window.service.busy and window.run_tabs.active is None, timeout=20000)
+    window.model.set_checked_nodeids(NODES[1:])
+    failure = window.results.failure_for(NODES[1], 0)
+    assert failure is not None and 'old failure kept' in failure.body
+    menu = window._tree_context_menu(window.model.index_for_nodeid(NODES[0]))
+    next(a for a in menu.actions() if a.text() == 'Run only this test').trigger()
+    qtbot.waitUntil(lambda: not window.service.busy and window.run_tabs.active is None, timeout=20000)
+    assert window.results.failure_for(NODES[1], 0) == failure
+    window._select_test(window.model.index_for_nodeid(NODES[1]))
+    assert 'old failure kept' in window.results.detail.body.toPlainText()
+    assert window.model.checked_nodeids() == NODES[1:]
+    latest = window.history.entries()[0]
+    assert latest.nodeids == (NODES[0],)
+    assert latest.failed_nodeids == ()
+
+
+@pytest.mark.parametrize('active', [0, 1, 2])
+def test_single_reader_run_selects_its_logs_without_changing_test_or_checks(
+        window, tmp_path, monkeypatch, active):
+    from dataclasses import replace
+    from runner.ui.results_panel import ONGLET_LOGS
+    from runner.tests.test_logs import ecrire
+    names = ['Reader A', 'Reader B', 'Reader C']
+    window.workspace = replace(window.workspace, settings={'readers': names})
+    window._on_collected(Collection(tuple(NODES)))
+    root = tmp_path / 'logs'
+    for name in names:
+        ecrire(root / '20261023' / 'Run_0001' / name, 'test_read', f'log of {name}')
+    window.results.set_log_root(root)
+    window.model.set_checked_nodeids(NODES[1:])
+    index = window.model.index_for_nodeid(NODES[0])
+    window.tree.setCurrentIndex(index)
+    window._select_test(index)
+    window.results.show_tab(ONGLET_LOGS)
+    window.results._on_reader((active + 1) % 3)
+    window.results.logs.compare.setChecked(True)
+    window.readers_bar.select_names(window.workspace.readers, [names[active]])
+    monkeypatch.setattr(window.service, 'start', lambda request, env:
+                        (window.service.started.emit(request) or True))
+    window._start([NODES[0]], preserve_results=True)
+    assert window.results.logs.tabs.currentIndex() == active
+    assert window.results.output.tabs.currentIndex() == active
+    assert not window.results.logs.compare.isChecked()
+    assert window.results.tabs.currentIndex() == ONGLET_LOGS
+    assert f'log of {names[active]}' in window.results.logs.views[active].text()
+    assert window.results._nodeid == NODES[0]
+    assert window.model.checked_nodeids() == NODES[1:]
+    window._select_test(index)
+    assert window.results.logs.tabs.currentIndex() == active
+    window.run_tabs.complete(window.run_tabs.entry_for(window), [])

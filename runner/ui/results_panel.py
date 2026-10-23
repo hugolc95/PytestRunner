@@ -236,6 +236,8 @@ class ReaderViews(QWidget):
             self._defile = False
 
     def set_readers(self, readers: tuple[Reader, ...]) -> None:
+        current = max(0, self.tabs.currentIndex())
+        selected = self._readers[current].name if current < len(self._readers) else None
         self._readers = tuple(readers)
         multi = len(self._readers) > 1
 
@@ -266,6 +268,9 @@ class ReaderViews(QWidget):
             self.tabs.setTabButton(position, QTabBar.LeftSide, libelle)
             self._tab_labels.append(libelle)
             self.tabs.setTabToolTip(position, lecteur.name)
+        if selected is not None and self.tabs.count():
+            self.tabs.setCurrentIndex(next((i for i, reader in enumerate(self._readers)
+                                            if reader.name == selected), 0))
         self.tabs.blockSignals(False)
 
         for position, entete in enumerate(self.headers):
@@ -360,11 +365,13 @@ class ReaderViews(QWidget):
     # ---------------------------------------------------------------- contenu
 
     def append(self, index: int, texte: str) -> None:
+        index = self._reader_position(index)
         if 0 <= index < len(self.views):
             self.views[index].append(texte)
 
     def set_text(self, index: int, texte: str, entete: str = "",
                  chemin: str = "") -> None:
+        index = self._reader_position(index)
         if 0 <= index < len(self.views):
             self.views[index].set_text(texte)
             self.headers[index].setText(entete)
@@ -376,6 +383,12 @@ class ReaderViews(QWidget):
             self.headers[index].setToolTip(chemin)
             self._update_external_buttons()
             self._update_difference_highlights()
+
+    def _reader_position(self, index):
+        if not self._readers:
+            return index
+        return next((position for position, reader in enumerate(self._readers)
+                     if reader.index == index), -1)
 
     def _update_difference_highlights(self, reveal: bool = False) -> None:
         """Compare les logs et colore seulement les ecarts significatifs."""
@@ -532,6 +545,9 @@ class ResultsPanel(QWidget):
         self._sorties: dict[int, str] = {}
         self._index_echecs: dict[int, dict] = {}
         self._durations: dict[int, dict[str, float]] = {}
+        self._previous_failures = {}
+        self._executed_by_reader = {}
+        self._preserve_details = False
         self._nodeid = ""
         self._statuses: dict[int, Status] = {}
         self._markers: tuple[str, ...] = ()
@@ -616,6 +632,19 @@ class ResultsPanel(QWidget):
         self.logs.select_silently(index)
         self.reader_selected.emit(index)
 
+    def select_run_readers(self, readers) -> None:
+        """Show a reader used by this run without changing the primary tab."""
+        indexes = {reader.index for reader in readers}
+        positions = [i for i, reader in enumerate(self._readers) if reader.index in indexes]
+        if not positions:
+            return
+        current = self.logs.tabs.currentIndex()
+        target = current if current in positions else positions[0]
+        if len(positions) == 1:
+            for view in (self.output, self.logs):
+                view.compare.setChecked(False)
+        self._on_reader(target)
+
     # ------------------------------------------------------------------- run
 
     def set_readers(self, readers: tuple[Reader, ...]) -> None:
@@ -628,23 +657,35 @@ class ResultsPanel(QWidget):
         self._durations.clear()
         self.detail.clear()
         self.set_result_origins({})
+        self._previous_failures.clear()
+        self._executed_by_reader.clear()
+        self._preserve_details = False
         self.source.save()
         self.source.clear()
         self.output.set_readers(readers)
         self.logs.set_readers(readers)
 
-    def begin_run(self) -> None:
+    def begin_run(self, *, preserve_results=False, nodeids=()) -> None:
         """Vide les vues sans changer d'onglet.
 
         Basculer d'office sur la console au lancement volait l'ecran a
         l'utilisateur : l'avancement se lit dans l'arbre et dans la barre
         d'etat, la console n'a pas a s'imposer.
         """
+        if preserve_results:
+            readers = self._readers or (Reader('', 0),)
+            self._previous_failures = {
+                (nodeid, reader.index): self.failure_for(nodeid, reader.index)
+                for nodeid in nodeids for reader in readers}
+        else:
+            self._previous_failures.clear()
+            self._durations.clear()
+        self._preserve_details = preserve_results
+        self._executed_by_reader.clear()
         self.output.clear()
         self.logs.clear()
         self._sorties.clear()
         self._index_echecs.clear()
-        self._durations.clear()
         self.set_result_origins({})
         self._refresh_detail()
 
@@ -658,7 +699,14 @@ class ResultsPanel(QWidget):
         index = rapport.reader.index
         self._sorties[index] = rapport.output
         self._index_echecs.pop(index, None)
-        self._durations[index] = rapport.durations
+        if self._preserve_details:
+            for nodeid in self._executed_by_reader.get(index, ()):
+                self._previous_failures[(nodeid, index)] = failures_mod.failure_for(
+                    self._echecs_de(index), nodeid)
+                self._durations.get(index, {}).pop(nodeid, None)
+            self._durations.setdefault(index, {}).update(rapport.durations)
+        else:
+            self._durations[index] = rapport.durations
         self._refresh_detail()
 
     def append_output(self, index: int, texte: str) -> None:
@@ -712,12 +760,14 @@ class ResultsPanel(QWidget):
         vues = [connues[n] for n in nodeids if n in connues]
         return sum(vues) if vues else None
 
-    def update_statuses(self, nodeid: str, statuses: dict[int, Status]) -> None:
+    def update_statuses(self, nodeid: str, statuses: dict[int, Status], *, reader_index=None) -> None:
         """Rafraichit la fiche si elle porte sur ce test, sans toucher aux logs.
 
         Appele a chaque resultat pendant un run : relire les .log a ce
         rythme-la balayerait le disque des centaines de fois.
         """
+        if reader_index is not None:
+            self._executed_by_reader.setdefault(reader_index, set()).add(nodeid)
         if nodeid and nodeid == self._nodeid:
             self._statuses = dict(statuses)
             self._refresh_detail()
@@ -728,8 +778,7 @@ class ResultsPanel(QWidget):
             return
         cibles = self._readers or (Reader("", 0),)
         echecs = {
-            lecteur.index: failures_mod.failure_for(
-                self._echecs_de(lecteur.index), self._nodeid)
+            lecteur.index: self.failure_for(self._nodeid, lecteur.index)
             for lecteur in cibles
         }
         durees = {
@@ -752,6 +801,9 @@ class ResultsPanel(QWidget):
         Expose pour le menu contextuel de l'arbre : "Copy failure trace" ne
         doit s'activer que si ce test a vraiment un echec a copier.
         """
+        key = (nodeid, reader_index)
+        if key in self._previous_failures:
+            return self._previous_failures[key]
         return failures_mod.failure_for(self._echecs_de(reader_index), nodeid)
 
     # ------------------------------------------------------------------ logs

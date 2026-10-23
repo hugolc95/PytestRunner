@@ -396,3 +396,43 @@ def test_the_output_of_each_reader_stays_in_its_own_console(panel):
     panel.append_output(1, "second lecteur\n")
     assert "premier" in panel.output.views[0].text()
     assert "premier" not in panel.output.views[1].text()
+
+
+def test_partial_reruns_update_only_executed_failure_details_and_durations(panel):
+    panel.set_report(ReaderReport(READERS[0], output=SORTIE,
+                                 durations={ECHEC: 1.5, SUCCES: 2.5}))
+    original = panel.failure_for(ECHEC, 0)
+    assert original is not None
+    panel.begin_run(preserve_results=True, nodeids=(ECHEC, SUCCES))
+    panel.update_statuses(SUCCES, {0: Status.PASSED}, reader_index=0)
+    panel.set_report(ReaderReport(READERS[0], output='passed', durations={SUCCES: 0.4}))
+    assert panel.failure_for(ECHEC, 0) == original
+    assert panel._durations[0] == {ECHEC: 1.5, SUCCES: 0.4}
+    # A second targeted rerun replaces the old failure with a pass.
+    panel.begin_run(preserve_results=True, nodeids=(ECHEC, SUCCES))
+    panel.update_statuses(ECHEC, {0: Status.PASSED}, reader_index=0)
+    panel.set_report(ReaderReport(READERS[0], output='passed', durations={ECHEC: 0.2}))
+    assert panel.failure_for(ECHEC, 0) is None
+    assert panel._durations[0] == {ECHEC: 0.2, SUCCES: 0.4}
+    panel.begin_run()
+    assert panel._durations == {}
+    assert panel.failure_for(ECHEC, 0) is None
+
+
+def test_profile_reader_refresh_keeps_active_reader_and_sparse_indexes_receive_logs(panel, tmp_path):
+    panel._on_reader(1)
+    panel.set_readers(READERS)
+    assert panel.logs.tabs.currentIndex() == 1
+    assert panel.output.tabs.currentIndex() == 1
+    # Profiles keep the original reader index even with a single reader.
+    reader = Reader('Third Reader', 2)
+    path = tmp_path / 'test.log'
+    path.write_text('third reader trace')
+    panel.set_readers((reader,))
+    panel.logs.set_text(2, path.read_text(), reader.name, str(path))
+    panel.output.append(2, 'third reader output\n')
+    assert panel.logs.views[0].text() == 'third reader trace'
+    assert panel.logs.path_at(0) == path
+    assert panel.output.views[0].text() == 'third reader output'
+    panel.logs.set_text(0, 'should not be assigned to the third reader')
+    assert panel.logs.views[0].text() == 'third reader trace'

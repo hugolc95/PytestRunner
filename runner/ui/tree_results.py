@@ -72,16 +72,17 @@ class TreeResultsController(QObject):
         w.model.set_retained_results(records if self.enabled else {})
         self.refresh()
 
-    def start_run(self, request):
+    def start_run(self, request, *, preserve_results=False):
         w = self.window
+        retain = self.enabled or preserve_results
         w._cleared_run_counts = None
-        if not self.enabled:
+        if not retain:
             self._hidden_previous = {}
         w.results.set_result_origins({})
         meta = dict(run_id=request.run_id, at=datetime.now().astimezone().isoformat(timespec='seconds'), order=time_ns(),
                     config=Path(request.config_path).name if request.config_path else '')
-        w.model.begin_run(self.enabled, meta)
-        if self.enabled and w.workspace:
+        w.model.begin_run(retain, meta)
+        if retain and w.workspace:
             try:
                 previous = w.model.export_results()
                 for nodeid, readers in self.saved_results().items():
@@ -94,7 +95,7 @@ class TreeResultsController(QObject):
                 w.model.set_retained_results(previous)
             except (OSError, ValueError, TypeError) as exc:
                 w.status_label.setText(f'Could not restore tree results: {exc}')
-        if not self.enabled and w.workspace:
+        if not retain and w.workspace:
             try:
                 self.store.write(w.workspace.path, {})
             except OSError as exc:
