@@ -26,6 +26,7 @@ class LogSearchBar(QWidget):
         self._active = QTextCursor(editor.document())
         self._revision = -1
         self._query_changed = False
+        self._status = ""
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(100)
@@ -35,6 +36,7 @@ class LogSearchBar(QWidget):
         self.field.setPlaceholderText("Find in log…")
         self.field.setAccessibleName("Find in log")
         self.field.setClearButtonEnabled(True)
+        self.field.setMinimumWidth(60)
         self.field.setToolTip(
             "Find literal text in the displayed log, ignoring case. "
             "Ctrl+F · Enter / Shift+Enter · F3 / Shift+F3 · Esc to clear")
@@ -42,7 +44,8 @@ class LogSearchBar(QWidget):
             icons.icon("mdi.magnify", t.TEXT_FAINT), QLineEdit.LeadingPosition)
         self.counter = QLabel("")
         self.counter.setObjectName("Faint")
-        self.counter.setMinimumWidth(52)
+        self.counter.setMinimumWidth(44)
+        self.counter.setMaximumWidth(80)
         self.counter.setAlignment(Qt.AlignCenter)
         self.previous = self._button("mdi.chevron-up", "Previous match (Shift+Enter / Shift+F3)", -1)
         self.next = self._button("mdi.chevron-down", "Next match (Enter / F3)", 1)
@@ -155,12 +158,25 @@ class LogSearchBar(QWidget):
         total = len(self._matches)
         if self._index >= 0:
             self._active = self._cursor(self._matches[self._index])
-        self.counter.setText(f"{self._index + 1}/{total}" if self.field.text() else "")
-        self.counter.setToolTip(
-            f"{total} matches in the displayed log" if total else "No matches in the displayed log")
+        self._update_counter()
         self.previous.setEnabled(total > 1)
         self.next.setEnabled(total > 1)
         self.highlights_changed.emit()
+
+    def set_status(self, text):
+        self._status = text
+        self._update_counter()
+
+    def _update_counter(self):
+        if self.field.text():
+            total = len(self._matches)
+            self.counter.setText(f"{self._index + 1}/{total}")
+            self.counter.setToolTip(
+                f"{total} matches in the displayed log" if total else "No matches in the displayed log")
+        else:
+            self.counter.setText(self.counter.fontMetrics().elidedText(
+                self._status, Qt.ElideRight, self.counter.maximumWidth()))
+            self.counter.setToolTip(self._status)
 
     def selections(self):
         selections = []

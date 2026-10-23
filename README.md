@@ -9,6 +9,11 @@ occurrences sont surlignées ; le compteur et les flèches permettent de les
 parcourir en boucle. **Ctrl+F** depuis le log place le curseur dans ce champ,
 **Entrée / F3** passe au résultat suivant, **Maj+Entrée / Maj+F3** au précédent
 et **Échap** efface la recherche. Le bouton de suppression du champ fait de même.
+La recherche et les deux flèches rouges de navigation entre les erreurs
+partagent une seule ligne avec les commandes du log. Si le panneau est étroit,
+les commandes secondaires restent accessibles dans **More log actions** (`…`).
+Sans recherche active, le compteur indique le nombre de lignes ou la position
+de l’erreur ; le survol donne l’information complète.
 
 La recherche fonctionne aussi pour les profils. En comparaison, chaque
 lecteur garde sa propre recherche et les différences restent surlignées.

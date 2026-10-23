@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QTextEdit,
@@ -91,6 +92,8 @@ class ConsoleView(QWidget):
         self._formats: dict[ansi.Style, QTextCharFormat] = {}
         self._line_selections = []
         self.search = None
+        self._secondary_tools = []
+        self.more_tools = None
 
         self.view = QPlainTextEdit(self)
         self.view.setReadOnly(True)
@@ -107,20 +110,12 @@ class ConsoleView(QWidget):
             self.search = LogSearchBar(self.view, self)
             self.search.highlights_changed.connect(self._update_highlights)
             self.search.navigated.connect(lambda: self.set_follow(False))
-            colonne.addWidget(self.search)
-        colonne.addWidget(self._build_toolbar(show_lens))
+            self.previous_error = self._error_button("mdi.arrow-up", "Previous error in this log", -1)
+            self.next_error = self._error_button("mdi.arrow-down", "Next error in this log", 1)
+        self._toolbar = self._build_toolbar(show_lens)
+        colonne.addWidget(self._toolbar)
         colonne.addWidget(self.view, 1)
         self.log_highlighter = LogLevelHighlighter(self.view.document()) if not show_lens else None
-        if not show_lens:
-            self.previous_error = QPushButton("↑ Error")
-            self.next_error = QPushButton("↓ Error")
-            self.previous_error.setToolTip("Previous error in this log")
-            self.next_error.setToolTip("Next error in this log")
-            self.previous_error.clicked.connect(lambda: self.navigate_error(-1))
-            self.next_error.clicked.connect(lambda: self.navigate_error(1))
-            self.add_tool(self.previous_error)
-            self.add_tool(self.next_error)
-
         self._update_counter()
 
     # ------------------------------------------------------------- structure
@@ -164,14 +159,22 @@ class ConsoleView(QWidget):
             rangee.addWidget(bouton)
 
         self.lens_bar.setVisible(show_lens)
-        ligne.addWidget(self.lens_bar)
+        if show_lens:
+            ligne.addWidget(self.lens_bar)
 
-        self.counter = QLabel("")
+        self.counter = QLabel("", self)
         self.counter.setObjectName("Faint")
 
-        ligne.addSpacing(t.SPACE_2)
-        ligne.addWidget(self.counter)
-        ligne.addStretch(1)
+        if self.search is not None:
+            ligne.addWidget(self.search, 1)
+            ligne.addWidget(self.previous_error)
+            ligne.addWidget(self.next_error)
+            # The search counter also carries the line/error status when idle.
+            self.counter.hide()
+        else:
+            ligne.addSpacing(t.SPACE_2)
+            ligne.addWidget(self.counter)
+            ligne.addStretch(1)
 
         self.wrap_button = self._icon_toggle(
             "mdi.wrap", "Wrap long lines", self._on_wrap)
@@ -188,7 +191,48 @@ class ConsoleView(QWidget):
         ligne.addWidget(self.follow_button)
         ligne.addWidget(self.copy_button)
         self._tools = ligne
+        if self.search is not None:
+            self._secondary_tools = [self.wrap_button, self.follow_button, self.copy_button]
+            self.more_tools = QPushButton()
+            self.more_tools.setObjectName("IconSm")
+            self.more_tools.setIcon(icons.icon("mdi.dots-horizontal", t.TEXT_MUTED))
+            self.more_tools.setToolTip("More log actions")
+            self.more_tools.setAccessibleName("More log actions")
+            self.more_tools.clicked.connect(self._show_log_tools)
+            ligne.addWidget(self.more_tools)
         return barre
+
+    def _error_button(self, glyph, tooltip, direction):
+        button = QPushButton()
+        button.setObjectName("IconSm")
+        button.setIcon(icons.icon(glyph, t.status_color(Status.FAILED)))
+        button.setToolTip(tooltip)
+        button.setAccessibleName(tooltip)
+        button.clicked.connect(lambda: self.navigate_error(direction))
+        return button
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._adapt_log_tools()
+
+    def _adapt_log_tools(self):
+        if self.more_tools is None:
+            return
+        compact = self.width() < 560
+        for button in self._secondary_tools:
+            button.setVisible(not compact)
+        self.more_tools.setVisible(compact)
+
+    def _show_log_tools(self):
+        menu = QMenu(self)
+        for button in self._secondary_tools:
+            action = menu.addAction(button.icon(), button.toolTip())
+            action.setEnabled(button.isEnabled())
+            action.setCheckable(button.isCheckable())
+            action.setChecked(button.isChecked())
+            action.triggered.connect(button.click)
+        menu.exec(self.more_tools.mapToGlobal(self.more_tools.rect().bottomLeft()))
+        menu.deleteLater()
 
     def add_tool(self, bouton: QPushButton) -> None:
         """Ajoute un bouton au bout de la barre d'outils de CETTE console.
@@ -199,7 +243,12 @@ class ConsoleView(QWidget):
         bouton, au lieu d'un seul bouton partage dont on devrait deviner sur
         laquelle il porte.
         """
-        self._tools.addWidget(bouton)
+        if self.more_tools is None:
+            self._tools.addWidget(bouton)
+        else:
+            self._secondary_tools.append(bouton)
+            self._tools.insertWidget(self._tools.indexOf(self.more_tools), bouton)
+            self._adapt_log_tools()
 
     def navigate_error(self, direction: int) -> None:
         document = self.view.document()
@@ -211,7 +260,7 @@ class ConsoleView(QWidget):
                 errors.append(block.blockNumber())
             block = block.next()
         if not errors:
-            self.counter.setText("No errors in displayed log")
+            self._set_counter_text("No errors in displayed log")
             return
         current = self.view.textCursor().blockNumber()
         target = (next((n for n in errors if n > current), errors[0]) if direction > 0
@@ -221,7 +270,7 @@ class ConsoleView(QWidget):
         cursor.select(QTextCursor.LineUnderCursor)
         self.view.setTextCursor(cursor)
         self.view.centerCursor()
-        self.counter.setText(f"Error {errors.index(target) + 1} / {len(errors)}")
+        self._set_counter_text(f"Error {errors.index(target) + 1} / {len(errors)}")
 
     def _icon_toggle(self, glyph: str, infobulle: str, slot,
                      coche: bool = False) -> QPushButton:
@@ -246,6 +295,9 @@ class ConsoleView(QWidget):
             self.log_highlighter.rehighlight()
         if self.search is not None:
             self.search.restyle()
+            self.previous_error.setIcon(icons.icon("mdi.arrow-up", t.status_color(Status.FAILED)))
+            self.next_error.setIcon(icons.icon("mdi.arrow-down", t.status_color(Status.FAILED)))
+            self.more_tools.setIcon(icons.icon("mdi.dots-horizontal", t.TEXT_MUTED))
         self.copy_button.setIcon(icons.icon("mdi.content-copy", t.TEXT_MUTED))
         self.wrap_button.setIcon(icons.icon("mdi.wrap", t.TEXT_MUTED))
         self.follow_button.setIcon(
@@ -421,20 +473,27 @@ class ConsoleView(QWidget):
             _PLACEHOLDERS[self._lens] if total else _PLACEHOLDERS[Lens.ALL])
 
         if not total:
-            self.counter.setText("")
+            self._set_counter_text("")
         elif self._tronque_source:
             # Le fichier source depassait largement ce qu'on garde affiche :
             # le dire evite de croire, a tort, qu'un run enorme n'a produit
             # que ces quelques milliers de lignes.
-            self.counter.setText(
+            self._set_counter_text(
                 f"last {visibles} of {total + self._tronque_source} lines "
                 "— open the log file for the rest")
         elif caches:
             # Dire combien de lignes sont masquees : sans ce chiffre, une
             # lentille active ressemble a une console qui a perdu sa sortie.
-            self.counter.setText(f"{visibles} of {total} lines")
+            self._set_counter_text(f"{visibles} of {total} lines")
         else:
-            self.counter.setText(f"{total} lines")
+            self._set_counter_text(f"{total} lines")
+
+    def _set_counter_text(self, text):
+        self.counter.setText(text)
+        if self.search is not None:
+            self.search.set_status(text)
+            self.previous_error.setToolTip(f"Previous error in this log\n{text}".rstrip())
+            self.next_error.setToolTip(f"Next error in this log\n{text}".rstrip())
 
     # ----------------------------------------------------------------- rendu
 
