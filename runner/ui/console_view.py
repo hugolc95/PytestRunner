@@ -89,6 +89,8 @@ class ConsoleView(QWidget):
         self._follow = True
         self._defile_seul = False   # garde : distinguer nos scrolls des siens
         self._formats: dict[ansi.Style, QTextCharFormat] = {}
+        self._line_selections = []
+        self.search = None
 
         self.view = QPlainTextEdit(self)
         self.view.setReadOnly(True)
@@ -100,6 +102,12 @@ class ConsoleView(QWidget):
         colonne = QVBoxLayout(self)
         colonne.setContentsMargins(0, 0, 0, 0)
         colonne.setSpacing(t.SPACE_1)
+        if not show_lens:
+            from runner.ui.log_search import LogSearchBar
+            self.search = LogSearchBar(self.view, self)
+            self.search.highlights_changed.connect(self._update_highlights)
+            self.search.navigated.connect(lambda: self.set_follow(False))
+            colonne.addWidget(self.search)
         colonne.addWidget(self._build_toolbar(show_lens))
         colonne.addWidget(self.view, 1)
         self.log_highlighter = LogLevelHighlighter(self.view.document()) if not show_lens else None
@@ -236,6 +244,8 @@ class ConsoleView(QWidget):
         self._formats.clear()
         if self.log_highlighter is not None:
             self.log_highlighter.rehighlight()
+        if self.search is not None:
+            self.search.restyle()
         self.copy_button.setIcon(icons.icon("mdi.content-copy", t.TEXT_MUTED))
         self.wrap_button.setIcon(icons.icon("mdi.wrap", t.TEXT_MUTED))
         self.follow_button.setIcon(
@@ -309,7 +319,11 @@ class ConsoleView(QWidget):
         self._tronque_source = 0
         self._reste = ""
         self._filtre.reset()
+        self._line_selections = []
         self.view.clear()
+        if self.search is not None:
+            self.search.refresh()
+        self._update_highlights()
         self.set_follow(True)
         self._update_counter()
 
@@ -344,6 +358,13 @@ class ConsoleView(QWidget):
                 selection.format.setForeground(
                     QColor(t.STATUS_COLORS[Status.FAILED]))
             selections.append(selection)
+        self._line_selections = selections
+        self._update_highlights()
+
+    def _update_highlights(self) -> None:
+        selections = list(self._line_selections)
+        if self.search is not None:
+            selections.extend(self.search.selections())
         self.view.setExtraSelections(selections)
 
     def reveal_line(self, number: int) -> None:

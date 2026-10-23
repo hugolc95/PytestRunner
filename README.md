@@ -1,5 +1,22 @@
 # Pytest Runner GUI
 
+## Recherche dans les logs
+
+Dans **Logs**, une barre **Find in log…** au-dessus de chaque log permet de
+chercher du texte sans masquer les lignes voisines. La recherche ignore la
+casse et traite les caractères tels que `[` ou `.` comme du texte. Les
+occurrences sont surlignées ; le compteur et les flèches permettent de les
+parcourir en boucle. **Ctrl+F** depuis le log place le curseur dans ce champ,
+**Entrée / F3** passe au résultat suivant, **Maj+Entrée / Maj+F3** au précédent
+et **Échap** efface la recherche. Le bouton de suppression du champ fait de même.
+
+La recherche fonctionne aussi pour les profils. En comparaison, chaque
+lecteur garde sa propre recherche et les différences restent surlignées.
+Naviguer dans les résultats suspend le suivi automatique ; le bouton de suivi
+permet de revenir à la fin. Le compteur se met à jour quand le contenu change.
+Seule la partie affichée d’un fichier très volumineux est recherchée ; le
+fichier complet reste accessible par **Open log**.
+
 ## Résultats conservés dans l’arbre (version d’essai)
 
 **Settings → Tree & details → Keep previous results in the test tree** permet
