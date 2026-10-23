@@ -309,21 +309,76 @@ def test_existing_draft_refreshes_previous_results_when_it_starts(window):
     assert draft.model.status_counts() == {}
 
 
-def test_previous_result_has_explicit_provenance_and_clear_is_locked(window):
+def test_previous_result_has_explicit_provenance_and_clear_is_locked(window, qtbot):
     start(window)
     deliver(window, NODES[0], Status.FAILED)
     start(window, NODES[1:], 'second')
     index = window.model.index_for_nodeid(NODES[0])
     window.tree.setCurrentIndex(index)
     window._select_test(index)
-    assert 'Previous run result' in window.tree_results.origin.text()
-    assert not window.tree_results.origin.isHidden()
+    qtbot.waitUntil(lambda: window.results.detail.results_row._origins[0].isVisible())
+    badge = window.results.detail.results_row._origins[0]
+    assert 'Previous run result' in badge.toolTip()
+    assert badge.isVisible()
     assert window.results._statuses[0] is Status.FAILED
     window.service._profile_active = True
     window.tree_results.clear()
     assert not window.tree_results.button.isEnabled()
     assert window.model.display_statuses_for_nodeid(NODES[0])[0] is Status.FAILED
     window.service._profile_active = False
+
+
+def test_previous_result_badges_are_per_reader_and_clear_on_new_results(window):
+    readers = (Reader('Reader A', 0), Reader('Reader B', 1))
+    window.model.set_readers(readers)
+    window.results.set_readers(readers)
+    window.model._run_meta = {'at': '2026-10-23T10:09:00+02:00', 'config': 'old.yaml'}
+    window.model.apply_outcome(NODES[0], Status.FAILED, 0)
+    window.model.apply_outcome(NODES[0], Status.PASSED, 1)
+    window.model.begin_run(retain=True, meta={'run_id': 'latest'})
+    window.model.apply_outcome(NODES[0], Status.PASSED, 0)
+    index = window.model.index_for_nodeid(NODES[0])
+    window.tree.setCurrentIndex(index)
+    window._select_test(index)
+    badges = window.results.detail.results_row._origins
+    assert set(badges) == {1}
+    assert 'Reader B' in badges[1].toolTip()
+    assert '23/10/2026 10:09' in badges[1].toolTip()
+    assert 'old.yaml' in badges[1].toolTip()
+    assert 'latest run' in window.results.tabs.tabToolTip(3)
+    # A live outcome updates the badge without clicking the test again.
+    window._on_outcome(Outcome(NODES[0], Status.PASSED, 1))
+    assert not window.results.detail.results_row._origins
+    assert not window.results.detail.retained_view
+    assert 'tree includes previous' not in window.results.tabs.tabToolTip(3).lower()
+
+
+@pytest.mark.parametrize('width', [1100, 1600])
+@pytest.mark.parametrize('palette', ['dark', 'light'])
+@pytest.mark.parametrize('profile', [False, True])
+def test_result_tabs_align_with_tree_tools_in_every_view(window, qtbot, width, palette, profile):
+    from runner.domain.execution_profile import ExecutionProfile
+    from runner.ui import tokens as t
+    window.resize(width, 820)
+    start(window)
+    deliver(window, NODES[0], Status.FAILED)
+    start(window, NODES[1:], 'second')
+    index = window.model.index_for_nodeid(NODES[0])
+    window.tree.setCurrentIndex(index)
+    window._select_test(index)
+    if profile:
+        window._load_execution_profile(ExecutionProfile('Preview', list(NODES), '', ''))
+    panel = window.profile_results if profile else window.results
+    window.apply_theme(palette)
+    try:
+        for tab in range(4):
+            panel.show_tab(tab)
+            qtbot.wait(20)
+            toolbar_y = window.tree_toolbar.mapTo(window, window.tree_toolbar.rect().topLeft()).y()
+            tabs_y = panel.tabs.tabBar().mapTo(window, panel.tabs.tabBar().rect().topLeft()).y()
+            assert abs(toolbar_y - tabs_y) <= 1
+    finally:
+        t.set_theme('dark')
 
 
 def test_real_partial_rerun_does_not_pollute_archived_statuses(window, qtbot):

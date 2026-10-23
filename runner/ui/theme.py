@@ -396,6 +396,11 @@ QPushButton#Icon:hover {{ background-color: {t.BG_HOVER}; }}
 QPushButton#Icon:checked {{ background-color: {t.rgba(t.ACCENT, 0.16)}; }}
 
 QWidget#TreeActionGroup {{ background: transparent; }}
+QLabel#PreviousResultCaption {{
+    color: {t.TEXT_MUTED};
+    background: transparent;
+    font-size: {t.TEXT_XS}px;
+}}
 QPushButton#MarkerFilter {{
     background: transparent;
     border-color: transparent;

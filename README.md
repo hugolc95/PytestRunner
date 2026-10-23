@@ -6,7 +6,12 @@
 de conserver le dernier verdict connu de chaque test et lecteur. Les icônes
 du dernier run sont pleines ; celles des résultats précédents sont en contour
 et de couleur atténuée. Le survol indique le statut et la date du résultat.
-Le panneau de détail signale explicitement un résultat provenant d’un autre run.
+Dans **Detail**, un indicateur discret **Previous** apparaît sur la ligne de
+chaque lecteur dont le verdict provient d’un autre run. Son survol donne la
+date et la configuration. Ces informations restent dans le contenu de Detail :
+les onglets **Detail / Source / Output / Logs** restent alignés avec la barre
+d’outils du tree. Le contexte des exécutions de profil se trouve aussi dans
+Detail. Les infobulles d’Output et Logs rappellent qu’ils montrent le dernier run.
 Les compteurs, la progression et les rapports du run ne comptent que les tests
 réellement exécutés pendant ce run.
 

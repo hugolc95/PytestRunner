@@ -123,6 +123,26 @@ class _ElidedLabel(QLabel):
         peintre.end()
 
 
+class PreviousResultBadge(QWidget):
+    """Quiet reader-level provenance; full details remain in the tooltip."""
+
+    def __init__(self, detail, parent=None):
+        super().__init__(parent)
+        self.setToolTip(detail)
+        self.setAccessibleName('Previous run result')
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(t.SPACE_1)
+        image = QLabel()
+        image.setToolTip(detail)
+        image.setPixmap(icons.icon('mdi.history', t.TEXT_MUTED).pixmap(12, 12))
+        row.addWidget(image)
+        self.caption = QLabel('Previous')
+        self.caption.setToolTip(detail)
+        self.caption.setObjectName('PreviousResultCaption')
+        row.addWidget(self.caption)
+
+
 class ReaderResultsTable(QWidget):
     """Verdict de CE test, une ligne par lecteur : nom, resultat, duree,
     derniers runs.
@@ -146,6 +166,7 @@ class ReaderResultsTable(QWidget):
         self._grille.setColumnStretch(self.COL_NOM, 1)
         self._durees: list[QWidget] = []
         self._lignes = 0
+        self._origins = {}
 
     def clear(self) -> None:
         while self._grille.count():
@@ -159,8 +180,9 @@ class ReaderResultsTable(QWidget):
                 widget.deleteLater()
         self._durees = []
         self._lignes = 0
+        self._origins = {}
 
-    def set_rows(self, rows, avec_duree: bool, avec_historique: bool) -> None:
+    def set_rows(self, rows, avec_duree: bool, avec_historique: bool, origins=None) -> None:
         """`rows` : (lecteur, statut, duree ou None, sparkline ou None)."""
         self.clear()
         entetes = [(self.COL_NOM, "Reader"), (self.COL_RESULTAT, "Result")]
@@ -185,6 +207,10 @@ class ReaderResultsTable(QWidget):
             rangee.addWidget(_ReaderDot(lecteur.index))
             rangee.addWidget(_ElidedLabel(lecteur.name or "Test interpreter",
                                           lecteur.index if lecteur.name else None), 1)
+            if origins and lecteur.index in origins:
+                badge = PreviousResultBadge(origins[lecteur.index])
+                self._origins[lecteur.index] = badge
+                rangee.addWidget(badge)
             nom.setMinimumWidth(0)
             nom.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
             self._grille.addWidget(nom, ligne, self.COL_NOM)
@@ -203,6 +229,8 @@ class ReaderResultsTable(QWidget):
         large = self.width() >= self.ETROIT
         for widget in self._durees:
             widget.setVisible(large)
+        for badge in self._origins.values():
+            badge.caption.setVisible(large)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -242,6 +270,8 @@ class DetailPanel(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._nodeid = ""
+        self.retained_view = False
+        self._result_origins = {}
         self._texte_brut = ""
         # Ce qu'il faut pour refaire le rendu a l'identique : le HTML de la
         # trace porte des couleurs resolues au moment ou il a ete construit, et
@@ -643,6 +673,8 @@ class DetailPanel(QWidget):
             entete.setContentsMargins(0, 0, 0, 0)
             if lecteur.name:
                 entete.addWidget(ReaderBadge(lecteur.short_name, lecteur.index))
+            if lecteur.index in self._result_origins:
+                entete.addWidget(PreviousResultBadge(self._result_origins[lecteur.index]))
             entete.addStretch(1)
             entete.addWidget(self._chiffres(propres))
             ligne.addLayout(entete)
@@ -755,6 +787,8 @@ class DetailPanel(QWidget):
 
     def clear(self) -> None:
         self._nodeid = ""
+        self.retained_view = False
+        self._result_origins = {}
         self._texte_brut = ""
         self._dernier = None
         self._dernier_groupe = None
@@ -786,6 +820,17 @@ class DetailPanel(QWidget):
 
     def nodeid(self) -> str:
         return self._nodeid
+
+    def set_result_origins(self, origins):
+        origins = dict(origins)
+        if origins == self._result_origins:
+            return
+        self._result_origins = origins
+        self.retained_view = bool(origins)
+        if self.stack.currentIndex() == self.PAGE_TEST and self._dernier is not None:
+            self.show_test(*self._dernier)
+        elif self.stack.currentIndex() == self.PAGE_GROUPE and self._dernier_groupe is not None:
+            self.show_group(*self._dernier_groupe)
 
     def show_test(self, nodeid: str, readers: tuple[Reader, ...],
                   statuses: dict[int, Status],
@@ -874,7 +919,7 @@ class DetailPanel(QWidget):
         self.results_row.set_rows(
             lignes,
             avec_duree=any(durations.get(l.index) is not None for l in cibles),
-            avec_historique=bool(self._sparklines))
+            avec_historique=bool(self._sparklines), origins=self._result_origins)
 
     def _remplir_corps(self, readers, statuses: dict[int, Status],
                        failures: dict[int, Failure | None],

@@ -3,9 +3,8 @@ from datetime import datetime
 from pathlib import Path
 from time import time_ns
 
-from PySide6.QtCore import QObject, Qt
+from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QLabel, QSizePolicy
 
 from runner.domain.models import Reader
 from runner.domain.tree_results import TreeResultsStore
@@ -26,15 +25,6 @@ class TreeResultsController(QObject):
         self.action.triggered.connect(self.clear)
         toolbar = window.tree_toolbar.layout()
         toolbar.insertWidget(toolbar.indexOf(window.select_all_button), self.button)
-        self.origin = QLabel()
-        self.origin.setObjectName('Faint')
-        self.origin.setTextFormat(Qt.PlainText)
-        self.origin.setWordWrap(True)
-        self.origin.setMinimumWidth(0)
-        self.origin.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        self.origin.hide()
-        window.results.detail.retained_view = False
-        window.results.layout().insertWidget(0, self.origin)
         window.model.layoutChanged.connect(self.refresh)
         window.model.dataChanged.connect(self.refresh)
         window.service.finished.connect(self.completed)
@@ -72,7 +62,7 @@ class TreeResultsController(QObject):
             self._hidden_previous = {}
             w._cleared_run_counts = None
             w.model._run_meta = {}
-            self.origin.hide()
+            w.results.set_result_origins({})
         records = retained if same_workspace and retained is not None else {}
         if self.enabled and w.workspace and retained is None:
             try:
@@ -87,8 +77,7 @@ class TreeResultsController(QObject):
         w._cleared_run_counts = None
         if not self.enabled:
             self._hidden_previous = {}
-        self.origin.hide()
-        w.results.detail.retained_view = False
+        w.results.set_result_origins({})
         meta = dict(run_id=request.run_id, at=datetime.now().astimezone().isoformat(timespec='seconds'), order=time_ns(),
                     config=Path(request.config_path).name if request.config_path else '')
         w.model.begin_run(self.enabled, meta)
@@ -131,7 +120,7 @@ class TreeResultsController(QObject):
         if not self.enabled:
             self._hidden_previous = dict(self.window.model._retained)
             self.window.model.set_retained_results({})
-            self.origin.hide()
+            self.window.results.set_result_origins({})
         else:
             self.collected(True, self._hidden_previous or None)
             self._hidden_previous = {}
@@ -157,11 +146,10 @@ class TreeResultsController(QObject):
         w.model.clear_stress_annotation()
         w.profile_model.clear_statuses()
         w._clear_status_filter()
-        self.origin.hide()
         for panel in (w.results, w.profile_results):
             panel._statuses = {}
             panel._nodeid = ''
-            panel.detail.retained_view = False
+            panel.set_result_origins({})
             panel.detail.clear()
         w.view_failures_button.hide()
         w.view_differences_button.hide()
@@ -171,7 +159,7 @@ class TreeResultsController(QObject):
 
     def show_origin(self, nodeids):
         w = self.window
-        previous = []
+        previous = {}
         for nodeid in nodeids:
             row = w.model._by_nodeid.get(nodeid)
             if row is None:
@@ -190,11 +178,9 @@ class TreeResultsController(QObject):
                         label += ' · ' + when
                     if meta.get('config'):
                         label += ' · ' + str(meta['config'])
-                    previous.append(label)
-        self.origin.setText('\n'.join(dict.fromkeys(previous)) +
-                            ('\nNot executed in the latest run. Output and logs show the latest run.' if previous else ''))
-        self.origin.setVisible(bool(previous))
-        if getattr(w.results.detail, 'retained_view', False) != bool(previous):
-            w.results.detail.retained_view = bool(previous)
-            if w.results._nodeid:
-                w.results._refresh_detail()
+                    previous.setdefault(reader.index, {})[label] = None
+        note = ('\nIncludes results not executed in the latest run.' if len(nodeids) > 1
+                else '\nNot executed in the latest run.')
+        note += ' Output and logs show the latest run.'
+        w.results.set_result_origins({reader: '\n'.join(labels) + note
+                                     for reader, labels in previous.items()})

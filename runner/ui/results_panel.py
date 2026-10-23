@@ -575,6 +575,7 @@ class ResultsPanel(QWidget):
         self.tabs.setTabToolTip(ONGLET_OUTPUT, "Everything pytest wrote  (Ctrl+3)")
         self.tabs.setTabToolTip(ONGLET_LOGS,
                                 "The .log files of the selected test  (Ctrl+4)")
+        self._tab_tooltips = {i: self.tabs.tabToolTip(i) for i in range(self.tabs.count())}
 
         colonne = QVBoxLayout(self)
         colonne.setContentsMargins(0, 0, 0, 0)
@@ -600,6 +601,13 @@ class ResultsPanel(QWidget):
     def show_tab(self, position: int) -> None:
         self.tabs.setCurrentIndex(position)
 
+    def set_result_origins(self, origins):
+        self.detail.set_result_origins(origins)
+        for index in (ONGLET_OUTPUT, ONGLET_LOGS):
+            note = ('\nThe tree includes previous results. Output and logs show the latest run.'
+                    if origins else '')
+            self.tabs.setTabToolTip(index, self._tab_tooltips[index] + note)
+
     def show_output(self) -> None:
         self.show_tab(ONGLET_OUTPUT)
 
@@ -619,6 +627,7 @@ class ResultsPanel(QWidget):
         self._index_echecs.clear()
         self._durations.clear()
         self.detail.clear()
+        self.set_result_origins({})
         self.source.save()
         self.source.clear()
         self.output.set_readers(readers)
@@ -636,6 +645,7 @@ class ResultsPanel(QWidget):
         self._sorties.clear()
         self._index_echecs.clear()
         self._durations.clear()
+        self.set_result_origins({})
         self._refresh_detail()
 
     def set_report(self, rapport: ReaderReport) -> None:

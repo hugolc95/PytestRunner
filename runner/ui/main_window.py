@@ -1202,12 +1202,10 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         self.profile_selection_label = QLabel('Select an execution to inspect its result.')
         self.profile_selection_label.setWordWrap(False)
-        self.profile_selection_label.setFixedHeight(self.profile_selection_label.fontMetrics().height() + 4)
         self.profile_selection_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
-        context_policy = self.profile_selection_label.sizePolicy()
-        context_policy.setRetainSizeWhenHidden(True)
-        self.profile_selection_label.setSizePolicy(context_policy)
         self.profile_results = ResultsPanel(self.profile_result_page)
+        self.profile_selection_label.setObjectName('Faint')
+        self.profile_results.detail.layout().insertWidget(0, self.profile_selection_label)
         for result_panel in (self.results, self.profile_results):
             result_panel.detail.source_requested.connect(lambda location, external, p=result_panel:
                 self._open_source_reference(location, external, panel=p))
@@ -1233,7 +1231,6 @@ class MainWindow(QMainWindow):
         self._profile_counts_timer.timeout.connect(self._rafraichir_compteurs)
         panel_layout = QVBoxLayout(panel)
         panel_layout.setContentsMargins(0, 0, 0, 0)
-        panel_layout.addWidget(self.profile_selection_label)
         panel_layout.addWidget(self.results_stack, 1)
         self.profile_selection_label.hide()
         return panel
@@ -2683,7 +2680,9 @@ class MainWindow(QMainWindow):
 
         self._refresh_live_counts()
         self.results.update_statuses(outcome.nodeid,
-                                     self.model.statuses_for_nodeid(outcome.nodeid))
+                                     self.model.display_statuses_for_nodeid(outcome.nodeid))
+        if hasattr(self, 'tree_results') and outcome.nodeid == self.results._nodeid:
+            self.tree_results.show_origin([outcome.nodeid])
 
     def _refresh_live_counts(self) -> None:
         now = time.monotonic()
