@@ -915,8 +915,8 @@ QPlainTextEdit, QTextEdit {{
 }}
 /* Native text selection must not obscure the current search result. */
 QPlainTextEdit[logSearchActive="true"] {{
-    selection-background-color: {t.search_highlight(current=True)[0]};
-    selection-color: {t.search_highlight(current=True)[1]};
+    selection-background-color: {t.search_highlight()[0]};
+    selection-color: {t.search_highlight()[1]};
 }}
 
 /* ------------------------------------------------------------ progression */

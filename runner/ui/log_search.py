@@ -1,7 +1,7 @@
 """Recherche locale dans un log, sans filtrer ni modifier son contenu."""
 
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QKeySequence, QTextCursor
+from PySide6.QtGui import QColor, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit, QWidget,
 )
@@ -200,13 +200,9 @@ class LogSearchBar(QWidget):
         for index in range(start, end):
             selection = QTextEdit.ExtraSelection()
             selection.cursor = self._cursor(self._matches[index])
-            current = index == self._index
-            background, foreground = t.search_highlight(current)
+            background, foreground = t.search_highlight()
             selection.format.setBackground(QColor(background))
             selection.format.setForeground(QColor(foreground))
-            if current:
-                selection.format.setFontWeight(QFont.Weight.Bold)
-                selection.format.setFontUnderline(True)
             selections.append(selection)
         return selections
 
