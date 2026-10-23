@@ -1,7 +1,7 @@
 """Recherche locale dans un log, sans filtrer ni modifier son contenu."""
 
 from PySide6.QtCore import QEvent, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QKeySequence, QTextCursor
+from PySide6.QtGui import QColor, QFont, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit, QWidget,
 )
@@ -98,6 +98,7 @@ class LogSearchBar(QWidget):
         return True
 
     def _queue_query(self):
+        self._sync_selection_style()
         self._query_changed = True
         self.previous.setEnabled(False)
         self.next.setEnabled(False)
@@ -106,6 +107,16 @@ class LogSearchBar(QWidget):
         else:
             self.counter.setText("…")
             self._timer.start()
+
+    def _sync_selection_style(self):
+        # Qt's native selection is painted above ExtraSelections. Keep the
+        # active match vivid even while focus stays in the search field.
+        active = bool(self.field.text())
+        if self.editor.property('logSearchActive') != active:
+            self.editor.setProperty('logSearchActive', active)
+            self.editor.style().unpolish(self.editor)
+            self.editor.style().polish(self.editor)
+            self.editor.viewport().update()
 
     def _queue_document(self):
         if self.field.text() and not self._timer.isActive():
@@ -190,11 +201,12 @@ class LogSearchBar(QWidget):
             selection = QTextEdit.ExtraSelection()
             selection.cursor = self._cursor(self._matches[index])
             current = index == self._index
-            colour = QColor(t.ACCENT)
-            colour.setAlpha(210 if current else 65)
-            selection.format.setBackground(colour)
+            background, foreground = t.search_highlight(current)
+            selection.format.setBackground(QColor(background))
+            selection.format.setForeground(QColor(foreground))
             if current:
-                selection.format.setForeground(QColor(t.ON_ACCENT))
+                selection.format.setFontWeight(QFont.Weight.Bold)
+                selection.format.setFontUnderline(True)
             selections.append(selection)
         return selections
 

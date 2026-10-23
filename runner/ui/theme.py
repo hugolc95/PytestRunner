@@ -913,6 +913,11 @@ QPlainTextEdit, QTextEdit {{
     selection-color: {t.TEXT};
     padding: {t.SPACE_2}px;
 }}
+/* Native text selection must not obscure the current search result. */
+QPlainTextEdit[logSearchActive="true"] {{
+    selection-background-color: {t.search_highlight(current=True)[0]};
+    selection-color: {t.search_highlight(current=True)[1]};
+}}
 
 /* ------------------------------------------------------------ progression */
 QProgressBar {{

@@ -21,7 +21,8 @@ Les profils conservent également le lecteur affiché entre les étapes.
 Dans **Logs**, une barre **Find in log…** au-dessus de chaque log permet de
 chercher du texte sans masquer les lignes voisines. La recherche ignore la
 casse et traite les caractères tels que `[` ou `.` comme du texte. Les
-occurrences sont surlignées ; le compteur et les flèches permettent de les
+occurrences ont un fond jaune vif et un texte sombre ; l’occurrence active
+est orange, en gras et soulignée, en thème clair comme sombre. Le compteur et les flèches permettent de les
 parcourir en boucle. **Ctrl+F** depuis le log place le curseur dans ce champ,
 **Entrée / F3** passe au résultat suivant, **Maj+Entrée / Maj+F3** au précédent
 et **Échap** efface la recherche. Le bouton de suppression du champ fait de même.

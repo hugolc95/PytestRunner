@@ -47,6 +47,12 @@ def blend(couleur:str,fond:str,opacite:float)->str:
         c=v.lstrip("#"); return tuple(int(c[i:i+2],16) for i in (0,2,4))
     avant,arriere=canaux(couleur),canaux(fond); m=(round(a*opacite+b*(1-opacite)) for a,b in zip(avant,arriere)); return "#"+"".join(f"{v:02x}" for v in m)
 def status_color(status:Status)->str:return STATUS_COLORS.get(status,TEXT_MUTED)
+def search_highlight(current:bool=False)->tuple[str,str]:
+    """Opaque search marks with dark text, independent of log-level colours."""
+    background = ("#ff922b" if is_dark() else "#f08c00") if current else (
+        "#ffe066" if is_dark() else "#ffdf5d")
+    return background, "#171a21"
+
 def divergent_color()->str:
     """Teinte des lignes dont les lecteurs ne rendent pas le meme verdict.
 
