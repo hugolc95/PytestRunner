@@ -630,6 +630,9 @@ class SearchBar(QWidget):
             icons.icon("mdi.magnify", t.TEXT_FAINT), QLineEdit.LeadingPosition)
         self.field.textChanged.connect(self._queue_query)
         self.field.returnPressed.connect(self._submit)
+        # Esc efface la recherche, comme dans les logs. Le reclamer des
+        # ShortcutOverride empeche le raccourci Stop de la fenetre de le voir.
+        self.field.installEventFilter(self)
 
         self.counter = QLabel("")
         self.counter.setObjectName("Faint")
@@ -670,6 +673,18 @@ class SearchBar(QWidget):
         ligne.addWidget(self.next_button)
         ligne.addWidget(self.tests_button)
         ligne.addWidget(self.failures_button)
+
+    def eventFilter(self, watched, event):
+        from PySide6.QtCore import QEvent
+
+        if (watched is self.field
+                and event.type() in (QEvent.ShortcutOverride, QEvent.KeyPress)
+                and event.key() == Qt.Key_Escape):
+            event.accept()
+            if event.type() == QEvent.KeyPress:
+                self.field.clear()
+            return True
+        return super().eventFilter(watched, event)
 
     @property
     def scope(self) -> str:
@@ -1108,6 +1123,25 @@ class StatusRibbon(QWidget):
             # laisse une raie du fond entre deux segments voisins.
             peintre.drawRect(int(depart), 0, int(part + 1), hauteur)
             depart += part
+
+
+def text_input_has_focus() -> bool:
+    """Vrai si Esc appartient au champ de saisie qui a le focus.
+
+    QLineEdit ne consomme pas Esc : sans ce garde, la touche qui sert a
+    abandonner une saisie arretait le run en cours via le raccourci Stop.
+    """
+    from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QComboBox,
+                                   QLineEdit, QTextEdit)
+
+    focus = QApplication.focusWidget()
+    if isinstance(focus, (QLineEdit, QAbstractSpinBox)):
+        return True
+    if isinstance(focus, QComboBox):
+        return focus.isEditable()
+    if isinstance(focus, (QTextEdit, QPlainTextEdit)):
+        return not focus.isReadOnly()
+    return False
 
 
 def separator() -> QFrame:

@@ -1,5 +1,16 @@
 # Pytest Runner GUI
 
+## Échap et changement de workspace
+
+**Échap** arrête le run seulement quand le curseur n’est pas dans un champ de
+saisie. Dans **Find a test…**, Échap efface la recherche ; dans les autres
+champs (chemin du workspace, nom du run, valeurs numériques…), il est ignoré.
+Le bouton **Stop** reste disponible à tout moment.
+
+Si la collecte d’un autre workspace échoue, l’arbre se vide : les tests du
+workspace précédent ne peuvent plus être lancés dans le nouveau dossier. Si
+une nouvelle collecte du même workspace échoue, l’arbre existant est conservé.
+
 ## Relances ciblées et lecteur affiché
 
 **Run only this test / Run only this** dans le menu contextuel relance le test

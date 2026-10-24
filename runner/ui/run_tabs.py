@@ -25,7 +25,7 @@ from runner.domain.models import Status
 from runner.domain.execution_profile import ProfileValidationError
 from runner.ui.run_tabs_strip import RunTabBar, RunTabClose
 from runner.ui import icons, tokens as t
-from runner.ui.widgets import ErrorDialog
+from runner.ui.widgets import ErrorDialog, text_input_has_focus
 
 
 @dataclass(eq=False)
@@ -82,7 +82,8 @@ class DetachedRun(QMainWindow):
             callback = controller.window.close if action.text() == "Quit" else action.trigger
             shortcut.activated.connect(callback)
         stop = QShortcut(QKeySequence("Esc"), self)
-        stop.activated.connect(lambda: controller.active.context.stop_run() if controller.active else None)
+        stop.activated.connect(lambda: controller.active.context.stop_run()
+                               if controller.active and not text_input_has_focus() else None)
         geometry = controller.window.settings.value("runs/detached_geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)

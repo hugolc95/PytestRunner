@@ -101,6 +101,7 @@ from runner.ui.widgets import (
     RemainingPill,
     SearchBar,
     StatusPill,
+    text_input_has_focus,
 )
 
 ORG, APP = "PytestRunner", "Runner"
@@ -1638,6 +1639,10 @@ class MainWindow(QMainWindow):
             # boutons qui declenchent la meme action.
             action.setToolTip(f"{texte}  ({QKeySequence(raccourci).toString()})")
         def invoke():
+            if getattr(slot, "__name__", "") == "stop_run" and text_input_has_focus():
+                # Esc abandonne la saisie en cours ; seul le bouton Stop
+                # arrete un run pendant qu'on tape.
+                return
             context = self.run_tabs.current.context if self.run_tabs else self
             if (self._run_host is None and self.run_tabs and self.run_tabs.active
                     and getattr(slot, "__name__", "") == "stop_run"):
@@ -2240,6 +2245,22 @@ class MainWindow(QMainWindow):
         self.progress.setRange(0, 100)
         self.load_button.setEnabled(True)
         self.status_label.setText("Collection failed")
+        failed_workspace = self.workspace.path if self.workspace else ""
+        if getattr(self, "_tree_workspace", "") != failed_workspace:
+            # L'arbre montre encore les tests du workspace precedent alors que
+            # `self.workspace` designe deja le nouveau : Run lancait ces anciens
+            # nodeids dans un autre dossier. Sans collecte valide, rien a lancer.
+            self._tree_workspace = ""
+            self._collected_environment = None
+            self._active_execution_profile = None
+            self._displayed_profile = None
+            self._profile_selected_key = None
+            self.profile_model.set_tree([])
+            self._set_profile_tree_visible(False)
+            self._markers_by_nodeid = {}
+            self.markers.set_markers([])
+            self._clear_status_filter()
+            self.model.set_tree([])
 
         preferences = (getattr(self, "preferences", None)
                        or getattr(self._run_host, "preferences", None))
