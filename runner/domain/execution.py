@@ -204,6 +204,10 @@ class Collection:
     nodeids: tuple[str, ...] = ()
     markers: dict[str, tuple[str, ...]] = field(default_factory=dict)
     declared: dict[str, str] = field(default_factory=dict)
+    # Fichiers que pytest n'a pas pu importer, quand les autres l'ont ete :
+    # chemin relatif (tel que pytest le nomme) -> {"location", "message",
+    # "body"}, de quoi resumer l'erreur sur la ligne et la detailler ensuite.
+    broken_files: dict[str, dict[str, str]] = field(default_factory=dict)
 
     def __len__(self) -> int:
         return len(self.nodeids)
@@ -263,8 +267,28 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
                 f"Could not start {interpreter}: {exc}",
                 traceback_text=traceback.format_exc(), **context) from exc
 
+        broken_files: dict[str, dict[str, str]] = {}
+        if process.returncode == 2:
+            # Collecte interrompue. Si seuls des fichiers de tests sont en
+            # cause et que d'autres ont ete collectes, pytest les liste quand
+            # meme : un fichier casse ne doit pas masquer toute la suite.
+            nodeids = parsing.parse_collect_only(process.stdout)
+            # L'interruption elle-meme laisse une entree "execution" sans
+            # nodeid : seules les erreurs de collecte disent qui est casse.
+            errors = [d for d in diagnostics.read_diagnostics(diagnostic_file)
+                      if d["kind"] == "collection"]
+            if nodeids and errors and all(
+                    d["kind"] == "collection" and _is_test_file(d["nodeid"])
+                    for d in errors):
+                for d in errors:
+                    broken_files[d["nodeid"]] = {
+                        "location": diagnostics.diagnostic_location(d),
+                        "message": diagnostics.format_errors([d]).splitlines()[-1],
+                        "body": d.get("body") or d.get("message") or "",
+                    }
+
         # 5 = aucun test collecte. Ce n'est pas une erreur, juste un dossier vide.
-        if process.returncode not in (0, 5):
+        if process.returncode not in (0, 5) and not broken_files:
             sortie = "\n".join(filter(None, (process.stdout, process.stderr)))
             if "No module named pytest" in sortie:
                 raise diagnostics.CollectionError(
@@ -289,7 +313,18 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
     connus = set(nodeids)
     par_nodeid = {k: v for k, v in par_nodeid.items() if k in connus}
 
-    return Collection(tuple(nodeids), par_nodeid, descriptions)
+    return Collection(tuple(nodeids), par_nodeid, descriptions, broken_files)
+
+
+def _is_test_file(nodeid: str) -> bool:
+    """Vrai pour un module de tests, pas pour un conftest ni un dossier.
+
+    Un conftest casse change le comportement de tous les tests de son dossier :
+    afficher ceux-ci comme s'ils etaient sains serait trompeur.
+    """
+    path = str(nodeid or "").replace("\\", "/")
+    return (bool(path) and "::" not in path and path.endswith(".py")
+            and path.rsplit("/", 1)[-1] != "conftest.py")
 
 
 class ReaderRun:
@@ -362,18 +397,20 @@ class ReaderRun:
         return env
 
     def run(self, on_line: Callable[[str], None],
-            on_outcome: Callable[[Outcome], None]) -> ReaderReport:
+            on_outcome: Callable[[Outcome], None],
+            on_duration: Callable[[str, float], None] | None = None) -> ReaderReport:
         try:
-            return self._execute(on_line, on_outcome)
+            return self._execute(on_line, on_outcome, on_duration)
         finally:
             self.pause_control.close()
 
-    def _execute(self, on_line, on_outcome):
+    def _execute(self, on_line, on_outcome, on_duration=None):
         """Run one logical reader run, isolating each TestSuite in its own pytest."""
         start = time.monotonic()
         report = ReaderReport(reader=self.reader, counts={})
         output: list[str] = []
         verdicts: dict[str, Status] = {}
+        live_durations: dict[str, float] = {}
         resolver = parsing.NodeidResolver(self.request.nodeids)
         groups = _group_nodeids_by_suite(self.request.workspace, self.request.nodeids)
         final_junit = self._junit_path()
@@ -442,6 +479,15 @@ class ReaderRun:
                             except (ValueError, KeyError, TypeError):
                                 pass
                         result = parsing.parse_status_line(line)
+                        measured = parsing.parse_duration_line(line)
+                        if measured is not None:
+                            # Canal a part : la ligne verbeuse de pytest a
+                            # souvent deja livre le verdict, et le renvoyer
+                            # doublerait l'execution dans l'historique.
+                            measured_nodeid = resolver.resolve(measured[0])
+                            live_durations[measured_nodeid] = measured[1]
+                            if on_duration is not None:
+                                on_duration(measured_nodeid, measured[1])
                         protocol = parsing.is_outcome_protocol_line(line)
                         if protocol:
                             skip_blank_after_protocol = True
@@ -504,9 +550,12 @@ class ReaderRun:
             report.exit_code = -1
         report.cancelled = self._cancelled
         report.output = "".join(output)
+        # Le releve --durations masque les tests de moins de 5 ms : les durees
+        # mesurees en direct les completent.
         report.durations = {
-            resolver.resolve(nodeid): duration
-            for nodeid, duration in parsing.parse_durations(report.output).items()
+            **live_durations,
+            **{resolver.resolve(nodeid): duration
+               for nodeid, duration in parsing.parse_durations(report.output).items()},
         }
 
         if final_junit and partial_junits:

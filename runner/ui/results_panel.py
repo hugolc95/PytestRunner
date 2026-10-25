@@ -750,6 +750,15 @@ class ResultsPanel(QWidget):
         self.source.show_file(source, jump_nodeid)
         self.logs.clear()
 
+    def show_collection_error(self, path: str, name: str, message: str,
+                              source: Path | None = None) -> None:
+        """Un fichier que pytest n'a pas pu importer : son erreur, et sa source."""
+        self._nodeid = ""
+        self._statuses = {}
+        self.detail.show_collection_error(path, name, message)
+        self.source.show_file(source, "")
+        self.logs.clear()
+
     def _duree_totale(self, reader_index: int, nodeids: tuple[str, ...]) -> float | None:
         """Somme des durees connues de ces nodeids pour ce lecteur.
 

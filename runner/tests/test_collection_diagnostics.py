@@ -18,7 +18,8 @@ def test_collection_keeps_all_tracebacks_locations_and_process_context(tmp_path)
     helper.write_text("def initialize():\n    raise RuntimeError('card initialization failed')\n")
     (tmp_path / "test_import.py").write_text("from card_dependency import initialize\ninitialize()\n")
     (tmp_path / "test_syntax.py").write_text("def test_broken(:\n    pass\n")
-    (tmp_path / "test_good.py").write_text("def test_ok(): pass\n")
+    # Pas de fichier sain ici : avec un test valide, la collecte devient
+    # partielle (voir test_partial_collection_durations.py).
     with pytest.raises(diagnostics.CollectionError) as raised:
         execution.collect(str(tmp_path), sys.executable)
     error = raised.value

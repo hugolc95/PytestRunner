@@ -42,6 +42,22 @@ _SEVERITE = {
 }
 
 
+def failure_summary(counts) -> str:
+    """`8 failed · 1 error`, ou "" si rien n'a echoue.
+
+    Les deux restent separes : additionnes, ils affichaient « 9 failed » a
+    cote de pastilles qui disaient 8 FAILED et 1 ERROR.
+    """
+    failed = counts.get(Status.FAILED, 0)
+    errors = counts.get(Status.ERROR, 0)
+    parts = []
+    if failed:
+        parts.append(f"{failed} failed")
+    if errors:
+        parts.append(f"{errors} error{'s' if errors != 1 else ''}")
+    return " · ".join(parts)
+
+
 def worst(statuses) -> Status:
     """Etat le plus grave d'un ensemble, PENDING si l'ensemble est vide."""
     retenus = list(statuses)
@@ -72,6 +88,8 @@ class TestNode:
     kind: Kind
     nodeid: str = ""
     children: list["TestNode"] = field(default_factory=list)
+    # Module que pytest n'a pas pu importer : visible, jamais executable.
+    collection_error: str = ""
 
     @property
     def is_leaf(self) -> bool:

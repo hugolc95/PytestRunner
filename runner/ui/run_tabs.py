@@ -21,7 +21,7 @@ from PySide6.QtWidgets import (
 )
 
 from runner.domain.execution import Collection
-from runner.domain.models import Status
+from runner.domain.models import Status, failure_summary
 from runner.domain.execution_profile import ProfileValidationError
 from runner.ui.run_tabs_strip import RunTabBar, RunTabClose
 from runner.ui import icons, tokens as t
@@ -858,7 +858,7 @@ class RunTabsController(QObject):
 
     def presentation(self, entry):
         counts = entry.context._run_status_counts()
-        failures = counts.get(Status.FAILED, 0) + counts.get(Status.ERROR, 0)
+        failures = failure_summary(counts)
         if entry.state == "waiting":
             return f"Waiting {self.queue.index(entry) + 1}", t.divergent_color(), "mdi.clock-outline"
         if entry.state == "running":
@@ -870,7 +870,7 @@ class RunTabsController(QObject):
             return "Stopped", t.divergent_color(), "mdi.stop-circle-outline"
         if entry.state == "finished":
             if failures:
-                return f"Failed · {failures} failures/errors", t.status_color(Status.FAILED), "mdi.alert-circle-outline"
+                return f"Failed · {failures}", t.status_color(Status.FAILED), "mdi.alert-circle-outline"
             if sum(counts.values()) < entry.progress[1]:
                 return "Incomplete", t.divergent_color(), "mdi.alert-outline"
             if counts.get(Status.PASSED):

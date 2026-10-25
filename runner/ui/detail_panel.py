@@ -651,6 +651,34 @@ class DetailPanel(QWidget):
         self._remplir_echecs(readers, failures, failure_details, failure_statuses)
         self.failures_title.setVisible(not compact)
 
+    def show_collection_error(self, path: str, name: str, message: str) -> None:
+        """Fiche d'un module ecarte a la collecte : ni test, ni resultat.
+
+        La fiche de groupe ordinaire annoncait « 0 test, not run yet, nothing
+        is failing » -- tout le contraire d'un fichier casse.
+        """
+        self._dernier_groupe = None
+        self._nodeid = ""
+        self.stack.setCurrentIndex(self.PAGE_GROUPE)
+        self.group_path.setText(path)
+        self.group_path.setVisible(bool(path))
+        self.group_name.setText(name)
+        self.group_name.setToolTip(f"{path} / {name}" if path else name)
+        self.group_total.setText("Collection error · not runnable")
+        self.group_summary.hide()
+        while self._ribbons.count():
+            element = self._ribbons.takeAt(0)
+            if element.widget() is not None:
+                element.widget().deleteLater()
+        self.issue_filters.setVisible(False)
+        self.failures_title.setVisible(True)
+        self.failures_title.setText("pytest could not import this file. Fix it, then Collect again.")
+        self.failures.clear()
+        item = QListWidgetItem(message)
+        item.setForeground(QColor(t.status_color(Status.ERROR)))
+        item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+        self.failures.addItem(item)
+
     def _remplir_rubans(self, readers, counts: dict, compact: bool = False) -> None:
         while self._ribbons.count():
             element = self._ribbons.takeAt(0)

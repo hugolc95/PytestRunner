@@ -8,6 +8,7 @@ from runner.domain.ansi import strip_ansi
 from runner.domain.models import Status
 
 OUTCOME_PREFIX = "PYTESTRUNNER_OUTCOME\t"
+DURATION_PREFIX = "PYTESTRUNNER_DURATION\t"
 
 _STATUTS = "PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS"
 
@@ -54,7 +55,21 @@ def parse_status_line(ligne: str) -> tuple[str, Status] | None:
 
 def is_outcome_protocol_line(ligne: str) -> bool:
     """Vrai pour une ligne de transport interne, a ne pas montrer a l'UI."""
-    return strip_ansi(ligne).strip().startswith(OUTCOME_PREFIX)
+    return strip_ansi(ligne).strip().startswith((OUTCOME_PREFIX, DURATION_PREFIX))
+
+
+def parse_duration_line(ligne: str) -> tuple[str, float] | None:
+    """(nodeid, secondes) pour la duree qu'emet le plugin avant un verdict."""
+    nue = strip_ansi(ligne).strip()
+    if not nue.startswith(DURATION_PREFIX):
+        return None
+    morceaux = nue.split("\t", 2)
+    if len(morceaux) != 3 or not morceaux[2]:
+        return None
+    try:
+        return morceaux[2], float(morceaux[1])
+    except ValueError:
+        return None
 
 
 class NodeidResolver:

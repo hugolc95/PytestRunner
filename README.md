@@ -1,5 +1,34 @@
 # Pytest Runner GUI
 
+## Collecte partielle, durées et compteurs — v1.4.0
+
+**Fichiers en erreur.** Un fichier de tests que pytest ne peut pas importer
+(erreur de syntaxe, import manquant…) ne bloque plus toute la collecte. Les
+autres tests restent dans l’arbre et peuvent être lancés. Le fichier en erreur
+apparaît à sa place, en couleur d’erreur et sans case à cocher ; son survol
+donne l’emplacement et le message. Le sélectionner affiche l’erreur dans
+**Detail** et le fichier dans **Source**. La barre d’état indique
+« N file(s) could not be collected » et la trace complète est dans
+**Console → Errors**. Corriger le fichier puis **Collect** le réintègre.
+Un `conftest.py` en erreur, ou un workspace dont aucun fichier n’est valide,
+bloque toujours la collecte avec la fenêtre d’erreur habituelle.
+
+**Colonne Duration.** L’arbre affiche la durée de chaque test (setup + call
++ teardown) dès qu’il se termine, sans attendre la fin du run. Avec plusieurs
+lecteurs, la valeur est celle du lecteur le plus long ; le survol détaille
+chaque lecteur. Un dossier, un fichier ou une classe affiche la somme de ses
+tests. Les durées repartent de zéro à chaque nouveau run.
+
+**Compteurs.** Les échecs et les erreurs sont comptés séparément partout :
+« 8 failed · 1 error » dans la barre d’état, dans l’onglet du run et dans la
+notification de fin, comme dans les pastilles de résultats.
+
+**Affichage stable.** Quand l’arbre rétrécit, la colonne des noms cède la
+place : Status et Duration restent visibles, et la largeur choisie revient
+quand l’espace le permet. Run et Pause occupent une seule et même case :
+lancer, mettre en pause, reprendre ou arrêter ne déplace plus ni le bouton, ni
+son icône, ni Stop et Re-run.
+
 ## Échap et changement de workspace
 
 **Échap** arrête le run seulement quand le curseur n’est pas dans un champ de

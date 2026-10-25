@@ -9,6 +9,7 @@ from PySide6.QtCore import QTimer
 from runner.domain.duration import format_duration
 from runner.domain import history
 from runner.domain.history import RunEntry
+from runner.domain.models import failure_summary
 from runner.services.finalize_service import RunArchiveWorker
 
 
@@ -100,11 +101,15 @@ def install() -> None:
         self.remaining_pill.setVisible(False)
 
         cancelled = any(r.cancelled for r in rapports)
-        failures = sum(r.failed for r in rapports)
+        counts = {}
+        for rapport in rapports:
+            for status, count in rapport.counts.items():
+                counts[status] = counts.get(status, 0) + count
+        failures = failure_summary(counts)
         if cancelled:
             summary = "Run stopped"
         elif failures:
-            summary = f"{failures} failed"
+            summary = failures
         else:
             summary = "All tests passed"
 

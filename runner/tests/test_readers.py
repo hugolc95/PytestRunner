@@ -120,7 +120,7 @@ class _FauxRun:
     def cancel(self) -> None:
         self._annule = True
 
-    def run(self, on_line, on_outcome):
+    def run(self, on_line, on_outcome, on_duration=None):
         debut = time.monotonic()
         _FauxRun.journal.append(("debut", self._reader.index, debut))
         duree = self.durees.get(self._reader.index, self.duree)

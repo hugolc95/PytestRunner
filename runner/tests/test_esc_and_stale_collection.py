@@ -119,7 +119,9 @@ def test_failed_recollection_of_the_same_workspace_keeps_its_tree(
     rows = window.model.rowCount()
     assert rows > 0
 
-    (tmp_path / "test_broken.py").write_text("def test_x(:\n    pass\n")
+    # Un conftest casse fait echouer toute la collecte ; un simple fichier de
+    # tests casse ne donnerait qu'une collecte partielle.
+    (tmp_path / "conftest.py").write_text("import missing_module_stale_xyz\n")
     collect(window, qtbot, tmp_path)
     assert window.status_label.text() == "Collection failed"
     assert window.model.rowCount() == rows

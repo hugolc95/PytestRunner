@@ -15,7 +15,9 @@ from pathlib import Path
 
 from PySide6.QtCore import (
     QEasingCurve,
+    QEvent,
     QModelIndex,
+    QObject,
     QParallelAnimationGroup,
     QPropertyAnimation,
     QSettings,
@@ -58,10 +60,10 @@ from runner.domain.duration import format_duration
 from runner.domain import history, failures as failures_mod
 from runner.domain import interpreter as interpreter_mod
 from runner.domain.execution_profile import ExecutionProfile, ProfileStore, ProfileValidationError
-from runner.domain.models import Kind, Reader, RunRequest, Status
+from runner.domain.models import Kind, Reader, RunRequest, Status, failure_summary
 from runner.domain.source import path_of as source_path
 from runner.domain.stress import MODE_N_TIMES, MODE_UNTIL_FAIL, StressAttempt, StressSummary
-from runner.domain.tree import build_tree, collapse_single_class
+from runner.domain.tree import add_broken_files, build_tree, collapse_single_class
 from runner.domain.workspace import (
     MODE_SEQUENTIEL,
     Workspace,
@@ -121,6 +123,24 @@ K_SIDEBAR_COLLAPSED = "window/sidebar_collapsed"
 # Fichier de configuration retenu, par workspace. Un projet peut en
 # compter plusieurs, et le premier trouve n'est pas forcement le bon.
 K_CONFIG = "workspace/config"
+
+
+class _LaunchButtonsSync(QObject):
+    """Remesure Run / Pause des que leur police ou leur style change."""
+
+    def __init__(self, window):
+        super().__init__(window)
+        self._window = window
+        self.busy = False
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.setInterval(0)
+        self._timer.timeout.connect(window._equalize_launch_buttons)
+
+    def eventFilter(self, watched, event):
+        if not self.busy and event.type() in (QEvent.FontChange, QEvent.StyleChange):
+            self._timer.start()
+        return False
 
 
 class MainWindow(QMainWindow):
@@ -977,6 +997,7 @@ class MainWindow(QMainWindow):
         self.pause_button.setIcon(icons.icon('mdi.pause', t.status_color(Status.SKIPPED)))
         self.pause_button.setToolTip('Pause after the current test finishes; its setup, execution and teardown complete normally.')
         self.pause_button.clicked.connect(self._toggle_run_pause)
+        self._equalize_launch_buttons()
 
         self.markers = MarkerFilter()
         self.markers.filter_changed.connect(self._on_marker_filter)
@@ -1006,8 +1027,15 @@ class MainWindow(QMainWindow):
         profile_layout.addWidget(self.clear_profile_button)
         self.profile_chip.hide()
 
-        ligne.addWidget(self.run_button)
-        ligne.addWidget(self.pause_button)
+        # Run et Pause partagent UNE case : on change la page affichee, on ne
+        # montre/cache plus deux boutons. Montrer Pause puis cacher Run laissait
+        # Windows peindre une image intermediaire ou les deux s'empilaient :
+        # Pause apparaissait une ligne plus bas et poussait Stop, puis revenait.
+        self.launch_stack = QStackedWidget()
+        self.launch_stack.addWidget(self.run_button)
+        self.launch_stack.addWidget(self.pause_button)
+        self.launch_stack.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        ligne.addWidget(self.launch_stack)
         ligne.addWidget(self.stop_button)
         ligne.addWidget(self.profile_chip)
         ligne.addWidget(self.rerun_button)
@@ -1132,6 +1160,8 @@ class MainWindow(QMainWindow):
         entete.setSectionResizeMode(QHeaderView.Interactive)
         entete.setMinimumSectionSize(48)
         entete.resizeSection(0, 420)
+        from runner.ui.tree_columns import NameColumnFitter
+        self.tree_column_fitter = NameColumnFitter(self.tree)
 
         self.tree_empty = EmptyState(
             "mdi.folder-search-outline",
@@ -1341,11 +1371,7 @@ class MainWindow(QMainWindow):
         self.profile_picker.setVisible(visible)
         self.profile_chip.hide()
         self.run_button.setText('Run profile' if visible else 'Run tests')
-        # Both modes share the full launch column in the structured header.
-        metrics = self.run_button.fontMetrics()
-        self.run_button.setMinimumWidth(max(metrics.horizontalAdvance(label)
-                                           for label in ('Run tests', 'Run profile')) + 64)
-        self.run_button.setMaximumWidth(16777215)
+        self._equalize_launch_buttons()
         self.run_name_button.setText(self._pending_run_name or 'Run name (optional)')
         self.run_name_button.setEnabled(not self.service.busy and self._stress_worker is None)
         name_policy = self.run_name_stack.sizePolicy()
@@ -1960,6 +1986,7 @@ class MainWindow(QMainWindow):
             bouton.setIcon(icons.icon(glyphe, t.TEXT_MUTED))
         self.run_button.setIcon(icons.icon("mdi.play", t.ON_RUN))
         self._style_pause_button()
+        self._equalize_launch_buttons()
 
         for glyphe, bouton in (
                 ("mdi.checkbox-multiple-marked-outline", self.select_all_button),
@@ -2013,10 +2040,18 @@ class MainWindow(QMainWindow):
         self.service.started.connect(self._on_run_started)
         self.service.line.connect(self.results.append_output)
         self.service.outcome.connect(self._on_outcome)
+        self.service.duration.connect(self._on_test_duration)
         self.service.progress.connect(self._on_progress)
         self.service.reader_finished.connect(self.results.set_report)
+        self.service.reader_finished.connect(self._merge_reader_durations)
         self.service.finished.connect(self._on_run_finished)
         self.service.pause_changed.connect(self._on_pause_changed)
+
+    def _on_test_duration(self, reader_index: int, nodeid: str, seconds: float) -> None:
+        self.model.set_duration(nodeid, reader_index, seconds)
+
+    def _merge_reader_durations(self, rapport) -> None:
+        self.model.merge_durations(rapport.reader.index, rapport.durations)
 
     # =====================================================================
     # Workspace
@@ -2130,7 +2165,12 @@ class MainWindow(QMainWindow):
             self.remaining_pill.setVisible(False)
         if not same_workspace:
             self.model.set_disabled_tests({})
-        self.model.set_tree(collapse_single_class(build_tree(nodeids)))
+        broken = getattr(collection, "broken_files", {}) or {}
+        self.model.set_tree(add_broken_files(
+            collapse_single_class(build_tree(nodeids)),
+            {path: f"{item['location']}\n{item['message']}" for path, item in broken.items()}))
+        if broken:
+            self._record_broken_files(broken)
         if hasattr(self, 'disabled_tests'):
             self.disabled_tests.refresh()
         self._stress_counts = None
@@ -2206,6 +2246,9 @@ class MainWindow(QMainWindow):
         details = f"{len(nodeids)} tests"
         if lecteurs:
             details += f" · {len(lecteurs)} readers"
+        if broken:
+            details += (f" · {len(broken)} file{'s' if len(broken) != 1 else ''}"
+                        " could not be collected")
         self.status_label.setText(f"{nom} — {details}")
         self.setWindowTitle(f"{WINDOW_TITLE} — {nom}" if nom else WINDOW_TITLE)
         self._update_actions()
@@ -2217,6 +2260,22 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, lambda: self._open_collected_profile(pending_profile))
         if self._pending_history_run is not None:
             QTimer.singleShot(0, self._launch_pending_history_run)
+
+    def _record_broken_files(self, broken: dict) -> None:
+        """Les fichiers ecartes par la collecte vont dans Console > Errors.
+
+        Pas de fenetre : les autres tests sont la et utilisables. La ligne
+        rouge dans l'arbre et la barre d'etat suffisent a le signaler.
+        """
+        preferences = (getattr(self, "preferences", None)
+                       or getattr(self._run_host, "preferences", None))
+        if preferences is None:
+            return
+        sections = [f"{item['location']}\n{item['body']}" for item in broken.values()]
+        preferences.context_record(
+            self, "errors",
+            f"{len(broken)} file(s) could not be collected; other tests remain available\n\n"
+            + "\n\n".join(sections))
 
     def _tree_paths(self, parent=QModelIndex(), path=()):
         model = self.tree.model()
@@ -2554,6 +2613,45 @@ class MainWindow(QMainWindow):
         else:
             self.service.resume()
 
+    # Tous les libelles que prend la place de lancement, Run comme Pause.
+    LAUNCH_LABELS = ("Run tests", "Run profile", "Add to queue", "Queued",
+                     "Pause", "Cancel pause", "Resume")
+
+    def _equalize_launch_buttons(self) -> None:
+        """Run et Pause occupent la meme place : meme largeur, quel que soit le texte.
+
+        Pause remplace Run pendant un run. A 85 px contre 122, Stop et Re-run
+        glissaient vers la gauche au lancement, puis revenaient avec
+        « Cancel pause » : toute la rangee bougeait sous la souris.
+        """
+        buttons = (self.run_button, self.pause_button)
+        if getattr(self, "_launch_sync", None) is None:
+            # La taille de texte des preferences et le changement de style de
+            # Pause (« Resume » en vert) changent la police APRES ce calcul :
+            # mesurer une fois ne suffisait pas, le gras plus large de la
+            # police reelle redonnait au bouton une largeur a lui.
+            self._launch_sync = _LaunchButtonsSync(self)
+            for button in buttons:
+                button.installEventFilter(self._launch_sync)
+        # La police reelle de chaque bouton, apres feuille de style et preferences.
+        widest = max(button.fontMetrics().horizontalAdvance(label)
+                     for button in buttons for label in self.LAUNCH_LABELS)
+        width = widest + 64
+        # Contenu centre, l'icone glissait a chaque libelle (Pause, Cancel
+        # pause, Resume) : il part d'une marge fixe, qui centre le plus long.
+        inset = max(t.SPACE_2, (width - widest - self.run_button.iconSize().width() - 6) // 2)
+        style = f"QPushButton {{ text-align: left; padding-left: {inset}px; }}"
+        self._launch_sync.busy = True
+        try:
+            for button in buttons:
+                if button.minimumWidth() != width:
+                    button.setMinimumWidth(width)
+                button.setMaximumWidth(16777215)
+                if button.styleSheet() != style:
+                    button.setStyleSheet(style)
+        finally:
+            self._launch_sync.busy = False
+
     def _style_pause_button(self):
         state = self.service.pause_state
         self.pause_button.setObjectName('Run' if state == 'paused' else 'Pause')
@@ -2885,13 +2983,17 @@ class MainWindow(QMainWindow):
             f"{r.reader.name or 'Test interpreter'}\n{issue}"
             for r in rapports if not r.cancelled for issue in r.issues
         ]
-        echecs = sum(r.failed for r in rapports)
+        comptes = {}
+        for rapport in rapports:
+            for statut, nombre in rapport.counts.items():
+                comptes[statut] = comptes.get(statut, 0) + nombre
+        echecs = failure_summary(comptes)
         if annule:
             resume = "Run stopped"
         elif global_errors:
             resume = "Execution completed with errors"
         elif echecs:
-            resume = f"{echecs} failed"
+            resume = echecs
         else:
             resume = "All tests passed"
         self._set_status_idle(f"{resume} · {format_duration(self._seconds, precision=0)}")
@@ -3021,6 +3123,21 @@ class MainWindow(QMainWindow):
                 self.disabled_tests.show_details(nodeid)
             if hasattr(self, 'tree_results'):
                 self.tree_results.show_origin([nodeid])
+            return
+
+        noeud = self.model.data(premiere, NODE_ROLE)
+        if noeud is not None and noeud.collection_error:
+            chemin, nom = self._situer(premiere)
+            segments = [noeud.name]
+            parent = premiere.parent()
+            while parent.isValid():
+                segments.insert(0, self.model.data(parent, NODE_ROLE).name)
+                parent = parent.parent()
+            source = (source_path(self.workspace.path, "/".join(segments))
+                      if self.workspace else None)
+            self.results.show_collection_error(chemin, nom, noeud.collection_error, source)
+            if hasattr(self, 'tree_results'):
+                self.tree_results.show_origin([])
             return
 
         compteurs, echecs = self.model.subtree_summary(premiere)
@@ -3845,8 +3962,8 @@ class MainWindow(QMainWindow):
         self.run_button.setEnabled(charge and a_lancer and not occupe and cible)
         self.stop_button.setEnabled(occupe)
         self.pause_button.setEnabled(self.service.busy and not self.service._stopping)
-        self.pause_button.setVisible(self.service.busy)
-        self.run_button.setVisible(not self.service.busy)
+        self.launch_stack.setCurrentWidget(
+            self.pause_button if self.service.busy else self.run_button)
         self.act_run.setEnabled(self.run_button.isEnabled())
         self.act_stop.setEnabled(occupe)
         rejouable = (charge and not occupe and cible

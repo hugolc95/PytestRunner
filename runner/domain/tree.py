@@ -240,6 +240,31 @@ def _consommer(node: TestNode, nodeids: list[str], pos: int,
     return groupes, courant
 
 
+def add_broken_files(racines: list[TestNode], broken: dict[str, str]) -> list[TestNode]:
+    """Ajoute a l'arbre les modules dont la collecte a echoue.
+
+    Ils restent a leur place dans l'arborescence, a cote des fichiers sains :
+    c'est la que l'on cherche un fichier, et le dossier montre alors qu'il
+    contient un probleme. Sans enfant ni nodeid, ils ne sont jamais lances.
+    """
+    for chemin, message in broken.items():
+        morceaux = [m for m in chemin.replace("\\", "/").split("/") if m]
+        if not morceaux:
+            continue
+        enfants = racines
+        for dossier in morceaux[:-1]:
+            noeud = next((n for n in enfants if n.name == dossier
+                          and n.kind is Kind.FOLDER), None)
+            if noeud is None:
+                noeud = TestNode(name=dossier, kind=Kind.FOLDER)
+                enfants.append(noeud)
+            enfants = noeud.children
+        if not any(n.name == morceaux[-1] and n.kind is Kind.MODULE for n in enfants):
+            enfants.append(TestNode(name=morceaux[-1], kind=Kind.MODULE,
+                                    collection_error=message or "Collection failed"))
+    return racines
+
+
 def collapse_single_class(racines: list[TestNode]) -> list[TestNode]:
     """Retire les classes uniques, qui n'apportent qu'un niveau a deplier.
 

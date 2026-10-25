@@ -115,8 +115,8 @@ def pytest_runtest_logstart(nodeid, location):
     # stripped from the finished report so it never pollutes logs/history.
     original_reader_run = execution.ReaderRun.run
 
-    def reader_run_without_start_marker(self, on_line, on_outcome):
-        rapport = original_reader_run(self, on_line, on_outcome)
+    def reader_run_without_start_marker(self, on_line, on_outcome, *args, **kwargs):
+        rapport = original_reader_run(self, on_line, on_outcome, *args, **kwargs)
         if _START_PREFIX in rapport.output:
             rapport.output = "".join(
                 ligne for ligne in rapport.output.splitlines(keepends=True)
@@ -278,6 +278,7 @@ def pytest_runtest_logstart(nodeid, location):
             flush_live()
             self.model.clear_running_reader(rapport.reader.index)
             self.results.set_report(rapport)
+            self._merge_reader_durations(rapport)
 
         def run_finished(rapports) -> None:
             flush_live()
@@ -290,6 +291,7 @@ def pytest_runtest_logstart(nodeid, location):
 
         self.service.line.connect(live_line)
         self.service.outcome.connect(self._on_outcome)
+        self.service.duration.connect(self._on_test_duration)
         self.service.progress.connect(self._on_progress)
         self.service.reader_finished.connect(reader_finished)
         self.service.finished.connect(run_finished)

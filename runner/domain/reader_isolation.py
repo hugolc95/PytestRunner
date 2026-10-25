@@ -62,6 +62,8 @@ _erreur = ""
 # workspace. Ce prefixe reste volontairement simple et reserve.
 _OUTCOME_PREFIX = "PYTESTRUNNER_OUTCOME"
 _OUTCOMES = {}
+_DURATION_PREFIX = "PYTESTRUNNER_DURATION"
+_DURATIONS = {}
 _RANK = {"PASSED": 0, "SKIPPED": 1, "FAILED": 2, "ERROR": 3}
 
 
@@ -235,6 +237,9 @@ def _record_outcome(nodeid, status):
 @pytest.hookimpl(trylast=True)
 def pytest_runtest_logreport(report):
     """Retient le verdict final sans dependre du rendu du terminal pytest."""
+    # Setup + call + teardown, comme le releve --durations de pytest.
+    _DURATIONS[report.nodeid] = (_DURATIONS.get(report.nodeid, 0.0)
+                                 + (getattr(report, "duration", 0.0) or 0.0))
     if report.skipped and "PYTEST_XDIST_WORKER" not in os.environ:
         detail = report.longrepr
         reason = getattr(report, "wasxfail", None)
@@ -263,7 +268,12 @@ def pytest_runtest_logreport(report):
 def pytest_runtest_logfinish(nodeid, location):
     """Emet exactement un verdict apres setup, call et teardown."""
     status = _OUTCOMES.pop(nodeid, None)
+    duration = _DURATIONS.pop(nodeid, None)
     if status is not None and "PYTEST_XDIST_WORKER" not in os.environ:
+        if duration is not None:
+            # Avant le verdict : le runner rattache la duree au resultat
+            # qu'il recoit juste apres, sans attendre la fin du run.
+            sys.__stdout__.write("\\n%s\t%.6f\t%s\\n" % (_DURATION_PREFIX, duration, nodeid))
         sys.__stdout__.write("\\n%s\t%s\t%s\\n" % (_OUTCOME_PREFIX, status, nodeid))
         sys.__stdout__.flush()
 '''

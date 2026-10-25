@@ -71,6 +71,7 @@ class _ReaderWorker(QThread):
 
     line = Signal(int, str)
     outcome = Signal(object)
+    duration = Signal(int, str, float)  # lecteur, nodeid, secondes
     done = Signal(object)
 
     def __init__(self, request: RunRequest, reader: Reader, env: dict, parent=None):
@@ -88,6 +89,8 @@ class _ReaderWorker(QThread):
             self._report = self._run.run(
                 on_line=lambda texte: self.line.emit(self._reader.index, texte),
                 on_outcome=self.outcome.emit,
+                on_duration=lambda nodeid, seconds: self.duration.emit(
+                    self._reader.index, nodeid, seconds),
             )
         except Exception as exc:
             # Preparation/IO errors outside pytest must still finish the UI run.
@@ -115,6 +118,7 @@ class RunService(QObject):
     started = Signal(object)          # RunRequest
     line = Signal(int, str)           # index du lecteur, ligne brute
     outcome = Signal(object)          # Outcome
+    duration = Signal(int, str, float)  # lecteur, nodeid, secondes
     progress = Signal(int, int)       # termines, total
     profile_detail = Signal(int, str)
     profile_execution = Signal(int, int, int, str, object)  # position, retry, reader, nodeid, status
@@ -237,6 +241,7 @@ class RunService(QObject):
                 worker._run.pause_control.request()
             worker.line.connect(self._on_live_line)
             worker.outcome.connect(self._on_outcome)
+            worker.duration.connect(self.duration)
             worker.done.connect(self._on_reader_done)
             self._workers.append(worker)
 

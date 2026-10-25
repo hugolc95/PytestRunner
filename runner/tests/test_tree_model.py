@@ -44,7 +44,9 @@ def _racine(model) -> QModelIndex:
 # ------------------------------------------------------------------ structure
 
 def test_one_status_column_per_reader(model):
-    assert model.columnCount() == 1 + len(READERS)
+    # Nom, une colonne par lecteur, puis Duration.
+    assert model.columnCount() == 1 + len(READERS) + 1
+    assert model.headerData(model.duration_column, Qt.Horizontal, Qt.DisplayRole) == "Duration"
     assert model.headerData(1, Qt.Horizontal, Qt.DisplayRole) == "Reader A"
     assert model.headerData(2, Qt.Horizontal, Qt.DisplayRole) == "Reader B"
 
@@ -88,7 +90,7 @@ def test_a_run_status_carries_no_tooltip(model):
 def test_without_readers_a_single_status_column_remains(qapp):
     m = TestTreeModel()
     m.set_tree(build_tree(NODEIDS))
-    assert m.columnCount() == 2
+    assert m.columnCount() == 3  # nom, Status, Duration
 
 
 def test_the_leaves_carry_the_nodeids(model):

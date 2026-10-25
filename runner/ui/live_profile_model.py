@@ -17,6 +17,15 @@ class LiveProfileModel(TestTreeModel):
     def _folder_depth(self, row):
         return max(0, super()._folder_depth(row) - 1)
 
+    # Pas de colonne Duration ici : une ligne est une etape de la sequence,
+    # pas un test, et ses durees ne passent pas par ce modele.
+    @property
+    def duration_column(self) -> int:
+        return -1
+
+    def columnCount(self, parent=QModelIndex()) -> int:
+        return 1 + max(1, len(self._readers))
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.locations = {}

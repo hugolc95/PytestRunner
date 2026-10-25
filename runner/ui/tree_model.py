@@ -14,6 +14,7 @@ from datetime import datetime
 from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 
+from runner.domain.duration import format_duration
 from runner.domain.models import Kind, Reader, Status, TestNode, worst
 from runner.domain.reader_labels import badge_labels
 from runner.ui import icons
@@ -109,6 +110,11 @@ class TestTreeModel(QAbstractItemModel):
         # Le nodeid stress-teste, et le texte court a coller sur sa ligne --
         # voir `set_stress_annotation`.
         self._stress_annotation: tuple[str, str] | None = None
+        # Duree mesuree par test et par lecteur, et somme retenue par
+        # regroupement : la recalculer a chaque image reparcourrait tout un
+        # dossier replie de plusieurs milliers de tests.
+        self._durations: dict[str, dict[int, float]] = {}
+        self._duration_sums: dict[_Row, float | None] = {}
 
     # ------------------------------------------------------------- chargement
 
@@ -120,6 +126,8 @@ class TestTreeModel(QAbstractItemModel):
         self._fresh_counts.clear()
         self._roots = [_Row(n, None, i) for i, n in enumerate(roots)]
         self._by_nodeid = {}
+        self._durations = {}
+        self._duration_sums = {}
         for racine in self._roots:
             for ligne in [racine, *racine.descendants()]:
                 if ligne.node.nodeid:
@@ -161,8 +169,13 @@ class TestTreeModel(QAbstractItemModel):
 
     # ------------------------------------------------------ interface Qt
 
-    def columnCount(self, parent=QModelIndex()) -> int:
+    @property
+    def duration_column(self) -> int:
+        """Derniere colonne, apres celles des lecteurs."""
         return 1 + max(1, len(self._readers))
+
+    def columnCount(self, parent=QModelIndex()) -> int:
+        return self.duration_column + 1
 
     def rowCount(self, parent=QModelIndex()) -> int:
         if parent.column() > 0:
@@ -187,6 +200,15 @@ class TestTreeModel(QAbstractItemModel):
 
     def headerData(self, section: int, orientation, role=Qt.DisplayRole):
         if orientation != Qt.Horizontal:
+            return None
+        if section == self.duration_column:
+            if role == Qt.DisplayRole:
+                return "Duration"
+            if role == Qt.ToolTipRole:
+                return ("Test: setup + call + teardown, longest reader.\n"
+                        "Group: sum of its tests.")
+            if role == Qt.TextAlignmentRole:
+                return int(Qt.AlignRight | Qt.AlignVCenter)
             return None
         if role == Qt.DisplayRole:
             if section == 0:
@@ -264,6 +286,8 @@ class TestTreeModel(QAbstractItemModel):
         def visit(row):
             if row.children:
                 blocked = all([visit(child) for child in row.children])
+            elif row.node.collection_error:
+                blocked = True
             else:
                 blocked = bool(matching_record(self._disabled, self._leaf_nodeid(row)))
             if blocked:
@@ -303,9 +327,13 @@ class TestTreeModel(QAbstractItemModel):
 
         if index.column() == 0:
             return self._data_colonne_nom(ligne, role)
+        if index.column() == self.duration_column:
+            return self._data_colonne_duree(ligne, role)
         return self._data_colonne_statut(ligne, index.column() - 1, role)
 
     def _data_colonne_nom(self, ligne: _Row, role):
+        if ligne.node.collection_error:
+            return self._data_fichier_casse(ligne, role)
         disabled = self.disabled_data(self._activation_targets.get(ligne, ligne.node.nodeid), role)
         if disabled is not None:
             return disabled
@@ -340,6 +368,88 @@ class TestTreeModel(QAbstractItemModel):
             if ligne.node.kind is Kind.FOLDER:
                 return QColor(t.TEXT_MUTED)
         return None
+
+    def _data_fichier_casse(self, ligne: _Row, role):
+        """Un module que pytest n'a pas pu importer : rouge, sans case."""
+        if role == Qt.DisplayRole:
+            return ligne.node.name
+        if role == Qt.DecorationRole:
+            return icons.status_icon(Status.ERROR)
+        if role == Qt.ForegroundRole:
+            return QColor(t.status_color(Status.ERROR))
+        if role == Qt.ToolTipRole:
+            return f"Collection error — not runnable\n{ligne.node.collection_error}"
+        if role == NODE_ROLE:
+            return ligne.node
+        if role == NODEID_ROLE:
+            return ""
+        return None
+
+    def _data_colonne_duree(self, ligne: _Row, role):
+        if role == Qt.TextAlignmentRole:
+            return int(Qt.AlignRight | Qt.AlignVCenter)
+        if role == Qt.BackgroundRole:
+            return self._fond_divergent(ligne)
+        if role not in (Qt.DisplayRole, Qt.ToolTipRole, Qt.ForegroundRole):
+            return None
+        valeur = self.duration_for(ligne)
+        if valeur is None:
+            return None
+        if role == Qt.DisplayRole:
+            return format_duration(valeur, precision=2 if valeur < 10 else 1)
+        if role == Qt.ForegroundRole:
+            return QColor(t.TEXT_MUTED)
+        if ligne.is_leaf and len(self._readers) > 1:
+            parts = self._durations.get(ligne.node.nodeid, {})
+            return "\n".join(
+                f"{reader.short_name}: {format_duration(parts[reader.index], precision=2)}"
+                for reader in self._readers if reader.index in parts)
+        return None
+
+    def duration_for(self, ligne: _Row) -> float | None:
+        """Le plus long lecteur pour un test, la somme pour un regroupement."""
+        if ligne.is_leaf:
+            parts = self._durations.get(ligne.node.nodeid)
+            return max(parts.values()) if parts else None
+        if ligne in self._duration_sums:
+            return self._duration_sums[ligne]
+        valeurs = [v for enfant in ligne.children
+                   if (v := self.duration_for(enfant)) is not None]
+        somme = sum(valeurs) if valeurs else None
+        self._duration_sums[ligne] = somme
+        return somme
+
+    def duration_for_nodeid(self, nodeid: str) -> float | None:
+        ligne = self._by_nodeid.get(nodeid)
+        return self.duration_for(ligne) if ligne is not None else None
+
+    def set_duration(self, nodeid: str, reader_index: int, seconds: float) -> None:
+        """Pose la duree d'un test des qu'il se termine, et repeint sa branche."""
+        ligne = self._by_nodeid.get(nodeid)
+        if ligne is None:
+            return
+        self._durations.setdefault(nodeid, {})[reader_index] = float(seconds)
+        colonne = self.duration_column
+        while ligne is not None:
+            self._duration_sums.pop(ligne, None)
+            index = self.createIndex(ligne.row, colonne, ligne)
+            self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.ToolTipRole])
+            ligne = ligne.parent
+
+    def merge_durations(self, reader_index: int, durations: dict[str, float]) -> None:
+        """Complete avec le releve de fin de lecteur, sans ecraser le direct."""
+        ajout = False
+        for nodeid, seconds in durations.items():
+            if nodeid in self._by_nodeid and reader_index not in self._durations.get(nodeid, {}):
+                self._durations.setdefault(nodeid, {})[reader_index] = float(seconds)
+                ajout = True
+        if ajout:
+            self._duration_sums.clear()
+            self._emit_layout_changed()
+
+    def broken_file_count(self) -> int:
+        return sum(1 for racine in self._roots for ligne in [racine, *racine.descendants()]
+                   if ligne.node.collection_error)
 
     def set_stress_annotation(self, nodeid: str, texte: str) -> None:
         """Colle `texte` a la suite du nom de `nodeid`, dans l'arbre.
@@ -666,6 +776,8 @@ class TestTreeModel(QAbstractItemModel):
         self._retained.clear()
         self._aggregate_counts.clear()
         self._fresh_counts.clear()
+        self._durations.clear()
+        self._duration_sums.clear()
         for racine in self._roots:
             for ligne in [racine, *racine.descendants()]:
                 ligne.statuses.clear()
