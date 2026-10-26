@@ -16,8 +16,8 @@ from __future__ import annotations
 
 import re
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor, QTextFormat, QSyntaxHighlighter
+from PySide6.QtCore import QEvent, Qt
+from PySide6.QtGui import QColor, QKeySequence, QTextCharFormat, QTextCursor, QTextFormat, QSyntaxHighlighter
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -35,6 +35,26 @@ from runner.domain.console import Lens, LensFilter
 from runner.domain.models import Status
 from runner.ui import icons, theme
 from runner.ui import tokens as t
+
+
+# Only remove a logging prefix, never dates/times inside the actual message.
+_LOG_TIMESTAMP_PREFIX = re.compile(
+    r'^\s*\[?(?:\d{4}[-/.]\d{2}[-/.]\d{2}[ T])?'
+    r'\d{2}:\d{2}:\d{2}(?:[.,]\d{1,9})?'
+    r'(?:Z|[+-]\d{2}:?\d{2})?\]?[ \t]*(?:[-|][ \t]*)?'
+    r'(?=\[?(?:DEBUG|INFO|WARN|WARNING|ERROR|ERRO|CRITICAL|FATAL)\b)',
+    re.IGNORECASE,
+)
+
+
+class ConsoleTextEdit(QPlainTextEdit):
+    def event(self, event):
+        # Read-only editors must claim Ctrl+A before the window's tree-wide
+        # "Select all tests" action takes it. Native selection/copy does the rest.
+        if event.type() == QEvent.ShortcutOverride and event.matches(QKeySequence.SelectAll):
+            event.accept()
+            return True
+        return super().event(event)
 
 # Au-dela, la zone de texte devient lente a defiler. Un run de plusieurs
 # milliers de tests depasse largement ce seuil ; c'est la fin qui interesse.
@@ -95,7 +115,7 @@ class ConsoleView(QWidget):
         self._secondary_tools = []
         self.more_tools = None
 
-        self.view = QPlainTextEdit(self)
+        self.view = ConsoleTextEdit(self)
         self.view.setReadOnly(True)
         self.view.setLineWrapMode(QPlainTextEdit.NoWrap)
         self.view.setUndoRedoEnabled(False)
@@ -184,7 +204,8 @@ class ConsoleView(QWidget):
         self.copy_button = QPushButton()
         self.copy_button.setObjectName("IconSm")
         self.copy_button.setIcon(icons.icon("mdi.content-copy", t.TEXT_MUTED))
-        self.copy_button.setToolTip("Copy the whole output")
+        self.copy_button.setToolTip("Copy the displayed log" if self.search is not None
+                                    else "Copy the whole output")
         self.copy_button.clicked.connect(self.copy_all)
 
         ligne.addWidget(self.wrap_button)
@@ -388,7 +409,8 @@ class ConsoleView(QWidget):
     def copy_all(self) -> None:
         from PySide6.QtWidgets import QApplication
 
-        QApplication.clipboard().setText(self.text())
+        QApplication.clipboard().setText(
+            self.view.toPlainText().removesuffix('\n') if self.search is not None else self.text())
 
     def highlight_lines(self, lines=(), error_lines=()) -> None:
         """Surligne des lignes completes, plus fortement pour les erreurs."""
@@ -518,9 +540,20 @@ class ConsoleView(QWidget):
 
     def _ecrire(self, curseur: QTextCursor, ligne: str) -> None:
         if not ansi.contient_ansi(ligne):
+            if self.search is not None:
+                ligne = _LOG_TIMESTAMP_PREFIX.sub('', ligne, count=1)
             curseur.insertText(ligne + "\n")
             return
-        for contenu, style in ansi.parse_ansi(ligne):
+        parts = ansi.parse_ansi(ligne)
+        prefix = (_LOG_TIMESTAMP_PREFIX.match(''.join(text for text, _ in parts))
+                  if self.search is not None else None)
+        remaining = prefix.end() if prefix else 0
+        for contenu, style in parts:
+            skip = min(remaining, len(contenu))
+            remaining -= skip
+            contenu = contenu[skip:]
+            if not contenu:
+                continue
             if style.neutre:
                 curseur.insertText(contenu)
             else:

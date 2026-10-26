@@ -1,5 +1,16 @@
 # Pytest Runner GUI
 
+## Logs lisibles et sélection du texte — v1.4.6
+
+Les timestamps en début de ligne sont masqués dans les logs affichés par
+l’interface. Les niveaux INFO/ERROR et les dates présentes dans les messages
+restent visibles ; les fichiers originaux conservent leur contenu complet.
+Le bouton de copie des logs copie le texte affiché, sans les timestamps.
+
+**Ctrl+A** dans un panneau Logs ou Output sélectionne son texte, sans modifier
+la sélection des tests. Dans le champ de recherche d’un log, il sélectionne
+uniquement le texte de recherche.
+
 ## Tous les lecteurs dans Run tests — v1.4.5
 
 La liste du lecteur principal (**Run tests → Execution**) montre maintenant
