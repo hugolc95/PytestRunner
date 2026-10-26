@@ -23,6 +23,65 @@ def find(log, text):
     log.search.refresh()
 
 
+@pytest.mark.parametrize('prefix', [
+    '2026-10-27 00:31:45,233 - ',
+    '2026-10-27T00:31:45.233Z | ',
+    '[2026-10-27 00:31:45.233] ',
+    '00:31:45,233 - ',
+])
+def test_log_hides_timestamp_prefix_but_keeps_message_dates_and_original(log, prefix):
+    message = 'INFO - Card expires at 2027-10-27 00:31:45,233'
+    original = prefix + message
+    log.set_text(original)
+    assert log.view.toPlainText().rstrip('\n') == message
+    assert log.text() == original
+    log.copy_all()
+    from PySide6.QtWidgets import QApplication
+    assert QApplication.clipboard().text() == message
+    log.restyle()
+    assert log.view.toPlainText().rstrip('\n') == message
+
+
+def test_live_coloured_log_preserves_lines_search_and_error_navigation(log):
+    log.append('\x1b[31m2026-10-27 00:31:45,233 - ER')
+    log.append('ROR - rejected\x1b[0m\n2026-10-27 00:31:45,234 - INFO - accepted\n')
+    assert log.view.toPlainText() == 'ERROR - rejected\nINFO - accepted\n'
+    find(log, 'accepted')
+    assert log.view.textCursor().selectedText() == 'accepted'
+    assert log.view.textCursor().blockNumber() == 1
+    log.navigate_error(-1)
+    assert log.view.textCursor().selectedText() == 'ERROR - rejected'
+    log.set_text('2026-10-27 00:31:45 is the message, not a logging prefix')
+    assert log.view.toPlainText().startswith('2026-10-27 00:31:45 is')
+
+
+@pytest.mark.parametrize('show_lens', [False, True])
+def test_ctrl_a_selects_active_log_or_output_instead_of_tests(qtbot, show_lens):
+    widget = ConsoleView(show_lens=show_lens)
+    qtbot.addWidget(widget)
+    tree_calls = []
+    action = QAction(widget)
+    action.setShortcut(QKeySequence.SelectAll)
+    action.triggered.connect(lambda: tree_calls.append(True))
+    widget.addAction(action)
+    original = '2026-10-27 00:31:45,233 - INFO - first\nsecond'
+    widget.set_text(original)
+    widget.show()
+    widget.activateWindow()
+    widget.view.setFocus()
+    qtbot.keyClick(widget.view, Qt.Key_A, Qt.ControlModifier)
+    assert widget.view.textCursor().selectedText().replace('\u2029', '\n') == widget.view.toPlainText()
+    assert not tree_calls
+    if show_lens:
+        assert widget.view.toPlainText().startswith('2026-10-27')
+    else:
+        widget.search.field.setText('first')
+        widget.search.field.setFocus()
+        qtbot.keyClick(widget.search.field, Qt.Key_A, Qt.ControlModifier)
+        assert widget.search.field.selectedText() == 'first'
+        assert not tree_calls
+
+
 def test_literal_case_insensitive_search_preserves_context_and_ansi(log):
     log.set_text("\x1b[31mERROR [9E EE]\x1b[0m\ncontext\ninfo [9e ee]\n")
     before = log.text()
