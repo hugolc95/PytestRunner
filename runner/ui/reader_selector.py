@@ -1,7 +1,7 @@
 """Compact primary-reader editor using the workspace's test interpreter."""
 import json
 
-from PySide6.QtCore import QProcess, QProcessEnvironment, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QProcess, QProcessEnvironment, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter
 from PySide6.QtWidgets import QComboBox, QLineEdit, QStyle
 
@@ -35,6 +35,17 @@ class ReaderSelector(QComboBox):
         self._timeout.setSingleShot(True)
         self._timeout.timeout.connect(self._timed_out)
         self._expired = False
+        # Contexte pour lequel la liste des lecteurs a ete obtenue.
+        self._found_context = None
+
+    def changeEvent(self, event):
+        super().changeEvent(event)
+        # La fenetre desactive la liste pendant une collecte ou un run. Une
+        # decouverte tombee pendant ce temps abandonnait sans reessayer : la
+        # liste ne montrait que les lecteurs deja ecrits dans la config.
+        if (event.type() == QEvent.EnabledChange and self.isEnabled()
+                and self._context and self._found_context != self._context):
+            QTimer.singleShot(0, self.discover)
 
     def set_context(self, workspace, interpreter, value, known=()):
         context = (workspace, interpreter, value, tuple(known))
@@ -68,6 +79,9 @@ class ReaderSelector(QComboBox):
         self.view().setMinimumWidth(min(max(self.width(), width),
                                        self.screen().availableGeometry().width()))
         super().showPopup()
+        # Ouvrir la liste la remet a jour, comme « Refresh available readers »
+        # dans la configuration : un lecteur branche depuis y apparait.
+        self.discover()
 
     def discover(self):
         if (not self.isEnabled() or not self._context
@@ -103,6 +117,7 @@ class ReaderSelector(QComboBox):
             self.setToolTip(message + " Manual entry remains available.")
             return
         names = tuple(dict.fromkeys(name.strip() for name in names if name.strip()))
+        self._found_context = self._context
         self._set_names(names)
         self.setToolTip(f"{len(names)} available HubReader devices. Select or enter the primary reader.")
 

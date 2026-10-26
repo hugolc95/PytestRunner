@@ -1,5 +1,16 @@
 # Pytest Runner GUI
 
+## Tous les lecteurs dans Run tests — v1.4.5
+
+La liste du lecteur principal (**Run tests → Execution**) montre maintenant
+tous les lecteurs HubReader détectés, comme dans la configuration YAML. La
+recherche des lecteurs partait pendant la collecte des tests, alors que la
+liste est désactivée à ce moment-là : elle abandonnait sans réessayer, et la
+liste ne montrait que les lecteurs déjà écrits dans le fichier de
+configuration. Elle reprend maintenant dès que la liste redevient utilisable.
+Ouvrir la liste relance aussi la recherche, comme **Refresh available
+readers** dans la configuration : un lecteur branché entre-temps y apparaît.
+
 ## Colonnes de résultat collées à droite — v1.4.4
 
 Les colonnes des lecteurs (et Duration quand elle est affichée) restent
