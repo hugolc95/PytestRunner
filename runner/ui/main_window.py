@@ -1193,6 +1193,8 @@ class MainWindow(QMainWindow):
         self.profile_tree.header().setSectionResizeMode(QHeaderView.Interactive)
         self.profile_tree.header().setMinimumSectionSize(48)
         self.profile_tree.header().resizeSection(0, 420)
+        from runner.ui.tree_columns import NameColumnFitter
+        self.profile_tree_column_fitter = NameColumnFitter(self.profile_tree)
         self.profile_tree.selectionModel().currentChanged.connect(self._select_profile_execution)
         self.left_stack.addWidget(self.profile_tree)
         self.tree_view_switch.attach(self.tree.header())

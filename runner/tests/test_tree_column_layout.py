@@ -177,13 +177,11 @@ def test_widths_are_kept_after_a_restart(make_window, monkeypatch):
     w = make_window()
     as_user(w, monkeypatch)
     w.tree.header().resizeSection(1, 140)
-    w.tree.header().resizeSection(0, 300)
     w.tree_columns._save()
     w.close()
 
     again = make_window()
     assert again.tree.columnWidth(1) == 140
-    assert again.tree_columns._fitter._preferred == 300
 
 
 def test_reset_restores_the_computed_widths(make_window, monkeypatch):
@@ -191,14 +189,40 @@ def test_reset_restores_the_computed_widths(make_window, monkeypatch):
     defaut = w.tree.columnWidth(1)
     as_user(w, monkeypatch)
     w.tree.header().resizeSection(1, 200)
-    w.tree.header().resizeSection(0, 250)
 
     w.tree_columns.reset()
     assert w.tree.columnWidth(1) == defaut
-    assert w.tree_columns._fitter._preferred == TreeColumnLayout.NAME_DEFAULT
     w.model.set_readers(DEUX)
     w._size_reader_columns()
     assert w.tree.columnWidth(1) == defaut
+
+
+def _bord_droit(tree):
+    header = tree.header()
+    return max(header.sectionViewportPosition(i) + header.sectionSize(i)
+               for i in range(header.count()) if not header.isSectionHidden(i))
+
+
+@pytest.mark.parametrize("arbre", ["tree", "profile_tree"])
+def test_result_columns_stay_flush_right_without_duration(make_window, qtbot, arbre):
+    """Sans Duration, les colonnes des lecteurs restent collees au bord droit :
+    la colonne Test prend la place liberee au lieu de laisser un vide."""
+    w = make_window()
+    w.resize(1400, 800)
+    w.show()
+    qtbot.waitExposed(w)
+    if arbre == "profile_tree":
+        w.profile_model.set_readers(DEUX)
+        w._size_reader_columns(w.profile_tree, w.profile_model)
+        w._set_profile_tree_visible(True)
+    tree = getattr(w, arbre)
+    qtbot.waitUntil(lambda: _bord_droit(tree) == tree.viewport().width())
+
+    if arbre == "tree":
+        w.set_duration_column_visible(False)
+        qtbot.waitUntil(lambda: _bord_droit(tree) == tree.viewport().width())
+        w.set_duration_column_visible(True)
+        qtbot.waitUntil(lambda: _bord_droit(tree) == tree.viewport().width())
 
 
 def test_dragging_a_column_edge_with_the_mouse_is_remembered(make_window, qtbot):

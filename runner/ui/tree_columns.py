@@ -6,13 +6,16 @@ from PySide6.QtCore import QEvent, QObject, QTimer
 
 
 class NameColumnFitter(QObject):
-    """La colonne des noms cede la place, jamais les colonnes Status / Duration.
+    """La colonne des noms prend toute la place que laissent les autres.
 
-    Sa largeur reste celle que l'utilisateur a choisie (ou restauree) tant
-    qu'elle tient. Quand le panneau devient trop etroit, elle se reduit juste
-    assez pour que les colonnes de droite restent a l'ecran ; elle retrouve sa
-    largeur choisie des que la place revient. Avant, ces colonnes partaient
-    hors champ derriere une barre de defilement horizontale.
+    Les colonnes de resultat (lecteurs, Duration) restent collees au bord
+    droit de l'arbre : avec une largeur fixe pour les noms, masquer Duration
+    ou avoir peu de lecteurs laissait un vide a droite des resultats. Et quand
+    le panneau devient etroit, c'est encore elle qui cede la place, jusqu'a
+    MINIMUM ; au-dela, une barre de defilement horizontale apparait plutot que
+    d'ecraser les noms.
+
+    Les autres colonnes se reglent a la souris ; la colonne des noms suit.
     """
 
     MINIMUM = 100
@@ -20,13 +23,11 @@ class NameColumnFitter(QObject):
     def __init__(self, tree, parent=None):
         super().__init__(parent or tree)
         self._tree = tree
-        self._preferred = tree.columnWidth(0)
         self._fitting = False
         header = tree.header()
         header.sectionResized.connect(self._on_section_resized)
+        header.sectionCountChanged.connect(lambda *_: self._timer.start())
         tree.viewport().installEventFilter(self)
-        # Apres un changement de lecteurs, la largeur des colonnes de droite
-        # change sans que le panneau bouge.
         self._timer = QTimer(self)
         self._timer.setSingleShot(True)
         self._timer.setInterval(0)
@@ -39,20 +40,19 @@ class NameColumnFitter(QObject):
             self._timer.start()
         return False
 
-    def _on_section_resized(self, index: int, _old: int, new: int) -> None:
-        if self._fitting:
-            return
-        if index == 0:
-            self._preferred = new
-        else:
+    def _on_section_resized(self, index: int, _old: int, _new: int) -> None:
+        if not self._fitting:
+            # Une autre colonne a change, ou on a tire le bord des noms : la
+            # colonne des noms reprend exactement la place restante.
             self._timer.start()
 
     def fit(self) -> None:
         header = self._tree.header()
+        if header.count() == 0:
+            return
         others = sum(header.sectionSize(i) for i in range(1, header.count())
                      if not header.isSectionHidden(i))
-        available = self._tree.viewport().width() - others
-        width = max(self.MINIMUM, min(self._preferred, available))
+        width = max(self.MINIMUM, self._tree.viewport().width() - others)
         if width == header.sectionSize(0):
             return
         self._fitting = True
@@ -68,15 +68,14 @@ class TreeColumnLayout(QObject):
 
     Les largeurs etaient recalculees a chaque collecte qui changeait de
     lecteurs, et a chaque demarrage : un reglage fait a la souris ne tenait
-    pas. Elles sont maintenant retenues par IDENTITE de colonne -- Test, nom du
+    pas. Elles sont maintenant retenues par IDENTITE de colonne -- nom du
     lecteur, Duration -- et non par position, qui change avec le nombre de
     lecteurs. Seuls les gestes de l'utilisateur sont retenus : les ajustements
-    automatiques (cession de place de la colonne Test, remise a zero du
-    modele) ne doivent pas ecraser son choix.
+    automatiques (remise a zero du modele) ne doivent pas ecraser son choix.
+    La colonne Test, elle, prend la place restante (`NameColumnFitter`).
     """
 
     SETTINGS_KEY = "tree/column_widths"
-    NAME_DEFAULT = 420
     # Une duree de plus d'une heure reste lisible en elargissant la colonne.
     DURATION_SAMPLE = "10 min 59.9s"
 
@@ -99,8 +98,6 @@ class TreeColumnLayout(QObject):
         self._save_timer.setSingleShot(True)
         self._save_timer.setInterval(300)
         self._save_timer.timeout.connect(self._save)
-        if "name" in self._widths:
-            self._set_name_width(self._widths["name"])
 
     # ------------------------------------------------------------ memoire
 
@@ -114,7 +111,7 @@ class TreeColumnLayout(QObject):
         if not isinstance(data, dict):
             return {}
         return {str(k): int(v) for k, v in data.items()
-                if isinstance(v, (int, float)) and 24 <= v <= 4000}
+                if k != "name" and isinstance(v, (int, float)) and 24 <= v <= 4000}
 
     def _save(self) -> None:
         import json
@@ -126,7 +123,7 @@ class TreeColumnLayout(QObject):
         if model is None or section < 0:
             return None
         if section == 0:
-            return "name"
+            return None   # la colonne Test prend la place restante
         if section == getattr(model, "duration_column", -1):
             return "duration"
         readers = getattr(model, "readers", ())
@@ -169,11 +166,6 @@ class TreeColumnLayout(QObject):
         finally:
             self._programmatic -= 1
 
-    def _set_name_width(self, width: int) -> None:
-        self._fitter._preferred = width
-        self._resize(0, width)
-        self._fitter._timer.start()
-
     def duration_default(self) -> int:
         header = self._tree.header()
         title = header.fontMetrics().horizontalAdvance("Duration") + 28
@@ -210,16 +202,14 @@ class TreeColumnLayout(QObject):
             if key is not None and width >= 24 and not header.isSectionHidden(section):
                 self._widths[key] = width
         self._save_timer.start()
-        self._fitter._preferred = header.sectionSize(0)
         self._apply_visibility()
         self._fitter._timer.start()
 
     def reset(self) -> None:
-        """Oublie les reglages : largeurs calculees, colonne Test comprise."""
+        """Oublie les reglages : largeurs calculees."""
         self._widths.clear()
         self._save_timer.stop()
         self._save()
-        self._set_name_width(self.NAME_DEFAULT)
         self.size_columns()
 
     # ------------------------------------------------------------ Duration

@@ -1,5 +1,15 @@
 # Pytest Runner GUI
 
+## Colonnes de résultat collées à droite — v1.4.4
+
+Les colonnes des lecteurs (et Duration quand elle est affichée) restent
+collées au bord droit de l’arbre : masquer Duration ou n’avoir que peu de
+lecteurs ne laisse plus de vide à droite. La colonne **Test** prend toute la
+place restante, dans l’arbre des tests comme dans celui des profils. Quand le
+panneau rétrécit, c’est toujours elle qui cède la place. Les colonnes des
+lecteurs et Duration se règlent à la souris et restent retenues ; la colonne
+Test suit.
+
 ## Durée avec plusieurs lecteurs — v1.4.3
 
 **Ce que montre la colonne Duration.** Avec deux lecteurs ou plus, clic droit

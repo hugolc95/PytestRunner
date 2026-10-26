@@ -14,7 +14,7 @@ from runner.ui.tree_columns import NameColumnFitter
 from runner.ui.tree_model import TestTreeModel
 
 
-def test_name_column_yields_space_and_takes_it_back(qtbot):
+def test_name_column_yields_space_and_fills_the_rest(qtbot):
     model = TestTreeModel()
     model.set_tree(build_tree(["pkg/test_a.py::test_one"]))
     model.set_readers((Reader("Reader A", 0), Reader("Reader B", 1)))
@@ -39,8 +39,15 @@ def test_name_column_yields_space_and_takes_it_back(qtbot):
     qtbot.waitUntil(lambda: last_edge() <= tree.viewport().width())
     assert header.sectionSize(0) < 420
 
+    # Avec de la place, les colonnes de resultat restent collees au bord
+    # droit : la colonne des noms prend tout le reste, pas une largeur fixe.
     tree.resize(900, 300)
-    qtbot.waitUntil(lambda: header.sectionSize(0) == 420)
+    qtbot.waitUntil(lambda: last_edge() == tree.viewport().width())
+    assert header.sectionSize(0) > 420
+
+    # Masquer une colonne (Duration) ne laisse pas de vide a droite.
+    header.setSectionHidden(model.duration_column, True)
+    qtbot.waitUntil(lambda: last_edge() == tree.viewport().width())
 
 
 @pytest.fixture
