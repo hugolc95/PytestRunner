@@ -71,7 +71,8 @@ def _colonnes(fenetre, noms):
     fenetre.model.set_readers(lecteurs)
     fenetre._size_reader_columns()
     entete = fenetre.tree.header()
-    return [entete.sectionSize(c) for c in range(1, fenetre.model.columnCount())]
+    # Les colonnes des lecteurs seulement : Duration, apres elles, a sa largeur.
+    return [entete.sectionSize(c) for c in range(1, 1 + len(noms))]
 
 
 def test_the_model_serves_the_badge_and_keeps_the_full_name_in_the_tooltip(fenetre):

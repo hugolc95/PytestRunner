@@ -1,5 +1,20 @@
 # Pytest Runner GUI
 
+## Colonnes de l’arbre réglables — v1.4.2
+
+**Colonne Duration affichable ou non.** Clic droit sur les en-têtes de
+colonnes de l’arbre, ou menu **…** de la barre de l’arbre : **Show Duration
+column**. Le choix est enregistré et vaut pour tous les runs ouverts ; on le
+retrouve dans **Settings → Tree & details → Duration column**.
+
+**Largeurs retenues.** Une largeur réglée à la souris (colonne Test, colonne
+d’un lecteur, Duration) est retenue pour cette colonne : elle tient après une
+nouvelle collecte, un changement de lecteurs — la largeur suit le lecteur même
+s’il change de position — et un redémarrage. Seuls les réglages faits à la
+souris sont retenus, pas les ajustements automatiques. **Reset column widths**
+(même menus) revient aux largeurs calculées. La colonne Duration est
+maintenant assez large pour une durée de plusieurs minutes (« 1 min 20.5s »).
+
 ## Test supprimé et onglet conservé — v1.4.1
 
 **Test supprimé depuis la collecte.** Lancer un test qui n’existe plus dans le

@@ -95,7 +95,8 @@ def test_the_row_repaints_when_it_starts_to_diverge(fenetre):
     fenetre.model.dataChanged.connect(
         lambda a, b, roles: recu.append((a.column(), b.column(), list(roles))))
     fenetre.model.apply_outcome(NODEIDS[0], Status.FAILED, 0)
-    assert (0, 2, [Qt.BackgroundRole]) in recu
+    derniere = fenetre.model.columnCount() - 1
+    assert (0, derniere, [Qt.BackgroundRole]) in recu
 
 
 def test_a_single_reader_never_diverges(fenetre):

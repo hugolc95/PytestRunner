@@ -364,6 +364,7 @@ class RunTabsController(QObject):
                 if reader.index in source.readers_bar.selected_indexes()])
         context.split.restoreState(source.split.saveState())
         context.tree.header().restoreState(source.tree.header().saveState())
+        context.tree_columns.reapply()
         entry = self._register(context, context.workspace_page)
         self.tabs.setCurrentIndex(self.entries.index(entry))
         self.window._show_page("workspace")
@@ -776,6 +777,7 @@ class RunTabsController(QObject):
                     state = item.get(key)
                     if isinstance(state, str) and state:
                         widget.restoreState(QByteArray.fromBase64(state.encode("ascii")))
+                context.tree_columns.reapply()
                 context._pending_run_name = item.get("name", "")
                 context._configuration_profile = item.get("configuration_profile", "")
                 context.run_name_button.setText(context._pending_run_name or "Run name (optional)")

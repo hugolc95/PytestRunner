@@ -96,6 +96,8 @@ class TreeToolbarController(QObject):
                                           'Select tests where readers disagree', w.select_divergent)
         differences.setEnabled(w.act_diverge.isEnabled() and w.select_all_button.isEnabled())
         self.menu.addSeparator()
+        w._ajouter_actions_colonnes(self.menu)
+        self.menu.addSeparator()
         for text, scope in [('Search by test name', 'tests'), ('Search in failure output', 'failures')]:
             action = self.menu.addAction(text, lambda checked=False, scope=scope: w.search._set_scope(scope))
             action.setCheckable(True)

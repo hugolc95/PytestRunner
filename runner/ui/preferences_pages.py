@@ -25,7 +25,8 @@ DEFAULTS = dict(font_size=13, compact_header=False, atr_bottom=False,
                 tree_density="Normal", selection_tab="Last used", follow_test=False,
                 actions=True, commands=True, output=True, errors=True,
                 timestamps=True, auto_scroll=True, limit=1000, notify_end=True,
-                external_editor="Automatic", vscode_path="", pycharm_path="", retain_tree_results=True)
+                external_editor="Automatic", vscode_path="", pycharm_path="", retain_tree_results=True,
+                show_duration=True)
 DEFAULTS.update(timeouts.DEFAULTS)
 # "Last used" garde l'onglet ouvert : forcer Detail a chaque nouveau test
 # obligeait a recliquer Logs pour chaque test qu'on parcourait.
@@ -42,6 +43,7 @@ GROUPS = (
         ("retain_tree_results", "Keep previous results in the test tree", "Outline icons keep older results; filled icons belong to the latest run. Clear results resets the tree, not History.", bool),
         ("tree_density", "Row spacing", "Choose how much space each test occupies.", ("Compact", "Normal", "Comfortable")),
         ("selection_tab", "Tab when selecting another test", "Last used keeps the tab you were reading, Logs for example.", SELECTION_TABS),
+        ("show_duration", "Duration column", "Show each test's duration in the tree. Also from a right-click on the column headers.", bool),
         ("follow_test", "Follow the running test", "Bring the executing test into view.", bool),
     )),
     ("Timeouts", "Maximum waiting times • seconds • used by the next operation", (
@@ -732,6 +734,8 @@ class PreferencesController(QObject):
             window.reader_controls.layout().addWidget(atr, 1, 0, 1, 2)
             atr.setMinimumWidth(80)
         atr.show()
+        if "show_duration" in changed and hasattr(window, "tree_columns"):
+            window.tree_columns.set_duration_visible(values["show_duration"])
         if "tree_density" in changed:
             height = {"Compact": 23, "Normal": 29, "Comfortable": 35}[values["tree_density"]]
             for tree in (window.tree, window.profile_tree):
@@ -745,6 +749,20 @@ class PreferencesController(QObject):
         finally:
             QApplication.restoreOverrideCursor()
         self.settings_panel.notice.setText("Unsaved preview • click Apply settings to keep it")
+
+    def set_saved_value(self, key, value):
+        """Un reglage change hors de la page Settings (menu de l'arbre) :
+        applique et enregistre tout de suite, sans toucher aux autres reglages
+        en cours d'apercu sur la page."""
+        self.values[key] = value
+        self.saved[key] = value
+        control = self.settings_panel.controls.get(key)
+        if isinstance(control, QCheckBox) and control.isChecked() != value:
+            control.blockSignals(True)
+            control.setChecked(value)
+            control.blockSignals(False)
+        self.apply()
+        self.window.settings.setValue("preferences/personal", json.dumps(self.saved))
 
     def save(self):
         self.preview_timer.stop()

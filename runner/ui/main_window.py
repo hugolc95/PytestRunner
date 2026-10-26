@@ -1160,8 +1160,13 @@ class MainWindow(QMainWindow):
         entete.setSectionResizeMode(QHeaderView.Interactive)
         entete.setMinimumSectionSize(48)
         entete.resizeSection(0, 420)
-        from runner.ui.tree_columns import NameColumnFitter
+        from runner.ui.tree_columns import NameColumnFitter, TreeColumnLayout
         self.tree_column_fitter = NameColumnFitter(self.tree)
+        self.tree_columns = TreeColumnLayout(
+            self.tree, self.settings, self.tree_column_fitter,
+            lambda section: self._default_column_width(self.tree, self.model, section))
+        entete.setContextMenuPolicy(Qt.CustomContextMenu)
+        entete.customContextMenuRequested.connect(self._menu_entete_arbre)
 
         self.tree_empty = EmptyState(
             "mdi.folder-search-outline",
@@ -2353,22 +2358,49 @@ class MainWindow(QMainWindow):
         """
         tree = tree if tree is not None else self.tree
         model = model if model is not None else self.model
+        if tree is self.tree and getattr(self, "tree_columns", None) is not None:
+            # Arbre principal : les largeurs reglees a la souris sont retenues
+            # par colonne et reprises ici (voir `TreeColumnLayout`).
+            self.tree_columns.size_columns()
+            return
         entete = tree.header()
-        metriques = entete.fontMetrics()
-
-        badge = getattr(entete, "badge_width", None)
         for colonne in range(1, model.columnCount()):
-            largeur_badge = badge(colonne) if badge else None
-            if largeur_badge is not None:
-                # Le badge du lecteur, et juste de quoi respirer autour : le
-                # badge est court (sauf lecteur unique, qui garde son nom).
-                largeur = max(largeur_badge + t.SPACE_4, 40)
-            else:
-                titre = model.headerData(colonne, Qt.Horizontal, Qt.DisplayRole) or ""
-                # De quoi loger le titre, sa marge de section, et l'icone de statut.
-                largeur = max(metriques.horizontalAdvance(str(titre)) + t.SPACE_8, 72)
             entete.setSectionResizeMode(colonne, QHeaderView.Interactive)
-            entete.resizeSection(colonne, largeur)
+            entete.resizeSection(colonne, self._default_column_width(tree, model, colonne))
+
+    def _default_column_width(self, tree, model, colonne: int) -> int:
+        entete = tree.header()
+        badge = getattr(entete, "badge_width", None)
+        largeur_badge = badge(colonne) if badge else None
+        if largeur_badge is not None:
+            # Le badge du lecteur, et juste de quoi respirer autour : le
+            # badge est court (sauf lecteur unique, qui garde son nom).
+            return max(largeur_badge + t.SPACE_4, 40)
+        titre = model.headerData(colonne, Qt.Horizontal, Qt.DisplayRole) or ""
+        # De quoi loger le titre, sa marge de section, et l'icone de statut.
+        return max(entete.fontMetrics().horizontalAdvance(str(titre)) + t.SPACE_8, 72)
+
+    def _menu_entete_arbre(self, point) -> None:
+        """Clic droit sur l'en-tete : afficher Duration, remettre les largeurs."""
+        menu = QMenu(self)
+        self._ajouter_actions_colonnes(menu)
+        menu.exec(self.tree.header().mapToGlobal(point))
+
+    def _ajouter_actions_colonnes(self, menu) -> None:
+        duree = menu.addAction("Show Duration column")
+        duree.setCheckable(True)
+        duree.setChecked(self.tree_columns.duration_visible)
+        duree.toggled.connect(self.set_duration_column_visible)
+        menu.addAction("Reset column widths", self.tree_columns.reset)
+
+    def set_duration_column_visible(self, visible: bool) -> None:
+        """Retenu dans les preferences, pour tous les runs ouverts."""
+        preferences = (getattr(self, "preferences", None)
+                       or getattr(self._run_host, "preferences", None))
+        if preferences is not None:
+            preferences.set_saved_value("show_duration", bool(visible))
+        else:
+            self.tree_columns.set_duration_visible(visible)
 
     def _config_retenue(self, workspace: str) -> str:
         """Chemin du fichier de configuration choisi pour ce workspace, ou "".
@@ -4014,6 +4046,9 @@ class MainWindow(QMainWindow):
             # widths, while enabling manual resizing after restoration.
             self.tree.header().setStretchLastSection(False)
             self.tree.header().setSectionResizeMode(QHeaderView.Interactive)
+            # L'etat sauve date parfois d'un autre nombre de colonnes : les
+            # largeurs retenues par colonne et l'affichage de Duration priment.
+            self.tree_columns.reapply()
 
         self._interpreter_override = self.settings.value(K_INTERPRETER, "", type=str)
         self.apply_theme(self.settings.value(K_THEME, "dark", type=str))
