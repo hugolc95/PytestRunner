@@ -26,7 +26,7 @@ DEFAULTS = dict(font_size=13, compact_header=False, atr_bottom=False,
                 actions=True, commands=True, output=True, errors=True,
                 timestamps=True, auto_scroll=True, limit=1000, notify_end=True,
                 external_editor="Automatic", vscode_path="", pycharm_path="", retain_tree_results=True,
-                show_duration=True)
+                show_duration=True, duration_mode="slowest")
 DEFAULTS.update(timeouts.DEFAULTS)
 # "Last used" garde l'onglet ouvert : forcer Detail a chaque nouveau test
 # obligeait a recliquer Logs pour chaque test qu'on parcourait.
@@ -734,6 +734,8 @@ class PreferencesController(QObject):
             window.reader_controls.layout().addWidget(atr, 1, 0, 1, 2)
             atr.setMinimumWidth(80)
         atr.show()
+        if "duration_mode" in changed and hasattr(window, "model"):
+            window.model.set_duration_mode(values["duration_mode"])
         if "show_duration" in changed and hasattr(window, "tree_columns"):
             window.tree_columns.set_duration_visible(values["show_duration"])
         if "tree_density" in changed:

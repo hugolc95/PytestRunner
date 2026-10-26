@@ -2391,7 +2391,39 @@ class MainWindow(QMainWindow):
         duree.setCheckable(True)
         duree.setChecked(self.tree_columns.duration_visible)
         duree.toggled.connect(self.set_duration_column_visible)
+        self._ajouter_modes_duree(menu)
         menu.addAction("Reset column widths", self.tree_columns.reset)
+
+    def _ajouter_modes_duree(self, menu) -> None:
+        """Ce que montre Duration avec plusieurs lecteurs : un sous-menu."""
+        from PySide6.QtGui import QActionGroup
+
+        sous_menu = menu.addMenu("Duration shows")
+        lecteurs = self.model.readers
+        sous_menu.setEnabled(len(lecteurs) > 1 and self.tree_columns.duration_visible)
+        if len(lecteurs) < 2:
+            sous_menu.setToolTip("Only useful when several readers run")
+        groupe = QActionGroup(sous_menu)
+        courant = self.model.duration_mode
+        choix = [(mode, self.model.DURATION_MODE_LABELS[mode]) for mode in self.model.DURATION_MODES]
+        for position, (mode, libelle) in enumerate(choix + [
+                (f"reader:{r.name}", f"{r.name} only") for r in lecteurs]):
+            if position == len(choix):
+                sous_menu.addSeparator()
+            action = sous_menu.addAction(libelle)
+            action.setCheckable(True)
+            action.setChecked(mode == courant)
+            action.setActionGroup(groupe)
+            action.triggered.connect(lambda _=False, m=mode: self.set_duration_mode(m))
+
+    def set_duration_mode(self, mode: str) -> None:
+        """Retenu dans les preferences, pour tous les runs ouverts."""
+        preferences = (getattr(self, "preferences", None)
+                       or getattr(self._run_host, "preferences", None))
+        if preferences is not None:
+            preferences.set_saved_value("duration_mode", mode)
+        else:
+            self.model.set_duration_mode(mode)
 
     def set_duration_column_visible(self, visible: bool) -> None:
         """Retenu dans les preferences, pour tous les runs ouverts."""

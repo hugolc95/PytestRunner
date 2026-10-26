@@ -1,5 +1,25 @@
 # Pytest Runner GUI
 
+## Durée avec plusieurs lecteurs — v1.4.3
+
+**Ce que montre la colonne Duration.** Avec deux lecteurs ou plus, clic droit
+sur les en-têtes de colonnes (ou menu **…**) → **Duration shows** :
+le lecteur le plus lent (par défaut), le plus rapide, la moyenne, l’écart
+entre le plus lent et le plus rapide (**Spread**), ou un lecteur précis. Le
+titre de la colonne indique le mode (« Fastest », « Spread », « Duration · A »…).
+Le choix est enregistré et vaut pour tous les runs ouverts.
+
+**Écarts en couleur.** En mode **Spread**, la colonne affiche « Δ 1.50s » et
+un écart notable (plus de 30 % de la durée du plus lent, et au moins 0,1 s)
+ressort en ambre : on repère d’un coup d’œil le lecteur anormalement lent.
+
+**Totaux justes et survols corrigés.** Un dossier ou un fichier se calcule à
+partir du total réel de chaque lecteur : en mode par défaut, c’est le total du
+lecteur le plus lent, et non plus la somme des pires cas de chaque test, qui
+ne correspondait à la durée d’aucun lecteur. Le survol d’un groupe donne le
+total de chaque lecteur et l’écart ; celui d’un test, la durée de chaque
+lecteur et l’écart.
+
 ## Colonnes de l’arbre réglables — v1.4.2
 
 **Colonne Duration affichable ou non.** Clic droit sur les en-têtes de

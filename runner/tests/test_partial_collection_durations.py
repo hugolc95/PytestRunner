@@ -134,7 +134,10 @@ def test_duration_column_shows_longest_reader_and_group_sums(qapp):
     one = model.index(0, column, model.index(0, 0, model.index(0, 0)))
     assert one.data() == "2.50s"
     assert "Reader A: 1.00s" in one.data(Qt.ToolTipRole)
-    assert module.data() == "3.00s" and folder.data() == "3.00s"
+    # Un groupe montre le total du lecteur le plus lent (B : 2.5 s), pas la
+    # somme des pires cas de chaque test (3 s), qui n'etait celle de personne.
+    assert module.data() == "2.50s" and folder.data() == "2.50s"
+    assert "Reader A: 1.50s" in module.data(Qt.ToolTipRole)
 
     # Le releve de fin complete, sans ecraser la mesure en direct.
     model.merge_durations(0, {"pkg/test_a.py::test_one": 9.0,

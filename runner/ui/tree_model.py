@@ -114,7 +114,10 @@ class TestTreeModel(QAbstractItemModel):
         # regroupement : la recalculer a chaque image reparcourrait tout un
         # dossier replie de plusieurs milliers de tests.
         self._durations: dict[str, dict[int, float]] = {}
-        self._duration_sums: dict[_Row, float | None] = {}
+        # Total PAR LECTEUR d'un regroupement. La somme des pires cas de chaque
+        # test ne correspondait a la duree reelle d'aucun lecteur.
+        self._duration_totals: dict[_Row, dict[int, float]] = {}
+        self._duration_mode = "slowest"
 
     # ------------------------------------------------------------- chargement
 
@@ -127,7 +130,7 @@ class TestTreeModel(QAbstractItemModel):
         self._roots = [_Row(n, None, i) for i, n in enumerate(roots)]
         self._by_nodeid = {}
         self._durations = {}
-        self._duration_sums = {}
+        self._duration_totals = {}
         for racine in self._roots:
             for ligne in [racine, *racine.descendants()]:
                 if ligne.node.nodeid:
@@ -148,6 +151,8 @@ class TestTreeModel(QAbstractItemModel):
         self.beginResetModel()
         self._readers = tuple(readers)
         self._badges = badge_labels([r.name for r in self._readers])
+        # Les totaux de duree ne retiennent que les lecteurs affiches.
+        self._duration_totals.clear()
         # Pas de purge des agregats ici : ils sont ranges par index de lecteur,
         # exactement comme les statuts des feuilles dont ils derivent. Les deux
         # vieillissent donc ensemble et restent coherents. Ce qui repart
@@ -203,10 +208,9 @@ class TestTreeModel(QAbstractItemModel):
             return None
         if section == self.duration_column:
             if role == Qt.DisplayRole:
-                return "Duration"
+                return self._duration_title()
             if role == Qt.ToolTipRole:
-                return ("Test: setup + call + teardown, longest reader.\n"
-                        "Group: sum of its tests.")
+                return self._duration_header_tooltip()
             if role == Qt.TextAlignmentRole:
                 return int(Qt.AlignRight | Qt.AlignVCenter)
             return None
@@ -392,32 +396,133 @@ class TestTreeModel(QAbstractItemModel):
             return self._fond_divergent(ligne)
         if role not in (Qt.DisplayRole, Qt.ToolTipRole, Qt.ForegroundRole):
             return None
-        valeur = self.duration_for(ligne)
+        parts = self.reader_durations(ligne)
+        valeur = self._combine_durations(parts)
+        if role == Qt.ToolTipRole:
+            return self._duration_tooltip(ligne, parts)
         if valeur is None:
             return None
         if role == Qt.DisplayRole:
-            return format_duration(valeur, precision=2 if valeur < 10 else 1)
-        if role == Qt.ForegroundRole:
-            return QColor(t.TEXT_MUTED)
-        if ligne.is_leaf and len(self._readers) > 1:
+            texte = format_duration(valeur, precision=2 if valeur < 10 else 1)
+            return f"Δ {texte}" if self._effective_duration_mode() == "spread" else texte
+        if self._effective_duration_mode() == "spread" and self.notable_spread(parts):
+            return QColor(t.divergent_color())
+        return QColor(t.TEXT_MUTED)
+
+    # --------------------------------------------------------------- durees
+
+    # Ce qu'affiche la colonne Duration quand plusieurs lecteurs ont tourne.
+    DURATION_MODES = ("slowest", "fastest", "average", "spread")
+    DURATION_MODE_LABELS = {"slowest": "Slowest reader", "fastest": "Fastest reader",
+                            "average": "Average of the readers",
+                            "spread": "Spread (slowest − fastest)"}
+    # Un ecart se remarque au-dela de 30 % du plus lent, et d'un dixieme de
+    # seconde : sous ce seuil, ce n'est que le bruit de la mesure.
+    NOTABLE_SPREAD_RATIO = 0.3
+    NOTABLE_SPREAD_MIN = 0.1
+
+    @property
+    def duration_mode(self) -> str:
+        return self._duration_mode
+
+    def set_duration_mode(self, mode: str) -> None:
+        """`slowest`, `fastest`, `average`, `spread`, ou `reader:<nom>`."""
+        mode = str(mode or "slowest")
+        if mode not in self.DURATION_MODES and not mode.startswith("reader:"):
+            mode = "slowest"
+        if mode == self._duration_mode:
+            return
+        self._duration_mode = mode
+        if self.duration_column >= 0:
+            self.headerDataChanged.emit(Qt.Horizontal, self.duration_column, self.duration_column)
+        self._emit_layout_changed()
+
+    def _mode_reader_index(self) -> int | None:
+        nom = self._duration_mode[len("reader:"):]
+        return next((r.index for r in self._readers if r.name == nom), None)
+
+    def _effective_duration_mode(self) -> str:
+        """Avec un seul lecteur, tous les modes reviennent a sa duree."""
+        if len(self._readers) < 2:
+            return "slowest"
+        if self._duration_mode.startswith("reader:"):
+            return self._duration_mode if self._mode_reader_index() is not None else "slowest"
+        return self._duration_mode
+
+    def _duration_title(self) -> str:
+        mode = self._effective_duration_mode()
+        if mode.startswith("reader:"):
+            position = [r.index for r in self._readers].index(self._mode_reader_index())
+            return f"Duration · {self._badges[position]}"
+        return {"slowest": "Duration", "fastest": "Fastest",
+                "average": "Average", "spread": "Spread"}[mode]
+
+    def _duration_header_tooltip(self) -> str:
+        mode = self._effective_duration_mode()
+        base = "Test: setup + call + teardown."
+        if len(self._readers) < 2:
+            return base + "\nGroup: sum of its tests."
+        if mode.startswith("reader:"):
+            quoi = f"{self._duration_mode[len('reader:'):]} only"
+        else:
+            quoi = self.DURATION_MODE_LABELS[mode]
+        return (f"{base}\nShowing: {quoi}.\n"
+                "Group: computed from each reader's total.\n"
+                "Right-click the column headers to change.")
+
+    def reader_durations(self, ligne: _Row) -> dict[int, float]:
+        """Duree de chaque lecteur : la sienne pour un test, son total pour
+        un regroupement."""
+        indices = {r.index for r in self._readers}
+        if ligne.is_leaf:
             parts = self._durations.get(ligne.node.nodeid, {})
-            return "\n".join(
-                f"{reader.short_name}: {format_duration(parts[reader.index], precision=2)}"
-                for reader in self._readers if reader.index in parts)
-        return None
+            return {i: v for i, v in parts.items() if not indices or i in indices}
+        retenu = self._duration_totals.get(ligne)
+        if retenu is None:
+            retenu = {}
+            for enfant in ligne.children:
+                for i, v in self.reader_durations(enfant).items():
+                    retenu[i] = retenu.get(i, 0.0) + v
+            self._duration_totals[ligne] = retenu
+        return retenu
+
+    def _combine_durations(self, parts: dict[int, float]) -> float | None:
+        if not parts:
+            return None
+        mode = self._effective_duration_mode()
+        if mode.startswith("reader:"):
+            return parts.get(self._mode_reader_index())
+        valeurs = list(parts.values())
+        if mode == "fastest":
+            return min(valeurs)
+        if mode == "average":
+            return sum(valeurs) / len(valeurs)
+        if mode == "spread":
+            return max(valeurs) - min(valeurs) if len(valeurs) > 1 else None
+        return max(valeurs)
+
+    def notable_spread(self, parts: dict[int, float]) -> bool:
+        if len(parts) < 2:
+            return False
+        ecart = max(parts.values()) - min(parts.values())
+        return (ecart >= self.NOTABLE_SPREAD_MIN
+                and ecart >= self.NOTABLE_SPREAD_RATIO * max(parts.values()))
+
+    def _duration_tooltip(self, ligne: _Row, parts: dict[int, float]) -> str | None:
+        if len(self._readers) < 2 or not parts:
+            return None
+        lignes = [f"{reader.short_name}: {format_duration(parts[reader.index], precision=2)}"
+                  for reader in self._readers if reader.index in parts]
+        if not ligne.is_leaf:
+            lignes.insert(0, "Total per reader:")
+        if len(parts) > 1:
+            ecart = max(parts.values()) - min(parts.values())
+            lignes.append(f"Spread: {format_duration(ecart, precision=2)}")
+        return "\n".join(lignes)
 
     def duration_for(self, ligne: _Row) -> float | None:
-        """Le plus long lecteur pour un test, la somme pour un regroupement."""
-        if ligne.is_leaf:
-            parts = self._durations.get(ligne.node.nodeid)
-            return max(parts.values()) if parts else None
-        if ligne in self._duration_sums:
-            return self._duration_sums[ligne]
-        valeurs = [v for enfant in ligne.children
-                   if (v := self.duration_for(enfant)) is not None]
-        somme = sum(valeurs) if valeurs else None
-        self._duration_sums[ligne] = somme
-        return somme
+        """La valeur affichee : selon le mode, pour un test comme pour un groupe."""
+        return self._combine_durations(self.reader_durations(ligne))
 
     def duration_for_nodeid(self, nodeid: str) -> float | None:
         ligne = self._by_nodeid.get(nodeid)
@@ -431,7 +536,7 @@ class TestTreeModel(QAbstractItemModel):
         self._durations.setdefault(nodeid, {})[reader_index] = float(seconds)
         colonne = self.duration_column
         while ligne is not None:
-            self._duration_sums.pop(ligne, None)
+            self._duration_totals.pop(ligne, None)
             index = self.createIndex(ligne.row, colonne, ligne)
             self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.ToolTipRole])
             ligne = ligne.parent
@@ -444,7 +549,7 @@ class TestTreeModel(QAbstractItemModel):
                 self._durations.setdefault(nodeid, {})[reader_index] = float(seconds)
                 ajout = True
         if ajout:
-            self._duration_sums.clear()
+            self._duration_totals.clear()
             self._emit_layout_changed()
 
     def broken_file_count(self) -> int:
@@ -777,7 +882,7 @@ class TestTreeModel(QAbstractItemModel):
         self._aggregate_counts.clear()
         self._fresh_counts.clear()
         self._durations.clear()
-        self._duration_sums.clear()
+        self._duration_totals.clear()
         for racine in self._roots:
             for ligne in [racine, *racine.descendants()]:
                 ligne.statuses.clear()

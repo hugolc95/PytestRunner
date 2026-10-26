@@ -123,7 +123,7 @@ def test_both_menus_offer_the_column_actions(make_window):
     menu = QMenu()
     w._ajouter_actions_colonnes(menu)
     textes = [a.text() for a in menu.actions()]
-    assert textes == ["Show Duration column", "Reset column widths"]
+    assert textes == ["Show Duration column", "Duration shows", "Reset column widths"]
     assert menu.actions()[0].isChecked()
 
     # Le menu « … » de la barre de l'arbre, et le clic droit sur l'en-tete.
