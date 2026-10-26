@@ -269,7 +269,7 @@ def test_new_run_never_shows_temporary_top_level_widgets(window, qtbot):
 def test_new_runs_receive_preferences_and_context_specific_console(window, qtbot):
     preferences = window.preferences
     preferences.values.update(compact_header=True, atr_bottom=True,
-                              tree_density="Comfortable", default_tab="Output", follow_test=True)
+                              tree_density="Comfortable", selection_tab="Output", follow_test=True)
     preferences.apply()
     draft = window.run_tabs.new_run()
     assert draft.run_header.atr_presentation.parentWidget() is draft.statusBar()

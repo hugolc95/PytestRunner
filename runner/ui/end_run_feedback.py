@@ -11,6 +11,7 @@ from runner.domain import history
 from runner.domain.history import RunEntry
 from runner.domain.models import failure_summary
 from runner.services.finalize_service import RunArchiveWorker
+from runner.ui.widgets import ErrorDialog
 
 
 def install() -> None:
@@ -106,8 +107,18 @@ def install() -> None:
             for status, count in rapport.counts.items():
                 counts[status] = counts.get(status, 0) + count
         failures = failure_summary(counts)
+        # Erreurs qui ne sont le verdict d'aucun test : test supprime depuis la
+        # collecte, interpreteur introuvable, conftest casse... pytest n'a
+        # alors rien rapporte, et sans elles le run finissait sur "All tests
+        # passed", sans un mot.
+        global_errors = [
+            f"{r.reader.name or 'Test interpreter'}\n{issue}"
+            for r in rapports if not r.cancelled for issue in r.issues
+        ]
         if cancelled:
             summary = "Run stopped"
+        elif global_errors:
+            summary = "Execution completed with errors"
         elif failures:
             summary = failures
         else:
@@ -117,6 +128,12 @@ def install() -> None:
         self.elapsed_label.clear()
         if not cancelled:
             self._notifier_fin_de_run(summary)
+        if global_errors:
+            # Apres la fin de cette methode : la boite est modale, et l'archivage
+            # et la remise a zero des actions ne doivent pas attendre sa fermeture.
+            texte = "\n\n".join(dict.fromkeys(global_errors))
+            QTimer.singleShot(0, lambda: ErrorDialog.show_diagnostics(
+                self, "Execution error", texte, self.results.show_output))
 
         entries = _archive_entries(self, rapports)
         self._running_execution_profile = None

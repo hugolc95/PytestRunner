@@ -165,7 +165,15 @@ def fallback_error(output: str, code: int) -> str:
               if re.match(r"^\s*(?:E\s+)?[\w.]+(?:Error|Exception):", line)
               or line.lstrip().startswith(("ERROR:", "INTERNALERROR>"))]
     if errors:
-        return "\n".join(dict.fromkeys(errors))
+        message = "\n".join(dict.fromkeys(errors))
+        if any(e.startswith(("ERROR: not found:", "ERROR: file or directory not found:"))
+               for e in errors):
+            # Test supprime ou renomme depuis la derniere collecte : pytest
+            # refuse alors toute la commande, meme les tests encore valides.
+            message += ("\n\nThis test no longer exists in the workspace: it was "
+                        "deleted or renamed since the last collection. Pytest ran "
+                        "nothing. Click Collect to refresh the test tree, then run again.")
+        return message
     # No assumptions about custom exception names in bootstrap failures.
     if any("Traceback (most recent call last)" in line for line in lines):
         nonempty = [line.strip() for line in lines if line.strip()]

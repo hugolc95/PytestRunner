@@ -1,5 +1,21 @@
 # Pytest Runner GUI
 
+## Test supprimé et onglet conservé — v1.4.1
+
+**Test supprimé depuis la collecte.** Lancer un test qui n’existe plus dans le
+workspace (supprimé ou renommé sans relancer **Collect**) affiche maintenant
+la fenêtre **Execution error** avec le message de pytest, au lieu de finir
+sans rien dire sur « All tests passed ». La barre d’état indique
+« Execution completed with errors ». Pytest refuse alors toute la commande,
+même les tests encore valides de la sélection : le message invite à cliquer
+**Collect** pour rafraîchir l’arbre avant de relancer.
+
+**Onglet conservé.** Passer d’un test à un autre garde l’onglet ouvert
+(**Logs**, **Source**, **Output** ou **Detail**) au lieu de revenir sur
+**Detail**. Le réglage **Settings → Tree & details → Tab when selecting
+another test** vaut désormais **Last used** ; on peut toujours y imposer un
+onglet fixe.
+
 ## Collecte partielle, durées et compteurs — v1.4.0
 
 **Fichiers en erreur.** Un fichier de tests que pytest ne peut pas importer

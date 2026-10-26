@@ -22,11 +22,14 @@ from runner.ui import timeouts
 from runner.ui.trace_browser import TraceBrowser
 
 DEFAULTS = dict(font_size=13, compact_header=False, atr_bottom=False,
-                tree_density="Normal", default_tab="Detail", follow_test=False,
+                tree_density="Normal", selection_tab="Last used", follow_test=False,
                 actions=True, commands=True, output=True, errors=True,
                 timestamps=True, auto_scroll=True, limit=1000, notify_end=True,
                 external_editor="Automatic", vscode_path="", pycharm_path="", retain_tree_results=True)
 DEFAULTS.update(timeouts.DEFAULTS)
+# "Last used" garde l'onglet ouvert : forcer Detail a chaque nouveau test
+# obligeait a recliquer Logs pour chaque test qu'on parcourait.
+SELECTION_TABS = ("Last used", "Detail", "Source", "Output", "Logs")
 GROUPS = (
     ("Interface", "Appearance and space", (
         ("theme", "Theme", "Keep the existing dark, light and accessible palettes.",
@@ -38,7 +41,7 @@ GROUPS = (
     ("Tree & details", "Browsing tests", (
         ("retain_tree_results", "Keep previous results in the test tree", "Outline icons keep older results; filled icons belong to the latest run. Clear results resets the tree, not History.", bool),
         ("tree_density", "Row spacing", "Choose how much space each test occupies.", ("Compact", "Normal", "Comfortable")),
-        ("default_tab", "Default detail tab", "Open this tab when selecting another test.", ("Detail", "Source", "Output", "Logs")),
+        ("selection_tab", "Tab when selecting another test", "Last used keeps the tab you were reading, Logs for example.", SELECTION_TABS),
         ("follow_test", "Follow the running test", "Bring the executing test into view.", bool),
     )),
     ("Timeouts", "Maximum waiting times • seconds • used by the next operation", (
@@ -486,6 +489,10 @@ class PreferencesController(QObject):
             stored = {}
         if not isinstance(stored, dict):
             stored = {}
+        # Ancien reglage `default_tab`, qui valait Detail par defaut : seul un
+        # autre onglet choisi expres est repris, Detail devient "Last used".
+        if "selection_tab" not in stored and stored.get("default_tab") in ("Source", "Output", "Logs"):
+            stored["selection_tab"] = stored["default_tab"]
         self.values = dict(DEFAULTS)
         self.values.update({key: value for key, value in stored.items()
                             if key in DEFAULTS and type(value) is type(DEFAULTS[key])})
@@ -494,7 +501,7 @@ class PreferencesController(QObject):
             self.values[key] = min(timeouts.MAX_SECONDS, max(timeouts.MIN_SECONDS, self.values[key]))
         for key, choices in (("tree_density", ("Compact", "Normal", "Comfortable")),
                              ("external_editor", ("Automatic", "VS Code", "PyCharm")),
-                             ("default_tab", ("Detail", "Source", "Output", "Logs")),
+                             ("selection_tab", SELECTION_TABS),
                              ("limit", (250, 1000, 5000))):
             if self.values[key] not in choices:
                 self.values[key] = DEFAULTS[key]
@@ -612,8 +619,11 @@ class PreferencesController(QObject):
             nodeid = current.data(NODEID_ROLE)
             if nodeid:
                 self.context_record(context, "actions", f"Selected test: {nodeid}")
+            onglet = self.values["selection_tab"]
+            if onglet == "Last used":
+                return
             panel = context.profile_results if context.profile_tree_button.isChecked() else context.results
-            panel.tabs.setCurrentIndex(("Detail", "Source", "Output", "Logs").index(self.values["default_tab"]))
+            panel.tabs.setCurrentIndex(SELECTION_TABS.index(onglet) - 1)
 
     def process_line(self, index, text, context=None):
         context = context or self.window
