@@ -393,11 +393,15 @@ def dialogue(qapp):
 def test_opening_the_dialog_probes_the_default_interpreter(dialogue, qapp):
     from PySide6.QtCore import QEventLoop, QTimer
 
-    boucle = QEventLoop()
-    QTimer.singleShot(3000, boucle.quit)
-    if dialogue._probe is not None:
-        dialogue._probe.done.connect(boucle.quit)
-    boucle.exec()
+    import time
+
+    # La sonde lance un vrai Python : sous la charge d'une suite parallele,
+    # elle depasse facilement 3 s. Attendre son resultat, pas un delai fixe.
+    limite = time.monotonic() + 60
+    while "Checking" in dialogue.status_label.text() and time.monotonic() < limite:
+        boucle = QEventLoop()
+        QTimer.singleShot(100, boucle.quit)
+        boucle.exec()
     dialogue.wait_for_probe()
 
     assert dialogue.status_label.text()

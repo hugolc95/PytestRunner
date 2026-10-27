@@ -2400,7 +2400,11 @@ class MainWindow(QMainWindow):
         """Ce que montre Duration avec plusieurs lecteurs : un sous-menu."""
         from PySide6.QtGui import QActionGroup
 
-        sous_menu = menu.addMenu("Duration shows")
+        # Parent explicite : sous PySide6, le QMenu rendu par addMenu("...")
+        # appartient a Python et disparait avec cette fonction -- le menu de
+        # l'en-tete s'ouvrait ensuite avec un sous-menu deja detruit.
+        sous_menu = QMenu("Duration shows", menu)
+        menu.addMenu(sous_menu)
         lecteurs = self.model.readers
         sous_menu.setEnabled(len(lecteurs) > 1 and self.tree_columns.duration_visible)
         if len(lecteurs) < 2:

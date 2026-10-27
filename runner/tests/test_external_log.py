@@ -1,5 +1,7 @@
 """Tests de l'ouverture du log sans dependance vers l'ancienne interface."""
 
+from pathlib import Path
+
 import pytest
 
 from runner.ui.external_log import (
@@ -33,7 +35,8 @@ def test_windows_folder_open_falls_back_to_qt_and_reports_both_failures(tmp_path
     monkeypatch.setattr(external_log.QDesktopServices, "openUrl",
                         lambda url: opened.append(url.toLocalFile()) or True)
     external_log.open_log_folder(tmp_path)
-    assert opened == [str(tmp_path)]
+    # Qt rend des barres obliques : comparer des chemins, pas des chaines.
+    assert [Path(path) for path in opened] == [tmp_path.resolve()]
     monkeypatch.setattr(external_log.QDesktopServices, "openUrl", lambda *_: False)
     with pytest.raises(OSError, match="Explorer access denied"):
         external_log.open_log_folder(tmp_path)

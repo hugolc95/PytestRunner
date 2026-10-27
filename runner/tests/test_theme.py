@@ -353,7 +353,12 @@ def test_rapid_search_typing_is_coalesced_into_one_query(qapp):
     assert requetes == []
     assert barre.counter.text() == "…"
 
-    QTest.qWait(170)
+    # Une seule requete, une fois le delai de frappe ecoule : l'attendre
+    # (sous charge, 170 ms ne suffisent pas toujours a un minuteur de 80 ms).
+    for _ in range(100):
+        if requetes:
+            break
+        QTest.qWait(20)
     assert requetes == ["test"]
 
 

@@ -158,7 +158,7 @@ def modes_menu(w):
 
 def test_the_header_menu_lists_every_mode_and_each_reader(window):
     w = window()
-    _, sous_menu = modes_menu(w)
+    menu, sous_menu = modes_menu(w)  # garder le parent : il possede le sous-menu
     textes = [a.text() for a in sous_menu.actions() if not a.isSeparator()]
     assert textes == ["Slowest reader", "Fastest reader", "Average of the readers",
                       "Spread (slowest − fastest)", "Reader A only", "Reader B only"]
@@ -168,7 +168,7 @@ def test_the_header_menu_lists_every_mode_and_each_reader(window):
 
 def test_choosing_a_mode_applies_and_is_kept_after_a_restart(window):
     w = window()
-    _, sous_menu = modes_menu(w)
+    menu, sous_menu = modes_menu(w)  # garder le parent : il possede le sous-menu
     [spread] = [a for a in sous_menu.actions() if a.text().startswith("Spread")]
     spread.trigger()
     assert w.model.duration_mode == "spread"
@@ -180,5 +180,5 @@ def test_choosing_a_mode_applies_and_is_kept_after_a_restart(window):
 def test_the_modes_are_disabled_with_a_single_reader(window):
     w = window()
     w.model.set_readers((A,))
-    _, sous_menu = modes_menu(w)
+    menu, sous_menu = modes_menu(w)  # garder le parent : il possede le sous-menu
     assert not sous_menu.isEnabled()

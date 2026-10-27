@@ -28,12 +28,11 @@ travail précis.
   `QT_QPA_PLATFORM=offscreen`, un fichier par commande avec une limite
   (`timeout 240`) : un plantage natif ou un blocage ne doit pas emporter le
   reste.
-- Ne lancer la suite complète (`runner/tests`, ~10 min) que si l'utilisateur
-  l'accepte : plusieurs fixtures effacent ses vrais réglages
-  (`QSettings(ORG, APP).clear()`). Le dire avant.
+- Suite complète si le changement est large : `-n 6`, ~6 min. Les réglages
+  de l'utilisateur sont isolés par `runner/tests/conftest.py`.
 - Distinguer les régressions des échecs déjà présents : relancer un échec
   avec `git stash` pour comparer, et lancer en série ce qui échoue en
-  parallèle (`-n`), qui est instable chez nous.
+  parallèle (`-n`), pour séparer un vrai échec d'un problème de minutage.
 - Si `runner/ui`, `runner/services` ou le protocole pytest ont changé :
   passer par le skill **run-app** (au minimum la vérification courante).
 

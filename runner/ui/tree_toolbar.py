@@ -1,6 +1,7 @@
 """Compact tree actions grouped by search, selection and presentation."""
 from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtWidgets import QHBoxLayout, QMenu, QSizePolicy, QWidget
+from shiboken6 import isValid
 
 from runner.ui import icons, tokens as t
 
@@ -59,9 +60,16 @@ class TreeToolbarController(QObject):
 
     def _refresh_groups(self):
         for group, buttons in self._groups:
+            # Pendant la destruction de la fenetre, QWidget detruit ses enfants
+            # un par un et chacun envoie encore Hide : un groupe deja detruit
+            # ne doit plus etre lu (plantage natif, intermittent en tests).
+            if not isValid(group) or not all(isValid(button) for button in buttons):
+                continue
             group.setVisible(any(not button.isHidden() for button in buttons))
 
     def eventFilter(self, watched, event):
+        if not isValid(self.window) or not isValid(watched):
+            return False
         if watched is self.window.tree_toolbar and event.type() == QEvent.Resize:
             self.adapt(event.size().width())
         if event.type() in (QEvent.Show, QEvent.Hide, QEvent.ShowToParent, QEvent.HideToParent):

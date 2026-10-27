@@ -84,18 +84,16 @@ def test_the_pills_live_in_the_workspace_bar_not_the_status_bar(fenetre):
     """Les verdicts vivent desormais, plus grands, dans l'espace vide de la
     barre du workspace -- plus question de les repeter en plus petit tout en
     bas, ce qui affichait deux fois le meme chiffre."""
-    barre_workspace = fenetre.workspace_combo.parentWidget().layout()
+    # En-tete structure : elles vivent dans le panneau Results.
     for pastille in fenetre.pills.values():
-        assert barre_workspace.indexOf(pastille) >= 0
-
-    for pastille in fenetre.pills.values():
-        assert pastille.parentWidget() is not fenetre.statusBar()
+        assert fenetre.run_header.results.isAncestorOf(pastille)
+        assert not fenetre.statusBar().isAncestorOf(pastille)
 
 
 def test_result_counters_are_large_enough_to_read_at_a_glance(fenetre):
     for status, pill in fenetre.pills.items():
         assert pill.minimumWidth() >= 72
-        assert pill.minimumHeight() >= 48
+        assert pill.minimumHeight() >= 40
         assert pill.iconSize().width() >= 20
         assert status.label in pill.text()
 

@@ -272,7 +272,9 @@ def test_the_refresh_button_reads_the_card_again(fenetre, qtbot, tmp_path):
     [bouton] = fenetre.reader_atr.actions()
     bouton.trigger()
     qtbot.waitUntil(lambda: len(_journal(tmp_path)) == 4, timeout=15000)
-    assert fenetre.reader_atr.state == ATR_OK
+    # Le faux lecteur ecrit son journal AVANT que l'interface ait recu sa
+    # ligne de resultat : l'etat suit, il faut l'attendre, pas le lire aussitot.
+    qtbot.waitUntil(lambda: fenetre.reader_atr.state == ATR_OK, timeout=5000)
 
 
 def test_nothing_touches_the_reader_during_a_run(fenetre, qtbot, tmp_path, monkeypatch):

@@ -114,11 +114,15 @@ def test_history_shows_the_build_and_opens_its_log_folder(
 
     assert "Build #0042" in window.detail_meta.text()
     opened = []
+    # Sous Windows le dossier s'ouvre par os.startfile : sans ce remplacement,
+    # le test ouvrait une vraie fenetre de l'Explorateur.
+    monkeypatch.setattr(external_log.os, "startfile",
+                        lambda path, verb="open": opened.append(Path(path)), raising=False)
     monkeypatch.setattr(external_log.QDesktopServices, "openUrl",
-                        lambda url: opened.append(url) or True)
+                        lambda url: opened.append(Path(url.toLocalFile())) or True)
     window.open_logs()
 
-    assert Path(opened[0].toLocalFile()) == run_folder
+    assert opened[0] == run_folder.resolve()
 
 
 def test_history_logs_follow_the_selected_run_date(qapp, tmp_path, monkeypatch):
@@ -136,13 +140,15 @@ def test_history_logs_follow_the_selected_run_date(qapp, tmp_path, monkeypatch):
                             build_number=42, log_root="logs"))
     window = HistoryWindow(history)
     opened = []
+    monkeypatch.setattr(external_log.os, "startfile",
+                        lambda path, verb="open": opened.append(Path(path)), raising=False)
     monkeypatch.setattr(external_log.QDesktopServices, "openUrl",
                         lambda url: opened.append(Path(url.toLocalFile())) or True)
     select_run(window, 0)
     window.open_logs()
     select_run(window, 1)
     window.open_logs()
-    assert opened == list(reversed(folders))
+    assert opened == [folder.resolve() for folder in reversed(folders)]
 
 
 def test_history_reports_a_folder_open_failure(qapp, tmp_path, monkeypatch):
@@ -153,6 +159,9 @@ def test_history_reports_a_folder_open_failure(qapp, tmp_path, monkeypatch):
     history = History(tmp_path / "history")
     ajoute(history, "run", build_number=42, log_root=str(tmp_path))
     window = HistoryWindow(history)
+    def explorer_refuses(*_):
+        raise OSError("Explorer access denied")
+    monkeypatch.setattr(external_log.os, "startfile", explorer_refuses, raising=False)
     monkeypatch.setattr(external_log.QDesktopServices, "openUrl", lambda url: False)
     window.open_logs()
     assert "Could not open log folder" in window.status.text()

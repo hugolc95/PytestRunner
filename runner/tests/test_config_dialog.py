@@ -333,7 +333,10 @@ def test_the_run_actions_have_a_row_of_their_own(fenetre):
     chemin du workspace -- qu'on ne touche qu'une fois par session. Une rangee
     a eux repond aux deux : a portee, et sans confusion sur ce qui agit.
     """
-    column = fenetre.run_button.parentWidget()
+    # Run et Pause partagent une case (launch_stack) : la colonne des
+    # actions est son parent.
+    assert fenetre.run_button.parentWidget() is fenetre.launch_stack
+    column = fenetre.launch_stack.parentWidget()
     assert fenetre.run_header.execution.isAncestorOf(column)
     assert fenetre.stop_button.parentWidget() is column
     assert fenetre.rerun_button.parentWidget() is column

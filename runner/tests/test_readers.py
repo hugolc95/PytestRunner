@@ -349,15 +349,18 @@ def test_reader_choices_share_the_run_actions_row(fenetre, tmp_path):
     les trois actions principales."""
     _charger(fenetre, _workspace(tmp_path, "Reader: A\nReaders:\n  - B\n"))
 
-    barre = fenetre.run_button.parentWidget()
-    disposition = barre.layout()
-
-    assert fenetre.readers_bar.parentWidget() is barre
-    assert disposition.indexOf(fenetre.rerun_button) < disposition.indexOf(
-        fenetre.readers_bar)
-
+    # En-tete structure : les lecteurs du run sont dans le panneau Execution,
+    # a cote des actions de lancement, jamais dans celui de l'environnement.
+    execution = fenetre.run_header.execution
+    assert execution.isAncestorOf(fenetre.readers_bar)
+    assert execution.isAncestorOf(fenetre.run_button)
+    assert execution.isAncestorOf(fenetre.rerun_button)
+    assert not fenetre.run_header.environment.isAncestorOf(fenetre.readers_bar)
     assert not fenetre.readers_bar.isHidden()
-    assert disposition.indexOf(fenetre.run_button) < disposition.indexOf(fenetre.readers_bar)
+    # Les actions restent groupees entre elles, separees des lecteurs.
+    actions = fenetre.launch_stack.parentWidget()
+    assert actions.isAncestorOf(fenetre.rerun_button)
+    assert not actions.isAncestorOf(fenetre.readers_bar)
 
 
 def test_every_reader_is_included_to_begin_with(fenetre, tmp_path):

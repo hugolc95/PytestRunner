@@ -848,12 +848,21 @@ class TestTreeModel(QAbstractItemModel):
                 counts[old_display] -= 1
             counts[status] += 1
             fresh = self._fresh_counts.setdefault((parent, reader_index), Counter())
+            avant = parent.agg.get(reader_index)
+            avant_frais = bool(fresh.get(avant, 0)) if avant is not None else False
             if ancien is not None:
                 fresh[ancien] -= 1
             fresh[status] += 1
             parent.agg[reader_index] = worst(s for s, count in counts.items() if count > 0)
-            index_parent = self.createIndex(parent.row, colonne, parent)
-            self.dataChanged.emit(index_parent, index_parent, [Qt.DecorationRole, Qt.ToolTipRole])
+            apres = parent.agg[reader_index]
+            # Un dossier n'affiche que son pire statut et s'il vient de ce run
+            # (icone pleine) ou d'un precedent (contour). Le repeindre a chaque
+            # resultat, meme inchange, triplait les signaux sur une grande
+            # suite : 150 000 pour 50 000 tests.
+            if apres is not avant or bool(fresh.get(apres, 0)) != avant_frais:
+                index_parent = self.createIndex(parent.row, colonne, parent)
+                self.dataChanged.emit(index_parent, index_parent,
+                                      [Qt.DecorationRole, Qt.ToolTipRole])
             parent = parent.parent
         return True
 

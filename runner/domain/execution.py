@@ -156,6 +156,20 @@ def _merge_junit_files(sources: list[str], destination: str) -> None:
     ET.ElementTree(merged).write(destination, encoding="utf-8", xml_declaration=True)
 
 
+def _sans_contexte_pytest_parent(env: dict) -> dict:
+    """Retire ce qu'un pytest parent laisse dans l'environnement.
+
+    Si le runner tourne lui-meme sous pytest-xdist (ses propres tests en
+    parallele), `PYTEST_XDIST_WORKER` passe au pytest qu'il lance : celui-ci
+    se croit alors un worker xdist, et le plugin du runner se tait -- aucun
+    verdict, aucune duree. Le pytest lance cree ses propres workers s'il en
+    a besoin ; il ne doit rien heriter de ceux du parent.
+    """
+    for key in [k for k in env if k.startswith("PYTEST_XDIST_") or k == "PYTEST_CURRENT_TEST"]:
+        del env[key]
+    return env
+
+
 def _prepend_pythonpath(env: dict, paths) -> None:
     """Ajoute ``paths`` devant PYTHONPATH sans doublon, sans perdre l'existant."""
     existant = [p for p in str(env.get("PYTHONPATH", "")).split(os.pathsep) if p]
@@ -238,7 +252,7 @@ def collect(workspace: str, interpreter: str, env: dict | None = None,
                     *args_plugin, *diagnostic_args, *configuration_args]
         context = dict(workspace=workspace, interpreter=interpreter,
                        command=commande, configuration=configuration)
-        environnement = markers.environment(env, fichier_markers)
+        environnement = _sans_contexte_pytest_parent(markers.environment(env, fichier_markers))
         environnement[diagnostics.ENV_OUT] = diagnostic_file
         _prepend_pythonpath(
             environnement,
@@ -378,6 +392,7 @@ class ReaderRun:
         # pas un remplacement de l'environnement du poste.
         env = dict(os.environ)
         env.update(self._env)
+        _sans_contexte_pytest_parent(env)
         from runner.domain.run_pause import ENV_PAUSE
         env[ENV_PAUSE] = str(self.pause_control.path)
         if self.request.build_number is not None:

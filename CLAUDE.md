@@ -31,18 +31,23 @@ sous-processus, avec l'interpréteur configuré pour les tests.
 - `pytest.ini` à la racine cible `testSuite1` (workspace de démonstration),
   pas les tests de l'application.
 
-## Tests : prudence
+## Tests
 
-- La suite complète prend ~10 min. Plusieurs fixtures appellent
-  `QSettings(ORG, APP).clear()` et **effacent les vrais réglages de
-  l'utilisateur** : demander avant de la lancer, et préférer les fichiers
-  ciblés, en série, un par commande avec `timeout`.
-- Un nouveau test isole ses réglages (fixture `window` avec un `QSettings`
-  INI dans `tmp_path`, `history.dossier` redirigé) et ne touche jamais à
-  `QSettings(ORG, APP)`.
-- Des tests échouent déjà ou sont instables (parallélisme, plantage natif
-  intermittent de `test_profile_header_picker`) : comparer avec
-  `git stash` avant de conclure à une régression.
+- Suite complète : `python -m pytest runner/tests -q -n 6` (~6 min). La CI
+  (`.github/workflows/ci.yml`) la lance sur main, `codex/**` et les PR.
+- `runner/tests/conftest.py` isole automatiquement chaque test : tout
+  `QSettings(ORG, APP)` (appli et tests) va dans un INI temporaire,
+  `QStandardPaths` est en mode test et `history.dossier` est redirigé. Ne pas
+  contourner cette fixture : sans elle, la suite effaçait les vrais réglages
+  de l'utilisateur.
+- Un test qui attend un sous-processus ou un minuteur attend une condition
+  (boucle avec limite, `qtbot.waitUntil`), jamais un délai fixe : la suite
+  tourne en parallèle et sous charge.
+- Instabilités natives connues (PySide, objets Qt détruits encore référencés) :
+  segfault intermittent de `test_profile_header_picker` (bascules rapides
+  Tests / Profiles) et `QWidgetItem` à la place d'un modèle dans
+  `ExecutionProfilesPage._build_ui`. Comparer avec `git stash` avant de
+  conclure à une régression.
 
 ## Livrer
 

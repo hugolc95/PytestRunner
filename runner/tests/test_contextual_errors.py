@@ -21,12 +21,24 @@ def test_collection_only_shows_errors_from_all_files(tmp_path):
     (tmp_path / "test_a.py").write_text("import missing_component_a\n")
     (tmp_path / "test_b.py").write_text("raise ValueError('invalid product config')\n")
     (tmp_path / "test_ok.py").write_text("def test_ok(): pass\n")
+    # Un fichier sain rend la collecte partielle : les deux fichiers casses
+    # sont rapportes a part, chacun avec un message court.
+    collection = collect(str(tmp_path), sys.executable)
+    assert collection.nodeids == ("test_ok.py::test_ok",)
+    assert set(collection.broken_files) == {"test_a.py", "test_b.py"}
+    a = collection.broken_files["test_a.py"]["message"]
+    b = collection.broken_files["test_b.py"]["message"]
+    assert "missing_component_a" in a
+    assert "ValueError: invalid product config" in b
+    for message in (a, b):
+        assert "Traceback" not in message and "short test summary" not in message
+
+    (tmp_path / "test_ok.py").unlink()
     with pytest.raises(RuntimeError) as error:
         collect(str(tmp_path), sys.executable)
     message = str(error.value)
     assert "test_a.py" in message and "missing_component_a" in message
     assert "test_b.py" in message and "ValueError: invalid product config" in message
-    assert "test_ok.py::" not in message
     assert "Traceback" not in message and "short test summary" not in message
 
 
