@@ -4,8 +4,10 @@ __pycache__/
 .pytest_cache/
 .codex-tmp/
 
-# Config locale de l'outil Claude Code, pas du code source du projet
-.claude/
+# Reglages locaux de Claude Code. Les skills du projet (.claude/skills) et
+# CLAUDE.md sont versionnes : ils decrivent comment lancer et livrer l'appli.
+.claude/settings.local.json
+.claude/**/__pycache__/
 
 # Etat / rapports generes a l'execution, pas du code source
 campaign_state.txt
