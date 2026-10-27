@@ -1,5 +1,25 @@
 # Pytest Runner GUI
 
+## Fiabilité — v1.4.7
+
+**Menu de l’en-tête de l’arbre.** Le sous-menu **Duration shows** (clic droit
+sur l’en-tête) s’affiche de nouveau correctement : il était détruit avant même
+l’ouverture du menu.
+
+**Grandes suites plus fluides.** Pendant un run, un dossier de l’arbre n’est
+redessiné que lorsque son statut affiché change, et non plus à chaque
+résultat d’un de ses tests.
+
+**Runs lancés depuis un environnement pytest parallèle.** Le pytest lancé par
+l’application n’hérite plus des variables de pytest-xdist de son parent :
+verdicts et durées arrivent toujours.
+
+**Tests de l’application.** Lancer la suite de tests de Pytest Runner ne
+modifie plus les préférences de l’utilisateur (workspaces récents, thème,
+interpréteur…) : chaque test travaille dans des réglages temporaires. Une CI
+lance cette suite sur `main` et sur les branches de travail, et construit
+l’exécutable à chaque mise à jour de `main`.
+
 ## Logs lisibles et sélection du texte — v1.4.6
 
 Les timestamps en début de ligne sont masqués dans les logs affichés par
