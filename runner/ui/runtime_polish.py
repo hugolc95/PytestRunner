@@ -186,7 +186,9 @@ def install() -> None:
         for view in self.findChildren(QAbstractItemView):
             _polish_item_view(view)
         for tree in self.findChildren(QTreeView):
-            tree.setUniformRowHeights(True)
+            # La sequence contient un editeur YAML entre les lignes : lui
+            # imposer leur hauteur coupe ses champs dans l'application reelle.
+            tree.setUniformRowHeights(not bool(tree.property("variableRowHeights")))
             tree.setAnimated(False)
 
         # Hidden notices consume no space. They appear below the workspace bar

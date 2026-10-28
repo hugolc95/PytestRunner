@@ -1,5 +1,24 @@
 # Pytest Runner GUI
 
+## Profils : retour des groupes — v1.4.8
+
+La **Test sequence** retrouve un arbre compact avec des groupes de dossiers,
+modules, classes et cas paramétrés, repliés au départ. **Add tests / groups**
+permet d’ajouter un test seul ou un groupe complet ; **Add selected again**
+répète le dernier ajout sans devoir tout recocher.
+
+Un groupe se déplie pour retrouver ses tests. **Duplicate**, **Remove**, les
+flèches et le glisser-déposer agissent sur le groupe ou sur le test choisi.
+Sélectionner à la fois un groupe et un de ses tests ne traite pas ce test deux
+fois. L’ordre d’exécution, les doublons volontaires et les paramètres YAML
+propres à chaque occurrence suivent tous ces déplacements et restent conservés
+dans les profils sauvegardés ou exportés.
+
+Les lignes ne sont plus de grandes cartes individuelles. Sélectionner un test
+ouvre ses paramètres YAML ; déplier un groupe n’ouvre pas les paramètres de
+tous ses tests. Les commandes de dépliage et repliage restent dans la barre
+de la séquence.
+
 ## Fiabilité — v1.4.7
 
 **Menu de l’en-tête de l’arbre.** Le sous-menu **Duration shows** (clic droit

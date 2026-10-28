@@ -7,8 +7,7 @@ import copy
 import yaml
 from pathlib import Path
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal, QSize, QRect
-from PySide6.QtGui import QColor
+from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal, QSize
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -20,7 +19,6 @@ from PySide6.QtWidgets import (
     QComboBox,
     QToolButton,
     QStyledItemDelegate,
-    QStyle,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -49,7 +47,8 @@ from runner.domain.execution_profile import (
     export_profile,
     inspect_profile,
 )
-from runner.domain.tree import build_tree
+from runner.domain.models import Kind
+from runner.domain.tree import build_tree, build_sequence_tree, group_hierarchically
 from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
@@ -58,6 +57,9 @@ from runner.ui.widgets import ErrorDialog
 _OVERRIDES_ROLE = Qt.UserRole + 20
 _ERROR_ROLE = Qt.UserRole + 21
 _DRAFT_ROLE = Qt.UserRole + 22
+_LABEL_ROLE = Qt.UserRole + 23
+_EDITOR_ROLE = Qt.UserRole + 24
+_KIND_ROLE = Qt.UserRole + 25
 
 
 def _short_nodeid(nodeid: str) -> str:
@@ -69,51 +71,29 @@ def _short_nodeid(nodeid: str) -> str:
 
 
 class StepDelegate(QStyledItemDelegate):
-    """Compact step cards; only the selected card owns an inline editor."""
+    """Des lignes compactes ; seul l'editeur YAML prend plusieurs lignes."""
 
     def sizeHint(self, option, index):
-        if index.data(NODEID_ROLE):
-            return QSize(200, 84)
-        return super().sizeHint(option, index)
+        size = super().sizeHint(option, index)
+        if not index.data(_EDITOR_ROLE):
+            size.setHeight(max(30, size.height()))
+        return size
 
-    def paint(self, painter, option, index):
-        nodeid = index.data(NODEID_ROLE)
-        if not nodeid:
-            return super().paint(painter, option, index)
-        painter.save()
-        rect = option.rect.adjusted(2, 3, -3, -3)
-        selected = bool(option.state & QStyle.State_Selected)
-        painter.setPen(QColor(t.ACCENT if selected else t.BORDER))
-        painter.setBrush(QColor(t.ACCENT_SOFT if selected else t.BG_SURFACE))
-        painter.drawRoundedRect(rect, 6, 6)
-        number = QRect(rect.left() + 9, rect.top() + 9, 30, 26)
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(QColor(t.BG_INPUT))
-        painter.drawRoundedRect(number, 4, 4)
-        painter.setPen(QColor(t.TEXT_MUTED))
-        painter.drawText(number, Qt.AlignCenter, str(index.row() + 1).zfill(2))
-        left = number.right() + 10
-        width = max(1, rect.right() - left - 10)
-        font = painter.font()
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(QColor(t.TEXT))
-        painter.drawText(QRect(left, rect.top() + 8, width, 20), Qt.AlignVCenter,
-                         painter.fontMetrics().elidedText(_short_nodeid(nodeid), Qt.ElideRight, width))
-        font.setBold(False)
-        painter.setFont(font)
-        painter.setPen(QColor(t.TEXT_MUTED))
-        painter.drawText(QRect(left, rect.top() + 29, width, 18), Qt.AlignVCenter,
-                         painter.fontMetrics().elidedText(nodeid.split('::')[0], Qt.ElideMiddle, width))
-        patch = index.data(_OVERRIDES_ROLE) or {}
-        detail = "Profile configuration"
-        if patch:
-            detail = " · ".join(f"{'.'.join(path)} = {value}"
-                                 for path, value in ExecutionProfilesPage._yaml_fields(patch))
-            painter.setPen(QColor(t.divergent_color()))
-        painter.drawText(QRect(left, rect.top() + 51, width, 18), Qt.AlignVCenter,
-                         painter.fontMetrics().elidedText(detail, Qt.ElideRight, width))
-        painter.restore()
+
+class SequenceTree(QTreeWidget):
+    order_changed = Signal()
+
+    def __init__(self, can_move, parent=None):
+        super().__init__(parent)
+        self._can_move = can_move
+
+    def dropEvent(self, event):
+        if not self._can_move():
+            event.ignore()
+            return
+        super().dropEvent(event)
+        if event.isAccepted():
+            self.order_changed.emit()
 
 
 class AddTestsDialog(QDialog):
@@ -123,15 +103,15 @@ class AddTestsDialog(QDialog):
 
     def __init__(self, nodeids: list[str], parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Add tests to sequence")
+        self.setWindowTitle("Add tests or groups")
         self.resize(690, 520)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(t.SPACE_4, t.SPACE_4, t.SPACE_4, t.SPACE_4)
         layout.setSpacing(t.SPACE_2)
 
         copy = QLabel(
-            "Select tests and add them in sequence order. You can add the "
-            "same test as many times as needed.")
+            "Select a test, a class or a folder. Groups are added together "
+            "in selection order, and can be added again.")
         copy.setObjectName("Muted")
         copy.setWordWrap(True)
         layout.addWidget(copy)
@@ -145,6 +125,7 @@ class AddTestsDialog(QDialog):
         self.model.set_tree(build_tree(nodeids))
         self.model.set_all_checked(False)
         self._selection_order = []
+        self._last_added = []
         self.model.selection_changed.connect(self._remember_selection_order)
         self.proxy = QSortFilterProxyModel(self)
         self.proxy.setSourceModel(self.model)
@@ -167,7 +148,8 @@ class AddTestsDialog(QDialog):
         # ni l'autre ne tombait plus dans la zone cliquable que Qt calcule
         # pour la case. Cacher cette colonne et etirer la premiere regle les
         # deux : le texte redevient lisible, et la case redevient cliquable.
-        self.tree.setColumnHidden(1, True)
+        for column in range(1, self.model.columnCount()):
+            self.tree.setColumnHidden(column, True)
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         layout.addWidget(self.tree, 1)
@@ -187,8 +169,10 @@ class AddTestsDialog(QDialog):
         self.search.textChanged.connect(self._filter)
         self.tree.doubleClicked.connect(self._add_clicked_test)
         self.add_button.clicked.connect(self._add)
-        self.add_again_button.clicked.connect(self._add)
+        self.add_again_button.clicked.connect(self._add_again)
         self.done_button.clicked.connect(self.accept)
+        self.add_button.setEnabled(False)
+        self.add_again_button.setEnabled(False)
 
     def _filter(self, text: str) -> None:
         self.proxy.setFilterFixedString(text.strip())
@@ -198,8 +182,15 @@ class AddTestsDialog(QDialog):
     def _add(self) -> None:
         selected = list(self._selection_order)
         if selected:
+            self._last_added = list(selected)
             self.tests_added.emit(selected)
             self.model.set_all_checked(False)
+
+    def _add_again(self):
+        if self._selection_order:
+            self._add()
+        elif self._last_added:
+            self.tests_added.emit(list(self._last_added))
 
     def _remember_selection_order(self, *_):
         selected = self.model.checked_nodeids()
@@ -207,11 +198,16 @@ class AddTestsDialog(QDialog):
         self._selection_order = [nodeid for nodeid in self._selection_order if nodeid in current]
         previous = set(self._selection_order)
         self._selection_order.extend(nodeid for nodeid in selected if nodeid not in previous)
+        self.add_button.setEnabled(bool(selected))
+        self.add_again_button.setEnabled(bool(selected or self._last_added))
+        self.add_button.setText(f"Add selected ({len(selected)})" if selected else "Add selected")
 
     def _add_clicked_test(self, proxy_index) -> None:
         source_index = self.proxy.mapToSource(proxy_index).siblingAtColumn(0)
         nodeid = self.model.data(source_index, NODEID_ROLE)
         if nodeid:
+            self._last_added = [nodeid]
+            self.add_again_button.setEnabled(True)
             self.tests_added.emit([nodeid])
 
 
@@ -228,6 +224,9 @@ class ExecutionProfilesPage(QWidget):
         self._workspace_config = ""
         self._dirty = False
         self._building = False
+        self._reorder_timer = QTimer(self)
+        self._reorder_timer.setSingleShot(True)
+        self._reorder_timer.timeout.connect(self._settle_sequence_order)
         self._build_ui()
         self.refresh()
 
@@ -326,8 +325,9 @@ class ExecutionProfilesPage(QWidget):
 
     def _build_sequence(self) -> QWidget:
         frame, layout = self._surface("Test sequence")
-        self.sequence_list = QTreeWidget()
+        self.sequence_list = SequenceTree(self._valid_editing, self)
         self.sequence_list.setObjectName("ProfileSequence")
+        self.sequence_list.setProperty("variableRowHeights", True)
         self.sequence_list.setHeaderHidden(True)
         self.sequence_list.setItemDelegate(StepDelegate(self.sequence_list))
         self.sequence_list.setDragDropMode(QAbstractItemView.InternalMove)
@@ -340,13 +340,13 @@ class ExecutionProfilesPage(QWidget):
         self.sequence_list.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.sequence_list.setAccessibleName("Ordered test sequence")
         self.sequence_list.setAccessibleDescription(
-            "Select a step to edit its YAML parameters. Drag steps to reorder them.")
-        self.sequence_list.setToolTip("Each row is one execution, including repeated tests.")
+            "Expandable test groups in execution order. Move, duplicate or remove a group or a test.")
+        self.sequence_list.setToolTip("Select a group to manage it, or a test to edit its YAML parameters.")
         self.sequence_list.currentItemChanged.connect(self._show_step_editor)
         self.sequence_list.itemExpanded.connect(self._expand_step_editor)
         layout.addWidget(self.sequence_list, 1)
         actions = QHBoxLayout()
-        self.add_tests_button = QPushButton("Add tests")
+        self.add_tests_button = QPushButton("Add tests / groups")
         self.add_tests_button.setIcon(icons.icon("mdi.plus"))
         self.duplicate_button = QPushButton("Duplicate")
         self.remove_button = QPushButton("Remove")
@@ -357,8 +357,16 @@ class ExecutionProfilesPage(QWidget):
         for direction, name in ((-1, "mdi.arrow-up"), (1, "mdi.arrow-down")):
             button = QToolButton()
             button.setIcon(icons.icon(name))
-            button.setToolTip("Move step up" if direction < 0 else "Move step down")
+            button.setToolTip("Move test or group up" if direction < 0 else "Move test or group down")
             button.clicked.connect(lambda checked=False, d=direction: self._move_step(d))
+            actions.addWidget(button)
+        for glyph, tooltip, callback in (
+                ("mdi.unfold-more-horizontal", "Expand groups", self._expand_groups),
+                ("mdi.unfold-less-horizontal", "Collapse groups", self.sequence_list.collapseAll)):
+            button = QToolButton()
+            button.setIcon(icons.icon(glyph))
+            button.setToolTip(tooltip)
+            button.clicked.connect(callback)
             actions.addWidget(button)
         actions.addStretch(1)
         layout.addLayout(actions)
@@ -366,6 +374,7 @@ class ExecutionProfilesPage(QWidget):
         self.duplicate_button.clicked.connect(self.duplicate_steps)
         self.remove_button.clicked.connect(self.remove_steps)
         self.sequence_list.model().rowsMoved.connect(self._on_sequence_reordered)
+        self.sequence_list.order_changed.connect(self._on_sequence_reordered)
         return frame
 
     def _build_options(self) -> QWidget:
@@ -572,43 +581,151 @@ class ExecutionProfilesPage(QWidget):
         dialog.exec()
 
     def _step_items(self):
-        return [self.sequence_list.topLevelItem(i)
-                for i in range(self.sequence_list.topLevelItemCount())]
+        items = []
+        def visit(item):
+            if item.data(0, NODEID_ROLE):
+                items.append(item)
+            elif not item.data(0, _EDITOR_ROLE):
+                for i in range(item.childCount()):
+                    visit(item.child(i))
+        for i in range(self.sequence_list.topLevelItemCount()):
+            visit(self.sequence_list.topLevelItem(i))
+        return items
 
     def _step_patches(self):
         return [copy.deepcopy(item.data(0, _OVERRIDES_ROLE) or {}) for item in self._step_items()]
 
     def _append_tests(self, nodeids: list[str]) -> None:
-        for nodeid in nodeids:
-            self.sequence_list.addTopLevelItem(self._step_item(nodeid, {}))
+        # Chaque ajout reste un bloc : deux dossiers choisis separement ne
+        # fusionnent pas et une occurrence repetee ne disparait jamais.
+        self._add_sequence_groups(nodeids, [{} for _ in nodeids])
         self._mark_dirty()
 
-    def _step_item(self, nodeid, patch):
+    def _step_item(self, nodeid, patch, label=None):
         item = QTreeWidgetItem()
         item.setData(0, NODEID_ROLE, nodeid)
+        item.setData(0, _LABEL_ROLE, label or _short_nodeid(nodeid))
         item.setData(0, _OVERRIDES_ROLE, copy.deepcopy(patch))
+        item.setIcon(0, icons.kind_icon(Kind.TEST))
         item.setToolTip(0, nodeid)
         # Steps may move between rows, but cannot become children of other steps.
         item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
         child = QTreeWidgetItem(item)
+        child.setData(0, _EDITOR_ROLE, True)
         child.setFlags(Qt.ItemIsEnabled)
         return item
 
+    @staticmethod
+    def _group_item(label, kind):
+        item = QTreeWidgetItem()
+        item.setData(0, _LABEL_ROLE, label)
+        item.setData(0, _KIND_ROLE, kind.value)
+        item.setIcon(0, icons.kind_icon(kind))
+        item.setToolTip(0, label)
+        return item
+
+    def _add_sequence_groups(self, nodeids, patches):
+        patches = iter(patches)
+        def make_node(node):
+            if node.nodeid:
+                return self._step_item(node.nodeid, next(patches), node.name)
+            item = self._group_item(node.name, node.kind)
+            for child in node.children:
+                item.addChild(make_node(child))
+            return item
+        for group in group_hierarchically(nodeids):
+            if len(group.nodeids) == 1:
+                item = self._step_item(group.nodeids[0], next(patches))
+            else:
+                item = self._group_item(group.name, group.kind)
+                roots = build_sequence_tree(group.nodeids)
+                while len(roots) == 1 and roots[0].children:
+                    roots = roots[0].children
+                for node in roots:
+                    item.addChild(make_node(node))
+            self.sequence_list.addTopLevelItem(item)
+
     def _rebuild_sequence(self, nodeids: list[str], patches=None) -> None:
+        self._reorder_timer.stop()
+        old_ids, ranges = self._sequence_ranges()
+        expanded = {(item.data(0, _LABEL_ROLE), tuple(old_ids[start:end]))
+                    for item, start, end in ranges
+                    if not self._building and item.isExpanded() and not item.data(0, NODEID_ROLE)}
         blocked = self.sequence_list.blockSignals(True)
-        self.sequence_list.clear()
-        for index, nodeid in enumerate(nodeids):
-            patch = patches[index] if patches else {}
-            self.sequence_list.addTopLevelItem(self._step_item(nodeid, patch))
-        self.sequence_list.blockSignals(blocked)
+        try:
+            self._parameter_controls = {}
+            self.sequence_list.clear()
+            self._add_sequence_groups(nodeids, patches or [{} for _ in nodeids])
+            new_ids, ranges = self._sequence_ranges()
+            for item, start, end in ranges:
+                if not item.data(0, NODEID_ROLE) and (
+                        item.data(0, _LABEL_ROLE), tuple(new_ids[start:end])) in expanded:
+                    item.setExpanded(True)
+        finally:
+            self.sequence_list.blockSignals(blocked)
         self._renumber()
 
     def _flatten_sequence(self) -> list[str]:
         return [item.data(0, NODEID_ROLE) for item in self._step_items()]
 
     def _selected_ranges(self):
-        return self._flatten_sequence(), [(item, i, i + 1) for i, item in enumerate(self._step_items())
-                                         if item.isSelected()]
+        nodeids, ranges = self._sequence_ranges()
+        selected = {id(item) for item in self.sequence_list.selectedItems()}
+        def ancestor_selected(item):
+            parent = item.parent()
+            while parent is not None:
+                if id(parent) in selected:
+                    return True
+                parent = parent.parent()
+            return False
+        return nodeids, [(item, start, end) for item, start, end in ranges
+                         if id(item) in selected and not ancestor_selected(item)]
+
+    def _sequence_ranges(self):
+        nodeids, ranges = [], []
+        def visit(item):
+            if item.data(0, _EDITOR_ROLE):
+                return
+            start = len(nodeids)
+            nodeid = item.data(0, NODEID_ROLE)
+            if nodeid:
+                nodeids.append(nodeid)
+            else:
+                for i in range(item.childCount()):
+                    visit(item.child(i))
+            if len(nodeids) > start:
+                ranges.append((item, start, len(nodeids)))
+        for i in range(self.sequence_list.topLevelItemCount()):
+            visit(self.sequence_list.topLevelItem(i))
+        return nodeids, ranges
+
+    def _focus_range(self, start, count=1, *, edit=False):
+        _, ranges = self._sequence_ranges()
+        item = next((item for item, first, end in reversed(ranges)
+                     if first == start and end == start + count
+                     and (not edit or item.data(0, NODEID_ROLE))), None)
+        if item is None and start < len(self._step_items()):
+            item = self._step_items()[start]
+        if item is None:
+            return
+        parent = item.parent()
+        while parent is not None:
+            parent.setExpanded(True)
+            parent = parent.parent()
+        blocked = self.sequence_list.blockSignals(not edit)
+        self.sequence_list.setCurrentItem(item)
+        self.sequence_list.blockSignals(blocked)
+        self.sequence_list.scrollToItem(item)
+
+    def _expand_groups(self):
+        blocked = self.sequence_list.blockSignals(True)
+        try:
+            _, ranges = self._sequence_ranges()
+            for item, _, _ in ranges:
+                if not item.data(0, NODEID_ROLE):
+                    item.setExpanded(True)
+        finally:
+            self.sequence_list.blockSignals(blocked)
 
     def duplicate_steps(self) -> None:
         if not self._valid_editing():
@@ -617,18 +734,20 @@ class ExecutionProfilesPage(QWidget):
         patches = self._step_patches()
         if not selected:
             return
-        # Duplicate the selected block immediately after its last occurrence.
-        indexes = [start for _, start, _ in selected]
-        insertion = max(indexes) + 1
-        nodeids[insertion:insertion] = [nodeids[i] for i in indexes]
-        patches[insertion:insertion] = [copy.deepcopy(patches[i]) for i in indexes]
+        edit = len(selected) == 1 and bool(selected[0][0].data(0, NODEID_ROLE))
+        for _, start, end in sorted(selected, key=lambda row: row[1], reverse=True):
+            nodeids[end:end] = nodeids[start:end]
+            patches[end:end] = copy.deepcopy(patches[start:end])
         self._rebuild_sequence(nodeids, patches)
-        self.sequence_list.setCurrentItem(self.sequence_list.topLevelItem(insertion))
+        _, start, end = min(selected, key=lambda row: row[1])
+        self._focus_range(end, end - start, edit=edit)
         self._mark_dirty()
 
     def remove_steps(self) -> None:
         nodeids, selected = self._selected_ranges()
-        removed = {start for _, start, _ in selected}
+        removed = {i for _, start, end in selected for i in range(start, end)}
+        if not removed:
+            return
         if any(item.data(0, _ERROR_ROLE) for i, item in enumerate(self._step_items()) if i not in removed):
             self._valid_editing()
             return
@@ -641,23 +760,41 @@ class ExecutionProfilesPage(QWidget):
         if not self._valid_editing():
             return
         current = self.sequence_list.currentItem()
-        if current is None or current.parent() is not None:
+        if current is None or current.data(0, _EDITOR_ROLE):
             return
-        index = self.sequence_list.indexOfTopLevelItem(current)
+        parent = current.parent() or self.sequence_list.invisibleRootItem()
+        index = parent.indexOfChild(current)
         destination = index + direction
-        if not 0 <= destination < self.sequence_list.topLevelItemCount():
+        if not 0 <= destination < parent.childCount():
             return
+        _, ranges = self._sequence_ranges()
+        by_item = {id(item): (start, end) for item, start, end in ranges}
+        start, end = by_item[id(current)]
+        other_start, other_end = by_item[id(parent.child(destination))]
+        edit = bool(current.data(0, NODEID_ROLE))
         nodeids, patches = self._flatten_sequence(), self._step_patches()
-        nodeids[index], nodeids[destination] = nodeids[destination], nodeids[index]
-        patches[index], patches[destination] = patches[destination], patches[index]
+        # Echange les plages contigues, avec leurs patches YAML, sans trier.
+        left, middle, right = (other_start, start, end) if direction < 0 else (start, end, other_end)
+        for values in (nodeids, patches):
+            values[left:right] = values[middle:right] + values[left:middle]
+        target = other_start if direction < 0 else other_end - (end - start)
         self._rebuild_sequence(nodeids, patches)
-        self.sequence_list.setCurrentItem(self.sequence_list.topLevelItem(destination))
+        self._focus_range(target, end - start, edit=edit)
         self._mark_dirty()
 
     def _on_sequence_reordered(self, *_args):
-        QTimer.singleShot(0, self._settle_sequence_order)
+        # Le drop Qt doit finir avant de reconstruire ses index natifs.
+        self._reorder_timer.start(0)
 
     def _settle_sequence_order(self):
+        current = self.sequence_list.currentItem()
+        _, ranges = self._sequence_ranges()
+        selected = next(((start, end - start) for item, start, end in ranges
+                         if item is current), None)
+        nodeids, patches = self._flatten_sequence(), self._step_patches()
+        self._rebuild_sequence(nodeids, patches)
+        if selected:
+            self._focus_range(*selected)
         self._mark_dirty()
 
     @staticmethod
@@ -674,14 +811,17 @@ class ExecutionProfilesPage(QWidget):
                 yield path, value
 
     def _renumber(self):
-        for index, item in enumerate(self._step_items(), 1):
-            nodeid = item.data(0, NODEID_ROLE)
-            patch = item.data(0, _OVERRIDES_ROLE) or {}
-            changes = list(self._yaml_fields(patch))
-            detail = "Profile configuration"
-            if changes:
-                detail = " · ".join(f"{'.'.join(path)} = {value}" for path, value in changes)
-            item.setText(0, f"{index}   {_short_nodeid(nodeid)}\n       {nodeid.split('::')[0]}\n       {detail}")
+        _, ranges = self._sequence_ranges()
+        for item, start, end in ranges:
+            label = item.data(0, _LABEL_ROLE) or ''
+            number = f"{start + 1:02d}" if end - start == 1 else f"{start + 1:02d}–{end:02d}"
+            if item.data(0, NODEID_ROLE):
+                suffix = ' · Custom YAML' if item.data(0, _OVERRIDES_ROLE) else ''
+            else:
+                noun = ('parameter case' if end - start == 1 else 'parameter cases') if (
+                    item.data(0, _KIND_ROLE) == Kind.TEST.value) else ('test' if end - start == 1 else 'tests')
+                suffix = f" · {end - start} {noun}"
+            item.setText(0, f"{number}  {label}{suffix}")
 
     def _base_configuration(self):
         chosen = self.config_edit.property("fullPath") or ""
@@ -700,7 +840,7 @@ class ExecutionProfilesPage(QWidget):
         return base
 
     def _expand_step_editor(self, item):
-        if not self._building and item.parent() is None:
+        if not self._building and item.data(0, NODEID_ROLE):
             self.sequence_list.setCurrentItem(item)
             self._show_step_editor(item)
 
@@ -710,14 +850,15 @@ class ExecutionProfilesPage(QWidget):
     def _show_step_editor(self, item, previous=None):
         if self._building:
             return
-        if item is None or item.parent() is not None:
-            return
         self.sequence_list.blockSignals(True)
         for step in self._step_items():
             if step is not item:
                 step.setExpanded(False)
                 self.sequence_list.removeItemWidget(step.child(0), 0)
         self.sequence_list.blockSignals(False)
+        self._parameter_controls = {}
+        if item is None or not item.data(0, NODEID_ROLE):
+            return
         panel = QFrame()
         panel.setObjectName("Surface")
         layout = QVBoxLayout(panel)

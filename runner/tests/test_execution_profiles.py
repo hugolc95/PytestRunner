@@ -220,7 +220,7 @@ def test_profile_page_can_add_the_same_test_more_than_once(qapp, tmp_path):
         page.close()
 
 
-def test_profile_page_shows_each_parameter_case_as_a_distinct_step(qapp, tmp_path):
+def test_profile_page_collapses_parameter_cases_into_one_row_and_back(qapp, tmp_path):
     """Le regroupement n'est qu'un rendu du widget -- ce test verifie
     l'aller-retour reel via l'arbre, pas seulement la fonction de
     regroupement du domaine (deja couverte a part)."""
@@ -234,10 +234,15 @@ def test_profile_page_shows_each_parameter_case_as_a_distinct_step(qapp, tmp_pat
         page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
         page._append_tests(nodeids)
 
-        assert page.sequence_list.topLevelItemCount() == 3
-        assert page.sequence_list.topLevelItem(1).toolTip(0) == nodeids[1]
-        assert page._flatten_sequence() == nodeids
-        assert "3 tests" in page.summary.text()
+        assert page.sequence_list.topLevelItemCount() == 1
+        groupe = page.sequence_list.topLevelItem(0)
+        assert "3 parameter cases" in groupe.text(0)
+        assert groupe.childCount() == 3
+        assert groupe.text(0).startswith("01–03")
+        assert groupe.child(1).text(0).startswith("02")
+        assert groupe.child(1).toolTip(0) == nodeids[1]
+        assert "tests/test_api.py" not in groupe.child(1).text(0)
+        assert "3 tests in 1 group" in page.summary.text()
 
         page.new_profile()
         page._append_tests(nodeids)
@@ -257,8 +262,7 @@ def test_profile_page_sequence_group_is_collapsed_by_default(qapp, tmp_path):
         page._append_tests(nodeids)
 
         groupe = page.sequence_list.topLevelItem(0)
-        assert page.sequence_list.topLevelItemCount() == 5
-        assert groupe.childCount() == 1
+        assert groupe.childCount() == 5
         assert groupe.isExpanded() is False
     finally:
         page.close()
@@ -271,8 +275,8 @@ def test_profile_summary_counts_real_tests_not_collapsed_rows(qapp, tmp_path):
         page._append_tests(nodeids)
         page.repetitions.setValue(3)
 
-        assert page.sequence_list.topLevelItemCount() == 4
-        assert "4 tests" in page.summary.text()
+        assert page.sequence_list.topLevelItemCount() == 1
+        assert "4 tests in 1 group" in page.summary.text()
         assert "12 executions" in page.summary.text()
         assert page.sequence_list.accessibleName() == "Ordered test sequence"
     finally:
@@ -349,7 +353,6 @@ def test_profile_page_duplicate_steps_can_duplicate_a_whole_group(qapp, tmp_path
         page._append_tests(nodeids)
 
         page.sequence_list.topLevelItem(0).setSelected(True)
-        page.sequence_list.topLevelItem(1).setSelected(True)
         page.duplicate_steps()
 
         assert page._flatten_sequence() == [
@@ -377,7 +380,7 @@ def test_profile_page_duplicate_steps_can_duplicate_one_member_of_a_group(qapp, 
         page._append_tests(nodeids)
 
         groupe = page.sequence_list.topLevelItem(0)
-        page.sequence_list.topLevelItem(1).setSelected(True)  # "user"
+        groupe.child(1).setSelected(True)  # "user"
         page.duplicate_steps()
 
         assert page._flatten_sequence() == [
@@ -402,7 +405,7 @@ def test_profile_page_remove_steps_can_remove_one_member_without_the_group(qapp,
         page._append_tests(nodeids)
 
         groupe = page.sequence_list.topLevelItem(0)
-        page.sequence_list.topLevelItem(1).setSelected(True)  # "user"
+        groupe.child(1).setSelected(True)  # "user"
         page.remove_steps()
 
         assert page._flatten_sequence() == [
@@ -425,7 +428,6 @@ def test_profile_page_remove_steps_can_remove_a_whole_group(qapp, tmp_path):
         page._append_tests(nodeids)
 
         page.sequence_list.topLevelItem(0).setSelected(True)
-        page.sequence_list.topLevelItem(1).setSelected(True)
         page.remove_steps()
 
         assert page._flatten_sequence() == ["suite_b/test_card.py::test_reset"]
@@ -449,7 +451,7 @@ def test_profile_page_remove_steps_ignores_a_member_whose_group_is_also_selected
 
         groupe = page.sequence_list.topLevelItem(0)
         groupe.setSelected(True)
-        page.sequence_list.topLevelItem(1).setSelected(True)
+        groupe.child(0).setSelected(True)
         page.remove_steps()
 
         assert page._flatten_sequence() == ["suite_b/test_card.py::test_reset"]

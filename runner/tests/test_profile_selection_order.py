@@ -35,5 +35,5 @@ def test_interleaved_folders_remain_ordered_after_rebuild(qtbot, tmp_path):
     assert page._flatten_sequence() == ids
     page._rebuild_sequence(ids)
     assert page._flatten_sequence() == ids
-    assert page.sequence_list.topLevelItemCount() == len(ids)
+    assert page.sequence_list.topLevelItemCount() == 4
     assert all(item.data(0, NODEID_ROLE) for item in page._step_items())
