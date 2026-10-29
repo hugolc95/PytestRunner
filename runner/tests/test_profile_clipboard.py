@@ -163,7 +163,8 @@ def test_parent_and_child_selection_is_copied_only_once_and_mixed_selection_keep
 
 def test_parameterized_test_and_single_case_are_independently_copyable(page):
     _, ranges = page._sequence_ranges()
-    item = next(item for item, _, _ in ranges if item.data(0, _KIND_ROLE) == 'test')
+    item = next(item for item, _, _ in ranges if item.data(0, _KIND_ROLE) == 'test'
+                and not item.data(0, NODEID_ROLE))
     page.sequence_list.setCurrentItem(item)
     page.copy_elements()
     assert page.sequence_clipboard.payload['items'][0]['kind'] == 'parameterized'

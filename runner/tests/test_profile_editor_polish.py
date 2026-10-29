@@ -216,22 +216,25 @@ def test_effective_dialog_switches_reader_filters_copies_without_modifying_profi
     assert config == original
 
 
-def test_warning_indicators_agree_in_editor_preview_and_run_tree(page):
+def test_custom_yaml_indicators_agree_without_misrepresenting_overrides_as_errors(page):
     from runner.ui.execution_profiles_page import _OVERRIDES_ROLE
+    from runner.ui.profile_group_delegate import CONFIG_ISSUES_ROLE
     page._step_items()[0].setData(0, _OVERRIDES_ROLE, {'card': {'protocol': 'T0'}})
     page._mark_dirty()
     step = page._step_items()[0]
     assert step.data(0, EXCEPTION_ROLE)
-    assert 'YAML exception' in step.text(0)
-    assert 'inherited T1' in step.toolTip(0)
-    assert '1 exception' in page.sequence_list.topLevelItem(0).text(0)
+    assert 'Custom YAML' in step.text(0)
+    assert not step.data(0, CONFIG_ISSUES_ROLE)
+    assert 'Inherited value: T1' in step.toolTip(0)
+    assert 'exception' not in page.sequence_list.topLevelItem(0).text(0)
     model = LiveProfileModel()
     profile = page._profile_from_editor()
     model.prepare(profile, [Reader('A', 0)])
     index = model.index_for_nodeid('0:0')
     assert index.data(EXCEPTION_ROLE)
-    assert 'YAML exception' in index.data()
-    assert 'inherited T1' in index.data(Qt.ToolTipRole)
+    assert 'Custom YAML' in index.data()
+    assert not index.data(CONFIG_ISSUES_ROLE)
+    assert 'Inherited value: T1' in index.data(Qt.ToolTipRole)
     assert index.parent().data(EXCEPTION_ROLE)
 
 
@@ -274,4 +277,4 @@ def test_local_configuration_is_used_for_run_tree_exceptions(qapp):
     model = LiveProfileModel()
     model.configuration_base = BASE
     model.prepare(profile, [Reader('A', 0)])
-    assert 'inherited 15' in model.index_for_nodeid('0:0').data(Qt.ToolTipRole)
+    assert 'Inherited value: 15' in model.index_for_nodeid('0:0').data(Qt.ToolTipRole)

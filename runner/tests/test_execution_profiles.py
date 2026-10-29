@@ -231,7 +231,9 @@ def test_profile_page_collapses_parameter_cases_into_one_row_and_back(qapp, tmp_
     ]
     page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
     try:
-        page.set_workspace_context(nodeids, str(tmp_path / "campaign.yml"))
+        config = tmp_path / "campaign.yml"
+        config.write_text("Reader: local\n", encoding="utf-8")
+        page.set_workspace_context(nodeids, str(config))
         page._append_tests(nodeids)
 
         assert page.sequence_list.topLevelItemCount() == 1

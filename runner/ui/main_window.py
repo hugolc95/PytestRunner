@@ -1186,6 +1186,7 @@ class MainWindow(QMainWindow):
         self.left_stack.addWidget(self.tree)
         self.profile_model = LiveProfileModel(self)
         self.profile_tree = QTreeView()
+        self.profile_tree.setProperty('profileYamlReadOnly', True)
         self.profile_tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.profile_tree))
         self.profile_tree.setModel(self.profile_model)
         from runner.ui.profile_group_delegate import ProfileGroupDelegate

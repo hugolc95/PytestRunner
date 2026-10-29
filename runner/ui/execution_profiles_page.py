@@ -49,14 +49,14 @@ from runner.domain.execution_profile import (
     group_path, group_entry, inherited_configuration, merge_configuration,
 )
 from runner.domain.models import Kind
-from runner.domain.profile_configuration import configuration_details, exception_text
+from runner.domain.profile_configuration import configuration_details, configuration_annotation, aggregate_annotations
 from runner.domain.tree import build_tree, build_sequence_tree, group_hierarchically
 from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import ErrorDialog
 from runner.ui.profile_dialogs import StepParametersDialog, ProfileGroupDialog, ConfirmGroupMoveDialog, EffectiveConfigurationDialog, MoveToGroupDialog, yaml_fields, format_value
-from runner.ui.profile_group_delegate import ProfileGroupDelegate, EXCEPTION_ROLE
+from runner.ui.profile_group_delegate import ProfileGroupDelegate, EXCEPTION_ROLE, YAML_ROLE, GROUP_COLOR_ROLE, CONFIG_ISSUES_ROLE
 from runner.ui.profile_history import ProfileEdit, undoable
 from runner.ui.profile_clipboard import SequenceClipboard
 
@@ -686,13 +686,15 @@ class ExecutionProfilesPage(QWidget):
     def _step_groups(self):
         return [group_entry(self._item_group_path(item)) for item in self._step_items()]
 
-    def _step_item(self, nodeid, patch, label=None, group=None):
+    def _step_item(self, nodeid, patch, label=None, group=None, kind=None):
         item = QTreeWidgetItem()
         item.setData(0, NODEID_ROLE, nodeid)
         item.setData(0, _LABEL_ROLE, label or _short_nodeid(nodeid))
         item.setData(0, _OVERRIDES_ROLE, copy.deepcopy(patch))
         item.setData(0, _GROUP_ROLE, copy.deepcopy(group or {}))
-        item.setIcon(0, icons.kind_icon(Kind.TEST))
+        kind = kind or (Kind.CASE if nodeid.endswith(']') else Kind.TEST)
+        item.setData(0, _KIND_ROLE, kind.value)
+        item.setIcon(0, icons.kind_icon(kind))
         item.setToolTip(0, nodeid)
         # Steps may move between rows, but cannot become children of other steps.
         item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
@@ -714,7 +716,7 @@ class ExecutionProfilesPage(QWidget):
             patch_iterator = iter(patches[start:end])
             def make_node(node):
                 if node.nodeid:
-                    return self._step_item(node.nodeid, next(patch_iterator), node.name, metadata)
+                    return self._step_item(node.nodeid, next(patch_iterator), node.name, metadata, node.kind)
                 item = self._group_item(node.name, node.kind)
                 for child in node.children:
                     item.addChild(make_node(child))
@@ -936,24 +938,35 @@ class ExecutionProfilesPage(QWidget):
     def _renumber(self):
         _, ranges = self._sequence_ranges()
         steps = self._step_items()
+        problems = []
         try:
             base = self._base_configuration()
-        except (OSError, UnicodeError, yaml.YAMLError, ProfileValidationError):
+        except (OSError, UnicodeError, yaml.YAMLError, ProfileValidationError) as exc:
             base = {}
-        warnings = []
+            problems = ['Profile YAML: ' + str(exc)]
+        annotations = []
         for step in steps:
-            _, _, exceptions = configuration_details(base, self._item_group_path(step),
-                                                      step.data(0, _OVERRIDES_ROLE) or {})
-            warnings.append([exception_text(value) for value in exceptions])
+            annotations.append(configuration_annotation(base, self._item_group_path(step),
+                                                        step.data(0, _OVERRIDES_ROLE) or {}))
         for item, start, end in ranges:
             label = item.data(0, _LABEL_ROLE) or ''
             number = f"{start + 1:02d}" if end - start == 1 else f"{start + 1:02d}–{end:02d}"
             metadata = item.data(0, _GROUP_ROLE) or {}
-            exceptions = [text for row in warnings[start:end] for text in row]
+            is_test = bool(item.data(0, NODEID_ROLE))
+            path = self._item_group_path(item, include_self=not is_test)
+            own = configuration_annotation(base, path) if metadata and not is_test else None
+            annotation = (annotations[start] if is_test else own if own else
+                          aggregate_annotations(annotations[start:end], configuration_annotation(base, path, {})))
+            color = path[-1]['color'] if path else ''
+            item.setData(0, GROUP_COLOR_ROLE, color)
+            kind = Kind(item.data(0, _KIND_ROLE) or Kind.TEST.value)
+            item.setIcon(0, icons.icon('mdi.folder', color) if own else icons.kind_icon(kind, color))
+            item.setData(0, YAML_ROLE, annotation)
+            item.setData(0, CONFIG_ISSUES_ROLE, problems)
+            exceptions = [text for value in annotations[start:end] for text in value['exceptions']]
             item.setData(0, EXCEPTION_ROLE, exceptions)
-            count = sum(bool(row) for row in warnings[start:end])
-            if item.data(0, NODEID_ROLE):
-                suffix = ' · YAML exception' if count else (' · Custom YAML' if item.data(0, _OVERRIDES_ROLE) else '')
+            if is_test:
+                suffix = ' · Custom YAML' if item.data(0, _OVERRIDES_ROLE) else ''
                 tooltip = item.data(0, NODEID_ROLE)
             else:
                 noun = ('parameter case' if end - start == 1 else 'parameter cases') if (
@@ -961,12 +974,17 @@ class ExecutionProfilesPage(QWidget):
                 suffix = f" · {end - start} {noun}"
                 if metadata.get('configuration_overrides'):
                     suffix += ' · Custom YAML'
-                if count:
-                    suffix += f' · {count} exception' + ('s' if count != 1 else '')
                 tooltip = label + ('\n' + metadata['description'] if metadata else '')
-            if exceptions:
-                tooltip += '\n\nYAML exceptions:\n' + '\n'.join(dict.fromkeys(exceptions))
+            if path:
+                tooltip += '\nGroup: ' + ' / '.join(group['name'] for group in path)
+            if problems:
+                tooltip += '\n\nConfiguration problem\n' + '\n'.join(problems)
+            if annotation['tooltip']:
+                tooltip += '\n\n' + annotation['tooltip']
+            if annotation['state']:
+                tooltip += '\n\nTo change values: right-click → Edit YAML parameters…'
             item.setToolTip(0, tooltip)
+            item.setData(0, Qt.AccessibleDescriptionRole, tooltip)
             description = ('\n' + metadata['description']) if metadata and not item.data(0, NODEID_ROLE) and metadata['description'] else ''
             item.setText(0, f"{number}  {label}{suffix}{description}")
 
@@ -990,7 +1008,10 @@ class ExecutionProfilesPage(QWidget):
         selected = self.sequence_list.selectedItems()
         single_test = len(selected) == 1 and bool(selected[0].data(0, NODEID_ROLE))
         named_group = len(selected) == 1 and not selected[0].data(0, NODEID_ROLE) and bool(selected[0].data(0, _GROUP_ROLE))
-        self.parameters_button.setEnabled(single_test or named_group)
+        self.parameters_button.setEnabled(len(selected) == 1)
+        self.parameters_button.setToolTip('Edit YAML for this test occurrence' if single_test else
+                                         'Edit shared YAML for this group' if named_group else
+                                         'Edit YAML for the tests inside this item (mixed values are preserved)')
         self.effective_button.setEnabled(single_test)
         self.subgroup_button.setEnabled(named_group and len(self._item_group_path(selected[0], include_self=True)) < 20)
         self.group_button.setEnabled(bool(selected))
@@ -1008,10 +1029,15 @@ class ExecutionProfilesPage(QWidget):
             self.sequence_clipboard.update_actions()
 
     def _edit_item(self, item, column=0):
-        if item.data(0, NODEID_ROLE):
-            self.edit_step_parameters()
-        elif item.data(0, _GROUP_ROLE):
+        named = not item.data(0, NODEID_ROLE) and bool(item.data(0, _GROUP_ROLE))
+        if not named and not item.data(0, NODEID_ROLE) and item.data(0, _KIND_ROLE) != Kind.TEST.value:
+            return
+        self.sequence_list.clearSelection()
+        self.sequence_list.setCurrentItem(item)
+        if named:
             self.edit_group()
+        else:
+            self.edit_step_parameters()
 
     @undoable('Change YAML parameters')
     def edit_step_parameters(self):
@@ -1021,15 +1047,21 @@ class ExecutionProfilesPage(QWidget):
         item = selected[0]
         is_test = bool(item.data(0, NODEID_ROLE))
         own = item.data(0, _GROUP_ROLE) or {}
-        if not is_test and not own:
+        batch = not is_test and not own
+        _, ranges = self._selected_ranges()
+        if not ranges:
             return
+        _, start, end = ranges[0]
         path = self._item_group_path(item)
         try:
-            base = inherited_configuration(self._base_configuration(), path)
+            base, origin_rows, _ = configuration_details(self._base_configuration(), path)
             patch = (item.data(0, _OVERRIDES_ROLE) or {}) if is_test else own.get('configuration_overrides', {})
-            dialog = StepParametersDialog(item.data(0, NODEID_ROLE) if is_test else own['name'],
-                                          base, patch, self, group=not is_test,
-                                          inherited_label='Profile' if not path else 'Parent group')
+            patches = self._step_patches()[start:end] if batch else None
+            dialog = StepParametersDialog(item.data(0, NODEID_ROLE) if is_test else
+                                          (item.data(0, _LABEL_ROLE) if batch else own['name']),
+                                          base, patches[0] if batch else patch, self, group=not is_test and not batch,
+                                          inherited_label='Profile' if not path else 'Parent group', patches=patches,
+                                          origins={row['path']: row['source'] for row in origin_rows})
         except (OSError, UnicodeError, yaml.YAMLError, ProfileValidationError) as exc:
             ErrorDialog.show_error(self, "Could not load YAML parameters", str(exc))
             return
@@ -1037,6 +1069,9 @@ class ExecutionProfilesPage(QWidget):
             return
         if is_test:
             item.setData(0, _OVERRIDES_ROLE, copy.deepcopy(dialog.patch))
+        elif batch:
+            for step in self._step_items()[start:end]:
+                step.setData(0, _OVERRIDES_ROLE, dialog.apply_to_patch(step.data(0, _OVERRIDES_ROLE) or {}))
         else:
             self._apply_group_yaml(own['id'], dialog.patch, replace=dialog.replace_existing.isChecked())
         self._mark_dirty()
@@ -1228,8 +1263,8 @@ class ExecutionProfilesPage(QWidget):
         menu = QMenu(self)
         named = len(selected) == 1 and not selected[0].data(0, NODEID_ROLE) and bool(selected[0].data(0, _GROUP_ROLE))
         single = len(selected) == 1 and bool(selected[0].data(0, NODEID_ROLE))
-        action = menu.addAction('Group YAML parameters…' if named else 'Test YAML parameters…', self.edit_step_parameters)
-        action.setEnabled(named or single)
+        action = menu.addAction('Edit YAML parameters…', self.edit_step_parameters)
+        action.setEnabled(len(selected) == 1)
         action = menu.addAction('View effective YAML…', self.show_effective_configuration)
         action.setEnabled(single)
         menu.addSeparator()
@@ -1253,6 +1288,7 @@ class ExecutionProfilesPage(QWidget):
     def _show_context_menu(self, position):
         item = self.sequence_list.itemAt(position)
         if item is not None and not item.isSelected():
+            self.sequence_list.clearSelection()
             self.sequence_list.setCurrentItem(item)
         menu = self._context_menu()
         menu.exec(self.sequence_list.viewport().mapToGlobal(position))

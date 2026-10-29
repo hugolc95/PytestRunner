@@ -1,5 +1,60 @@
 # Pytest Runner GUI
 
+## YAML des profils : édition par test et repères visibles — v1.5.1
+
+Dans **Execution Profiles**, **YAML parameters…** fonctionne sur un test,
+un cas individuel, une fonction paramétrée, un dossier, une classe ou un
+groupe nommé. Un double-clic sur un test ou une fonction paramétrée ouvre
+directement ses paramètres. Pour un ensemble de tests, **Mixed values —
+unchanged** indique des réglages différents : seuls les champs modifiés
+dans la fenêtre sont appliqués à tous. Les autres valeurs propres à chaque
+cas sont conservées. Annuler/rétablir couvre cette modification en une action.
+
+Le menu clic droit sépare **Edit YAML parameters…** (modifier les réglages)
+de **View effective YAML…** (consulter les valeurs finales). Dans la fenêtre
+d'édition, les colonnes **Use value from** et **Value used** distinguent la
+source choisie de la valeur utilisée. Sous une valeur personnalisée, **Without
+this customization** indique celle qui serait reprise en supprimant cette
+personnalisation ; ce n'est pas une seconde valeur utilisée simultanément.
+
+Dans cette fenêtre, chaque valeur de référence indique sa véritable origine :
+**Profile** ou le nom complet du groupe/sous-groupe concerné. **Custom values
+only**, à côté de la recherche, permet de retrouver uniquement les paramètres
+explicitement personnalisés sur le test ou le groupe en cours. Les valeurs
+mixtes restent visibles lorsqu'au moins un test les personnalise. Le filtre
+se combine avec la recherche par paramètre ou origine et ne modifie aucune valeur.
+Si un champ invalide est masqué par les filtres, un lien permet de le retrouver
+directement et de le corriger avant d'appliquer les modifications.
+
+Une petite pastille ambre sur l'icône signale les paramètres explicitement
+personnalisés sur ce test ou ce groupe. Les valeurs simplement héritées
+n'ajoutent aucun repère permanent. Le survol distingue **Value used** (valeur
+utilisée) de **Inherited value** (valeur reprise sans la personnalisation) et
+indique le groupe d'origine. Pour un groupe, **Group default** désigne son
+réglage par défaut. Une valeur personnalisée identique à l'héritage conserve
+sa pastille. Les dossiers repliés détaillent les tests personnalisés au survol.
+
+Le survol présente les paramètres dans des encarts : noms en gras, valeurs
+utilisées agrandies, personnalisations en ambre et valeurs provenant des
+groupes en bleu. La valeur héritée et son origine restent en retrait sous
+chaque réglage. Les couleurs suivent le thème au moment du survol. Les listes
+longues sont résumées avec le nombre de paramètres supplémentaires ; le YAML
+complet reste accessible dans l'aperçu. Les descriptions accessibles gardent
+l'ensemble des informations en texte simple.
+
+Une personnalisation ou un écart d'héritage ne porte plus de triangle d'alerte.
+Le triangle est réservé à un problème réel de lecture du YAML : fichier
+inaccessible, syntaxe invalide ou racine qui n'est pas un dictionnaire.
+Son survol donne le diagnostic ; il disparaît une fois la configuration corrigée.
+
+Les icônes des dossiers, fichiers Python, classes, fonctions et cas reprennent
+la couleur du groupe nommé le plus proche. Un sous-groupe utilise sa propre
+couleur. Les mêmes couleurs, pastilles et infobulles apparaissent dans **Run
+Tests** dès le chargement du profil, puis pendant l'exécution et les reprises.
+Les couleurs des résultats par lecteur restent celles de leurs verdicts.
+L'infobulle de Run Tests rappelle que l'édition du profil dans **Execution
+Profiles** s'applique aux exécutions suivantes.
+
 ## Profils : groupes colorés et paramètres explicites — v1.5.0
 
 Dans **Execution Profiles**, sélectionner un test puis **YAML parameters…**

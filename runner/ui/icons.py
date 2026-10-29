@@ -98,8 +98,8 @@ def status_icon(status: Status, group: bool = False, previous: bool = False) -> 
     return icon(table.get(status, "mdi.circle-small"), couleur)
 
 
-def kind_icon(kind: Kind) -> QIcon:
-    return icon(KIND_GLYPHS.get(kind, "mdi.file-outline"), t.TEXT_FAINT)
+def kind_icon(kind: Kind, color: str = '') -> QIcon:
+    return icon(KIND_GLYPHS.get(kind, "mdi.file-outline"), color or t.TEXT_FAINT)
 
 
 def available() -> bool:

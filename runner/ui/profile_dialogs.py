@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (
 )
 
 from runner.domain.execution_profile import ProfileValidationError, validate_step_overrides
-from runner.ui import icons
+from runner.ui import icons, tokens as t
 
 
 def yaml_fields(mapping, prefix=()):
@@ -37,13 +37,21 @@ def format_value(value):
 
 
 class StepParametersDialog(QDialog):
-    def __init__(self, nodeid, base, patch, parent=None, *, group=False, inherited_label="Profile"):
+    def __init__(self, nodeid, base, patch, parent=None, *, group=False, inherited_label="Profile", patches=None, origins=None):
         super().__init__(parent)
         self.setWindowTitle("Group YAML parameters" if group else "Test YAML parameters")
         self.resize(860, 640)
         self.patch = copy.deepcopy(patch)
         self.controls = {}
+        self.changed_paths = set()
+        self._changed_values = {}
+        self._batch = patches is not None
+        self._scope = 'group' if group else ('test selection' if self._batch else 'test')
+        self._batch_initializing = True
         self._errors = set()
+        self._hints = {}
+        self._references = {}
+        self._defined_by = {}
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 20, 24, 20)
         title = QLabel(nodeid.split("::")[-1])
@@ -56,17 +64,27 @@ class StepParametersDialog(QDialog):
         location.setObjectName("Muted")
         location.setWordWrap(True)
         root.addWidget(location)
-        note = QLabel("Custom values apply to every test in this group and its subgroups. "
-                      "Subgroup and test overrides take priority unless you replace them below."
-                      if group else "Choose an inherited value or customize this test occurrence only. "
-                      "Priority: profile → groups → this test. The original YAML file stays unchanged.")
+        note = QLabel("Set defaults for this group and its subgroups. A test with its own value keeps that value."
+                      if group else "The value on the right is what this test will use. Choose Custom value to change it here. "
+                      "The original YAML file stays unchanged.")
         note.setWordWrap(True)
+        if self._batch:
+            self.setWindowTitle('Test selection YAML parameters')
+            note.setText(f'Edit {len(patches)} test occurrences. Only parameters changed here are applied to all of them. '
+                         'Mixed values stay unchanged until you choose a value. Group parameters and the original YAML file stay unchanged.')
         root.addWidget(note)
-        search = QLineEdit()
-        search.setPlaceholderText("Find a YAML parameter…")
-        search.setClearButtonEnabled(True)
-        root.addWidget(search)
+        filters = QHBoxLayout()
+        self.search = QLineEdit()
+        self.search.setPlaceholderText("Find a YAML parameter or origin…")
+        self.search.setClearButtonEnabled(True)
+        filters.addWidget(self.search, 1)
+        self.custom_only = QCheckBox('Custom values only')
+        self.custom_only.setToolTip('Show explicit overrides on this test or group. Mixed fields are included if any selected test overrides them. '
+                                    'Values inherited from groups are hidden.')
+        filters.addWidget(self.custom_only)
+        root.addLayout(filters)
         scroll = QScrollArea()
+        self._parameter_scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QScrollArea.NoFrame)
         content = QWidget()
@@ -74,10 +92,22 @@ class StepParametersDialog(QDialog):
         grid.setContentsMargins(0, 12, 12, 12)
         grid.setHorizontalSpacing(20)
         grid.setVerticalSpacing(14)
+        for column, text in enumerate(('Parameter', 'Use value from', 'Group default' if group else 'Value used')):
+            header = QLabel(text)
+            header.setObjectName('Muted')
+            grid.addWidget(header, 0, column)
         fields = dict(yaml_fields(base))
         self._inherited_paths = set(fields)
         custom = dict(yaml_fields(patch))
+        if self._batch:
+            for value in patches:
+                for path, original in yaml_fields(value):
+                    custom.setdefault(path, original)
+        batch_values = [dict(yaml_fields(value)) for value in patches] if self._batch else []
         fields.update({path: value for path, value in custom.items() if path not in fields})
+        self._has_fields = bool(fields)
+        self._initial_custom_paths = set(custom)
+        self._origins = {path: (origins or {}).get(path, inherited_label) for path in fields}
         readers = [path for path in fields if path[-1].lower() in ("reader", "lecteur")]
         managed = min(readers, key=len) if readers else None
         self._rows = []
@@ -86,7 +116,8 @@ class StepParametersDialog(QDialog):
             label.setTextFormat(Qt.PlainText)
             label.setWordWrap(True)
             mode = QComboBox()
-            mode.addItems(["Profile value" if inherited_label == "Profile" else "Inherited value", "Custom value"])
+            origin = self._origins[path]
+            mode.addItems(["Profile value" if origin == "Profile" else "Inherited value", "Custom value"])
             mode.setAccessibleName("Value source for " + ".".join(path))
             mode.setCurrentIndex(int(path in custom))
             value = custom.get(path, original)
@@ -103,12 +134,18 @@ class StepParametersDialog(QDialog):
                 editor = QLineEdit(format_value(value))
             editor.setAccessibleName("Value for " + ".".join(path))
             editor.setEnabled(bool(mode.currentIndex()))
-            hint = QLabel("Assigned by the readers selected in Run Tests" if path == managed else
-                          (inherited_label + ": " + format_value(original) if path in self._inherited_paths
-                           else "Not present in the profile YAML"))
+            reference = ('Without this customization: ' + format_value(original) + ' — ' + origin
+                         if path in self._inherited_paths else 'Without this customization: not defined')
+            defined_by = 'Defined by: ' + origin if path in self._inherited_paths else 'Not defined in the inherited configuration'
+            if path == managed:
+                reference = defined_by = 'Assigned by the readers selected in Run Tests'
+            hint = QLabel(reference if mode.currentIndex() == 1 else defined_by)
             hint.setTextFormat(Qt.PlainText)
             hint.setObjectName("Muted")
             hint.setWordWrap(True)
+            self._hints[path] = hint
+            self._references[path] = reference
+            self._defined_by[path] = defined_by
             error = QLabel()
             error.setTextFormat(Qt.PlainText)
             error.setStyleSheet("color: #e65770;")
@@ -120,9 +157,9 @@ class StepParametersDialog(QDialog):
             layout.addWidget(editor)
             layout.addWidget(hint)
             layout.addWidget(error)
-            grid.addWidget(label, index, 0, Qt.AlignTop)
-            grid.addWidget(mode, index, 1, Qt.AlignTop)
-            grid.addWidget(box, index, 2)
+            grid.addWidget(label, index + 1, 0, Qt.AlignTop)
+            grid.addWidget(mode, index + 1, 1, Qt.AlignTop)
+            grid.addWidget(box, index + 1, 2)
             if path == managed:
                 mode.setEnabled(False)
                 editor.setEnabled(False)
@@ -135,14 +172,32 @@ class StepParametersDialog(QDialog):
                 editor.currentTextChanged.connect(callback)
             else:
                 editor.textChanged.connect(callback)
+            if self._batch and path != managed:
+                first = batch_values[0]
+                mixed = any((path in value) != (path in first) or
+                            (path in value and (type(value[path]) is not type(first[path]) or value[path] != first[path]))
+                            for value in batch_values[1:])
+                if mixed:
+                    mode.blockSignals(True)
+                    mode.addItem('Mixed values — unchanged')
+                    mode.setCurrentIndex(2)
+                    mode.blockSignals(False)
+                    editor.setEnabled(False)
+                    hint.setText('Settings differ across these tests. They stay unchanged until you choose a source.\n' + reference)
         grid.setColumnStretch(2, 1)
-        grid.setRowStretch(len(fields), 1)
+        grid.setRowStretch(len(fields) + 1, 1)
         scroll.setWidget(content)
         root.addWidget(scroll, 1)
         self.empty = QLabel("No matching parameters.")
         self.empty.setObjectName("Muted")
         self.empty.setVisible(not fields)
         root.addWidget(self.empty)
+        self.validation_summary = QLabel()
+        self.validation_summary.setWordWrap(True)
+        self.validation_summary.setObjectName('Muted')
+        self.validation_summary.linkActivated.connect(self._show_invalid_parameter)
+        self.validation_summary.hide()
+        root.addWidget(self.validation_summary)
         self.replace_existing = QCheckBox("Apply custom parameters to all tests, replacing their overrides")
         self.replace_existing.setToolTip("Only parameters customized here are replaced. Other parameters are preserved.")
         if group:
@@ -170,18 +225,66 @@ class StepParametersDialog(QDialog):
             self.empty.setWordWrap(True)
             self.apply_button.setEnabled(False)
             self.reset_button.setEnabled(False)
-        def filter_fields(text):
-            any_visible = False
-            for path, *widgets in self._rows:
-                visible = text.casefold() in ".".join(path).casefold()
-                any_visible |= visible
-                for widget in widgets:
-                    widget.setVisible(visible)
-            self.empty.setVisible(not any_visible)
-        search.textChanged.connect(filter_fields)
+        self.search.textChanged.connect(self._filter_fields)
+        self.custom_only.toggled.connect(self._filter_fields)
+        self._batch_initializing = False
+        self.changed_paths.clear()
+        self.custom_only.setEnabled(bool(fields))
+        self._filter_fields()
+
+    def _filter_fields(self, *_):
+        if self._batch_initializing:
+            return
+        any_visible = False
+        customized = 0
+        hidden_errors = 0
+        text = self.search.text().casefold()
+        for path, *widgets in self._rows:
+            mode = self.controls[path][0]
+            custom = mode.currentIndex() == 1 or (mode.currentIndex() == 2 and path in self._initial_custom_paths)
+            customized += int(custom)
+            visible = (text in ('.'.join(path) + ' ' + self._origins[path]).casefold()
+                       and (not self.custom_only.isChecked() or custom))
+            any_visible |= visible
+            hidden_errors += int(path in self._errors and not visible)
+            for widget in widgets:
+                widget.setVisible(visible)
+        if self._has_fields:
+            self.empty.setText(f'No custom parameters on this {self._scope}. Turn off Custom values only to see inherited values.'
+                               if self.custom_only.isChecked() and not customized else 'No parameters match these filters.')
+            self.empty.setWordWrap(True)
+        self.empty.setVisible(not any_visible)
+        self.validation_summary.setText(f'{hidden_errors} invalid parameter' + ('s are' if hidden_errors != 1 else ' is')
+                                        + ' hidden by these filters. '
+                                        + f'<a href="show" style="color: {t.ACCENT};">Show the first invalid parameter</a>.')
+        self.validation_summary.setVisible(bool(hidden_errors))
+
+    def _show_invalid_parameter(self, *_):
+        if not self._errors:
+            return
+        self.search.clear()
+        self.custom_only.setChecked(False)
+        path = next(path for path in self.controls if path in self._errors)
+        editor = self.controls[path][1]
+        self._parameter_scroll.ensureWidgetVisible(editor)
+        editor.setFocus()
 
     def _change(self, path, original, mode, editor, error):
+        if self._batch and mode.currentIndex() == 2:
+            self.changed_paths.discard(path)
+            self._changed_values.pop(path, None)
+            self._errors.discard(path)
+            editor.setEnabled(False)
+            error.hide()
+            self.apply_button.setEnabled(not self._errors)
+            self._hints[path].setText('Settings differ across these tests. They stay unchanged until you choose a source.\n'
+                                      + self._references[path])
+            self._filter_fields()
+            return
+        if self._batch and not self._batch_initializing:
+            self.changed_paths.add(path)
         custom = mode.currentIndex() == 1
+        self._hints[path].setText(self._references[path] if custom else self._defined_by[path])
         editor.setEnabled(custom)
         try:
             if custom:
@@ -190,20 +293,26 @@ class StepParametersDialog(QDialog):
                 if original is not None and type(value) is not type(original):
                     raise ValueError(f"Expected {type(original).__name__}, using YAML syntax.")
                 validate_step_overrides([{path[-1]: value}], 1)
+                self._changed_values[path] = copy.deepcopy(value)
                 target = self.patch
                 for key in path[:-1]:
-                    target = target.setdefault(key, {})
+                    if not isinstance(target.get(key), dict):
+                        target[key] = {}
+                    target = target[key]
                 target[path[-1]] = value
             else:
                 target = self.patch
                 parents = []
                 for key in path[:-1]:
+                    if not isinstance(target.get(key), dict):
+                        break
                     parents.append((target, key))
-                    target = target.get(key, {})
-                target.pop(path[-1], None)
-                for parent, key in reversed(parents):
-                    if not parent.get(key):
-                        parent.pop(key, None)
+                    target = target[key]
+                else:
+                    target.pop(path[-1], None)
+                    for parent, key in reversed(parents):
+                        if not parent.get(key):
+                            parent.pop(key, None)
                 editor.blockSignals(True)
                 if isinstance(editor, QComboBox):
                     if path in self._inherited_paths:
@@ -221,6 +330,7 @@ class StepParametersDialog(QDialog):
             error.setText(str(exc))
             error.show()
         self.apply_button.setEnabled(not self._errors)
+        self._filter_fields()
 
     def accept(self):
         if not self._errors:
@@ -229,7 +339,33 @@ class StepParametersDialog(QDialog):
     def reset(self):
         for path, (mode, _) in self.controls.items():
             if mode.isEnabled():
+                if self._batch:
+                    self.changed_paths.add(path)
                 mode.setCurrentIndex(0)
+
+    def apply_to_patch(self, patch):
+        """Conserve les champs mixtes non touches lors d'une modification collective."""
+        result = copy.deepcopy(patch)
+        for path in sorted(self.changed_paths, key=lambda value: (len(value), value)):
+            mode, _ = self.controls[path]
+            target = result
+            parents = []
+            for key in path[:-1]:
+                if not isinstance(target.get(key), dict):
+                    if mode.currentIndex() != 1:
+                        break
+                    target[key] = {}
+                parents.append((target, key))
+                target = target[key]
+            else:
+                if mode.currentIndex() == 1:
+                    target[path[-1]] = copy.deepcopy(self._changed_values[path])
+                else:
+                    target.pop(path[-1], None)
+                    for parent, key in reversed(parents):
+                        if not parent[key]:
+                            parent.pop(key)
+        return result
 
 
 GROUP_COLORS = (("Blue", "#448aff"), ("Teal", "#00a99d"), ("Purple", "#a675ed"),
@@ -447,11 +583,11 @@ class EffectiveConfigurationDialog(QDialog):
                 if row['exception']:
                     item.setToolTip(self._exception_text(row['exception']))
                     if column == 0:
-                        item.setIcon(icons.icon('mdi.alert-outline', '#d89a17'))
+                        item.setIcon(icons.icon('mdi.tune', '#d89a17'))
                 self.table.setItem(index, column, item)
         self.yaml_view.setPlainText(yaml.safe_dump(values, allow_unicode=True, sort_keys=False))
         count = sum(bool(row['exception']) for row in rows)
-        self.status.setText(f'{len(rows)} parameters · {count} YAML exception' + ('s' if count != 1 else ''))
+        self.status.setText(f'{len(rows)} parameters · {count} value' + ('s' if count != 1 else '') + ' differing from inheritance')
         self._filter(self.search.text())
 
     def _filter(self, text):
