@@ -462,3 +462,33 @@ def test_console_trimming_unicode_retains_exact_text(window):
     assert console.text.toPlainText().startswith(console._rendered[0])
     assert console.text.toPlainText() == '\n'.join(console._rendered)
 
+
+
+def test_trace_plain_click_uses_its_event_even_if_global_ctrl_is_stale(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    browser = TraceBrowser()
+    qtbot.addWidget(browser)
+    browser.resize(500, 180)
+    browser.setPlainText('test_card.py:3: ValueError')
+    browser.show()
+    cursor = QTextCursor(browser.document())
+    cursor.setPosition(5)
+    position = browser.cursorRect(cursor).center()
+    assert browser.anchorAt(position)
+    hits = []
+    browser.source_requested.connect(lambda *args: hits.append(args))
+    monkeypatch.setattr(QApplication, 'keyboardModifiers', staticmethod(lambda: Qt.ControlModifier))
+    qtbot.mouseClick(browser.viewport(), Qt.LeftButton, Qt.NoModifier, pos=position)
+    qtbot.mouseClick(browser.viewport(), Qt.LeftButton, Qt.ControlModifier, pos=position)
+    assert [external for _, external in hits] == [False, True]
+
+
+def test_programmatic_trace_activation_does_not_inherit_global_keyboard_modifiers(qtbot, monkeypatch):
+    from PySide6.QtWidgets import QApplication
+    browser = TraceBrowser()
+    qtbot.addWidget(browser)
+    hits = []
+    browser.source_requested.connect(lambda *args: hits.append(args))
+    monkeypatch.setattr(QApplication, 'keyboardModifiers', staticmethod(lambda: Qt.ControlModifier))
+    browser.anchorClicked.emit(QUrl(TraceLocation('test_card.py', 3).href()))
+    assert len(hits) == 1 and hits[0][1] is False

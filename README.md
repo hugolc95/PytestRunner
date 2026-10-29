@@ -1,5 +1,94 @@
 # Pytest Runner GUI
 
+## Profils : groupes colorés et paramètres explicites — v1.5.0
+
+Dans **Execution Profiles**, sélectionner un test puis **YAML parameters…**
+(ou double-cliquer sur le test) ouvre une fenêtre dédiée. Chaque paramètre
+propose **Profile value** ou **Custom value**, avec la valeur du profil comme
+référence. **Apply** valide les modifications pour cette occurrence uniquement ;
+**Cancel** les abandonne. **Reset all to profile values** rétablit les valeurs
+du profil. Le fichier YAML d’origine reste intact.
+
+Sélectionner plusieurs tests avec Ctrl ou Maj puis **Create group…** permet
+de donner au groupe un nom, une couleur et une courte description. Si les tests
+ne sont pas adjacents, le dialogue annonce leur rassemblement à la première
+position sélectionnée ; leur ordre relatif est conservé. Un groupe peut être
+modifié, déplacé, dupliqué ou dissocié sans perdre les paramètres des tests.
+
+Les groupes peuvent contenir des **sous-groupes** : sélectionner des tests
+dans un groupe puis **Create group…**, ou utiliser l’icône **Create subgroup**
+sur le groupe sélectionné. Les dossiers et sous-dossiers de tests restent
+dépliables à l’intérieur de cette hiérarchie. Les descriptions reprennent la
+couleur de leur groupe, dans l’éditeur comme dans **Run Tests**.
+
+**YAML parameters…** fonctionne aussi sur un groupe. La configuration suit
+l’ordre **profil → groupes parents → sous-groupe → test**. On peut ainsi
+dupliquer une suite T0 puis passer le YAML du groupe copié en T1 ; les deux
+copies gardent des paramètres indépendants. Une option permet de remplacer
+les exceptions des sous-groupes et des tests pour les seuls paramètres
+personnalisés dans cette fenêtre.
+
+Un glisser-déposer vers un autre groupe demande confirmation avant de déplacer
+les tests. Le dialogue montre le groupe de départ, la destination et les
+changements de paramètres effectifs. **Cancel** conserve la séquence intacte ;
+réordonner les tests à l’intérieur du même groupe ne demande pas de confirmation.
+
+**Annuler / rétablir.** Les flèches de la barre de séquence, **Ctrl+Z** et
+**Ctrl+Y** permettent d’annuler ou de rétablir les ajouts, suppressions,
+déplacements, regroupements et paramètres YAML validés. L’historique garde
+les 50 dernières actions du profil en cours, y compris après une sauvegarde ;
+changer de profil démarre un nouvel historique. Annuler une action ne modifie
+pas le fichier déjà sauvegardé. Les champs de texte gardent leur annulation
+habituelle pendant la saisie.
+
+**Voir le YAML effectif.** Sélectionner un test puis l’icône d’aperçu, ou
+**View effective YAML…** dans son menu clic droit, affiche les valeurs finales
+et leur origine : profil, groupe, sous-groupe ou test. Un deuxième onglet
+permet de lire et copier le YAML complet. Le choix du lecteur reprend ceux
+sélectionnés dans **Run Tests** ; sans lecteur choisi, son affectation est
+explicitement indiquée comme restant à faire au lancement.
+
+**Exceptions visibles.** Un triangle discret et une infobulle signalent les
+paramètres qui diffèrent de ceux hérités du groupe, par exemple un test T0
+dans une suite T1. Les groupes récapitulent le nombre de tests concernés.
+Ces indicateurs sont aussi présents dans l’arbre d’exécution.
+
+Le menu clic droit rassemble les paramètres YAML, l’aperçu effectif, les
+groupes, la duplication, la suppression et **Move to…**. Ce déplacement permet
+de choisir la destination et de voir les changements avant de confirmer,
+sans devoir utiliser le glisser-déposer.
+
+**Copier / coller.** Dans la séquence, **Ctrl+C** copie les éléments sélectionnés
+(groupes, sous-groupes, dossiers, modules, classes, tests et cas paramétrés).
+Un parent sélectionné avec ses enfants n’est copié qu’une fois. La copie fige
+la sélection et conserve les occurrences répétées, la hiérarchie, les couleurs,
+descriptions et paramètres YAML explicites. Modifier ensuite l’original ne
+change pas le contenu du presse-papiers.
+
+**Ctrl+V** colle après la sélection, ou à la fin du profil sans sélection.
+**Paste into this group** / **Ctrl+Maj+V** colle à l’intérieur du groupe choisi.
+Les groupes collés reçoivent leurs propres identifiants : modifier une copie
+ne modifie pas l’original. Si les valeurs héritées changent à destination, un
+aperçu demande confirmation ; les tests absents du workspace sont également
+signalés avant de coller. Le collage peut être annulé avec **Ctrl+Z**.
+
+Un contour bleu pointillé et un message dans l’en-tête signalent la copie.
+Les éléments collés sont sélectionnés et marqués en vert pendant six secondes.
+Ces repères n’ajoutent aucun bandeau à l’arbre. Les commandes sont aussi dans
+le menu clic droit. Dans les champs de texte, Ctrl+C / Ctrl+V gardent leur
+fonctionnement habituel ; vers une autre application, la copie fournit les
+identifiants pytest sous forme de texte.
+
+Les liens d’erreur utilisent la touche Ctrl du clic courant : un clic simple
+ne part plus vers l’éditeur externe à cause d’un ancien état clavier resté
+actif dans Qt. Le clic simple et Ctrl+clic gardent leurs comportements respectifs.
+
+Les groupes colorés apparaissent aussi dans l’arbre **Run Tests**, avec leurs
+descriptions en ligne et en infobulle. Ils sont conservés dans les profils
+sauvegardés, exportés et récupérés depuis l’historique. Les profils antérieurs
+restent lisibles ; les profils contenant ces nouveaux groupes nécessitent
+Pytest Runner 1.5.0 ou une version ultérieure.
+
 ## Profils : retour des groupes — v1.4.8
 
 La **Test sequence** retrouve un arbre compact avec des groupes de dossiers,

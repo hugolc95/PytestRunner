@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QSizePolicy, QStatusBar, QTabBar, QVBoxLayout, QWidget,
 )
 
+from runner.domain.execution_profile import effective_step_overrides
 from runner.domain.execution import Collection
 from runner.domain.models import Status, failure_summary
 from runner.domain.execution_profile import ProfileValidationError
@@ -460,7 +461,7 @@ class RunTabsController(QObject):
                     repetitions=execution.repetitions,
                     rerun_failures=execution.rerun_failures,
                     stop_after_failure=execution.stop_after_failure,
-                    step_overrides=job.profile.step_overrides)
+                    step_overrides=effective_step_overrides(job.profile))
             except (OSError, UnicodeError, ProfileValidationError) as exc:
                 accepted = False
                 ErrorDialog.show_error(context, "Could not prepare profile parameters", str(exc))

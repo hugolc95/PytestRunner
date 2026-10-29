@@ -43,11 +43,13 @@ def test_long_test_id_does_not_force_splitter_width(qtbot, monkeypatch):
     assert window.split.sizes()[0] > first + 50
 
 
-def test_profile_parameter_editor_keeps_its_height_after_runtime_install(qtbot, monkeypatch):
+def test_profile_parameters_open_in_a_separate_dialog_after_runtime_install(qtbot, monkeypatch):
     from runner.domain.execution_profile import ExecutionProfile
     from runner.ui.main_window import MainWindow
     from runner.ui.widgets import ErrorDialog
+    from runner.ui.profile_dialogs import StepParametersDialog
     from runner.ui import runtime_polish
+    from PySide6.QtCore import QTimer
     monkeypatch.setattr(MainWindow, '_build_ui', MainWindow._build_ui)
     monkeypatch.setattr(ErrorDialog, 'show_error', ErrorDialog.__dict__['show_error'])
     monkeypatch.setattr(MainWindow, '_restore', lambda self: None)
@@ -65,8 +67,16 @@ def test_profile_parameter_editor_keeps_its_height_after_runtime_install(qtbot, 
     page._expand_groups()
     step = page._step_items()[0]
     page.sequence_list.setCurrentItem(step)
-    panel = page.sequence_list.itemWidget(step.child(0), 0)
-    assert not page.sequence_list.uniformRowHeights()
-    qtbot.waitUntil(lambda: page.sequence_list.visualItemRect(step.child(0)).height() >= panel.sizeHint().height())
-    assert panel.height() > 100
-    assert page._parameter_controls[('timeout',)][1].isVisibleTo(page)
+    checked = []
+    def inspect_dialog():
+        from PySide6.QtWidgets import QApplication
+        dialog = QApplication.activeModalWidget()
+        assert isinstance(dialog, StepParametersDialog)
+        mode, editor = dialog.controls[('timeout',)]
+        checked.append(mode.isVisible() and editor.isVisible() and dialog.height() > 300)
+        dialog.reject()
+    QTimer.singleShot(0, inspect_dialog)
+    page.parameters_button.click()
+    assert checked == [True]
+    assert step.childCount() == 0
+    assert page._step_patches() == [{}, {}]

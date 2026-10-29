@@ -110,6 +110,9 @@ class ExecutionProfile:
     source: str = "local"
     # One patch per occurrence, never keyed by nodeid (duplicates are distinct).
     step_overrides: list[dict] = field(default_factory=list)
+    # Alignement par occurrence, comme le YAML : deux memes tests peuvent
+    # appartenir a des groupes differents sans partager leur personnalisation.
+    step_groups: list[dict] = field(default_factory=list)
 
     @property
     def total_executions(self) -> int:
@@ -140,6 +143,85 @@ def _optional_text(value: object, label: str, maximum: int) -> str:
     if not isinstance(value, str) or len(value) > maximum or "\x00" in value:
         raise ProfileValidationError(f"{label} is invalid or too long.")
     return value.strip()
+
+
+def group_path(group):
+    if not group:
+        return []
+    return copy.deepcopy(group.get("parents", [])) + [{key: copy.deepcopy(value)
+            for key, value in group.items() if key != "parents"}]
+
+
+def group_entry(path):
+    if not path:
+        return {}
+    entry = copy.deepcopy(path[-1])
+    if len(path) > 1:
+        entry["parents"] = copy.deepcopy(path[:-1])
+    return entry
+
+
+def inherited_configuration(base, path):
+    result = copy.deepcopy(base)
+    for group in path:
+        result = merge_configuration(result, group.get("configuration_overrides", {}))
+    return result
+
+
+def effective_step_overrides(profile):
+    if not any(profile.step_groups):
+        return copy.deepcopy(profile.step_overrides)
+    result = []
+    for index in range(len(profile.sequence)):
+        path = group_path(profile.step_groups[index])
+        patch = inherited_configuration({}, path)
+        result.append(merge_configuration(patch, profile.step_overrides[index] if profile.step_overrides else {}))
+    return result
+
+
+def validate_step_groups(groups, count: int) -> None:
+    if not isinstance(groups, list) or (groups and len(groups) != count):
+        raise ProfileValidationError("Test groups must match the sequence length.")
+    known = {}
+    for entry in groups:
+        if not isinstance(entry, dict):
+            raise ProfileValidationError("A test group must be a mapping.")
+        if not entry:
+            continue
+        parents = entry.get("parents", [])
+        if not isinstance(parents, list) or len(parents) > 19:
+            raise ProfileValidationError("Groups may contain at most 20 nested levels.")
+        path = parents + [{key: value for key, value in entry.items() if key != "parents"}]
+        ancestors = []
+        for group in path:
+            required = {"id", "name", "color", "description"}
+            if not isinstance(group, dict) or not required <= set(group) or set(group) - required - {"configuration_overrides"}:
+                raise ProfileValidationError("The test group metadata is invalid.")
+            identifier = _safe_name(group["id"], "Group identifier", 120)
+            _safe_name(group["name"], "Group name", 80)
+            _optional_text(group["description"], "Group description", 300)
+            if not isinstance(group["color"], str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", group["color"]):
+                raise ProfileValidationError("The group color must be a hexadecimal RGB color.")
+            validate_step_overrides([group.get("configuration_overrides", {})], 1)
+            if identifier in ancestors:
+                raise ProfileValidationError("A group cannot be its own parent.")
+            signature = (group, tuple(ancestors))
+            if identifier in known and known[identifier] != signature:
+                raise ProfileValidationError("Occurrences of the same group must have identical metadata and parents.")
+            known[identifier] = signature
+            ancestors.append(identifier)
+
+
+def profile_group_runs(sequence, groups=()):
+    """Plages adjacentes uniquement : le rendu ne change jamais l'ordre du run."""
+    start = 0
+    while start < len(sequence):
+        group = groups[start] if groups else {}
+        end = start + 1
+        while end < len(sequence) and (groups[end] if groups else {}) == group:
+            end += 1
+        yield start, end, group
+        start = end
 
 
 def _integer(value: object, label: str, minimum: int, maximum: int) -> int:
@@ -178,9 +260,10 @@ _NO_CONFIG_ENTRY = "_none.yaml"
 
 def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
     customized = any(profile.step_overrides)
+    grouped = any(profile.step_groups)
     return {
         "format": FORMAT,
-        "format_version": 2 if customized else FORMAT_VERSION,
+        "format_version": 3 if grouped else (2 if customized else FORMAT_VERSION),
         "profile": {
             "id": profile.profile_id,
             "name": profile.name,
@@ -192,8 +275,9 @@ def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
         },
         "sequence": [
             {"step_id": f"step-{index:05d}", "test": nodeid,
-             **({"configuration_overrides": profile.step_overrides[index - 1]}
-                if customized else {})}
+             **({"configuration_overrides": profile.step_overrides[index - 1] if customized else {}}
+                if customized or grouped else {}),
+             **({"group": profile.step_groups[index - 1]} if grouped else {})}
             for index, nodeid in enumerate(profile.sequence, 1)
         ],
         "execution": asdict(profile.execution),
@@ -224,6 +308,7 @@ def validate_profile(profile: ExecutionProfile) -> None:
         raise ProfileValidationError(
             f"A profile must contain between 1 and {MAX_STEPS} steps.")
     validate_step_overrides(profile.step_overrides, len(profile.sequence))
+    validate_step_groups(profile.step_groups, len(profile.sequence))
     for nodeid in profile.sequence:
         if not isinstance(nodeid, str) or not _NODEID.match(nodeid):
             raise ProfileValidationError(f"Invalid pytest test identifier: {nodeid!r}")
@@ -297,7 +382,7 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
                 raise ProfileValidationError("The manifest is not valid JSON.") from exc
             if not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
                 raise ProfileValidationError("This is not a Pytest Runner profile.")
-            if type(manifest.get("format_version")) is not int or manifest.get("format_version") not in (1, 2):
+            if type(manifest.get("format_version")) is not int or manifest.get("format_version") not in (1, 2, 3):
                 raise ProfileValidationError(
                     f"Unsupported profile version: {manifest.get('format_version')!r}.")
             allowed = {"format", "format_version", "profile", "configuration",
@@ -328,11 +413,14 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
     report_options = report_options_from_dict(reports)
     nodeids: list[str] = []
     overrides: list[dict] = []
+    groups: list[dict] = []
     step_ids: set[str] = set()
     for step in steps:
         keys = {"step_id", "test"}
-        if manifest["format_version"] == 2:
+        if manifest["format_version"] >= 2:
             keys.add("configuration_overrides")
+        if manifest["format_version"] >= 3:
+            keys.add("group")
         if not isinstance(step, dict) or set(step) != keys:
             raise ProfileValidationError("A sequence step is invalid.")
         step_id = _safe_name(step["step_id"], "Step identifier", 120)
@@ -341,6 +429,7 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
         step_ids.add(step_id)
         nodeids.append(step["test"])
         overrides.append(step.get("configuration_overrides", {}))
+        groups.append(step.get("group", {}))
     try:
         config_text = config.decode("utf-8")
     except UnicodeDecodeError as exc:
@@ -360,7 +449,8 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
         ),
         reports=report_options,
         source="imported",
-        step_overrides=overrides if manifest["format_version"] == 2 else [],
+        step_overrides=overrides if manifest["format_version"] >= 2 else [],
+        step_groups=groups if manifest["format_version"] >= 3 else [],
     )
     validate_profile(profile)
     available = set(available_nodeids)

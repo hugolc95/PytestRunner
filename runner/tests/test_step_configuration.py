@@ -44,51 +44,57 @@ def test_invalid_step_parameters_are_rejected(patches):
         validate_profile(value)
 
 
-def test_inline_parameters_duplicate_move_reset_and_save(qtbot, tmp_path):
+def test_dialog_parameters_duplicate_move_reset_and_save(qtbot, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QDialog
+    from runner.ui.profile_dialogs import StepParametersDialog
     page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
     qtbot.addWidget(page)
-    current = page.current_profile()
     original = profile()
-    original.profile_id = current.profile_id
+    original.profile_id = page.current_profile().profile_id
     page._profiles[page.profile_list.currentRow()] = original
     page._populate(original)
-    item = page.sequence_list.topLevelItem(1)
-    page.sequence_list.setCurrentItem(item)
-    toggle, editor = page._parameter_controls[("card", "protocol")]
-    assert toggle.isChecked()
-    editor.setCurrentText("T0")
-    assert page._profile_from_editor().step_overrides[1] == {"card": {"protocol": "T0"}}
+    page.sequence_list.setCurrentItem(page._step_items()[1])
+    def edit(dialog):
+        mode, editor = dialog.controls[("card", "protocol")]
+        assert mode.currentText() == "Custom value"
+        editor.setCurrentText("T0")
+        return QDialog.Accepted
+    monkeypatch.setattr(StepParametersDialog, 'exec', edit)
+    page.edit_step_parameters()
+    assert page._step_patches()[1] == {"card": {"protocol": "T0"}}
     page.duplicate_steps()
-    assert page._profile_from_editor().step_overrides == [{}, {"card": {"protocol": "T0"}},
-                                                        {"card": {"protocol": "T0"}}, {}]
-    page._parameter_controls[("card", "protocol")][1].setCurrentText("T1")
+    assert page._step_patches() == [{}, {"card": {"protocol": "T0"}},
+                                  {"card": {"protocol": "T0"}}, {}]
     page._move_step(-1)
-    assert page._profile_from_editor().step_overrides[1] == {"card": {"protocol": "T1"}}
-    assert page._profile_from_editor().step_overrides[2] == {"card": {"protocol": "T0"}}
-    page._reset_step(page.sequence_list.currentItem())
-    assert page._profile_from_editor().step_overrides[1] == {}
+    assert page._step_patches()[1] == {"card": {"protocol": "T0"}}
+    def reset(dialog):
+        dialog.reset()
+        return QDialog.Accepted
+    monkeypatch.setattr(StepParametersDialog, 'exec', reset)
+    page.edit_step_parameters()
+    assert page._step_patches()[1] == {}
     assert page.save_current()
     assert page.store.list()[0].step_overrides[2] == {"card": {"protocol": "T0"}}
 
 
-def test_invalid_numeric_edit_cannot_be_saved(qtbot, tmp_path):
-    page = ExecutionProfilesPage(ProfileStore(tmp_path / "profiles"))
-    qtbot.addWidget(page)
-    config = tmp_path / "configEnv.yml"
-    config.write_text("timeout: 15\n", encoding="utf-8")
-    page.set_workspace_context(["test_card.py::test_card"], str(config))
-    page._append_tests(["test_card.py::test_card"])
-    page.sequence_list.setCurrentItem(page.sequence_list.topLevelItem(0))
-    toggle, editor = page._parameter_controls[("timeout",)]
-    toggle.setChecked(True)
+def test_invalid_numeric_edit_cannot_be_applied(qtbot):
+    from runner.ui.profile_dialogs import StepParametersDialog
+    dialog = StepParametersDialog('test_card.py::test_card', {'timeout': 15}, {})
+    qtbot.addWidget(dialog)
+    mode, editor = dialog.controls[("timeout",)]
+    assert not editor.isEnabled()
+    mode.setCurrentText("Custom value")
     editor.setText("oops")
-    with pytest.raises(ProfileValidationError):
-        page._profile_from_editor()
+    assert not dialog.apply_button.isEnabled()
+    dialog.accept()
+    assert not dialog.result()
     editor.setText("20")
-    assert page._profile_from_editor().step_overrides == [{"timeout": 20}]
-    toggle.setChecked(False)
-    assert page._profile_from_editor().step_overrides == [{}]
+    assert dialog.patch == {"timeout": 20}
+    assert dialog.apply_button.isEnabled()
+    mode.setCurrentText("Profile value")
+    assert dialog.patch == {}
     assert editor.text() == "15"
+    assert not editor.isEnabled()
 
 
 def test_each_step_reloads_conftest_getters_and_session_fixtures(qtbot, tmp_path):

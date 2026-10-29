@@ -756,3 +756,29 @@ def test_only_one_icon_configuration_shortcut_with_and_without_readers(window, t
     assert window.run_header.execution_fields.indexOf(button) == -1
     assert button.isVisible()
     assert button.width() <= 32
+
+
+def test_queued_profile_keeps_group_yaml_snapshot_and_test_overrides(window, qtbot, monkeypatch):
+    calls = []
+    fake_start(window, calls, monkeypatch)
+    window.run_selected()
+    draft = window.run_tabs.new_run()
+    group = dict(id='protocol', name='T1 suite', color='#448aff', description='Protocol checks',
+                 configuration_overrides={'card': {'protocol': 'T1'}})
+    profile = ExecutionProfile('Grouped protocol', ['test_demo.py::test_a', 'test_demo.py::test_b'],
+                               'config.yaml', 'card:\n  protocol: T0\n',
+                               step_groups=[deepcopy(group), deepcopy(group)],
+                               step_overrides=[{}, {'card': {'timeout': 50}}])
+    draft._load_execution_profile(profile)
+    launched = []
+    def start(request, env, sequence, **options):
+        launched.append(options)
+        draft.service.started.emit(request)
+        return True
+    monkeypatch.setattr(draft.service, 'start_profile', start)
+    draft.run_selected()
+    profile.step_groups[0]['configuration_overrides']['card']['protocol'] = 'CHANGED'
+    window.service.finished.emit([])
+    qtbot.waitUntil(lambda: bool(launched))
+    assert launched[0]['step_overrides'] == [{'card': {'protocol': 'T1'}},
+                                           {'card': {'protocol': 'T1', 'timeout': 50}}]

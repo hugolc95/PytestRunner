@@ -7,27 +7,26 @@ import copy
 import yaml
 from pathlib import Path
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal, QSize
+from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal
+from PySide6.QtGui import QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QDialog,
-    QDialogButtonBox,
     QFileDialog,
     QFrame,
-    QGridLayout,
-    QComboBox,
     QToolButton,
-    QStyledItemDelegate,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMenu,
     QListWidget,
     QListWidgetItem,
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QSizePolicy,
     QSplitter,
     QTextEdit,
     QTreeView,
@@ -46,20 +45,25 @@ from runner.domain.execution_profile import (
     ReportOptions,
     export_profile,
     inspect_profile,
+    profile_group_runs,
+    group_path, group_entry, inherited_configuration, merge_configuration,
 )
 from runner.domain.models import Kind
+from runner.domain.profile_configuration import configuration_details, exception_text
 from runner.domain.tree import build_tree, build_sequence_tree, group_hierarchically
 from runner.ui import icons
 from runner.ui import tokens as t
 from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
 from runner.ui.widgets import ErrorDialog
+from runner.ui.profile_dialogs import StepParametersDialog, ProfileGroupDialog, ConfirmGroupMoveDialog, EffectiveConfigurationDialog, MoveToGroupDialog, yaml_fields, format_value
+from runner.ui.profile_group_delegate import ProfileGroupDelegate, EXCEPTION_ROLE
+from runner.ui.profile_history import ProfileEdit, undoable
+from runner.ui.profile_clipboard import SequenceClipboard
 
 _OVERRIDES_ROLE = Qt.UserRole + 20
-_ERROR_ROLE = Qt.UserRole + 21
-_DRAFT_ROLE = Qt.UserRole + 22
 _LABEL_ROLE = Qt.UserRole + 23
-_EDITOR_ROLE = Qt.UserRole + 24
 _KIND_ROLE = Qt.UserRole + 25
+_GROUP_ROLE = Qt.UserRole + 26
 
 
 def _short_nodeid(nodeid: str) -> str:
@@ -70,25 +74,18 @@ def _short_nodeid(nodeid: str) -> str:
     return parts[-1]
 
 
-class StepDelegate(QStyledItemDelegate):
-    """Des lignes compactes ; seul l'editeur YAML prend plusieurs lignes."""
-
-    def sizeHint(self, option, index):
-        size = super().sizeHint(option, index)
-        if not index.data(_EDITOR_ROLE):
-            size.setHeight(max(30, size.height()))
-        return size
-
-
 class SequenceTree(QTreeWidget):
     order_changed = Signal()
 
-    def __init__(self, can_move, parent=None):
+    def __init__(self, confirm_drop, parent=None):
         super().__init__(parent)
-        self._can_move = can_move
+        self.confirm_drop = confirm_drop
 
     def dropEvent(self, event):
-        if not self._can_move():
+        target = self.itemAt(event.position().toPoint())
+        if self.dropIndicatorPosition() != QAbstractItemView.OnItem and target is not None:
+            target = target.parent()
+        if not self.confirm_drop(target):
             event.ignore()
             return
         super().dropEvent(event)
@@ -222,12 +219,23 @@ class ExecutionProfilesPage(QWidget):
         self._profiles: list[ExecutionProfile] = []
         self._available_nodeids: list[str] = []
         self._workspace_config = ""
+        self._preview_readers = []
         self._dirty = False
         self._building = False
+        self._configuration_text = ''
+        self._history_state = None
+        self._edit_depth = 0
+        self._history_restoring = False
+        self._saving_refresh = False
+        self._initial_unsaved = False
+        self.undo_stack = QUndoStack(self)
+        self.undo_stack.setUndoLimit(50)
+        self.undo_stack.indexChanged.connect(self._sync_history_dirty)
         self._reorder_timer = QTimer(self)
         self._reorder_timer.setSingleShot(True)
         self._reorder_timer.timeout.connect(self._settle_sequence_order)
         self._build_ui()
+        self.sequence_clipboard = SequenceClipboard(self)
         self.refresh()
 
     def _build_ui(self) -> None:
@@ -325,11 +333,21 @@ class ExecutionProfilesPage(QWidget):
 
     def _build_sequence(self) -> QWidget:
         frame, layout = self._surface("Test sequence")
-        self.sequence_list = SequenceTree(self._valid_editing, self)
+        title = layout.takeAt(0).widget()
+        header = QHBoxLayout()
+        header.addWidget(title)
+        self.transfer_label = QLabel()
+        self.transfer_label.setTextFormat(Qt.PlainText)
+        self.transfer_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.transfer_label.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.transfer_label.hide()
+        header.addWidget(self.transfer_label, 1)
+        layout.insertLayout(0, header)
+        self.sequence_list = SequenceTree(self._confirm_drop, self)
         self.sequence_list.setObjectName("ProfileSequence")
         self.sequence_list.setProperty("variableRowHeights", True)
         self.sequence_list.setHeaderHidden(True)
-        self.sequence_list.setItemDelegate(StepDelegate(self.sequence_list))
+        self.sequence_list.setItemDelegate(ProfileGroupDelegate(self.sequence_list))
         self.sequence_list.setDragDropMode(QAbstractItemView.InternalMove)
         self.sequence_list.setDefaultDropAction(Qt.MoveAction)
         self.sequence_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -341,9 +359,48 @@ class ExecutionProfilesPage(QWidget):
         self.sequence_list.setAccessibleName("Ordered test sequence")
         self.sequence_list.setAccessibleDescription(
             "Expandable test groups in execution order. Move, duplicate or remove a group or a test.")
-        self.sequence_list.setToolTip("Select a group to manage it, or a test to edit its YAML parameters.")
-        self.sequence_list.currentItemChanged.connect(self._show_step_editor)
-        self.sequence_list.itemExpanded.connect(self._expand_step_editor)
+        self.sequence_list.setToolTip("Select tests to create a group. Double-click a test to edit its YAML parameters.")
+        self.sequence_list.itemSelectionChanged.connect(self._selection_changed)
+        self.sequence_list.itemDoubleClicked.connect(self._edit_item)
+        self.sequence_list.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.sequence_list.customContextMenuRequested.connect(self._show_context_menu)
+        tools = QHBoxLayout()
+        self.parameters_button = QPushButton("YAML parameters…")
+        self.parameters_button.setIcon(icons.icon("mdi.tune"))
+        self.parameters_button.clicked.connect(self.edit_step_parameters)
+        self.group_button = QPushButton("Create group…")
+        self.group_button.setIcon(icons.icon("mdi.folder-plus-outline"))
+        self.group_button.clicked.connect(self.edit_group)
+        self.subgroup_button = QToolButton()
+        self.subgroup_button.setIcon(icons.icon("mdi.folder-plus-outline"))
+        self.subgroup_button.setToolTip("Create a subgroup inside the selected group")
+        self.subgroup_button.setAccessibleName("Create subgroup")
+        self.subgroup_button.clicked.connect(lambda: self.edit_group(subgroup=True))
+        self.ungroup_button = QToolButton()
+        self.ungroup_button.setIcon(icons.icon("mdi.folder-remove-outline"))
+        self.ungroup_button.setToolTip("Ungroup selected tests (keep the tests and their YAML parameters)")
+        self.ungroup_button.clicked.connect(self.ungroup_steps)
+        for button in (self.parameters_button, self.group_button, self.subgroup_button, self.ungroup_button):
+            tools.addWidget(button)
+        self.effective_button = QToolButton()
+        self.effective_button.setIcon(icons.icon('mdi.file-eye-outline'))
+        self.effective_button.setToolTip('View effective YAML and value origins for this test')
+        self.effective_button.setAccessibleName('View effective YAML')
+        self.effective_button.clicked.connect(self.show_effective_configuration)
+        tools.addWidget(self.effective_button)
+        tools.addStretch()
+        self.undo_action = self.undo_stack.createUndoAction(self, 'Undo')
+        self.redo_action = self.undo_stack.createRedoAction(self, 'Redo')
+        for action, glyph, shortcut in ((self.undo_action, 'mdi.undo', QKeySequence.Undo),
+                                         (self.redo_action, 'mdi.redo', QKeySequence.Redo)):
+            action.setIcon(icons.icon(glyph))
+            action.setShortcuts(shortcut)
+            action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+            self.addAction(action)
+            button = QToolButton()
+            button.setDefaultAction(action)
+            tools.addWidget(button)
+        layout.addLayout(tools)
         layout.addWidget(self.sequence_list, 1)
         actions = QHBoxLayout()
         self.add_tests_button = QPushButton("Add tests / groups")
@@ -433,7 +490,7 @@ class ExecutionProfilesPage(QWidget):
         self._available_nodeids = list(nodeids)
         self._workspace_config = config_path or ""
         self.add_tests_button.setEnabled(bool(nodeids))
-        self._refresh_step_editor()
+        self._selection_changed()
 
     def refresh(self) -> None:
         current_id = self.current_profile().profile_id if self.current_profile() else ""
@@ -466,17 +523,22 @@ class ExecutionProfilesPage(QWidget):
 
     def _populate(self, profile: ExecutionProfile) -> None:
         self._building = True
+        self._configuration_text = profile.configuration_text
         self.config_edit.setProperty("fullPath", "")
         self.name_edit.setText(profile.name)
         self.description_edit.setPlainText(profile.description)
         self.config_edit.setText(profile.configuration_name)
-        self._rebuild_sequence(profile.sequence, profile.step_overrides)
+        self._rebuild_sequence(profile.sequence, profile.step_overrides, profile.step_groups)
         self.repetitions.setValue(profile.execution.repetitions)
         self.rerun_failures.setValue(profile.execution.rerun_failures)
         self.stop_after_failure.setChecked(profile.execution.stop_after_failure)
         self.save_logs.setChecked(profile.reports.save_complete_logs)
+        if not self._saving_refresh:
+            self.undo_stack.clear()
         self._building = False
+        self._initial_unsaved = False
         self._dirty = False
+        self._history_state = self._editor_state()
         self._update_summary()
 
     def new_profile(self) -> None:
@@ -488,33 +550,34 @@ class ExecutionProfilesPage(QWidget):
         item.setData(Qt.UserRole, profile.profile_id)
         self.profile_list.addItem(item)
         self.profile_list.setCurrentRow(self.profile_list.count() - 1)
+        self._initial_unsaved = True
         self._dirty = True
         self.name_edit.selectAll()
         self.name_edit.setFocus()
 
+    @undoable('Use local configuration')
     def use_local_configuration(self) -> None:
         self.config_edit.clear()
         self.config_edit.setProperty("fullPath", "")
         self._mark_dirty()
-        self._refresh_step_editor()
+        self._selection_changed()
 
     def _profile_from_editor(self, new_id: bool = False) -> ExecutionProfile:
         current = self.current_profile()
         config_name = self.config_edit.text().strip()
-        config_text = current.configuration_text if current and config_name else ""
+        config_text = self._configuration_text if config_name else ""
         chosen = self.config_edit.property("fullPath") or ""
         if chosen and Path(chosen).is_file():
             config_name = Path(chosen).name
             config_text = Path(chosen).read_text(encoding="utf-8")
         sequence = self._flatten_sequence()
-        if any(item.data(0, _ERROR_ROLE) for item in self._step_items()):
-            raise ProfileValidationError("Correct the highlighted step parameters before saving or running.")
         return ExecutionProfile(
             profile_id=str(uuid.uuid4()) if new_id or current is None else current.profile_id,
             name=self.name_edit.text().strip(),
             description=self.description_edit.toPlainText().strip(),
             sequence=sequence,
             step_overrides=self._step_patches(),
+            step_groups=self._step_groups(),
             configuration_name=config_name,
             configuration_text=config_text,
             execution=ExecutionOptions(
@@ -536,7 +599,14 @@ class ExecutionProfilesPage(QWidget):
         row = self.profile_list.currentRow()
         self._profiles[row] = profile
         self._dirty = False
-        self.refresh()
+        self._saving_refresh = True
+        try:
+            self.refresh()
+        finally:
+            self._saving_refresh = False
+        self._initial_unsaved = False
+        self.undo_stack.setClean()
+        self._sync_history_dirty()
         self._show_notice("Profile saved.", warning=False)
         return True
 
@@ -561,6 +631,7 @@ class ExecutionProfilesPage(QWidget):
             self.store.delete(profile.profile_id)
             self.refresh()
 
+    @undoable('Change profile YAML')
     def choose_config(self) -> None:
         start = self._workspace_config or ""
         path, _ = QFileDialog.getOpenFileName(
@@ -570,7 +641,7 @@ class ExecutionProfilesPage(QWidget):
             self.config_edit.setText(Path(path).name)
             self.config_edit.setProperty("fullPath", path)
             self._mark_dirty()
-            self._refresh_step_editor()
+            self._selection_changed()
 
     def add_tests(self) -> None:
         if not self._available_nodeids:
@@ -585,7 +656,7 @@ class ExecutionProfilesPage(QWidget):
         def visit(item):
             if item.data(0, NODEID_ROLE):
                 items.append(item)
-            elif not item.data(0, _EDITOR_ROLE):
+            else:
                 for i in range(item.childCount()):
                     visit(item.child(i))
         for i in range(self.sequence_list.topLevelItemCount()):
@@ -595,24 +666,36 @@ class ExecutionProfilesPage(QWidget):
     def _step_patches(self):
         return [copy.deepcopy(item.data(0, _OVERRIDES_ROLE) or {}) for item in self._step_items()]
 
+    @undoable('Add tests')
     def _append_tests(self, nodeids: list[str]) -> None:
         # Chaque ajout reste un bloc : deux dossiers choisis separement ne
         # fusionnent pas et une occurrence repetee ne disparait jamais.
         self._add_sequence_groups(nodeids, [{} for _ in nodeids])
         self._mark_dirty()
 
-    def _step_item(self, nodeid, patch, label=None):
+    def _item_group_path(self, item, *, include_self=False):
+        path = []
+        parent = item if include_self else item.parent()
+        while parent is not None:
+            metadata = parent.data(0, _GROUP_ROLE)
+            if metadata and not parent.data(0, NODEID_ROLE):
+                path.append({key: copy.deepcopy(value) for key, value in metadata.items() if key != 'parents'})
+            parent = parent.parent()
+        return list(reversed(path))
+
+    def _step_groups(self):
+        return [group_entry(self._item_group_path(item)) for item in self._step_items()]
+
+    def _step_item(self, nodeid, patch, label=None, group=None):
         item = QTreeWidgetItem()
         item.setData(0, NODEID_ROLE, nodeid)
         item.setData(0, _LABEL_ROLE, label or _short_nodeid(nodeid))
         item.setData(0, _OVERRIDES_ROLE, copy.deepcopy(patch))
+        item.setData(0, _GROUP_ROLE, copy.deepcopy(group or {}))
         item.setIcon(0, icons.kind_icon(Kind.TEST))
         item.setToolTip(0, nodeid)
         # Steps may move between rows, but cannot become children of other steps.
         item.setFlags(item.flags() & ~Qt.ItemIsDropEnabled)
-        child = QTreeWidgetItem(item)
-        child.setData(0, _EDITOR_ROLE, True)
-        child.setFlags(Qt.ItemIsEnabled)
         return item
 
     @staticmethod
@@ -624,38 +707,78 @@ class ExecutionProfilesPage(QWidget):
         item.setToolTip(0, label)
         return item
 
-    def _add_sequence_groups(self, nodeids, patches):
-        patches = iter(patches)
-        def make_node(node):
-            if node.nodeid:
-                return self._step_item(node.nodeid, next(patches), node.name)
-            item = self._group_item(node.name, node.kind)
-            for child in node.children:
-                item.addChild(make_node(child))
-            return item
-        for group in group_hierarchically(nodeids):
-            if len(group.nodeids) == 1:
-                item = self._step_item(group.nodeids[0], next(patches))
-            else:
-                item = self._group_item(group.name, group.kind)
-                roots = build_sequence_tree(group.nodeids)
+    def _add_sequence_groups(self, nodeids, patches, groups=None):
+        groups = groups or [{} for _ in nodeids]
+        root = self.sequence_list.invisibleRootItem()
+        for start, end, metadata in profile_group_runs(nodeids, groups):
+            patch_iterator = iter(patches[start:end])
+            def make_node(node):
+                if node.nodeid:
+                    return self._step_item(node.nodeid, next(patch_iterator), node.name, metadata)
+                item = self._group_item(node.name, node.kind)
+                for child in node.children:
+                    item.addChild(make_node(child))
+                return item
+            parent = root
+            path = group_path(metadata)
+            for level, group in enumerate(path):
+                last = parent.child(parent.childCount() - 1) if parent.childCount() else None
+                previous = last.data(0, _GROUP_ROLE) if last is not None else None
+                if previous and not last.data(0, NODEID_ROLE) and previous['id'] == group['id']:
+                    parent = last
+                else:
+                    item = self._group_item(group['name'], Kind.FOLDER)
+                    item.setData(0, _GROUP_ROLE, group_entry(path[:level + 1]))
+                    item.setIcon(0, icons.icon('mdi.folder', group['color']))
+                    item.setToolTip(0, group['name'] + '\n' + group['description'])
+                    parent.addChild(item)
+                    parent = item
+            if path:
+                roots = build_sequence_tree(nodeids[start:end])
                 while len(roots) == 1 and roots[0].children:
                     roots = roots[0].children
                 for node in roots:
-                    item.addChild(make_node(node))
-            self.sequence_list.addTopLevelItem(item)
+                    parent.addChild(make_node(node))
+            else:
+                for group in group_hierarchically(nodeids[start:end]):
+                    if len(group.nodeids) == 1:
+                        item = self._step_item(group.nodeids[0], next(patch_iterator))
+                    else:
+                        item = self._group_item(group.name, group.kind)
+                        roots = build_sequence_tree(group.nodeids)
+                        while len(roots) == 1 and roots[0].children:
+                            roots = roots[0].children
+                        for node in roots:
+                            item.addChild(make_node(node))
+                    root.addChild(item)
 
-    def _rebuild_sequence(self, nodeids: list[str], patches=None) -> None:
+    def _rebuild_sequence(self, nodeids: list[str], patches=None, groups=None) -> None:
         self._reorder_timer.stop()
+        if hasattr(self, 'sequence_clipboard'):
+            self.sequence_clipboard.reset_visuals()
+        if groups:
+            known, aliases, normalized = {}, {}, []
+            for entry in groups:
+                path = group_path(entry)
+                parents = []
+                for group in path:
+                    identifier = group['id']
+                    context = tuple(parents)
+                    if identifier in known and known[identifier] != context:
+                        group['id'] = aliases.setdefault((identifier, context), str(uuid.uuid4()))
+                    else:
+                        known[identifier] = context
+                    parents.append(group['id'])
+                normalized.append(group_entry(path))
+            groups = normalized
         old_ids, ranges = self._sequence_ranges()
         expanded = {(item.data(0, _LABEL_ROLE), tuple(old_ids[start:end]))
                     for item, start, end in ranges
                     if not self._building and item.isExpanded() and not item.data(0, NODEID_ROLE)}
         blocked = self.sequence_list.blockSignals(True)
         try:
-            self._parameter_controls = {}
             self.sequence_list.clear()
-            self._add_sequence_groups(nodeids, patches or [{} for _ in nodeids])
+            self._add_sequence_groups(nodeids, patches or [{} for _ in nodeids], groups)
             new_ids, ranges = self._sequence_ranges()
             for item, start, end in ranges:
                 if not item.data(0, NODEID_ROLE) and (
@@ -664,6 +787,7 @@ class ExecutionProfilesPage(QWidget):
         finally:
             self.sequence_list.blockSignals(blocked)
         self._renumber()
+        self._selection_changed()
 
     def _flatten_sequence(self) -> list[str]:
         return [item.data(0, NODEID_ROLE) for item in self._step_items()]
@@ -684,8 +808,6 @@ class ExecutionProfilesPage(QWidget):
     def _sequence_ranges(self):
         nodeids, ranges = [], []
         def visit(item):
-            if item.data(0, _EDITOR_ROLE):
-                return
             start = len(nodeids)
             nodeid = item.data(0, NODEID_ROLE)
             if nodeid:
@@ -716,6 +838,7 @@ class ExecutionProfilesPage(QWidget):
         self.sequence_list.setCurrentItem(item)
         self.sequence_list.blockSignals(blocked)
         self.sequence_list.scrollToItem(item)
+        self._selection_changed()
 
     def _expand_groups(self):
         blocked = self.sequence_list.blockSignals(True)
@@ -727,40 +850,52 @@ class ExecutionProfilesPage(QWidget):
         finally:
             self.sequence_list.blockSignals(blocked)
 
+    @undoable('Duplicate tests / groups')
     def duplicate_steps(self) -> None:
-        if not self._valid_editing():
-            return
         nodeids, selected = self._selected_ranges()
         patches = self._step_patches()
+        groups = self._step_groups()
         if not selected:
             return
         edit = len(selected) == 1 and bool(selected[0][0].data(0, NODEID_ROLE))
-        for _, start, end in sorted(selected, key=lambda row: row[1], reverse=True):
+        for selected_item, start, end in sorted(selected, key=lambda row: row[1], reverse=True):
             nodeids[end:end] = nodeids[start:end]
             patches[end:end] = copy.deepcopy(patches[start:end])
-        self._rebuild_sequence(nodeids, patches)
+            copied = copy.deepcopy(groups[start:end])
+            identifiers = {}
+            root_group = selected_item.data(0, _GROUP_ROLE) if not selected_item.data(0, NODEID_ROLE) else None
+            if root_group:
+                for i, entry in enumerate(copied):
+                    path = group_path(entry)
+                    inside = False
+                    for group in path:
+                        inside |= group['id'] == root_group['id']
+                        if inside:
+                            group['id'] = identifiers.setdefault(group['id'], str(uuid.uuid4()))
+                    copied[i] = group_entry(path)
+            groups[end:end] = copied
+        self._rebuild_sequence(nodeids, patches, groups)
         _, start, end = min(selected, key=lambda row: row[1])
         self._focus_range(end, end - start, edit=edit)
         self._mark_dirty()
 
+    @undoable('Remove tests / groups')
     def remove_steps(self) -> None:
         nodeids, selected = self._selected_ranges()
         removed = {i for _, start, end in selected for i in range(start, end)}
         if not removed:
             return
-        if any(item.data(0, _ERROR_ROLE) for i, item in enumerate(self._step_items()) if i not in removed):
-            self._valid_editing()
-            return
         patches = self._step_patches()
+        groups = self._step_groups()
         self._rebuild_sequence([value for i, value in enumerate(nodeids) if i not in removed],
-                               [value for i, value in enumerate(patches) if i not in removed])
+                               [value for i, value in enumerate(patches) if i not in removed],
+                               [value for i, value in enumerate(groups) if i not in removed])
         self._mark_dirty()
 
+    @undoable('Reorder sequence')
     def _move_step(self, direction):
-        if not self._valid_editing():
-            return
         current = self.sequence_list.currentItem()
-        if current is None or current.data(0, _EDITOR_ROLE):
+        if current is None:
             return
         parent = current.parent() or self.sequence_list.invisibleRootItem()
         index = parent.indexOfChild(current)
@@ -772,13 +907,13 @@ class ExecutionProfilesPage(QWidget):
         start, end = by_item[id(current)]
         other_start, other_end = by_item[id(parent.child(destination))]
         edit = bool(current.data(0, NODEID_ROLE))
-        nodeids, patches = self._flatten_sequence(), self._step_patches()
+        nodeids, patches, groups = self._flatten_sequence(), self._step_patches(), self._step_groups()
         # Echange les plages contigues, avec leurs patches YAML, sans trier.
         left, middle, right = (other_start, start, end) if direction < 0 else (start, end, other_end)
-        for values in (nodeids, patches):
+        for values in (nodeids, patches, groups):
             values[left:right] = values[middle:right] + values[left:middle]
         target = other_start if direction < 0 else other_end - (end - start)
-        self._rebuild_sequence(nodeids, patches)
+        self._rebuild_sequence(nodeids, patches, groups)
         self._focus_range(target, end - start, edit=edit)
         self._mark_dirty()
 
@@ -786,42 +921,54 @@ class ExecutionProfilesPage(QWidget):
         # Le drop Qt doit finir avant de reconstruire ses index natifs.
         self._reorder_timer.start(0)
 
+    @undoable('Move tests / groups', after_drop=True)
     def _settle_sequence_order(self):
         current = self.sequence_list.currentItem()
         _, ranges = self._sequence_ranges()
         selected = next(((start, end - start) for item, start, end in ranges
                          if item is current), None)
-        nodeids, patches = self._flatten_sequence(), self._step_patches()
-        self._rebuild_sequence(nodeids, patches)
+        nodeids, patches, groups = self._flatten_sequence(), self._step_patches(), self._step_groups()
+        self._rebuild_sequence(nodeids, patches, groups)
         if selected:
             self._focus_range(*selected)
         self._mark_dirty()
 
-    @staticmethod
-    def _yaml_fields(mapping, prefix=()):
-        if len(prefix) > 30:
-            raise ProfileValidationError("The YAML configuration is nested too deeply.")
-        for key, value in mapping.items():
-            if not isinstance(key, str):
-                continue
-            path = (*prefix, key)
-            if isinstance(value, dict) and value:
-                yield from ExecutionProfilesPage._yaml_fields(value, path)
-            else:
-                yield path, value
-
     def _renumber(self):
         _, ranges = self._sequence_ranges()
+        steps = self._step_items()
+        try:
+            base = self._base_configuration()
+        except (OSError, UnicodeError, yaml.YAMLError, ProfileValidationError):
+            base = {}
+        warnings = []
+        for step in steps:
+            _, _, exceptions = configuration_details(base, self._item_group_path(step),
+                                                      step.data(0, _OVERRIDES_ROLE) or {})
+            warnings.append([exception_text(value) for value in exceptions])
         for item, start, end in ranges:
             label = item.data(0, _LABEL_ROLE) or ''
             number = f"{start + 1:02d}" if end - start == 1 else f"{start + 1:02d}–{end:02d}"
+            metadata = item.data(0, _GROUP_ROLE) or {}
+            exceptions = [text for row in warnings[start:end] for text in row]
+            item.setData(0, EXCEPTION_ROLE, exceptions)
+            count = sum(bool(row) for row in warnings[start:end])
             if item.data(0, NODEID_ROLE):
-                suffix = ' · Custom YAML' if item.data(0, _OVERRIDES_ROLE) else ''
+                suffix = ' · YAML exception' if count else (' · Custom YAML' if item.data(0, _OVERRIDES_ROLE) else '')
+                tooltip = item.data(0, NODEID_ROLE)
             else:
                 noun = ('parameter case' if end - start == 1 else 'parameter cases') if (
                     item.data(0, _KIND_ROLE) == Kind.TEST.value) else ('test' if end - start == 1 else 'tests')
                 suffix = f" · {end - start} {noun}"
-            item.setText(0, f"{number}  {label}{suffix}")
+                if metadata.get('configuration_overrides'):
+                    suffix += ' · Custom YAML'
+                if count:
+                    suffix += f' · {count} exception' + ('s' if count != 1 else '')
+                tooltip = label + ('\n' + metadata['description'] if metadata else '')
+            if exceptions:
+                tooltip += '\n\nYAML exceptions:\n' + '\n'.join(dict.fromkeys(exceptions))
+            item.setToolTip(0, tooltip)
+            description = ('\n' + metadata['description']) if metadata and not item.data(0, NODEID_ROLE) and metadata['description'] else ''
+            item.setText(0, f"{number}  {label}{suffix}{description}")
 
     def _base_configuration(self):
         chosen = self.config_edit.property("fullPath") or ""
@@ -829,7 +976,7 @@ class ExecutionProfilesPage(QWidget):
         if chosen:
             text = Path(chosen).read_text(encoding="utf-8-sig")
         elif self.config_edit.text() and current:
-            text = current.configuration_text
+            text = self._configuration_text
         elif self._workspace_config:
             text = Path(self._workspace_config).read_text(encoding="utf-8-sig")
         else:
@@ -839,216 +986,317 @@ class ExecutionProfilesPage(QWidget):
             raise ProfileValidationError("The YAML configuration must contain a mapping.")
         return base
 
-    def _expand_step_editor(self, item):
-        if not self._building and item.data(0, NODEID_ROLE):
-            self.sequence_list.setCurrentItem(item)
-            self._show_step_editor(item)
+    def _selection_changed(self):
+        selected = self.sequence_list.selectedItems()
+        single_test = len(selected) == 1 and bool(selected[0].data(0, NODEID_ROLE))
+        named_group = len(selected) == 1 and not selected[0].data(0, NODEID_ROLE) and bool(selected[0].data(0, _GROUP_ROLE))
+        self.parameters_button.setEnabled(single_test or named_group)
+        self.effective_button.setEnabled(single_test)
+        self.subgroup_button.setEnabled(named_group and len(self._item_group_path(selected[0], include_self=True)) < 20)
+        self.group_button.setEnabled(bool(selected))
+        self.group_button.setText("Edit group…" if named_group else "Create group…")
+        def is_grouped(item):
+            while item is not None:
+                if item.data(0, _GROUP_ROLE):
+                    return True
+                item = item.parent()
+            return False
+        self.ungroup_button.setEnabled(any(is_grouped(item) for item in selected))
+        self.duplicate_button.setEnabled(bool(selected))
+        self.remove_button.setEnabled(bool(selected))
+        if hasattr(self, 'sequence_clipboard'):
+            self.sequence_clipboard.update_actions()
 
-    def _refresh_step_editor(self):
-        self._show_step_editor(self.sequence_list.currentItem())
+    def _edit_item(self, item, column=0):
+        if item.data(0, NODEID_ROLE):
+            self.edit_step_parameters()
+        elif item.data(0, _GROUP_ROLE):
+            self.edit_group()
 
-    def _show_step_editor(self, item, previous=None):
-        if self._building:
+    @undoable('Change YAML parameters')
+    def edit_step_parameters(self):
+        selected = self.sequence_list.selectedItems()
+        if len(selected) != 1:
             return
-        self.sequence_list.blockSignals(True)
-        for step in self._step_items():
-            if step is not item:
-                step.setExpanded(False)
-                self.sequence_list.removeItemWidget(step.child(0), 0)
-        self.sequence_list.blockSignals(False)
-        self._parameter_controls = {}
-        if item is None or not item.data(0, NODEID_ROLE):
+        item = selected[0]
+        is_test = bool(item.data(0, NODEID_ROLE))
+        own = item.data(0, _GROUP_ROLE) or {}
+        if not is_test and not own:
             return
-        panel = QFrame()
-        panel.setObjectName("Surface")
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(12, 10, 12, 12)
-        heading = QHBoxLayout()
-        title = QLabel("YAML parameters · this occurrence")
-        heading.addWidget(title, 1)
-        reset = QToolButton()
-        reset.setIcon(icons.icon("mdi.restore"))
-        reset.setToolTip("Reset this step to the profile configuration")
-        reset.clicked.connect(lambda: self._reset_step(item))
-        heading.addWidget(reset)
-        layout.addLayout(heading)
-        note = QLabel("Unchecked parameters inherit the profile configuration.")
-        note.setObjectName("Muted")
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        path = self._item_group_path(item)
         try:
-            base = self._base_configuration()
+            base = inherited_configuration(self._base_configuration(), path)
+            patch = (item.data(0, _OVERRIDES_ROLE) or {}) if is_test else own.get('configuration_overrides', {})
+            dialog = StepParametersDialog(item.data(0, NODEID_ROLE) if is_test else own['name'],
+                                          base, patch, self, group=not is_test,
+                                          inherited_label='Profile' if not path else 'Parent group')
         except (OSError, UnicodeError, yaml.YAMLError, ProfileValidationError) as exc:
-            base = {}
-            note.setText(f"Configuration unavailable: {exc}")
-        patch = item.data(0, _OVERRIDES_ROLE) or {}
-        try:
-            fields = dict(self._yaml_fields(base))
-        except ProfileValidationError as exc:
-            fields = {}
-            note.setText(str(exc))
-        custom = dict(self._yaml_fields(patch))
-        fields.update({key: value for key, value in custom.items() if key not in fields})
-        drafts = item.data(0, _DRAFT_ROLE) or {}
-        reader_fields = [path for path in fields if path[-1].lower() in ("reader", "lecteur")]
-        managed_reader = min(reader_fields, key=len) if reader_fields else None
-        search = QLineEdit()
-        search.setPlaceholderText("Find a YAML parameter…")
-        search.setClearButtonEnabled(True)
-        if len(fields) > 6:
-            layout.addWidget(search)
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(10)
-        self._parameter_controls = {}
-        cells = []
-        for index, (path, original) in enumerate(fields.items()):
-            cell = QWidget()
-            box = QVBoxLayout(cell)
-            box.setContentsMargins(0, 0, 0, 0)
-            toggle = QCheckBox(" · ".join(path))
-            toggle.setToolTip("Customize this YAML parameter for this occurrence only")
-            toggle.setChecked(path in custom or path in drafts)
-            box.addWidget(toggle)
-            value = custom.get(path, original)
-            if isinstance(original, bool):
-                editor = QComboBox()
-                editor.addItems(["false", "true"])
-                editor.setCurrentIndex(int(bool(value)))
-            elif isinstance(original, str) and original.upper() in ("T0", "T1") and "proto" in path[-1].lower():
-                editor = QComboBox()
-                editor.setEditable(True)
-                editor.addItems(["T0", "T1"])
-                editor.setCurrentText(str(value))
-            else:
-                editor = QLineEdit(self._format_value(value))
-            editor.setAccessibleName(" · ".join(path))
-            editor.setEnabled(toggle.isChecked())
-            if path in drafts:
-                editor.setText(drafts[path]) if isinstance(editor, QLineEdit) else editor.setCurrentText(drafts[path])
-            if path == managed_reader:
-                toggle.setEnabled(False)
-                editor.setEnabled(False)
-            box.addWidget(editor)
-            origin = QLabel("Inherited from profile" if path not in custom else
-                            f"Profile: {self._format_value(original)}")
-            origin.setObjectName("Muted")
-            origin.setWordWrap(True)
-            if path == managed_reader:
-                origin.setText("Assigned by the readers selected in Run Tests")
-            box.addWidget(origin)
-            error = QLabel()
-            error.setObjectName("ProfileParameterError")
-            error.setWordWrap(True)
-            error.hide()
-            if path in drafts:
-                error.setText("Invalid value. Correct it or uncheck this parameter.")
-                error.show()
-            box.addWidget(error)
-            self._parameter_controls[path] = (toggle, editor)
-            callback = lambda *args, p=path, o=original, c=toggle, e=editor, n=origin, err=error: self._change_parameter(item, p, o, c, e, n, err)
-            toggle.toggled.connect(callback)
-            if isinstance(editor, QComboBox):
-                editor.currentTextChanged.connect(callback)
-            else:
-                editor.textChanged.connect(callback)
-            grid.addWidget(cell, index // 2, index % 2)
-            cells.append((path, cell))
-        grid.setColumnStretch(0, 1)
-        grid.setColumnStretch(1, 1)
-        layout.addLayout(grid)
-        def filter_fields(text):
-            visible = 0
-            for path, cell in cells:
-                matches = text.casefold() in ".".join(path).casefold()
-                cell.setVisible(matches)
-                if matches:
-                    grid.addWidget(cell, visible // 2, visible % 2)
-                    visible += 1
-            layout.invalidate()
-            child.setSizeHint(0, QSize(0, panel.sizeHint().height()))
-        search.textChanged.connect(filter_fields)
-        if not fields:
-            choose = QPushButton("Choose configuration YAML…")
-            choose.clicked.connect(self.choose_config)
-            layout.addWidget(choose)
-        child = item.child(0)
-        child.setSizeHint(0, QSize(0, panel.sizeHint().height()))
-        self.sequence_list.setItemWidget(child, 0, panel)
-        self.sequence_list.blockSignals(True)
-        item.setExpanded(True)
-        self.sequence_list.blockSignals(False)
+            ErrorDialog.show_error(self, "Could not load YAML parameters", str(exc))
+            return
+        if dialog.exec() != QDialog.Accepted:
+            return
+        if is_test:
+            item.setData(0, _OVERRIDES_ROLE, copy.deepcopy(dialog.patch))
+        else:
+            self._apply_group_yaml(own['id'], dialog.patch, replace=dialog.replace_existing.isChecked())
+        self._mark_dirty()
 
     @staticmethod
-    def _format_value(value):
-        if isinstance(value, str):
-            return value
-        return yaml.safe_dump(value, default_flow_style=True, allow_unicode=True).split("\n...")[0].strip()
-
-    def _change_parameter(self, item, path, original, toggle, editor, origin, error):
-        editor.setEnabled(toggle.isChecked())
-        patch = copy.deepcopy(item.data(0, _OVERRIDES_ROLE) or {})
-        errors = set(item.data(0, _ERROR_ROLE) or [])
-        drafts = dict(item.data(0, _DRAFT_ROLE) or {})
-        try:
-            if toggle.isChecked():
-                text = editor.currentText() if isinstance(editor, QComboBox) else editor.text()
-                value = text if isinstance(original, str) else yaml.safe_load(text)
-                if original is not None and type(value) is not type(original):
-                    raise ValueError(f"Expected {type(original).__name__}, using YAML syntax.")
-                from runner.domain.execution_profile import validate_step_overrides
-                validate_step_overrides([{path[-1]: value}], 1)
-                target = patch
-                for key in path[:-1]:
-                    target = target.setdefault(key, {})
-                target[path[-1]] = value
-                origin.setText(f"Profile: {self._format_value(original)}")
+    def _without_parameters(patch, paths):
+        result = copy.deepcopy(patch)
+        for path in paths:
+            target, parents = result, []
+            for key in path[:-1]:
+                if not isinstance(target.get(key), dict):
+                    break
+                parents.append((target, key))
+                target = target[key]
             else:
-                target = patch
-                parents = []
-                for key in path[:-1]:
-                    parents.append((target, key))
-                    target = target.get(key, {})
                 target.pop(path[-1], None)
                 for parent, key in reversed(parents):
-                    if not parent.get(key):
-                        parent.pop(key, None)
-                editor.blockSignals(True)
-                if isinstance(editor, QComboBox):
-                    editor.setCurrentText(self._format_value(original))
-                else:
-                    editor.setText(self._format_value(original))
-                editor.blockSignals(False)
-                origin.setText("Inherited from profile")
-            errors.discard(path)
-            drafts.pop(path, None)
-            error.hide()
-            item.setData(0, _OVERRIDES_ROLE, patch)
-        except (ValueError, yaml.YAMLError) as exc:
-            errors.add(path)
-            drafts[path] = editor.currentText() if isinstance(editor, QComboBox) else editor.text()
-            error.setText(str(exc))
-            error.show()
-        item.setData(0, _ERROR_ROLE, list(errors))
-        item.setData(0, _DRAFT_ROLE, drafts)
-        child = item.child(0)
-        panel = self.sequence_list.itemWidget(child, 0)
-        if panel:
-            child.setSizeHint(0, QSize(0, panel.sizeHint().height()))
+                    if not parent[key]:
+                        parent.pop(key)
+        return result
+
+    @undoable('Change group YAML')
+    def _apply_group_yaml(self, identifier, patch, *, replace=False):
+        groups, patches = self._step_groups(), self._step_patches()
+        paths = list(dict(yaml_fields(patch)))
+        for index, entry in enumerate(groups):
+            path = group_path(entry)
+            inside = False
+            for group in path:
+                if group['id'] == identifier:
+                    group['configuration_overrides'] = copy.deepcopy(patch)
+                    inside = True
+                elif inside and replace:
+                    group['configuration_overrides'] = self._without_parameters(group.get('configuration_overrides', {}), paths)
+            if inside and replace:
+                patches[index] = self._without_parameters(patches[index], paths)
+            groups[index] = group_entry(path)
+        self._rebuild_sequence(self._flatten_sequence(), patches, groups)
+        self._focus_group(identifier)
+
+    def _focus_group(self, identifier):
+        _, ranges = self._sequence_ranges()
+        item = next((item for item, _, _ in ranges if not item.data(0, NODEID_ROLE)
+                     and (item.data(0, _GROUP_ROLE) or {}).get('id') == identifier), None)
+        if item is not None:
+            self.sequence_list.setCurrentItem(item)
+            self.sequence_list.scrollToItem(item)
+
+    @staticmethod
+    def _common_group_path(paths):
+        prefix = copy.deepcopy(paths[0]) if paths else []
+        for path in paths[1:]:
+            prefix = prefix[:next((i for i, (left, right) in enumerate(zip(prefix, path))
+                                    if left['id'] != right['id']), min(len(prefix), len(path)))]
+        return prefix
+
+    def edit_group(self, checked=False, *, subgroup=False):
+        nodeids, ranges = self._selected_ranges()
+        indices = sorted({i for _, start, end in ranges for i in range(start, end)})
+        if not indices:
+            return
+        selected = self.sequence_list.selectedItems()
+        existing = selected[0].data(0, _GROUP_ROLE) if len(selected) == 1 and not selected[0].data(0, NODEID_ROLE) and not subgroup else None
+        entries = self._step_groups()
+        prefix = self._common_group_path([group_path(entries[i]) for i in indices])
+        if existing:
+            prefix = self._item_group_path(selected[0])
+        elif subgroup:
+            prefix = self._item_group_path(selected[0], include_self=True)
+        if not existing and len(prefix) >= 20:
+            self._show_notice("Groups may contain at most 20 nested levels.", warning=True)
+            return
+        nonadjacent = indices != list(range(indices[0], indices[-1] + 1))
+        dialog = ProfileGroupDialog(len(indices), existing, will_reorder=nonadjacent, parent=self,
+                                    parent_name=' / '.join(g['name'] for g in prefix) or 'Profile root')
+        if dialog.exec() == QDialog.Accepted:
+            self._apply_group(indices, dialog.metadata(), editing=bool(existing), parent_path=prefix)
+
+    @undoable('Edit group')
+    def _apply_group(self, indices, metadata, *, editing=False, parent_path=None):
+        nodeids, patches, groups = self._flatten_sequence(), self._step_patches(), self._step_groups()
+        if editing:
+            own = {key: copy.deepcopy(value) for key, value in metadata.items() if key != 'parents'}
+            for index, entry in enumerate(groups):
+                path = group_path(entry)
+                groups[index] = group_entry([own if group['id'] == metadata['id'] else group for group in path])
+        else:
+            selected = set(indices)
+            prefix = parent_path if parent_path is not None else self._common_group_path([group_path(groups[i]) for i in indices])
+            outside = {group['id'] for i, entry in enumerate(groups) if i not in selected for group in group_path(entry)}
+            identifiers = {}
+            for i in indices:
+                path = group_path(groups[i])
+                common = self._common_group_path([path, prefix])
+                suffix = path[len(common):]
+                for group in suffix:
+                    if group['id'] in outside:
+                        group['id'] = identifiers.setdefault(group['id'], str(uuid.uuid4()))
+                groups[i] = group_entry(prefix + [copy.deepcopy(metadata)] + suffix)
+            order = list(range(indices[0])) + indices + [i for i in range(indices[0], len(nodeids)) if i not in selected]
+            nodeids, patches, groups = ([values[i] for i in order] for values in (nodeids, patches, groups))
+        self._rebuild_sequence(nodeids, patches, groups)
+        self._focus_group(metadata['id'])
         self._mark_dirty()
 
-    def _reset_step(self, item):
-        item.setData(0, _OVERRIDES_ROLE, {})
-        item.setData(0, _ERROR_ROLE, [])
-        item.setData(0, _DRAFT_ROLE, {})
+    @undoable('Ungroup tests')
+    def ungroup_steps(self):
+        nodeids, ranges = self._selected_ranges()
+        groups = self._step_groups()
+        for item, start, end in ranges:
+            identifier = (item.data(0, _GROUP_ROLE) or {}).get('id') if not item.data(0, NODEID_ROLE) else None
+            for index in range(start, end):
+                path = group_path(groups[index])
+                groups[index] = group_entry([group for group in path if group['id'] != identifier] if identifier else path[:-1])
+        self._rebuild_sequence(nodeids, self._step_patches(), groups)
         self._mark_dirty()
-        self._show_step_editor(item)
 
-    def _valid_editing(self):
-        if any(item.data(0, _ERROR_ROLE) for item in self._step_items()):
-            self._show_notice("Correct invalid step parameters before moving or duplicating steps.", warning=True)
+    def _drop_details(self, target):
+        _, ranges = self._selected_ranges()
+        if not ranges:
+            return None
+        destination = self._item_group_path(target, include_self=True) if target is not None else []
+        changed, sources, changes = [], set(), []
+        try:
+            base = self._base_configuration()
+        except (OSError, UnicodeError, yaml.YAMLError, ProfileValidationError):
+            base = {}
+        groups, patches = self._step_groups(), self._step_patches()
+        for item, start, end in ranges:
+            ancestor = target
+            while ancestor is not None:
+                if ancestor is item:
+                    return None
+                ancestor = ancestor.parent()
+            source = self._item_group_path(item)
+            if [g['id'] for g in source] == [g['id'] for g in destination]:
+                continue
+            changed.extend(range(start, end))
+            sources.add(' / '.join(g['name'] for g in source) or 'Profile root')
+            for index in range(start, end):
+                before = group_path(groups[index])
+                after = destination + before[len(source):] if not item.data(0, NODEID_ROLE) else destination
+                if len(after) > 20:
+                    return None
+                old = dict(yaml_fields(merge_configuration(inherited_configuration(base, before), patches[index])))
+                new = dict(yaml_fields(merge_configuration(inherited_configuration(base, after), patches[index])))
+                for key in old.keys() | new.keys():
+                    if old.get(key) != new.get(key):
+                        text = '.'.join(key) + ': ' + format_value(old.get(key)) + ' → ' + format_value(new.get(key))
+                        if text not in changes:
+                            changes.append(text)
+        return dict(count=len(changed), sources=sorted(sources),
+                    destination=' / '.join(g['name'] for g in destination) or 'Profile root', changes=changes)
+
+    def _confirm_drop(self, target):
+        details = self._drop_details(target)
+        if details is None:
             return False
-        return True
+        if not details['count']:
+            self._history_state = self._editor_state()
+            return True
+        dialog = ConfirmGroupMoveDialog(details['count'], details['sources'], details['destination'],
+                                         details['changes'][:6], self)
+        accepted = dialog.exec() == QDialog.Accepted
+        if accepted:
+            self._history_state = self._editor_state()
+        return accepted
+
+    def set_preview_readers(self, readers):
+        self._preview_readers = list(readers)
+
+    def show_effective_configuration(self):
+        selected = self.sequence_list.selectedItems()
+        if len(selected) != 1 or not selected[0].data(0, NODEID_ROLE):
+            return
+        item = selected[0]
+        try:
+            configuration, rows, _ = configuration_details(self._base_configuration(),
+                self._item_group_path(item), item.data(0, _OVERRIDES_ROLE) or {})
+        except (OSError, UnicodeError, yaml.YAMLError, ProfileValidationError) as exc:
+            ErrorDialog.show_error(self, 'Could not preview test configuration', str(exc))
+            return
+        dialog = EffectiveConfigurationDialog(item.data(0, NODEID_ROLE), configuration, rows,
+                                                self._preview_readers, self)
+        dialog.exec()
+
+    def _context_menu(self):
+        selected = self.sequence_list.selectedItems()
+        menu = QMenu(self)
+        named = len(selected) == 1 and not selected[0].data(0, NODEID_ROLE) and bool(selected[0].data(0, _GROUP_ROLE))
+        single = len(selected) == 1 and bool(selected[0].data(0, NODEID_ROLE))
+        action = menu.addAction('Group YAML parameters…' if named else 'Test YAML parameters…', self.edit_step_parameters)
+        action.setEnabled(named or single)
+        action = menu.addAction('View effective YAML…', self.show_effective_configuration)
+        action.setEnabled(single)
+        menu.addSeparator()
+        menu.addAction(self.sequence_clipboard.copy_action)
+        menu.addAction(self.sequence_clipboard.paste_action)
+        menu.addAction(self.sequence_clipboard.paste_into_action)
+        menu.addSeparator()
+        action = menu.addAction('Edit group…' if named else 'Create group…', self.edit_group)
+        action.setEnabled(bool(selected))
+        if named:
+            menu.addAction('Create subgroup…', lambda: self.edit_group(subgroup=True))
+        menu.addAction('Duplicate', self.duplicate_steps).setEnabled(bool(selected))
+        menu.addAction('Move to…', self.move_to_group).setEnabled(bool(selected))
+        menu.addAction('Ungroup', self.ungroup_steps).setEnabled(self.ungroup_button.isEnabled())
+        menu.addAction('Remove', self.remove_steps).setEnabled(bool(selected))
+        menu.addSeparator()
+        menu.addAction(self.undo_action)
+        menu.addAction(self.redo_action)
+        return menu
+
+    def _show_context_menu(self, position):
+        item = self.sequence_list.itemAt(position)
+        if item is not None and not item.isSelected():
+            self.sequence_list.setCurrentItem(item)
+        menu = self._context_menu()
+        menu.exec(self.sequence_list.viewport().mapToGlobal(position))
+
+    def copy_elements(self):
+        self.sequence_clipboard.copy()
+
+    @undoable('Paste elements')
+    def paste_elements(self, *, into_group=False):
+        self.sequence_clipboard.paste(into_group=into_group)
+
+    def move_to_group(self):
+        targets = [('Profile root', None)]
+        _, ranges = self._sequence_ranges()
+        for item, _, _ in ranges:
+            if item.data(0, _GROUP_ROLE) and not item.data(0, NODEID_ROLE) and self._drop_details(item) is not None:
+                targets.append((' / '.join(group['name'] for group in self._item_group_path(item, include_self=True)), item))
+        dialog = MoveToGroupDialog(targets, self._drop_details, self)
+        if dialog.exec() == QDialog.Accepted:
+            self._move_to_target(dialog.target())
+
+    @undoable('Move tests / groups')
+    def _move_to_target(self, target):
+        details = self._drop_details(target)
+        if not details or not details['count']:
+            return
+        nodeids, selected = self._selected_ranges()
+        patches, groups = self._step_patches(), self._step_groups()
+        destination = self._item_group_path(target, include_self=True) if target is not None else []
+        _, ranges = self._sequence_ranges()
+        end = next((end for item, _, end in ranges if item is target), len(nodeids))
+        moved = sorted({i for _, start, stop in selected for i in range(start, stop)})
+        for item, start, stop in selected:
+            source = self._item_group_path(item)
+            for i in range(start, stop):
+                path = group_path(groups[i])
+                groups[i] = group_entry(destination + path[len(source):] if not item.data(0, NODEID_ROLE) else destination)
+        moving = set(moved)
+        remaining = [i for i in range(len(nodeids)) if i not in moving]
+        insertion = sum(i < end for i in remaining)
+        order = remaining[:insertion] + moved + remaining[insertion:]
+        self._rebuild_sequence(*[[values[i] for i in order] for values in (nodeids, patches, groups)])
+        self._focus_range(insertion, len(moved))
+        self._mark_dirty()
 
     def _options_changed(self) -> None:
         self._mark_dirty()
@@ -1060,6 +1308,91 @@ class ExecutionProfilesPage(QWidget):
         self._dirty = True
         self._renumber()
         self._update_summary()
+        if self._edit_depth == 0 and not self._history_restoring:
+            sender = self.sender()
+            merge_key = id(sender) if sender in (self.name_edit, self.description_edit) else None
+            self._record_edit(self._history_state, 'Edit profile options', merge_key)
+
+    def _view_state(self):
+        expanded, selected, current = [], [], None
+        def visit(item, path):
+            nonlocal current
+            if item.isExpanded():
+                expanded.append(path)
+            if item.isSelected():
+                selected.append(path)
+            if item is self.sequence_list.currentItem():
+                current = path
+            for index in range(item.childCount()):
+                visit(item.child(index), (*path, index))
+        for index in range(self.sequence_list.topLevelItemCount()):
+            visit(self.sequence_list.topLevelItem(index), (index,))
+        return dict(expanded=expanded, selected=selected, current=current,
+                    scroll=self.sequence_list.verticalScrollBar().value())
+
+    def _editor_state(self):
+        return dict(sequence=self._flatten_sequence(), patches=self._step_patches(), groups=self._step_groups(),
+                    name=self.name_edit.text(), description=self.description_edit.toPlainText(),
+                    config_name=self.config_edit.text(), config_text=self._configuration_text,
+                    config_path=self.config_edit.property('fullPath') or '',
+                    repetitions=self.repetitions.value(), reruns=self.rerun_failures.value(),
+                    stop=self.stop_after_failure.isChecked(), logs=self.save_logs.isChecked(),
+                    view=self._view_state())
+
+    def _record_edit(self, before, label, merge_key=None):
+        if self._building or self._history_restoring:
+            return
+        after = self._editor_state()
+        self._history_state = copy.deepcopy(after)
+        if before is None or {k: v for k, v in before.items() if k != 'view'} == {k: v for k, v in after.items() if k != 'view'}:
+            return
+        self.undo_stack.push(ProfileEdit(self, before, after, label, merge_key))
+
+    def _restore_editor_state(self, state):
+        self._history_restoring = True
+        self._building = True
+        try:
+            self._configuration_text = state['config_text']
+            self.name_edit.setText(state['name'])
+            self.description_edit.setPlainText(state['description'])
+            self.config_edit.setText(state['config_name'])
+            self.config_edit.setProperty('fullPath', state['config_path'])
+            self.repetitions.setValue(state['repetitions'])
+            self.rerun_failures.setValue(state['reruns'])
+            self.stop_after_failure.setChecked(state['stop'])
+            self.save_logs.setChecked(state['logs'])
+            self._rebuild_sequence(state['sequence'], state['patches'], state['groups'])
+            view = state['view']
+            def find(path):
+                item = self.sequence_list.invisibleRootItem()
+                for index in path:
+                    item = item.child(index) if item is not None else None
+                return item
+            self.sequence_list.collapseAll()
+            self.sequence_list.clearSelection()
+            for path in view['expanded']:
+                item = find(path)
+                if item is not None:
+                    item.setExpanded(True)
+            if view['current'] is not None:
+                self.sequence_list.setCurrentItem(find(view['current']))
+            self.sequence_list.clearSelection()
+            for path in view['selected']:
+                item = find(path)
+                if item is not None:
+                    item.setSelected(True)
+            self.sequence_list.verticalScrollBar().setValue(view['scroll'])
+        finally:
+            self._building = False
+            self._history_restoring = False
+        self._history_state = self._editor_state()
+        self._selection_changed()
+        self._update_summary()
+
+    def _sync_history_dirty(self, *_):
+        if not self._building:
+            self._dirty = not self.undo_stack.isClean() or self._initial_unsaved
+            self._update_summary()
 
     def _update_summary(self) -> None:
         count = len(self._flatten_sequence())

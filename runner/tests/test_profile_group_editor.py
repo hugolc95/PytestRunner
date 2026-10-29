@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt
 
 from runner.domain.execution_profile import ExecutionProfile, ProfileStore, export_profile, inspect_profile
 from runner.ui.execution_profiles_page import (
-    AddTestsDialog, ExecutionProfilesPage, _EDITOR_ROLE, _OVERRIDES_ROLE,
+    AddTestsDialog, ExecutionProfilesPage, _OVERRIDES_ROLE,
 )
 from runner.ui.tree_model import NODEID_ROLE
 
@@ -70,12 +70,11 @@ def test_group_expansion_does_not_open_every_yaml_editor(page):
     assert page.sequence_list.topLevelItem(0).isExpanded()
     assert page.sequence_list.topLevelItem(1).isExpanded()
     assert all(not step.isExpanded() for step in page._step_items())
-    assert all(page.sequence_list.itemWidget(step.child(0), 0) is None for step in page._step_items())
+    assert all(step.childCount() == 0 for step in page._step_items())
     step = page._step_items()[1]
     page.sequence_list.setCurrentItem(step)
-    toggle, editor = page._parameter_controls[('timeout',)]
-    assert toggle.isChecked() and editor.text() == '20'
-    assert page.sequence_list.itemWidget(step.child(0), 0) is not None
+    assert page.parameters_button.isEnabled()
+    assert step.childCount() == 0
     page.sequence_list.setCurrentItem(page.sequence_list.topLevelItem(1))
     assert not step.isExpanded()
     assert page._step_patches() == PATCHES
@@ -88,7 +87,7 @@ def test_moving_member_keeps_other_open_groups_and_yaml_with_the_right_test(page
     assert page._flatten_sequence() == [NODES[1], NODES[0], *NODES[2:]]
     assert page._step_patches() == [PATCHES[1], PATCHES[0], *PATCHES[2:]]
     assert page.sequence_list.topLevelItem(1).isExpanded()
-    assert page._parameter_controls[('timeout',)][1].text() == '20'
+    assert page.parameters_button.isEnabled()
 
 
 def test_repeated_additions_remain_separate_groups_and_repeat_button_reuses_selection(qtbot, tmp_path):
@@ -120,7 +119,7 @@ def test_drop_between_groups_keeps_parameters_and_does_not_save_editor_rows(page
     assert page._flatten_sequence() == [NODES[0], NODES[2], NODES[1], NODES[3], NODES[4]]
     assert page._step_patches() == [PATCHES[0], PATCHES[2], PATCHES[1], PATCHES[3], PATCHES[4]]
     assert all(item.data(0, NODEID_ROLE) for item in page._step_items())
-    assert all(item.child(0).data(0, _EDITOR_ROLE) for item in page._step_items())
+    assert all(item.childCount() == 0 for item in page._step_items())
 
 
 def test_duplicate_group_patches_are_independent(page):

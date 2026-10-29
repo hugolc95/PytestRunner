@@ -29,6 +29,7 @@ class TraceBrowser(QTextBrowser):
         super().__init__(parent)
         self.default_workspace = ""
         self.require_context = False
+        self._activation_modifiers = Qt.NoModifier
         self._workspace_hint = ""
         self.setOpenLinks(False)
         self.setOpenExternalLinks(False)
@@ -38,7 +39,23 @@ class TraceBrowser(QTextBrowser):
     def _activate(self, url):
         location = TraceLocation.from_href(url.toString(QUrl.FullyEncoded))
         if location is not None:
-            self.source_requested.emit(location, bool(QApplication.keyboardModifiers() & Qt.ControlModifier))
+            self.source_requested.emit(location, bool(self._activation_modifiers & Qt.ControlModifier))
+
+    def mouseReleaseEvent(self, event):
+        # Le modificateur du clic est fiable meme si un ancien Ctrl de Qt
+        # reste dans son etat global (tests synthetiques, changement de focus).
+        self._activation_modifiers = event.modifiers()
+        try:
+            super().mouseReleaseEvent(event)
+        finally:
+            self._activation_modifiers = Qt.NoModifier
+
+    def keyPressEvent(self, event):
+        self._activation_modifiers = event.modifiers()
+        try:
+            super().keyPressEvent(event)
+        finally:
+            self._activation_modifiers = Qt.NoModifier
 
     def _tooltip(self, url):
         location = TraceLocation.from_href(url.toString(QUrl.FullyEncoded))

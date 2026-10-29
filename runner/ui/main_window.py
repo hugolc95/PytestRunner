@@ -56,6 +56,7 @@ from PySide6.QtWidgets import (
 )
 
 from app_icon import APP_ICON_RELATIVE_PATH, resource_path
+from runner.domain.execution_profile import effective_step_overrides
 from runner.domain.duration import format_duration
 from runner.domain import history, failures as failures_mod
 from runner.domain import interpreter as interpreter_mod
@@ -624,6 +625,7 @@ class MainWindow(QMainWindow):
         nodeids = list(getattr(context.model, "_by_nodeid", {}))
         config = context.workspace.config_path if context.workspace else ""
         self.profiles_page.set_workspace_context(nodeids, config)
+        self.profiles_page.set_preview_readers([reader.name for reader in context._readers_to_run()])
 
     @Slot(object)
     def _load_execution_profile(self, profile: ExecutionProfile) -> None:
@@ -697,6 +699,7 @@ class MainWindow(QMainWindow):
             self._profile_logs = None
             self._profile_batch_output.clear()
             self._profile_pending_console.clear()
+            self.profile_model.configuration_base = getattr(self.workspace, 'settings', {})
             self.profile_model.prepare(profile, self._readers_to_run())
             self._displayed_profile = profile
             self.profile_tree.expandToDepth(1)
@@ -1185,8 +1188,10 @@ class MainWindow(QMainWindow):
         self.profile_tree = QTreeView()
         self.profile_tree.setHeader(ReaderHeaderView(Qt.Horizontal, self.profile_tree))
         self.profile_tree.setModel(self.profile_model)
-        self.profile_tree.setItemDelegate(DivergenceDelegate(self.profile_tree))
-        self.profile_tree.setUniformRowHeights(True)
+        from runner.ui.profile_group_delegate import ProfileGroupDelegate
+        self.profile_tree.setItemDelegate(ProfileGroupDelegate(self.profile_tree))
+        self.profile_tree.setProperty('variableRowHeights', True)
+        self.profile_tree.setUniformRowHeights(False)
         self.profile_tree.setAnimated(False)
         self.profile_tree.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.profile_tree.header().setStretchLastSection(False)
@@ -2591,7 +2596,7 @@ class MainWindow(QMainWindow):
                     repetitions=profile.execution.repetitions,
                     rerun_failures=profile.execution.rerun_failures,
                     stop_after_failure=profile.execution.stop_after_failure,
-                    step_overrides=profile.step_overrides)
+                    step_overrides=effective_step_overrides(profile))
             except (OSError, UnicodeError, ProfileValidationError) as exc:
                 ErrorDialog.show_error(self, "Could not prepare profile parameters", str(exc))
 
@@ -2820,6 +2825,7 @@ class MainWindow(QMainWindow):
         self.tree_view_switch.setVisible(profile is not None)
         if profile is not None:
             self._displayed_profile = profile
+            self.profile_model.configuration_base = getattr(self.workspace, 'settings', {})
             self.profile_model.prepare(profile, request.readers)
             self._size_reader_columns(self.profile_tree, self.profile_model)
             self.profile_tree.expandToDepth(1)
