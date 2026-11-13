@@ -546,6 +546,8 @@ class ResultsPanel(QWidget):
         self._index_echecs: dict[int, dict] = {}
         self._durations: dict[int, dict[str, float]] = {}
         self._previous_failures = {}
+        self._live_failures = {}
+        self._live_detail_records = {}
         self._executed_by_reader = {}
         self._preserve_details = False
         self._nodeid = ""
@@ -658,6 +660,8 @@ class ResultsPanel(QWidget):
         self.detail.clear()
         self.set_result_origins({})
         self._previous_failures.clear()
+        self._live_failures.clear()
+        self._live_detail_records.clear()
         self._executed_by_reader.clear()
         self._preserve_details = False
         self.source.save()
@@ -681,6 +685,8 @@ class ResultsPanel(QWidget):
             self._previous_failures.clear()
             self._durations.clear()
         self._preserve_details = preserve_results
+        self._live_failures.clear()
+        self._live_detail_records.clear()
         self._executed_by_reader.clear()
         self.output.clear()
         self.logs.clear()
@@ -707,7 +713,32 @@ class ResultsPanel(QWidget):
             self._durations.setdefault(index, {}).update(rapport.durations)
         else:
             self._durations[index] = rapport.durations
+        for key in [key for key in self._live_failures if key[1] == index]:
+            self._live_failures.pop(key, None)
+            self._live_detail_records.pop(key, None)
         self._refresh_detail()
+
+    def set_test_detail(self, reader_index: int, detail: dict) -> None:
+        """Un diagnostic immediat, meme si un autre test reste en cours."""
+        import json
+        from runner.domain.diagnostics import PREFIX
+        nodeid = detail['nodeid']
+        key = (nodeid, reader_index)
+        records = self._live_detail_records.setdefault(key, {})
+        records[detail['phase']] = dict(detail)
+        failed = [record for record in records.values() if record['kind'] == 'test']
+        if failed:
+            index = failures_mod.index_failures('\n'.join(PREFIX + json.dumps(record) for record in failed))
+            self._live_failures[key] = failures_mod.failure_for(index, nodeid)
+        else:
+            self._live_failures[key] = failures_mod.Failure(nodeid, kind='skip', body=detail['body'])
+        if self._nodeid == nodeid:
+            self._refresh_detail()
+
+    def set_test_duration(self, reader_index: int, nodeid: str, seconds: float) -> None:
+        self._durations.setdefault(reader_index, {})[nodeid] = seconds
+        if self._nodeid == nodeid:
+            self._refresh_detail()
 
     def append_output(self, index: int, texte: str) -> None:
         self.output.append(index, texte)
@@ -777,6 +808,10 @@ class ResultsPanel(QWidget):
         """
         if reader_index is not None:
             self._executed_by_reader.setdefault(reader_index, set()).add(nodeid)
+            if statuses.get(reader_index) is Status.PASSED:
+                # Un re-run reussi ne doit pas conserver l'ancienne trace.
+                self._live_failures[(nodeid, reader_index)] = None
+                self._live_detail_records.pop((nodeid, reader_index), None)
         if nodeid and nodeid == self._nodeid:
             self._statuses = dict(statuses)
             self._refresh_detail()
@@ -811,6 +846,8 @@ class ResultsPanel(QWidget):
         doit s'activer que si ce test a vraiment un echec a copier.
         """
         key = (nodeid, reader_index)
+        if key in self._live_failures:
+            return self._live_failures[key]
         if key in self._previous_failures:
             return self._previous_failures[key]
         return failures_mod.failure_for(self._echecs_de(reader_index), nodeid)

@@ -72,6 +72,7 @@ class _ReaderWorker(QThread):
     line = Signal(int, str)
     outcome = Signal(object)
     duration = Signal(int, str, float)  # lecteur, nodeid, secondes
+    detail = Signal(int, object)
     done = Signal(object)
 
     def __init__(self, request: RunRequest, reader: Reader, env: dict, parent=None):
@@ -91,6 +92,7 @@ class _ReaderWorker(QThread):
                 on_outcome=self.outcome.emit,
                 on_duration=lambda nodeid, seconds: self.duration.emit(
                     self._reader.index, nodeid, seconds),
+                on_detail=lambda detail: self.detail.emit(self._reader.index, detail),
             )
         except Exception as exc:
             # Preparation/IO errors outside pytest must still finish the UI run.
@@ -120,6 +122,9 @@ class RunService(QObject):
     outcome = Signal(object)          # Outcome
     duration = Signal(int, str, float)  # lecteur, nodeid, secondes
     progress = Signal(int, int)       # termines, total
+    test_detail = Signal(int, object)
+    profile_test_detail = Signal(int, int, int, object)  # position, retry, lecteur, diagnostic
+    profile_duration = Signal(int, int, int, str, float)
     profile_detail = Signal(int, str)
     profile_execution = Signal(int, int, int, str, object)  # position, retry, reader, nodeid, status
     profile_batch_report = Signal(int, int, int, object)  # first position, count, retry, report
@@ -241,7 +246,8 @@ class RunService(QObject):
                 worker._run.pause_control.request()
             worker.line.connect(self._on_live_line)
             worker.outcome.connect(self._on_outcome)
-            worker.duration.connect(self.duration)
+            worker.duration.connect(self._on_duration)
+            worker.detail.connect(self._on_test_detail)
             worker.done.connect(self._on_reader_done)
             self._workers.append(worker)
 
@@ -372,6 +378,16 @@ class RunService(QObject):
         )
         self._start_request(request, self._profile_env, emit_started=False)
 
+    def _on_test_detail(self, reader_index: int, detail: dict) -> None:
+        self.test_detail.emit(reader_index, detail)
+        position = self._profile_position(detail['nodeid'])
+        if position is not None:
+            self.profile_test_detail.emit(position, self._profile_attempt, reader_index, detail)
+        # Le transport JSON reste dans le rapport archive. La console
+        # recoit une trace lisible, jamais la ligne machine.
+        self._on_live_line(reader_index,
+            f"\n{detail['nodeid']} · {detail['phase'].upper() or 'SKIPPED'}\n{detail['body']}\n")
+
     def _on_live_line(self, reader_index: int, text: str) -> None:
         prefix = "PYTESTRUNNER_START\t"
         if self._profile_active and text.strip().startswith(prefix):
@@ -382,6 +398,18 @@ class RunService(QObject):
             self.profile_output.emit(self._profile_expanded_length - len(self._profile_queue),
                                      len(self._current_batch), self._profile_attempt, reader_index, text)
         self.line.emit(reader_index, text)
+
+    def _profile_position(self, nodeid):
+        if not self._profile_active:
+            return None
+        offset = self._current_batch_positions.get(nodeid)
+        return self._profile_expanded_length - len(self._profile_queue) + offset if offset is not None else None
+
+    def _on_duration(self, reader, nodeid, seconds):
+        position = self._profile_position(nodeid)
+        if position is not None:
+            self.profile_duration.emit(position, self._profile_attempt, reader, nodeid, seconds)
+        self.duration.emit(reader, nodeid, seconds)
 
     def _emit_profile_detail(self, reader_index, nodeid, preparing=False):
         positions = getattr(self, '_current_batch_positions', None)

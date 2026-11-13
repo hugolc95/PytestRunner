@@ -1,5 +1,19 @@
 # Pytest Runner GUI
 
+## Détails des tests disponibles pendant le run — v1.5.2
+
+L'onglet **Detail** affiche les traces d'erreur dès leur réception, sans
+attendre la fin du run. Les erreurs de **setup**, d'appel du test et de
+**teardown**, les motifs de skip et les durées sont disponibles pendant que
+les tests suivants continuent de tourner, en exécution classique comme avec
+un profil et plusieurs lecteurs.
+
+Dans un profil, chaque occurrence, tentative de reprise et lecteur conserve
+ses propres détails. Changer de test puis revenir permet de les consulter
+avant la fin du lot. Une relance réussie remplace l'ancienne trace d'échec.
+La console reçoit également les traces au fil de l'eau, sous forme lisible.
+Les rapports finaux et l'historique conservent les diagnostics sans les dupliquer.
+
 ## YAML des profils : édition par test et repères visibles — v1.5.1
 
 Dans **Execution Profiles**, **YAML parameters…** fonctionne sur un test,

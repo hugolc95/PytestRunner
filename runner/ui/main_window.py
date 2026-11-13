@@ -215,6 +215,9 @@ class MainWindow(QMainWindow):
         self.model.selection_changed.connect(self._on_selection_changed)
 
         self._build_ui()
+        self.service.test_detail.connect(self.results.set_test_detail)
+        self.service.profile_test_detail.connect(self._on_profile_test_detail)
+        self.service.profile_duration.connect(self._on_profile_test_duration)
         self.service.profile_detail.connect(self._show_profile_detail)
         self.service.profile_execution.connect(self._on_profile_execution)
         self.service.profile_batch_report.connect(self._on_profile_batch_report)
@@ -696,6 +699,7 @@ class MainWindow(QMainWindow):
             self._profile_selection_timer.stop()
             self._profile_selected_key = None
             self._profile_reports.clear()
+            self._profile_live_details.clear()
             self._profile_logs = None
             self._profile_batch_output.clear()
             self._profile_pending_console.clear()
@@ -1257,6 +1261,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.profile_results, 1)
         self.results_stack.addWidget(self.profile_result_page)
         self._profile_reports = {}
+        self._profile_live_details = {}
         self._profile_logs = None
         self._profile_selected_key = None
         self._profile_selection_timer = QTimer(self)
@@ -1478,6 +1483,20 @@ class MainWindow(QMainWindow):
                 self._profile_selection_timer.start()
         self._profile_batch_output.pop(report.reader.index, None)
 
+    def _on_profile_test_detail(self, position, attempt, reader, detail):
+        key = self.profile_model.key(position, attempt)
+        data = self._profile_live_details.setdefault((key, reader), {'records': {}})
+        data['records'][detail['phase']] = dict(detail)
+        if self._profile_selected_key == key:
+            self.profile_results.set_test_detail(reader, detail)
+
+    def _on_profile_test_duration(self, position, attempt, reader, nodeid, seconds):
+        key = self.profile_model.key(position, attempt)
+        data = self._profile_live_details.setdefault((key, reader), {'records': {}})
+        data['duration'] = seconds
+        if self._profile_selected_key == key:
+            self.profile_results.set_test_duration(reader, nodeid, seconds)
+
     def _select_profile_execution(self, index, previous=None) -> None:
         if not index.isValid():
             return
@@ -1529,6 +1548,11 @@ class MainWindow(QMainWindow):
                 active = self._profile_batch_output.get(reader.index)
                 text = ''.join(active[3]) if active and active[2] == attempt and active[0] <= position < active[0] + active[1] else ''
                 self.profile_results.output.set_text(reader.index, text, 'Live pytest batch for this attempt')
+                data = self._profile_live_details.get((key, reader.index), {})
+                for detail in data.get('records', {}).values():
+                    self.profile_results.set_test_detail(reader.index, detail)
+                if 'duration' in data:
+                    self.profile_results.set_test_duration(reader.index, nodeid, data['duration'])
 
     def _build_status_bar(self) -> None:
         """L'avancement vit en bas, pas en haut.
@@ -2062,6 +2086,7 @@ class MainWindow(QMainWindow):
 
     def _on_test_duration(self, reader_index: int, nodeid: str, seconds: float) -> None:
         self.model.set_duration(nodeid, reader_index, seconds)
+        self.results.set_test_duration(reader_index, nodeid, seconds)
 
     def _merge_reader_durations(self, rapport) -> None:
         self.model.merge_durations(rapport.reader.index, rapport.durations)
@@ -2809,6 +2834,7 @@ class MainWindow(QMainWindow):
         self._profile_batch_output.clear()
         self._profile_selected_key = None
         self._profile_reports = {}
+        self._profile_live_details.clear()
         profile = self._running_execution_profile
         from runner.domain.profile_logs import ProfileLogIndex
         self._profile_logs = None

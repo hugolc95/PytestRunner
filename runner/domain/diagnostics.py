@@ -19,6 +19,7 @@ MODULE = "runner_diagnostic_probe"
 _SOURCE = r'''
 import json
 import os
+import sys
 import pytest
 
 def _write(kind, nodeid, phase, detail):
@@ -33,11 +34,17 @@ def _write(kind, nodeid, phase, detail):
                    message=str(getattr(crash, "message", "") or detail),
                    body=str(detail), path=str(getattr(crash, "path", "") or ""),
                    lineno=getattr(crash, "lineno", None))
+    encoded = json.dumps(payload, ensure_ascii=True)
     try:
         with open(target, "a", encoding="utf-8") as stream:
-            stream.write(json.dumps(payload, ensure_ascii=True) + "\n")
+            stream.write(encoded + "\n")
     except OSError:
         pass
+    if kind == "test":
+        # Le fichier reste le secours de fin de run ; le canal immediat
+        # rend la trace disponible avant que le test suivant se termine.
+        sys.__stdout__.write("\nPYTESTRUNNER_DIAGNOSTIC\t" + encoded + "\n")
+        sys.__stdout__.flush()
 
 @pytest.hookimpl(trylast=True)
 def pytest_collectreport(report):
@@ -80,6 +87,25 @@ def read_diagnostics(path: str) -> list[dict]:
         except (ValueError, TypeError):
             continue
     return result
+
+
+def parse_live_detail(text: str) -> dict | None:
+    """Valide une ligne machine avant de la transmettre aux widgets."""
+    line = strip_ansi(text).strip()
+    try:
+        if line.startswith(PREFIX):
+            detail = json.loads(line[len(PREFIX):])
+            if (isinstance(detail, dict) and detail.get('kind') == 'test'
+                    and all(isinstance(detail.get(key), str) for key in ('nodeid', 'phase', 'message', 'body'))
+                    and detail['nodeid'] and detail['phase'] in ('setup', 'call', 'teardown')):
+                return detail
+        elif line.startswith('PYTESTRUNNER_SKIP\t'):
+            detail = json.loads(line.split('\t', 1)[1])
+            if isinstance(detail, dict) and isinstance(detail.get('nodeid'), str) and isinstance(detail.get('reason'), str):
+                return dict(kind='skip', nodeid=detail['nodeid'], phase='', message=detail['reason'], body=detail['reason'])
+    except (ValueError, TypeError):
+        pass
+    return None
 
 
 def format_errors(items: list[dict]) -> str:

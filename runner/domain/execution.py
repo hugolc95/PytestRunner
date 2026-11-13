@@ -413,13 +413,14 @@ class ReaderRun:
 
     def run(self, on_line: Callable[[str], None],
             on_outcome: Callable[[Outcome], None],
-            on_duration: Callable[[str, float], None] | None = None) -> ReaderReport:
+            on_duration: Callable[[str, float], None] | None = None,
+            on_detail: Callable[[dict], None] | None = None) -> ReaderReport:
         try:
-            return self._execute(on_line, on_outcome, on_duration)
+            return self._execute(on_line, on_outcome, on_duration, on_detail)
         finally:
             self.pause_control.close()
 
-    def _execute(self, on_line, on_outcome, on_duration=None):
+    def _execute(self, on_line, on_outcome, on_duration=None, on_detail=None):
         """Run one logical reader run, isolating each TestSuite in its own pytest."""
         start = time.monotonic()
         report = ReaderReport(reader=self.reader, counts={})
@@ -483,16 +484,23 @@ class ReaderRun:
                         break
 
                     skip_blank_after_protocol = False
+                    streamed_details = set()
                     for line in iter(self._process.stdout.readline, ""):
                         if self._cancelled:
                             break
-                        if line.strip().startswith("PYTESTRUNNER_SKIP\t"):
-                            try:
-                                detail = json.loads(line.strip().split("\t", 1)[1])
-                                detail["nodeid"] = resolver.resolve(detail["nodeid"])
-                                line = "PYTESTRUNNER_SKIP\t" + json.dumps(detail) + "\n"
-                            except (ValueError, KeyError, TypeError):
-                                pass
+                        detail = diagnostics.parse_live_detail(line)
+                        if detail is not None:
+                            detail['nodeid'] = resolver.resolve(detail['nodeid'])
+                            if detail['kind'] == 'test':
+                                streamed_details.add(json.dumps(detail, sort_keys=True))
+                                line = diagnostics.PREFIX + json.dumps(detail) + '\n'
+                            else:
+                                line = 'PYTESTRUNNER_SKIP\t' + json.dumps(dict(nodeid=detail['nodeid'], reason=detail['body'])) + '\n'
+                            output.append(line)
+                            if on_detail is not None:
+                                on_detail(detail)
+                            skip_blank_after_protocol = True
+                            continue
                         result = parsing.parse_status_line(line)
                         measured = parsing.parse_duration_line(line)
                         if measured is not None:
@@ -544,7 +552,8 @@ class ReaderRun:
                     for detail in details:
                         if detail["kind"] == "test":
                             detail["nodeid"] = resolver.resolve(detail["nodeid"])
-                            output.append(diagnostics.PREFIX + json.dumps(detail) + "\n")
+                            if json.dumps(detail, sort_keys=True) not in streamed_details:
+                                output.append(diagnostics.PREFIX + json.dumps(detail) + "\n")
                     if not self._cancelled:
                         global_errors = [detail for detail in details if detail["kind"] != "test"]
                         global_errors = [d for d in global_errors if d["kind"] == "collection"] or global_errors
