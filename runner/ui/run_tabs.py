@@ -324,6 +324,7 @@ class RunTabsController(QObject):
         # MainWindow finalizes and archives before this connection runs.
         context.service.finished.connect(lambda reports: self.finished(entry, reports))
         context.model.selection_changed.connect(lambda *_: self.schedule_save())
+        context.profile_model.selection_changed.connect(lambda *_: self.schedule_save())
         context.model.modelReset.connect(self.schedule_save)
         return entry
 
@@ -606,6 +607,7 @@ class RunTabsController(QObject):
         context.model.set_checked_nodeids(entry.context.model.checked_nodeids())
         if entry.context._active_execution_profile is not None:
             context._open_collected_profile(deepcopy(entry.context._active_execution_profile))
+            context.profile_model.set_checked_nodeids(entry.context.profile_model.checked_nodeids())
         self.refresh()
 
     def detach_current(self):
@@ -724,6 +726,7 @@ class RunTabsController(QObject):
                 checked=context.model.checked_nodeids(),
                 profile=asdict(context._active_execution_profile) if context._active_execution_profile else None,
                 profile_visible=context.profile_tree_button.isChecked(),
+                profile_checked=context.profile_model.checked_nodeids(),
                 readers=context.readers_bar.selected_indexes(),
                 detached=entry.floating is not None, geometry=geometry,
                 interpreter=context._interpreter_override,
@@ -792,6 +795,9 @@ class RunTabsController(QObject):
                         validate_profile(profile)
                         if all(node in context.model._by_nodeid for node in profile.sequence):
                             context._open_collected_profile(profile)
+                            checked = item.get('profile_checked')
+                            if isinstance(checked, list) and all(isinstance(key, str) for key in checked):
+                                context.profile_model.set_checked_nodeids(checked)
                             if not item.get("profile_visible"):
                                 context._set_profile_tree_visible(False)
                     except (ValueError, KeyError, TypeError):
@@ -814,6 +820,7 @@ class RunTabsController(QObject):
     def apply_context_actions(self, context):
         locked = self.is_locked(context)
         context.model.selection_locked = locked
+        context.profile_model.selection_locked = locked
         context.run_name_button.setEnabled(not locked)
         context.run_name_edit.setEnabled(not locked)
         collecting = context._collector is not None and context._collector.isRunning()
@@ -827,8 +834,7 @@ class RunTabsController(QObject):
         context.yaml_stack.setEnabled(editable_configuration)
         context.run_header.run_config_button.setEnabled(context.workspace is not None)
         for button in (context.select_all_button, context.select_none_button):
-            button.setEnabled(not locked and bool(context.model._by_nodeid)
-                              and not context.profile_tree_button.isChecked())
+            button.setEnabled(not locked and bool(context._visible_test_tree().model()._by_nodeid))
         context.profile_picker.setEnabled(not locked)
         context.workspace_combo.setEnabled(not locked)
         context.readers_bar.setEnabled(not locked)
@@ -881,9 +887,7 @@ class RunTabsController(QObject):
             if counts.get(Status.SKIPPED):
                 return f"Completed · {counts[Status.SKIPPED]} skipped", t.divergent_color(), "mdi.minus-circle-outline"
             return "Finished · no results", t.TEXT_MUTED, "mdi.information-outline"
-        checked, _ = entry.context.model.counts()
-        profile = entry.context._active_execution_profile
-        count = profile.total_executions if profile and entry.context.profile_tree_button.isChecked() else checked
+        count, _ = entry.context._visible_test_tree().model().counts()
         return f"Draft · {count} selected", t.TEXT_MUTED, "mdi.pencil-outline"
 
     @staticmethod

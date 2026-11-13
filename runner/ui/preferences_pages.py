@@ -736,8 +736,10 @@ class PreferencesController(QObject):
         atr.show()
         if "duration_mode" in changed and hasattr(window, "model"):
             window.model.set_duration_mode(values["duration_mode"])
+            window.profile_model.set_duration_mode(values["duration_mode"])
         if "show_duration" in changed and hasattr(window, "tree_columns"):
             window.tree_columns.set_duration_visible(values["show_duration"])
+            window.profile_tree_columns.set_duration_visible(values["show_duration"])
         if "tree_density" in changed:
             height = {"Compact": 23, "Normal": 29, "Comfortable": 35}[values["tree_density"]]
             for tree in (window.tree, window.profile_tree):

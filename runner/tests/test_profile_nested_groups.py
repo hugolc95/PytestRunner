@@ -164,7 +164,7 @@ def test_live_nested_group_tree_keeps_order_and_retry_statuses(page, qapp):
     profile = page._profile_from_editor()
     model = LiveProfileModel()
     model.prepare(profile, [Reader('A', 0)])
-    root = model.index(0, 0, model.index(0, 0))
+    root = model.index(0, 0)
     child = model.index(0, 0, root)
     assert ROOT['name'] in root.data() and CHILD['name'] in child.data()
     from runner.ui.profile_group_delegate import GROUP_ROLE

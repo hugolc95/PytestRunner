@@ -189,4 +189,4 @@ def test_profile_search_and_repeated_switches_keep_the_correct_tree(qtbot, monke
     assert not window.profile_tree.isExpanded(window.profile_model.index(0, 0))
     window.expand_button.click()
     assert window.profile_tree.isExpanded(window.profile_model.index(0, 0))
-    assert not window.select_all_button.isEnabled()
+    assert window.select_all_button.isEnabled()

@@ -1,5 +1,36 @@
 # Pytest Runner GUI
 
+## Arbre des profils aligné sur All tests — v1.5.3
+
+Dans **Run Tests → Profiles**, l'arbre reprend la présentation de **All tests** :
+dossiers, fichiers, fonctions et cas paramétrés, sans niveau de classe lorsqu'il
+est seul dans son fichier. Les classes multiples restent distinctes. Une seule
+répétition n'ajoute plus de ligne **Repetition 1/1**, et les noms des tests
+n'ont plus de préfixe numérique. L'occurrence reste identifiable au survol
+et dans ses détails lorsqu'un test est répété.
+
+Les cases à cocher permettent de sélectionner les occurrences à exécuter.
+**Select all**, **Clear selection**, les raccourcis et la sélection des tests
+où les lecteurs divergent ciblent l'arbre affiché. La sélection est conservée
+dans les sessions et lors de la duplication d'un onglet.
+
+La colonne **Duration**, son menu et les modes de calcul suivent les mêmes
+réglages que dans **All tests**. Sélectionner un dossier, un fichier ou une
+fonction paramétrée affiche son bilan par lecteur, ses durées et ses erreurs,
+avec des liens vers les occurrences concernées. Les traces restent disponibles
+pendant que le run continue, comme depuis la version 1.5.2 incluse dans main.
+
+Le clic droit propose la relance ciblée, **Run N times**, **Run until it fails**,
+la copie du nodeid ou de la trace, la source et l'activation. **Re-run failed**
+relance les occurrences encore en échec après leur dernière reprise. La
+recherche dans les erreurs et les raccourcis **Ctrl+1/2/3/4** suivent la vue
+profil. La ligne en cours reste signalée tant qu'un lecteur travaille dessus.
+
+Une exécution partielle ou ciblée ouvre un nouvel onglet et conserve l'ordre,
+les doublons et les YAML propres aux occurrences sélectionnées. Le profil
+et les résultats d'origine restent disponibles. Les groupes colorés,
+descriptions, répétitions et reprises restent propres aux profils.
+
 ## Détails des tests disponibles pendant le run — v1.5.2
 
 L'onglet **Detail** affiche les traces d'erreur dès leur réception, sans

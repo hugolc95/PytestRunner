@@ -8,9 +8,10 @@ from PySide6.QtGui import QColor
 
 from runner.domain.models import Kind, Status, TestNode, worst
 from runner.domain.reader_labels import badge_labels
-from runner.domain.tree import build_sequence_tree
+from runner.domain.tree import build_sequence_tree, collapse_single_class
 from runner.domain.execution_profile import profile_group_runs, group_path
 from runner.ui import icons
+from runner.ui import tokens as t
 from runner.ui.profile_group_delegate import GROUP_ROLE, EXCEPTION_ROLE, YAML_ROLE, GROUP_COLOR_ROLE, CONFIG_ISSUES_ROLE
 from runner.domain.profile_configuration import configuration_annotation, aggregate_annotations
 from runner.ui.tree_model import TestTreeModel, _Row, NODEID_ROLE
@@ -21,22 +22,25 @@ class LiveProfileModel(TestTreeModel):
         return self.locations.get(row.node.nodeid, (0, 0, row.node.nodeid))[2]
 
     def _folder_depth(self, row):
-        return max(0, super()._folder_depth(row) - 1)
+        depth = 0
+        while row is not None:
+            if (row.node.kind is Kind.FOLDER and id(row.node) not in self._named_groups
+                    and id(row.node) not in self._repetition_roots):
+                depth += 1
+            row = row.parent
+        return depth
 
-    # Pas de colonne Duration ici : une ligne est une etape de la sequence,
-    # pas un test, et ses durees ne passent pas par ce modele.
-    @property
-    def duration_column(self) -> int:
-        return -1
-
-    def columnCount(self, parent=QModelIndex()) -> int:
-        return 1 + max(1, len(self._readers))
+    def _target_for_row(self, row):
+        if id(row.node) in self._named_groups or id(row.node) in self._repetition_roots:
+            return ''
+        return super()._target_for_row(row)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.configuration_base = {}
         self.locations = {}
         self._named_groups = {}
+        self._repetition_roots = set()
         self._yaml_exceptions = {}
         self._group_exceptions = {}
         self._group_counts = {}
@@ -57,7 +61,7 @@ class LiveProfileModel(TestTreeModel):
         if readers == self.readers:
             return
         old_count = self.columnCount()
-        new_count = 1 + max(1, len(readers))
+        new_count = 2 + max(1, len(readers))
         if new_count > old_count:
             self.beginInsertColumns(QModelIndex(), old_count, new_count - 1)
         elif new_count < old_count:
@@ -74,6 +78,7 @@ class LiveProfileModel(TestTreeModel):
     def prepare(self, profile, readers):
         self.locations = {}
         self._named_groups = {}
+        self._repetition_roots = set()
         self._yaml_exceptions = {}
         self._group_exceptions = {}
         self._group_counts = {}
@@ -84,6 +89,7 @@ class LiveProfileModel(TestTreeModel):
         self._stopped = False
         self._interrupted = set()
         self.sequence_length = len(profile.sequence)
+        self.nodeid_counts = Counter(profile.sequence)
         self.repetitions = max(1, profile.execution.repetitions)
         roots = []
         try:
@@ -109,10 +115,9 @@ class LiveProfileModel(TestTreeModel):
                         self._named_groups[id(node)] = group
                         siblings.append(node)
                     siblings = node.children
-                nested = build_sequence_tree(profile.sequence[start:end])
-                if path:
-                    while len(nested) == 1 and nested[0].children:
-                        nested = nested[0].children
+                # Meme reduction que All tests, sans supprimer les dossiers,
+                # fichiers ou cas parametres utiles dans un groupe colore.
+                nested = collapse_single_class(build_sequence_tree(profile.sequence[start:end]))
                 siblings.extend(nested)
             leaves = [leaf for child in children for leaf in child.leaves()]
             leaf_exceptions = {}
@@ -156,9 +161,13 @@ class LiveProfileModel(TestTreeModel):
                 key = self.key(position)
                 self.locations[key] = (position, 0, leaf.nodeid)
                 leaf.nodeid = key
-                leaf.name = f'{position + 1} · {leaf.name}'
-            roots.append(TestNode(name=f'Repetition {repetition + 1} / {self.repetitions}',
-                                  kind=Kind.FOLDER, children=children))
+            if self.repetitions > 1:
+                node = TestNode(name=f'Repetition {repetition + 1} / {self.repetitions}',
+                                kind=Kind.FOLDER, children=children)
+                self._repetition_roots.add(id(node))
+                roots.append(node)
+            else:
+                roots.extend(children)
         self.set_tree(roots)
         self.set_readers(tuple(readers))
 
@@ -175,7 +184,7 @@ class LiveProfileModel(TestTreeModel):
                 insertion += 1
             parent_index = self.createIndex(parent.row, 0, parent) if parent else self.parent(self.index_for_nodeid(self.key(position)))
             self.beginInsertRows(parent_index, insertion, insertion)
-            node = TestNode(name=f'{position + 1} · Retry {attempt} · {nodeid.split("::")[-1]}', kind=Kind.TEST, nodeid=key)
+            node = TestNode(name=f'{base.node.name} · Retry {attempt}', kind=base.node.kind, nodeid=key)
             row = _Row(node, parent, insertion)
             siblings.insert(insertion, row)
             for i in range(insertion + 1, len(siblings)):
@@ -186,12 +195,19 @@ class LiveProfileModel(TestTreeModel):
             self._annotations[id(node)] = self._annotations.get(id(base.node), {})
             self._group_colors[id(node)] = self._group_colors.get(id(base.node), '')
             self._membership[id(node)] = self._membership.get(id(base.node), '')
+            self._activation_targets[row] = nodeid
+            if base in self._blocked_rows:
+                self._blocked_rows.add(row)
+                row.checked = False
             self.endInsertRows()
         row = self._by_nodeid[key]
         previous = row.statuses.get(reader)
         if previous is status:
             return
         row.statuses[reader] = status
+        if (previous is Status.RUNNING) != (status is Status.RUNNING):
+            name = self.createIndex(row.row, 0, row)
+            self.dataChanged.emit(name, name, [Qt.DecorationRole, Qt.ForegroundRole])
         columns = [r.index for r in self.readers] or [0]
         if reader not in columns:
             return
@@ -201,10 +217,15 @@ class LiveProfileModel(TestTreeModel):
         self._repaint_divergence(row)
         parent = row.parent
         while parent:
+            was_running = any(self._group_counts.get((parent, index), {}).get(Status.RUNNING, 0) for index in columns)
             counts = self._group_counts.setdefault((parent, reader), Counter())
             if previous is not None:
                 counts[previous] -= 1
             counts[status] += 1
+            is_running = any(self._group_counts.get((parent, index), {}).get(Status.RUNNING, 0) for index in columns)
+            if was_running != is_running:
+                name = self.createIndex(parent.row, 0, parent)
+                self.dataChanged.emit(name, name, [Qt.DecorationRole, Qt.ForegroundRole])
             value = worst(s for s, count in counts.items() if count > 0)
             if parent.agg.get(reader) != value:
                 parent.agg[reader] = value
@@ -213,7 +234,32 @@ class LiveProfileModel(TestTreeModel):
             parent = parent.parent
 
     def flags(self, index):
-        return Qt.ItemIsEnabled | Qt.ItemIsSelectable if index.isValid() else Qt.NoItemFlags
+        flags = super().flags(index)
+        if index.isValid() and self.locations.get(index.internalPointer().node.nodeid, (0, 0, ''))[1]:
+            flags &= ~Qt.ItemIsUserCheckable
+        return flags
+
+    def checked_nodeids(self):
+        return [key for key in super().checked_nodeids() if self.locations.get(key, (0, 0, ''))[1] == 0]
+
+    def counts(self):
+        total = sum(self.locations.get(key, (0, 0, ''))[1] == 0 for key in self._by_nodeid)
+        return len(self.checked_nodeids()), total
+
+    def set_checked_nodeids(self, keys):
+        super().set_checked_nodeids([self.key(self.locations[key][0]) if key in self.locations else key for key in keys])
+
+    def _check_state(self, row):
+        if row in self._blocked_rows:
+            return Qt.Unchecked
+        if row.is_leaf:
+            if self.locations.get(row.node.nodeid, (0, 0, ''))[1]:
+                return None
+            return Qt.Checked if row.checked else Qt.Unchecked
+        if row.check_cache is None:
+            states = {self._check_state(child) for child in row.children if child not in self._blocked_rows} - {None}
+            row.check_cache = next(iter(states)) if len(states) == 1 else Qt.PartiallyChecked if states else Qt.Unchecked
+        return row.check_cache
 
     def finish(self):
         self._stopped = True
@@ -225,9 +271,19 @@ class LiveProfileModel(TestTreeModel):
                     self.apply_execution(position, attempt, reader, nodeid, Status.PENDING)
 
     def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid() or role == Qt.CheckStateRole:
+        if not index.isValid():
             return None
         row = index.internalPointer()
+        if index.column() == 0 and role == Qt.CheckStateRole:
+            return self._check_state(row)
+        if index.column() == self.duration_column:
+            return self._data_colonne_duree(row, role)
+        if index.column() == 0 and role in (Qt.DecorationRole, Qt.ForegroundRole):
+            readers = [r.index for r in self.readers] or [0]
+            running = (any(self._group_counts.get((row, reader), {}).get(Status.RUNNING, 0) for reader in readers)
+                       if row.children else Status.RUNNING in row.statuses.values())
+            if running:
+                return icons.status_icon(Status.RUNNING, group=True) if role == Qt.DecorationRole else QColor(t.ACCENT)
         group = self._named_groups.get(id(row.node))
         annotation = self._annotations.get(id(row.node), {})
         exceptions = self._group_exceptions.get(id(row.node), []) if row.node.children else self._yaml_exceptions.get(row.node.nodeid, [])
@@ -244,6 +300,11 @@ class LiveProfileModel(TestTreeModel):
                 return row.node.name + ' · Custom YAML'
             if role in (Qt.ToolTipRole, Qt.AccessibleDescriptionRole):
                 title = group['name'] + '\n' + group['description'] if group else self.locations.get(row.node.nodeid, (0, 0, row.node.name))[2]
+                if row.node.nodeid in self.locations:
+                    position, attempt, _ = self.locations[row.node.nodeid]
+                    title += f'\nOccurrence {position + 1} · Repetition {position // self.sequence_length + 1}/{self.repetitions}'
+                    if attempt:
+                        title += f' · Retry {attempt}'
                 membership = self._membership.get(id(row.node), '')
                 if membership:
                     title += '\nGroup: ' + membership

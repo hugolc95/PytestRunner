@@ -131,7 +131,7 @@ def test_reader_columns_use_classic_icons_and_preserve_expansion(qtbot):
     root = model.index(0, 0)
     model.set_readers(readers)
     assert tree.isExpanded(root)
-    assert model.columnCount() == 4
+    assert model.columnCount() == 5
     classic = TestTreeModel()
     classic.set_tree(build_tree([NODE]))
     classic.set_readers(readers)
@@ -146,7 +146,7 @@ def test_reader_columns_use_classic_icons_and_preserve_expansion(qtbot):
         assert index.data(Qt.DecorationRole).cacheKey() == expected.cacheKey()
         assert model.index_for_nodeid('1:0').siblingAtColumn(column).data(Qt.DecorationRole) is None
     model.set_readers(readers[1:])
-    assert model.columnCount() == 3
+    assert model.columnCount() == 4
     assert tree.isExpanded(root)
     assert model.statuses_for_nodeid('0:0')[2] is Status.ERROR
 

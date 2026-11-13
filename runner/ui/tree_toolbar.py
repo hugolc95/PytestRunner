@@ -42,7 +42,6 @@ class TreeToolbarController(QObject):
         window.search.failures_button.setToolTip(
             'Search inside failure output · click again to search test names')
         window.profile_tree.setContextMenuPolicy(Qt.CustomContextMenu)
-        window.profile_tree.customContextMenuRequested.connect(self.profile_menu)
 
     def _add_group(self, layout, *buttons):
         # Whitespace groups related controls without drawing extra chrome.
@@ -115,10 +114,7 @@ class TreeToolbarController(QObject):
         self.menu.popup(self.button.mapToGlobal(self.button.rect().bottomLeft()))
 
     def profile_menu(self, point):
-        self.window.tree_results.refresh()
-        menu = QMenu(self.window)
-        menu.addAction(self.window.tree_results.action)
-        menu.exec(self.window.profile_tree.viewport().mapToGlobal(point))
+        self.window.profile_run_tree.show_menu(point)
 
     def restyle(self):
         self.button.setIcon(icons.icon('mdi.dots-horizontal', t.TEXT_MUTED))

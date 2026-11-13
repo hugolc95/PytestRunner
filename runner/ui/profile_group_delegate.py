@@ -64,6 +64,8 @@ class ProfileGroupDelegate(DivergenceDelegate):
     def sizeHint(self, option, index):
         size = super().sizeHint(option, index)
         group = self._group(index)
+        if self.parent().property('profileRunTree') and not (group and group.get('description')):
+            return size
         opt = QStyleOptionViewItem(option)
         self.initStyleOption(opt, index)
         height = QFontMetrics(opt.font).height()

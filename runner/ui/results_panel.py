@@ -761,7 +761,8 @@ class ResultsPanel(QWidget):
 
     def show_group(self, path: str, name: str, readers, counts: dict,
                    failures: list, source: Path | None = None,
-                   jump_nodeid: str = "", nodeids: tuple[str, ...] = ()) -> None:
+                   jump_nodeid: str = "", nodeids: tuple[str, ...] = (), *,
+                   durations=None, failure_details=None) -> None:
         """Selectionne un regroupement : son bilan, et sa source s'il en a une.
 
         Un module a un fichier, un dossier n'en a pas. Laisser celui du test
@@ -775,9 +776,10 @@ class ResultsPanel(QWidget):
         self._nodeid = ""
         self._statuses = {}
         cibles = readers or (Reader("", 0),)
-        durees = {lecteur.index: self._duree_totale(lecteur.index, nodeids)
-                 for lecteur in cibles}
-        self.detail.show_group(path, name, tuple(readers), counts, failures, durees)
+        durees = durations if durations is not None else {
+            lecteur.index: self._duree_totale(lecteur.index, nodeids) for lecteur in cibles}
+        self.detail.show_group(path, name, tuple(readers) or tuple(cibles), counts, failures, durees,
+                               failure_details=failure_details)
         self.source.show_file(source, jump_nodeid)
         self.logs.clear()
 

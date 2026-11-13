@@ -154,8 +154,8 @@ def test_editor_and_run_tree_agree_on_each_test_color_and_yaml_tooltip(page):
         assert item.data(0, GROUP_COLOR_ROLE) == index.data(GROUP_COLOR_ROLE) == color
         assert item.data(0, YAML_ROLE)['tooltip'] in index.data(Qt.ToolTipRole)
         assert index.data(Qt.AccessibleDescriptionRole) == index.data(Qt.ToolTipRole)
-        assert not index.data(Qt.CheckStateRole)
-    root = model.index(0, 0, model.index(0, 0))
+        assert index.data(Qt.CheckStateRole) == Qt.Checked
+    root = model.index(0, 0)
     assert root.data(YAML_ROLE)['state'] == 'custom'
     assert 'Group default: T1' in root.data(Qt.ToolTipRole)
     assert 'Inherited value: T0' in root.data(Qt.ToolTipRole)

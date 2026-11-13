@@ -215,6 +215,8 @@ class MainWindow(QMainWindow):
         self.model.selection_changed.connect(self._on_selection_changed)
 
         self._build_ui()
+        from runner.ui.profile_run_tree import ProfileRunTree
+        self.profile_run_tree = ProfileRunTree(self)
         self.service.test_detail.connect(self.results.set_test_detail)
         self.service.profile_test_detail.connect(self._on_profile_test_detail)
         self.service.profile_duration.connect(self._on_profile_test_duration)
@@ -1108,10 +1110,10 @@ class MainWindow(QMainWindow):
 
         self.select_all_button = self._quiet("mdi.checkbox-multiple-marked-outline",
                                              "Select all  (Ctrl+A)",
-                                             lambda: self.model.set_all_checked(True))
+                                             lambda: self._visible_test_tree().model().set_all_checked(True))
         self.select_none_button = self._quiet("mdi.checkbox-multiple-blank-outline",
                                               "Clear selection  (Ctrl+Shift+A)",
-                                              lambda: self.model.set_all_checked(False))
+                                              lambda: self._visible_test_tree().model().set_all_checked(False))
         self.expand_button = self._quiet("mdi.unfold-more-horizontal", "Expand all",
                                          lambda: self._visible_test_tree().expandAll())
         self.collapse_button = self._quiet("mdi.unfold-less-horizontal", "Collapse all",
@@ -1205,7 +1207,7 @@ class MainWindow(QMainWindow):
         self.profile_tree.header().resizeSection(0, 420)
         from runner.ui.tree_columns import NameColumnFitter
         self.profile_tree_column_fitter = NameColumnFitter(self.profile_tree)
-        self.profile_tree.selectionModel().currentChanged.connect(self._select_profile_execution)
+        self.profile_tree.selectionModel().currentRowChanged.connect(self._select_profile_execution)
         self.left_stack.addWidget(self.profile_tree)
         self.tree_view_switch.attach(self.tree.header())
         colonne.addWidget(self.left_stack, 1)
@@ -1378,13 +1380,15 @@ class MainWindow(QMainWindow):
         self.classic_tree_button.setChecked(not visible)
         self.left_stack.setCurrentWidget(self.profile_tree if visible else self.tree)
         self.results_stack.setCurrentWidget(self.profile_result_page if visible else self.results)
-        self.profile_selection_label.setVisible(visible)
+        self.profile_selection_label.setVisible(visible and getattr(self.profile_model, 'repetitions', 1) > 1)
         self.tree_toolbar.setVisible(bool(self.model._by_nodeid))
-        for control in (self.select_all_button, self.select_none_button, self.markers):
-            control.setEnabled(not visible)
-        self.selection_footer.setVisible(not visible)
+        for control in (self.select_all_button, self.select_none_button):
+            control.setEnabled(not self.service.busy)
+        self.markers.setEnabled(not visible)
+        self.selection_footer.setVisible(True)
         self.failure_results.hide()
         self.tree_view_switch.attach(self.profile_tree.header() if visible else self.tree.header())
+        self.profile_run_tree.selection_changed()
         self.tree_view_switch.setVisible(self.workspace is not None or bool(self.model._by_nodeid))
         self.profile_picker.setVisible(visible)
         self.profile_chip.hide()
@@ -1467,11 +1471,17 @@ class MainWindow(QMainWindow):
             self._profile_counts_timer.start()
         if self._profile_selected_key == self.profile_model.key(position, attempt):
             self._profile_selection_timer.start()
+        elif self.profile_run_tree.group.isValid():
+            self._profile_selection_timer.start()
 
     def _on_profile_batch_report(self, position, count, attempt, report) -> None:
         for current in range(position, position + count):
             key = self.profile_model.key(current, attempt)
             self._profile_reports[(key, report.reader.index)] = report
+            if key in self.profile_model.locations:
+                nodeid = self.profile_model.locations[key][2]
+                if nodeid in report.durations:
+                    self.profile_model.set_duration(key, report.reader.index, report.durations[nodeid])
             if self._profile_logs is not None and key in self.profile_model.locations:
                 nodeid = self.profile_model.locations[key][2]
                 status = self.profile_model.statuses_for_nodeid(key).get(report.reader.index, Status.PENDING)
@@ -1489,13 +1499,18 @@ class MainWindow(QMainWindow):
         data['records'][detail['phase']] = dict(detail)
         if self._profile_selected_key == key:
             self.profile_results.set_test_detail(reader, detail)
+        elif self.profile_run_tree.group.isValid():
+            self._profile_selection_timer.start()
 
     def _on_profile_test_duration(self, position, attempt, reader, nodeid, seconds):
         key = self.profile_model.key(position, attempt)
+        self.profile_model.set_duration(key, reader, seconds)
         data = self._profile_live_details.setdefault((key, reader), {'records': {}})
         data['duration'] = seconds
         if self._profile_selected_key == key:
             self.profile_results.set_test_duration(reader, nodeid, seconds)
+        elif self.profile_run_tree.group.isValid():
+            self._profile_selection_timer.start()
 
     def _select_profile_execution(self, index, previous=None) -> None:
         if not index.isValid():
@@ -1504,22 +1519,25 @@ class MainWindow(QMainWindow):
         if key not in self.profile_model.locations:
             self._profile_selected_key = None
             self.profile_selection_label.setText(str(index.siblingAtColumn(0).data()))
-            self.profile_results.set_readers(self.profile_model.readers)
-            self.profile_results.output.clear()
-            self.profile_results.logs.clear()
+            self.profile_run_tree.show_group(index)
             return
+        from PySide6.QtCore import QPersistentModelIndex
+        self.profile_run_tree.group = QPersistentModelIndex()
         self._profile_selected_key = key
         self._refresh_profile_selection()
 
     def _refresh_profile_selection(self) -> None:
         key = self._profile_selected_key
         if key not in self.profile_model.locations:
+            self.profile_run_tree.refresh_group()
             return
         self._profile_console_timer.stop()
         self._profile_pending_console.clear()
         position, attempt, nodeid = self.profile_model.locations[key]
         size = self.profile_model.sequence_length
         suffix = f' · Retry {attempt}' if attempt else ''
+        self.profile_selection_label.setVisible(self.profile_model.repetitions > 1 or attempt > 0
+                                               or self.profile_model.nodeid_counts[nodeid] > 1)
         self.profile_selection_label.setText(
             f'Repetition {position // size + 1}/{self.profile_model.repetitions} · '
             f'Step {position % size + 1}/{size} · Execution {position + 1}{suffix}')
@@ -1653,9 +1671,9 @@ class MainWindow(QMainWindow):
             self._open_markers, "mdi.tag-multiple-outline")
         selection.addSeparator()
         self._action(selection, "All", QKeySequence.SelectAll,
-                     lambda: self._selected_run_context().model.set_all_checked(True))
+                     lambda: self._selected_run_context()._visible_test_tree().model().set_all_checked(True))
         self._action(selection, "None", "Ctrl+Shift+A",
-                     lambda: self._selected_run_context().model.set_all_checked(False))
+                     lambda: self._selected_run_context()._visible_test_tree().model().set_all_checked(False))
         selection.addSeparator()
         self.act_diverge = self._action(
             selection, "Only where readers disagree", "Ctrl+D",
@@ -1668,15 +1686,15 @@ class MainWindow(QMainWindow):
         # Les trois vues du panneau de droite, au clavier : c'est le geste le
         # plus repete d'un depouillement de run.
         self._action(vue, "Test detail", "Ctrl+1",
-                     lambda: self._selected_run_context().results.show_tab(ONGLET_DETAIL),
+                     lambda: self._selected_run_context()._visible_results().show_tab(ONGLET_DETAIL),
                      "mdi.text-box-search-outline")
         self._action(vue, "Source", "Ctrl+2",
-                     lambda: self._selected_run_context().results.show_tab(ONGLET_SOURCE),
+                     lambda: self._selected_run_context()._visible_results().show_tab(ONGLET_SOURCE),
                      "mdi.file-code-outline")
         self._action(vue, "Raw output", "Ctrl+3",
-                     lambda: self._selected_run_context().results.show_tab(ONGLET_OUTPUT), "mdi.console")
+                     lambda: self._selected_run_context()._visible_results().show_tab(ONGLET_OUTPUT), "mdi.console")
         self._action(vue, "Logs", "Ctrl+4",
-                     lambda: self._selected_run_context().results.show_tab(ONGLET_LOGS),
+                     lambda: self._selected_run_context()._visible_results().show_tab(ONGLET_LOGS),
                      "mdi.file-document-outline")
         vue.addSeparator()
         self._action(vue, "Compare readers side by side", "Ctrl+Shift+D",
@@ -2396,6 +2414,9 @@ class MainWindow(QMainWindow):
             # par colonne et reprises ici (voir `TreeColumnLayout`).
             self.tree_columns.size_columns()
             return
+        if tree is self.profile_tree and getattr(self, 'profile_tree_columns', None) is not None:
+            self.profile_tree_columns.size_columns()
+            return
         entete = tree.header()
         for colonne in range(1, model.columnCount()):
             entete.setSectionResizeMode(colonne, QHeaderView.Interactive)
@@ -2417,15 +2438,16 @@ class MainWindow(QMainWindow):
         """Clic droit sur l'en-tete : afficher Duration, remettre les largeurs."""
         menu = QMenu(self)
         self._ajouter_actions_colonnes(menu)
-        menu.exec(self.tree.header().mapToGlobal(point))
+        menu.exec(self._visible_test_tree().header().mapToGlobal(point))
 
     def _ajouter_actions_colonnes(self, menu) -> None:
         duree = menu.addAction("Show Duration column")
         duree.setCheckable(True)
-        duree.setChecked(self.tree_columns.duration_visible)
+        columns = self.profile_tree_columns if self.profile_tree_button.isChecked() else self.tree_columns
+        duree.setChecked(columns.duration_visible)
         duree.toggled.connect(self.set_duration_column_visible)
         self._ajouter_modes_duree(menu)
-        menu.addAction("Reset column widths", self.tree_columns.reset)
+        menu.addAction("Reset column widths", columns.reset)
 
     def _ajouter_modes_duree(self, menu) -> None:
         """Ce que montre Duration avec plusieurs lecteurs : un sous-menu."""
@@ -2436,12 +2458,14 @@ class MainWindow(QMainWindow):
         # l'en-tete s'ouvrait ensuite avec un sous-menu deja detruit.
         sous_menu = QMenu("Duration shows", menu)
         menu.addMenu(sous_menu)
-        lecteurs = self.model.readers
-        sous_menu.setEnabled(len(lecteurs) > 1 and self.tree_columns.duration_visible)
+        model = self._visible_test_tree().model()
+        columns = self.profile_tree_columns if self.profile_tree_button.isChecked() else self.tree_columns
+        lecteurs = model.readers
+        sous_menu.setEnabled(len(lecteurs) > 1 and columns.duration_visible)
         if len(lecteurs) < 2:
             sous_menu.setToolTip("Only useful when several readers run")
         groupe = QActionGroup(sous_menu)
-        courant = self.model.duration_mode
+        courant = model.duration_mode
         choix = [(mode, self.model.DURATION_MODE_LABELS[mode]) for mode in self.model.DURATION_MODES]
         for position, (mode, libelle) in enumerate(choix + [
                 (f"reader:{r.name}", f"{r.name} only") for r in lecteurs]):
@@ -2461,6 +2485,7 @@ class MainWindow(QMainWindow):
             preferences.set_saved_value("duration_mode", mode)
         else:
             self.model.set_duration_mode(mode)
+            self.profile_model.set_duration_mode(mode)
 
     def set_duration_column_visible(self, visible: bool) -> None:
         """Retenu dans les preferences, pour tous les runs ouverts."""
@@ -2470,6 +2495,7 @@ class MainWindow(QMainWindow):
             preferences.set_saved_value("show_duration", bool(visible))
         else:
             self.tree_columns.set_duration_visible(visible)
+            self.profile_tree_columns.set_duration_visible(visible)
 
     def _config_retenue(self, workspace: str) -> str:
         """Chemin du fichier de configuration choisi pour ce workspace, ou "".
@@ -2532,7 +2558,14 @@ class MainWindow(QMainWindow):
     @Slot()
     def run_selected(self) -> None:
         if self.profile_tree_button.isChecked() and self._active_execution_profile is not None:
-            self._start_profile(self._active_execution_profile)
+            keys = [key for key in self.profile_model.checked_nodeids() if self.profile_model.locations[key][1] == 0]
+            total = self.profile_model.sequence_length * self.profile_model.repetitions
+            if not keys:
+                return
+            if len(keys) == total:
+                self._start_profile(self._active_execution_profile)
+            else:
+                self.profile_run_tree.launch(keys)
         elif not self.profile_tree_button.isChecked():
             self._start(self.model.checked_nodeids())
 
@@ -2628,6 +2661,13 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def rerun_failed(self) -> None:
+        if self.profile_tree_button.isChecked():
+            keys = self.profile_run_tree.failed_keys()
+            if keys:
+                self.profile_run_tree.launch(keys)
+            else:
+                self.status_label.setText('No failed test to re-run')
+            return
         echecs = self.model.failed_nodeids()
         if not echecs:
             self.status_label.setText("No failed test to re-run")
@@ -3628,6 +3668,9 @@ class MainWindow(QMainWindow):
 
     @Slot(int, int)
     def _on_selection_changed(self, coches: int, total: int) -> None:
+        if self.profile_tree_button.isChecked():
+            self.profile_run_tree.selection_changed()
+            return
         self.selection_label.setText(f"{coches} of {total} tests selected")
         self._update_actions()
 
@@ -3718,7 +3761,10 @@ class MainWindow(QMainWindow):
 
     @Slot(int)
     def _on_reader_selected(self, index: int) -> None:
-        lecteurs = self.workspace.readers if self.workspace else ()
+        panneau = self.sender()
+        if not isinstance(panneau, ResultsPanel):
+            panneau = self._visible_results()
+        lecteurs = panneau._readers
         if 0 <= index < len(lecteurs):
             self.status_label.setText(f"Showing {lecteurs[index].name}")
 
@@ -3873,15 +3919,16 @@ class MainWindow(QMainWindow):
         C'est la question qui motive un run multi-lecteur : la reponse doit
         etre a un raccourci, pas a un tri manuel.
         """
-        divergents = self.model.divergent_nodeids()
+        model = self._visible_test_tree().model()
+        divergents = model.divergent_nodeids()
         if not divergents:
             self.status_label.setText("Every reader agrees so far")
             return
-        self.model.set_checked_nodeids(divergents)
+        model.set_checked_nodeids(divergents)
         self.status_label.setText(f"{len(divergents)} tests where readers disagree")
 
     def _toggle_compare(self) -> None:
-        courant = self.results.tabs.currentWidget()
+        courant = self._visible_results().tabs.currentWidget()
         if hasattr(courant, "toggle_compare"):
             courant.toggle_compare()
 
@@ -3890,28 +3937,15 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _on_search(self, texte: str, reveal: bool = True) -> None:
         if self.profile_tree_button.isChecked():
-            needle = texte.strip().lower()
-            self._matches = []
-            indexes = {}
-            if needle:
-                for key, (_, _, nodeid) in self.profile_model.locations.items():
-                    if self.search.scope != SCOPE_FAILURES:
-                        matches = needle in nodeid.lower()
-                    else:
-                        matches = False
-                        for reader in self.profile_model.readers or (Reader('', 0),):
-                            report = self._profile_reports.get((key, reader.index))
-                            if report is None:
-                                continue
-                            if id(report) not in indexes:
-                                indexes[id(report)] = failures_mod.index_failures(report.output)
-                            failure = failures_mod.failure_for(indexes[id(report)], nodeid)
-                            if failure is not None and needle in failure.body.lower():
-                                matches = True
-                                break
-                    if matches:
-                        self._matches.append(key)
-            self.failure_results.hide()
+            if self.search.scope == SCOPE_FAILURES:
+                matches = self.profile_run_tree.matching_failures(texte)
+                self._matches = [key for key, _ in matches]
+                self.profile_run_tree.fill_failure_matches(matches)
+            else:
+                needle = texte.strip().casefold()
+                self._matches = [key for key, (_, _, nodeid) in self.profile_model.locations.items()
+                                 if needle and needle in nodeid.casefold()]
+                self.failure_results.hide()
         elif self.search.scope == SCOPE_FAILURES:
             trouvailles = self._matching_failures(texte)
             self._matches = [nodeid for nodeid, _ in trouvailles]
@@ -3994,7 +4028,7 @@ class MainWindow(QMainWindow):
         if not nodeid:
             return
         self._match_index = self._matches.index(nodeid) if nodeid in self._matches else -1
-        self._reveal(nodeid)
+        self._reveal_search_match(nodeid)
         self.search.set_matches(self._match_index + 1, len(self._matches))
 
     def _goto_match(self, pas: int) -> None:
@@ -4006,6 +4040,9 @@ class MainWindow(QMainWindow):
 
     def _visible_test_tree(self):
         return self.profile_tree if self.profile_tree_button.isChecked() else self.tree
+
+    def _visible_results(self):
+        return self.profile_results if self.profile_tree_button.isChecked() else self.results
 
     def _reveal_search_match(self, key: str) -> None:
         if not self.profile_tree_button.isChecked():
@@ -4046,7 +4083,7 @@ class MainWindow(QMainWindow):
         self._refresh_primary_reader(occupe or bool(self.run_tabs and self.run_tabs.busy))
         self.run_name_button.setEnabled(not occupe)
         self.run_name_edit.setEnabled(not occupe)
-        coches, _ = self.model.counts()
+        coches, _ = self._visible_test_tree().model().counts()
 
         # Tout decocher dans la barre des lecteurs ne laisse rien a parcourir.
         # Le bouton s'eteint plutot que de repondre par une boite de dialogue :
@@ -4058,7 +4095,7 @@ class MainWindow(QMainWindow):
         # regarder que `coches` laissait "Run profile" grise des qu'on
         # chargeait un profil sans AUSSI cocher a la main les memes tests
         # dans l'arbre : le profil s'affichait, rien ne pouvait le lancer.
-        a_lancer = self._active_execution_profile is not None if self.profile_tree_button.isChecked() else coches > 0
+        a_lancer = coches > 0 and (self._active_execution_profile is not None if self.profile_tree_button.isChecked() else True)
         self.profile_picker.setEnabled(not occupe)
         self.profile_tree_button.setEnabled(not occupe or self._running_execution_profile is not None)
         self.profile_picker.setToolTip('Profile selection is locked while a run is active.' if occupe else 'Choose a saved execution profile')
@@ -4070,7 +4107,8 @@ class MainWindow(QMainWindow):
         self.act_run.setEnabled(self.run_button.isEnabled())
         self.act_stop.setEnabled(occupe)
         rejouable = (charge and not occupe and cible
-                     and bool(self.model.failed_nodeids()))
+                     and bool(self.profile_run_tree.failed_keys() if self.profile_tree_button.isChecked()
+                              else self.model.failed_nodeids()))
         self.act_rerun.setEnabled(rejouable)
         self.rerun_button.setEnabled(rejouable)
         self.act_diverge.setEnabled(len(self.model.readers) > 1)
