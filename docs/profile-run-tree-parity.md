@@ -7,7 +7,7 @@ des profils ne changent pas.
 | Comportement | Écart constaté avant | Comportement aligné |
 | --- | --- | --- |
 | Classes uniques | Niveau Class toujours présent | Même fonction `collapse_single_class` que All tests ; les classes multiples restent distinctes. |
-| Dossiers, fichiers, cas paramétrés | Certaines chaînes étaient supprimées dans les groupes nommés | Même hiérarchie utile, sans fusionner les occurrences non contiguës. |
+| Dossiers, fichiers, cas paramétrés | Certaines chaînes étaient supprimées dans les groupes nommés | Fichiers et cas paramétrés conservés ; la chaîne de dossiers commune est masquée dans un groupe nommé. Les occurrences non contiguës restent distinctes. |
 | Répétition unique | Ligne Repetition 1/1 systématique | Aucun niveau supplémentaire ; les répétitions multiples restent identifiées. |
 | Noms des tests | Préfixe numérique systématique | Même nom que dans All tests ; l’occurrence reste identifiable au survol et dans Detail. |
 | Sélection | Aucune case ; boutons de sélection désactivés | Cases par occurrence, états partiels des groupes, Tout cocher / Tout décocher et sélection des divergences. Les reprises ne sont pas des occurrences sélectionnables supplémentaires. |
@@ -29,13 +29,19 @@ des profils ne changent pas.
   paramètres hérités et personnalisés sont conservés.
 - Chaque répétition et reprise garde ses propres résultats et durées ; les anciennes
   tentatives ne sont pas remplacées par le dernier verdict du même nodeid.
-- Un lancement partiel ou ciblé utilise un nouvel onglet, avec une copie des
-  occurrences et de leurs paramètres effectifs. Le profil, ses cases cochées et
-  ses résultats d’origine restent disponibles.
+- Le bouton Run profile exécute les occurrences cochées dans le même onglet,
+  avec le profil complet affiché. Les cases et les résultats des occurrences
+  non relancées restent disponibles. Les relances ciblées du menu contextuel
+  utilisent un nouvel onglet, avec une copie des occurrences et de leurs
+  paramètres effectifs.
 - La source du profil reste consultable ; l’édition des fichiers se fait dans
   All tests. Les paramètres du profil continuent de se modifier dans son éditeur.
 - Les markers de collecte restent propres à All tests : ils ne réécrivent pas
   silencieusement la séquence d’un profil.
+- Dans un groupe nommé, les dossiers communs comme `TSu/RA/Int/FlexiDep/tests`
+  sont masqués pour accéder directement aux dossiers utiles, par exemple
+  `perso` et `nominal`. Les chemins complets restent utilisés par la source,
+  les logs, la recherche, les relances et les actions d’activation.
 
 ## Vérifications
 
@@ -68,3 +74,31 @@ ce scénario sur deux lecteurs simulés, en clair et en sombre.
   des trois thèmes ne produit aucune erreur applicative, boîte d'erreur ou
   message Qt. Le parcours des profils sur deux lecteurs simulés vérifie
   également les détails de groupe et les YAML 10/30 de la sélection partielle.
+
+### Correctif d’affichage après v1.5.3
+
+La première ligne de groupe réserve désormais l’espace de la case à cocher
+et de l’icône calculé par le style Qt. Le titre et la description ne les
+recouvrent plus, y compris avec une police agrandie.
+
+Glisser la séparation entre les noms et le premier lecteur ajuste sa largeur
+au lieu d’annuler immédiatement le geste. Son autre bord reste utilisable.
+Les largeurs sont mémorisées par lecteur, après redimensionnement de la fenêtre,
+réouverture et changement d’ordre des lecteurs, avec ou sans Duration.
+
+Le titre sélectionné garde la couleur de texte du thème, pour rester lisible
+sur le fond bleu pâle en thème clair.
+
+Les 19 tests de `runner/tests/test_profile_tree_layout.py` couvrent ces cas,
+la conservation des fichiers/cas paramétrés, les chemins d’activation complets,
+les doublons et les reprises. Trois cas représentatifs échouent sur v1.5.3
+et passent avec le correctif. La reproduction dans l’application réelle
+utilise le même préfixe de dossiers et le même type de nom de lecteur que
+les captures signalées, avec un vrai run pytest et les deux thèmes.
+
+Validation du correctif : 355 tests ciblés passent sur 21 modules, dont les
+19 nouveaux cas de géométrie, contraste et redimensionnement. Les tests du
+rendu YAML ont également été relancés après l’ajustement du contraste.
+Les essais Qt avec un puis deux lecteurs simulés se terminent sans erreur
+applicative ni message Qt. La suite complète n’a pas été relancée pour ce
+correctif ; Windows et les lecteurs matériels restent à vérifier sur le poste.

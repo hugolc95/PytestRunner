@@ -1,5 +1,42 @@
 # Pytest Runner GUI
 
+## Profils : conserver son contexte de travail — v1.5.4
+
+Dans **Run Tests → Profiles**, décocher des occurrences puis cliquer sur
+**Run profile** conserve le profil complet dans le même onglet. Seules les
+occurrences cochées sont exécutées, avec leurs YAML propres et dans leur
+ordre. Les cases restent cochées après le run. Les tests non relancés gardent
+leurs résultats, durées, traces, sorties et chemins de logs ; leurs verdicts
+précédents sont identifiés dans l'arbre et sur la ligne du lecteur de Detail.
+Les compteurs et l'historique décrivent uniquement l'exécution qui vient
+d'être lancée. Les doublons, répétitions et reprises restent indépendants.
+
+Les groupes retrouvent un arbre compact : les dossiers communs tels que
+**TSu/RA/Int/FlexiDep/tests** sont masqués à l'intérieur d'un groupe nommé,
+en conservant les fichiers et les cas paramétrés utiles. Le titre du groupe
+ne chevauche plus la case à cocher ou l'icône ; il reste lisible lorsqu'il
+est sélectionné en thème clair. Les colonnes lecteurs se redimensionnent
+depuis leurs deux bords et leur largeur reste mémorisée par lecteur.
+
+Dans **Execution Profiles → Test sequence**, les branches ouvertes et fermées
+ainsi que le point de défilement sont conservés lors des changements de YAML,
+renommages, duplications, suppressions, déplacements, copier-coller et
+sauvegardes. Annuler et rétablir conservent aussi les choix d'ouverture faits
+entre-temps. Les commandes de focus ne reprennent plus un Ctrl encore tenu ;
+les vrais Ctrl-clics gardent la sélection multiple.
+
+Le clic droit propose **Add tests / groups…** au point cliqué. La fenêtre
+indique la destination ; les ajouts successifs et **Add selected again**
+restent à cet endroit. Le bouton principal utilise également la sélection :
+dans le groupe choisi, après la ligne d'un test, ou en fin de profil sans
+sélection. Les nouveaux tests héritent du YAML de leurs groupes parents.
+
+**Suppr / Delete** retire les éléments sélectionnés dans Test sequence,
+y compris une sélection multiple de tests ou de groupes. **Ctrl+Z** annule
+la suppression et **Ctrl+Y** la rétablit. Le menu **Remove** affiche le
+raccourci. Les champs de texte et les dialogues de paramètres gardent leur
+comportement normal ; maintenir Suppr n'enchaîne pas les suppressions.
+
 ## Arbre des profils aligné sur All tests — v1.5.3
 
 Dans **Run Tests → Profiles**, l'arbre reprend la présentation de **All tests** :

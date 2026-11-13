@@ -180,6 +180,7 @@ class SequenceClipboard(QObject):
             self._feedback('Nothing to paste', 'Copy test elements from an execution profile first.', 'error')
             return
         payload = copy.deepcopy(self.payload)
+        step_ids = page._step_ids()
         try:
             insertion, destination, label = self._destination(into_group)
             nodeids, patches, groups = page._flatten_sequence(), page._step_patches(), page._step_groups()
@@ -218,6 +219,7 @@ class SequenceClipboard(QObject):
             nodeids[insertion:insertion] = additions
             patches[insertion:insertion] = overrides
             groups[insertion:insertion] = memberships
+            step_ids[insertion:insertion] = [str(uuid.uuid4()) for _ in additions]
             validate_profile(ExecutionProfile('Pasted sequence', nodeids, '', '', step_overrides=patches, step_groups=groups))
             if changes or missing:
                 dialog = PasteSequenceDialog(count, payload['source'], label, changes, missing, page)
@@ -226,7 +228,7 @@ class SequenceClipboard(QObject):
         except (OSError, UnicodeError, ValueError, RecursionError, yaml.YAMLError, ProfileValidationError) as exc:
             self._feedback('Could not paste', str(exc), 'error')
             return
-        page._rebuild_sequence(nodeids, patches, groups)
+        page._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
         self._mark_pasted(insertion, count)
         page._mark_dirty()
         size = len(payload['items'])

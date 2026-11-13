@@ -698,6 +698,7 @@ class MainWindow(QMainWindow):
             f'{profile.execution.repetitions} repetitions')
         self.profile_chip.hide()
         if changed:
+            self.profile_run_tree.selection = None
             self._profile_selection_timer.stop()
             self._profile_selected_key = None
             self._profile_reports.clear()
@@ -1359,13 +1360,14 @@ class MainWindow(QMainWindow):
             return False
 
     def _on_profile_output(self, position, count, attempt, reader, text):
+        positions = self.profile_run_tree.positions(position, count)
         active = self._profile_batch_output.get(reader)
-        if active is None or active[:3] != (position, count, attempt):
-            active = (position, count, attempt, [])
+        if active is None or active[:2] != (positions, attempt):
+            active = (positions, attempt, [])
             self._profile_batch_output[reader] = active
-        active[3].append(text)
+        active[2].append(text)
         selected = self.profile_model.locations.get(self._profile_selected_key)
-        if selected and selected[1] == attempt and position <= selected[0] < position + count:
+        if selected and selected[1] == attempt and selected[0] in positions:
             self._profile_pending_console.setdefault(reader, []).append(text)
             if not self._profile_console_timer.isActive():
                 self._profile_console_timer.start()
@@ -1452,6 +1454,8 @@ class MainWindow(QMainWindow):
         self._set_profile_tree_visible(True)
 
     def _on_profile_execution(self, position, attempt, reader, nodeid, status) -> None:
+        position = self.profile_run_tree.position(position)
+        self.profile_run_tree.start_occurrence(position, reader)
         states = getattr(self, '_profile_count_statuses', None)
         if states is not None:
             key = (position, attempt, reader)
@@ -1475,7 +1479,8 @@ class MainWindow(QMainWindow):
             self._profile_selection_timer.start()
 
     def _on_profile_batch_report(self, position, count, attempt, report) -> None:
-        for current in range(position, position + count):
+        positions = self.profile_run_tree.positions(position, count)
+        for current in positions:
             key = self.profile_model.key(current, attempt)
             self._profile_reports[(key, report.reader.index)] = report
             if key in self.profile_model.locations:
@@ -1489,11 +1494,13 @@ class MainWindow(QMainWindow):
                 self._profile_logs.capture(key, nodeid, report.reader, executed)
         if self._profile_selected_key:
             selected_position, selected_attempt, _ = self.profile_model.locations[self._profile_selected_key]
-            if selected_attempt == attempt and position <= selected_position < position + count:
+            if selected_attempt == attempt and selected_position in positions:
                 self._profile_selection_timer.start()
         self._profile_batch_output.pop(report.reader.index, None)
 
     def _on_profile_test_detail(self, position, attempt, reader, detail):
+        position = self.profile_run_tree.position(position)
+        self.profile_run_tree.start_occurrence(position, reader)
         key = self.profile_model.key(position, attempt)
         data = self._profile_live_details.setdefault((key, reader), {'records': {}})
         data['records'][detail['phase']] = dict(detail)
@@ -1503,6 +1510,8 @@ class MainWindow(QMainWindow):
             self._profile_selection_timer.start()
 
     def _on_profile_test_duration(self, position, attempt, reader, nodeid, seconds):
+        position = self.profile_run_tree.position(position)
+        self.profile_run_tree.start_occurrence(position, reader)
         key = self.profile_model.key(position, attempt)
         self.profile_model.set_duration(key, reader, seconds)
         data = self._profile_live_details.setdefault((key, reader), {'records': {}})
@@ -1564,13 +1573,14 @@ class MainWindow(QMainWindow):
                                                      'Pytest batch for this attempt')
             else:
                 active = self._profile_batch_output.get(reader.index)
-                text = ''.join(active[3]) if active and active[2] == attempt and active[0] <= position < active[0] + active[1] else ''
+                text = ''.join(active[2]) if active and active[1] == attempt and position in active[0] else ''
                 self.profile_results.output.set_text(reader.index, text, 'Live pytest batch for this attempt')
                 data = self._profile_live_details.get((key, reader.index), {})
                 for detail in data.get('records', {}).values():
                     self.profile_results.set_test_detail(reader.index, detail)
                 if 'duration' in data:
                     self.profile_results.set_test_duration(reader.index, nodeid, data['duration'])
+        self.profile_run_tree.show_origins([key])
 
     def _build_status_bar(self) -> None:
         """L'avancement vit en bas, pas en haut.
@@ -2565,7 +2575,7 @@ class MainWindow(QMainWindow):
             if len(keys) == total:
                 self._start_profile(self._active_execution_profile)
             else:
-                self.profile_run_tree.launch(keys)
+                self.profile_run_tree.run_checked(keys)
         elif not self.profile_tree_button.isChecked():
             self._start(self.model.checked_nodeids())
 
@@ -2605,7 +2615,7 @@ class MainWindow(QMainWindow):
         path.write_text(profile.configuration_text, encoding="utf-8")
         return str(path)
 
-    def _start_profile(self, profile: ExecutionProfile) -> None:
+    def _start_profile(self, profile: ExecutionProfile, *, selection=None) -> None:
         if (self.workspace is None or self.service.busy
                 or self.run_tabs and self.run_tabs.is_locked(self)):
             return
@@ -2647,8 +2657,9 @@ class MainWindow(QMainWindow):
             build_number=self._build_number,
         )
         if self.run_tabs:
-            self.run_tabs.submit(self, request, self.workspace.env, profile)
+            self.run_tabs.submit(self, request, self.workspace.env, profile, selection=selection)
         else:
+            self.profile_run_tree.selection = selection
             try:
                 self.service.start_profile(
                     request, self.workspace.env, profile.sequence,
@@ -2872,11 +2883,18 @@ class MainWindow(QMainWindow):
         self._profile_console_timer.stop()
         self._profile_pending_console.clear()
         self._profile_batch_output.clear()
-        self._profile_selected_key = None
-        self._profile_reports = {}
-        self._profile_live_details.clear()
         profile = self._running_execution_profile
+        selection = self.profile_run_tree.selection if profile is not None else None
+        display_profile = selection.profile if selection is not None else profile
+        preserve_profile = selection is not None and getattr(self, '_displayed_profile', None) == display_profile
+        preserve_results = preserve_results or preserve_profile
+        if not preserve_profile:
+            self._profile_selected_key = None
+            self._profile_reports = {}
+            self._profile_live_details.clear()
+        self.profile_run_tree.begin_run(preserve_profile)
         from runner.domain.profile_logs import ProfileLogIndex
+        previous_logs = self._profile_logs if preserve_profile else None
         self._profile_logs = None
         self._archive_log_root = None
         if self.workspace is not None:
@@ -2886,19 +2904,28 @@ class MainWindow(QMainWindow):
             self._archive_log_root = log_root
             if profile is not None:
                 self._profile_logs = ProfileLogIndex(log_root, request.build_number)
+                if previous_logs is not None:
+                    self._profile_logs.paths.update(previous_logs.paths)
         self._profile_count_statuses = {} if profile is not None else None
         self._profile_verdict_counts = Counter()
         self._profile_execution_total = request.total_tests
         self.tree_view_switch.setVisible(profile is not None)
         if profile is not None:
-            self._displayed_profile = profile
+            self._displayed_profile = display_profile
             self.profile_model.configuration_base = getattr(self.workspace, 'settings', {})
-            self.profile_model.prepare(profile, request.readers)
+            if not preserve_profile:
+                self.profile_model.prepare(display_profile, request.readers)
+            else:
+                self.profile_model.set_readers(request.readers)
             self._size_reader_columns(self.profile_tree, self.profile_model)
-            self.profile_tree.expandToDepth(1)
+            if not preserve_profile:
+                self.profile_tree.expandToDepth(1)
             self._set_profile_tree_visible(True)
-            first = self.profile_model.index_for_nodeid(self.profile_model.key(0))
-            self.profile_tree.setCurrentIndex(first)
+            if not preserve_profile:
+                first = self.profile_model.index_for_nodeid(self.profile_model.key(0))
+                self.profile_tree.setCurrentIndex(first)
+            else:
+                self._refresh_profile_selection()
         else:
             self._displayed_profile = None
             self._set_profile_tree_visible(False)

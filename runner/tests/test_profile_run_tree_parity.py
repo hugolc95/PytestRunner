@@ -242,7 +242,7 @@ class TestCard:
     w.profile_model.set_checked_nodeids(['0:0', '2:0'])
     w.run_selected()
     context = w.run_tabs.current.context
-    assert context is not w
+    assert context is w
     try:
         qtbot.waitUntil(lambda: not context.service.busy, timeout=25000)
         qtbot.waitUntil(lambda: w.run_tabs.active is None, timeout=15000)
@@ -251,6 +251,9 @@ class TestCard:
         assert w.profile_model.checked_nodeids() == ['0:0', '2:0']
         assert w._active_execution_profile is original
         assert original.sequence == [node] * 3
+        assert len(w.profile_model.locations) == 3
+        assert w.profile_model.statuses_for_nodeid('2:0')[0] is Status.PASSED
+        assert w.profile_model.statuses_for_nodeid('1:0').get(0, Status.PENDING) is Status.PENDING
     finally:
         context.service.cancel()
         context.service.wait()

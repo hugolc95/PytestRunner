@@ -123,9 +123,14 @@ class ProfileGroupDelegate(DivergenceDelegate):
                          max(0, option.rect.height() - 6), QColor(group['color']))
         painter.setFont(opt.font)
         fm = painter.fontMetrics()
-        selected = bool(opt.state & QStyle.State_Selected)
-        painter.setPen(opt.palette.highlightedText().color() if selected else QColor(t.TEXT))
-        left = option.rect.left() + max(16, opt.decorationSize.width()) + 8
+        # Le fond selectionne vient de notre QSS, pas de la palette native :
+        # garder sa couleur de texte evite du blanc sur bleu pale en theme clair.
+        painter.setPen(QColor(t.TEXT))
+        # Qt reserve la place exacte de la case ET de l'icone, y compris
+        # avec le style Windows et une police agrandie.
+        style = option.widget.style() if option.widget else QApplication.style()
+        text_rect = style.subElementRect(QStyle.SE_ItemViewItemText, opt, option.widget)
+        left = text_rect.left()
         width = max(0, option.rect.right() - left - 4)
         title = str(index.data(Qt.DisplayRole) or '').split('\n', 1)[0]
         if index.data(YAML_ROLE):

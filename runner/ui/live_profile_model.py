@@ -24,6 +24,7 @@ class LiveProfileModel(TestTreeModel):
     def _folder_depth(self, row):
         depth = 0
         while row is not None:
+            depth += self._hidden_folder_depths.get(id(row.node), 0)
             if (row.node.kind is Kind.FOLDER and id(row.node) not in self._named_groups
                     and id(row.node) not in self._repetition_roots):
                 depth += 1
@@ -39,7 +40,9 @@ class LiveProfileModel(TestTreeModel):
         super().__init__(parent)
         self.configuration_base = {}
         self.locations = {}
+        self._keys_by_position = {}
         self._named_groups = {}
+        self._hidden_folder_depths = {}
         self._repetition_roots = set()
         self._yaml_exceptions = {}
         self._group_exceptions = {}
@@ -50,6 +53,7 @@ class LiveProfileModel(TestTreeModel):
         self._configuration_issues = []
         self._stopped = False
         self._interrupted = set()
+        self.previous_results = set()
 
     @staticmethod
     def key(position, attempt=0):
@@ -77,7 +81,9 @@ class LiveProfileModel(TestTreeModel):
 
     def prepare(self, profile, readers):
         self.locations = {}
+        self._keys_by_position = {}
         self._named_groups = {}
+        self._hidden_folder_depths = {}
         self._repetition_roots = set()
         self._yaml_exceptions = {}
         self._group_exceptions = {}
@@ -88,6 +94,7 @@ class LiveProfileModel(TestTreeModel):
         self._configuration_issues = []
         self._stopped = False
         self._interrupted = set()
+        self.previous_results = set()
         self.sequence_length = len(profile.sequence)
         self.nodeid_counts = Counter(profile.sequence)
         self.repetitions = max(1, profile.execution.repetitions)
@@ -115,9 +122,17 @@ class LiveProfileModel(TestTreeModel):
                         self._named_groups[id(node)] = group
                         siblings.append(node)
                     siblings = node.children
-                # Meme reduction que All tests, sans supprimer les dossiers,
-                # fichiers ou cas parametres utiles dans un groupe colore.
                 nested = collapse_single_class(build_sequence_tree(profile.sequence[start:end]))
+                # Un groupe nomme donne deja le contexte : masquer la chaine
+                # de dossiers commune, jamais le fichier ni les cas parametres.
+                hidden = 0
+                if path:
+                    while len(nested) == 1 and nested[0].kind is Kind.FOLDER and nested[0].children:
+                        nested = nested[0].children
+                        hidden += 1
+                if hidden:
+                    for node in nested:
+                        self._hidden_folder_depths[id(node)] = hidden
                 siblings.extend(nested)
             leaves = [leaf for child in children for leaf in child.leaves()]
             leaf_exceptions = {}
@@ -160,6 +175,7 @@ class LiveProfileModel(TestTreeModel):
                 position = repetition * self.sequence_length + step
                 key = self.key(position)
                 self.locations[key] = (position, 0, leaf.nodeid)
+                self._keys_by_position[position] = {key}
                 leaf.nodeid = key
             if self.repetitions > 1:
                 node = TestNode(name=f'Repetition {repetition + 1} / {self.repetitions}',
@@ -191,6 +207,7 @@ class LiveProfileModel(TestTreeModel):
                 siblings[i].row = i
             self._by_nodeid[key] = row
             self.locations[key] = (position, attempt, nodeid)
+            self._keys_by_position.setdefault(position, set()).add(key)
             self._yaml_exceptions[key] = self._yaml_exceptions.get(self.key(position), [])
             self._annotations[id(node)] = self._annotations.get(id(base.node), {})
             self._group_colors[id(node)] = self._group_colors.get(id(base.node), '')
@@ -232,6 +249,55 @@ class LiveProfileModel(TestTreeModel):
                 index = self.createIndex(parent.row, column, parent)
                 self.dataChanged.emit(index, index)
             parent = parent.parent
+
+    def occurrence_keys(self, position):
+        return tuple(self._keys_by_position.get(position, ()))
+
+    def clear_statuses(self):
+        self._group_counts.clear()
+        self._interrupted.clear()
+        self.previous_results.clear()
+        super().clear_statuses()
+
+    def clear_occurrence(self, position, reader):
+        """Ne remplacer que l'occurrence qui commence, sur le lecteur relance."""
+        keys = self.occurrence_keys(position)
+        for key in keys:
+            row = self._by_nodeid[key]
+            old = row.statuses.pop(reader, None)
+            parent = row.parent
+            while parent is not None:
+                counts = self._group_counts.setdefault((parent, reader), Counter())
+                if old is not None:
+                    counts[old] -= 1
+                parent.agg[reader] = worst(status for status, count in counts.items() if count > 0)
+                parent = parent.parent
+            if reader in self._durations.get(key, {}):
+                self.set_duration(key, reader, 0)
+                self._durations[key].pop(reader, None)
+                self._duration_totals.pop(row, None)
+            self._interrupted.discard((key, reader))
+            if self.locations[key][1] and not row.statuses:
+                parent_index = self.parent(self.index_for_nodeid(key))
+                siblings = row.parent.children if row.parent is not None else self._roots
+                self.beginRemoveRows(parent_index, row.row, row.row)
+                siblings.pop(row.row)
+                for index, sibling in enumerate(siblings):
+                    sibling.row = index
+                self._by_nodeid.pop(key)
+                self.locations.pop(key)
+                self._keys_by_position[position].discard(key)
+                self._activation_targets.pop(row, None)
+                self._blocked_rows.discard(row)
+                self._durations.pop(key, None)
+                self._yaml_exceptions.pop(key, None)
+                for metadata in (self._annotations, self._group_colors, self._membership):
+                    metadata.pop(id(row.node), None)
+                self.endRemoveRows()
+        self._emit_layout_changed()
+
+    def is_previous(self, row, reader):
+        return (row.node.nodeid, reader) in self.previous_results or super().is_previous(row, reader)
 
     def flags(self, index):
         flags = super().flags(index)

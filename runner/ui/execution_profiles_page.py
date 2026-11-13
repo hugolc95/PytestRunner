@@ -7,8 +7,8 @@ import copy
 import yaml
 from pathlib import Path
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal
-from PySide6.QtGui import QKeySequence, QUndoStack
+from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal, QItemSelectionModel
+from PySide6.QtGui import QAction, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -38,6 +38,7 @@ from PySide6.QtWidgets import (
 
 from runner.domain.execution_profile import (
     EXTENSION,
+    MAX_STEPS,
     ExecutionOptions,
     ExecutionProfile,
     ProfileStore,
@@ -59,11 +60,13 @@ from runner.ui.profile_dialogs import StepParametersDialog, ProfileGroupDialog, 
 from runner.ui.profile_group_delegate import ProfileGroupDelegate, EXCEPTION_ROLE, YAML_ROLE, GROUP_COLOR_ROLE, CONFIG_ISSUES_ROLE
 from runner.ui.profile_history import ProfileEdit, undoable
 from runner.ui.profile_clipboard import SequenceClipboard
+from runner.ui import profile_sequence_view as sequence_view
 
 _OVERRIDES_ROLE = Qt.UserRole + 20
 _LABEL_ROLE = Qt.UserRole + 23
 _KIND_ROLE = Qt.UserRole + 25
 _GROUP_ROLE = Qt.UserRole + 26
+_CURRENT_INSERTION = object()
 
 
 def _short_nodeid(nodeid: str) -> str:
@@ -80,6 +83,12 @@ class SequenceTree(QTreeWidget):
     def __init__(self, confirm_drop, parent=None):
         super().__init__(parent)
         self.confirm_drop = confirm_drop
+
+    def setCurrentItem(self, item, column=0, command=QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows):
+        # Un focus programme apres Ctrl+V, une fleche ou une reconstruction
+        # remplace la selection ; il ne doit pas heriter d'un Ctrl encore tenu.
+        # Les vrais clics Ctrl/Maj gardent la selection multiple native de Qt.
+        super().setCurrentItem(item, column, command)
 
     def dropEvent(self, event):
         target = self.itemAt(event.position().toPoint())
@@ -98,7 +107,7 @@ class AddTestsDialog(QDialog):
 
     tests_added = Signal(list)
 
-    def __init__(self, nodeids: list[str], parent=None):
+    def __init__(self, nodeids: list[str], parent=None, *, destination=''):
         super().__init__(parent)
         self.setWindowTitle("Add tests or groups")
         self.resize(690, 520)
@@ -112,6 +121,12 @@ class AddTestsDialog(QDialog):
         copy.setObjectName("Muted")
         copy.setWordWrap(True)
         layout.addWidget(copy)
+        self.destination_label = QLabel(destination)
+        self.destination_label.setTextFormat(Qt.PlainText)
+        self.destination_label.setObjectName('Muted')
+        self.destination_label.setWordWrap(True)
+        self.destination_label.setVisible(bool(destination))
+        layout.addWidget(self.destination_label)
 
         self.search = QLineEdit()
         self.search.setPlaceholderText("Search tests…")
@@ -358,7 +373,17 @@ class ExecutionProfilesPage(QWidget):
         self.sequence_list.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.sequence_list.setAccessibleName("Ordered test sequence")
         self.sequence_list.setAccessibleDescription(
-            "Expandable test groups in execution order. Move, duplicate or remove a group or a test.")
+            "Expandable test groups in execution order. Move, duplicate or remove a group or a test. "
+            "Press Delete to remove the selection; Ctrl+Z to undo.")
+        self.remove_action = QAction('Remove', self.sequence_list)
+        self.remove_action.setShortcut(QKeySequence(Qt.Key_Delete))
+        # Le raccourci appartient a l'arbre : Suppr doit garder son sens dans
+        # le nom, la description et les dialogues de parametres.
+        self.remove_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        self.remove_action.setAutoRepeat(False)
+        self.remove_action.setEnabled(False)
+        self.remove_action.triggered.connect(self.remove_steps)
+        self.sequence_list.addAction(self.remove_action)
         self.sequence_list.setToolTip("Select tests to create a group. Double-click a test to edit its YAML parameters.")
         self.sequence_list.itemSelectionChanged.connect(self._selection_changed)
         self.sequence_list.itemDoubleClicked.connect(self._edit_item)
@@ -405,9 +430,11 @@ class ExecutionProfilesPage(QWidget):
         actions = QHBoxLayout()
         self.add_tests_button = QPushButton("Add tests / groups")
         self.add_tests_button.setIcon(icons.icon("mdi.plus"))
+        self.add_tests_button.setToolTip('Add at the selected group or test. With no selection, add at the end of the profile.')
         self.duplicate_button = QPushButton("Duplicate")
         self.remove_button = QPushButton("Remove")
         self.remove_button.setObjectName("Ghost")
+        self.remove_button.setToolTip('Remove selected tests or groups (Del). Undo: Ctrl+Z.')
         actions.addWidget(self.add_tests_button)
         actions.addWidget(self.duplicate_button)
         actions.addWidget(self.remove_button)
@@ -429,7 +456,7 @@ class ExecutionProfilesPage(QWidget):
         layout.addLayout(actions)
         self.add_tests_button.clicked.connect(self.add_tests)
         self.duplicate_button.clicked.connect(self.duplicate_steps)
-        self.remove_button.clicked.connect(self.remove_steps)
+        self.remove_button.clicked.connect(self.remove_action.trigger)
         self.sequence_list.model().rowsMoved.connect(self._on_sequence_reordered)
         self.sequence_list.order_changed.connect(self._on_sequence_reordered)
         return frame
@@ -522,13 +549,14 @@ class ExecutionProfilesPage(QWidget):
         self._populate(self._profiles[row])
 
     def _populate(self, profile: ExecutionProfile) -> None:
+        view = sequence_view.capture(self) if self._saving_refresh else None
         self._building = True
         self._configuration_text = profile.configuration_text
         self.config_edit.setProperty("fullPath", "")
         self.name_edit.setText(profile.name)
         self.description_edit.setPlainText(profile.description)
         self.config_edit.setText(profile.configuration_name)
-        self._rebuild_sequence(profile.sequence, profile.step_overrides, profile.step_groups)
+        self._rebuild_sequence(profile.sequence, profile.step_overrides, profile.step_groups, view=view)
         self.repetitions.setValue(profile.execution.repetitions)
         self.rerun_failures.setValue(profile.execution.rerun_failures)
         self.stop_after_failure.setChecked(profile.execution.stop_after_failure)
@@ -643,13 +671,67 @@ class ExecutionProfilesPage(QWidget):
             self._mark_dirty()
             self._selection_changed()
 
-    def add_tests(self) -> None:
+    def _insertion_point(self, target=_CURRENT_INSERTION):
+        tree = self.sequence_list
+        if target is _CURRENT_INSERTION:
+            target = tree.currentItem()
+            if target is not None and not target.isSelected():
+                target = None
+        nodeids, ranges = self._sequence_ranges()
+        if target is None:
+            return len(nodeids), [], 'Destination: end of profile'
+        end = next(end for item, _, end in ranges if item is target)
+        path = self._item_group_path(target, include_self=True)
+        labels = []
+        item = target
+        while item is not None:
+            labels.append(item.data(0, _LABEL_ROLE) or item.data(0, NODEID_ROLE) or '')
+            item = item.parent()
+        label = ' / '.join(reversed(labels))
+        if target.data(0, NODEID_ROLE):
+            destination = 'Destination: after ' + label
+        elif target.data(0, _GROUP_ROLE):
+            destination = 'Destination: inside ' + label
+        else:
+            destination = 'Insertion point: ' + label + '\nAfter the tests already shown here.'
+        return end, path, destination
+
+    def add_tests(self, checked=False, *, destination=None) -> None:
         if not self._available_nodeids:
             self._show_notice("Load a workspace before adding tests.", warning=True)
             return
-        dialog = AddTestsDialog(self._available_nodeids, self)
-        dialog.tests_added.connect(self._append_tests)
-        dialog.exec()
+        position, path, label = destination if destination is not None else self._insertion_point()
+        dialog = AddTestsDialog(self._available_nodeids, self, destination=label)
+        def insert(nodeids):
+            nonlocal position
+            # Le premier ajout reconstruit les items Qt : garder un curseur
+            # et le chemin du groupe, jamais l'ancien item du clic droit.
+            if self._insert_tests(nodeids, position, path):
+                position += len(nodeids)
+        dialog.tests_added.connect(insert)
+        try:
+            dialog.exec()
+        finally:
+            dialog.deleteLater()
+
+    @undoable('Add tests')
+    def _insert_tests(self, additions, position, path):
+        if not additions:
+            return False
+        nodeids, patches, groups = self._flatten_sequence(), self._step_patches(), self._step_groups()
+        if len(nodeids) + len(additions) > MAX_STEPS:
+            self._show_notice(f'A profile can contain at most {MAX_STEPS} test occurrences.', warning=True)
+            return False
+        position = max(0, min(position, len(nodeids)))
+        step_ids = self._step_ids()
+        nodeids[position:position] = additions
+        patches[position:position] = [{} for _ in additions]
+        groups[position:position] = [group_entry(copy.deepcopy(path)) for _ in additions]
+        step_ids[position:position] = [str(uuid.uuid4()) for _ in additions]
+        self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
+        self._focus_range(position, len(additions))
+        self._mark_dirty()
+        return True
 
     def _step_items(self):
         items = []
@@ -688,6 +770,7 @@ class ExecutionProfilesPage(QWidget):
 
     def _step_item(self, nodeid, patch, label=None, group=None, kind=None):
         item = QTreeWidgetItem()
+        item.setData(0, sequence_view.STEP_ID_ROLE, str(uuid.uuid4()))
         item.setData(0, NODEID_ROLE, nodeid)
         item.setData(0, _LABEL_ROLE, label or _short_nodeid(nodeid))
         item.setData(0, _OVERRIDES_ROLE, copy.deepcopy(patch))
@@ -754,8 +837,15 @@ class ExecutionProfilesPage(QWidget):
                             item.addChild(make_node(node))
                     root.addChild(item)
 
-    def _rebuild_sequence(self, nodeids: list[str], patches=None, groups=None) -> None:
+    def _step_ids(self):
+        return [item.data(0, sequence_view.STEP_ID_ROLE) for item in self._step_items()]
+
+    def _rebuild_sequence(self, nodeids: list[str], patches=None, groups=None, *, step_ids=None, view=None) -> None:
         self._reorder_timer.stop()
+        if view is None and not self._building:
+            view = sequence_view.capture(self)
+        if step_ids is None and list(nodeids) == self._flatten_sequence() and (not self._building or self._saving_refresh):
+            step_ids = self._step_ids()
         if hasattr(self, 'sequence_clipboard'):
             self.sequence_clipboard.reset_visuals()
         if groups:
@@ -773,21 +863,19 @@ class ExecutionProfilesPage(QWidget):
                     parents.append(group['id'])
                 normalized.append(group_entry(path))
             groups = normalized
-        old_ids, ranges = self._sequence_ranges()
-        expanded = {(item.data(0, _LABEL_ROLE), tuple(old_ids[start:end]))
-                    for item, start, end in ranges
-                    if not self._building and item.isExpanded() and not item.data(0, NODEID_ROLE)}
         blocked = self.sequence_list.blockSignals(True)
+        updates = self.sequence_list.updatesEnabled()
+        self.sequence_list.setUpdatesEnabled(False)
         try:
             self.sequence_list.clear()
             self._add_sequence_groups(nodeids, patches or [{} for _ in nodeids], groups)
-            new_ids, ranges = self._sequence_ranges()
-            for item, start, end in ranges:
-                if not item.data(0, NODEID_ROLE) and (
-                        item.data(0, _LABEL_ROLE), tuple(new_ids[start:end])) in expanded:
-                    item.setExpanded(True)
+            if step_ids is not None:
+                for item, identifier in zip(self._step_items(), step_ids):
+                    item.setData(0, sequence_view.STEP_ID_ROLE, identifier)
+            sequence_view.restore(self, view)
         finally:
             self.sequence_list.blockSignals(blocked)
+            self.sequence_list.setUpdatesEnabled(updates)
         self._renumber()
         self._selection_changed()
 
@@ -855,6 +943,7 @@ class ExecutionProfilesPage(QWidget):
     @undoable('Duplicate tests / groups')
     def duplicate_steps(self) -> None:
         nodeids, selected = self._selected_ranges()
+        step_ids = self._step_ids()
         patches = self._step_patches()
         groups = self._step_groups()
         if not selected:
@@ -862,6 +951,7 @@ class ExecutionProfilesPage(QWidget):
         edit = len(selected) == 1 and bool(selected[0][0].data(0, NODEID_ROLE))
         for selected_item, start, end in sorted(selected, key=lambda row: row[1], reverse=True):
             nodeids[end:end] = nodeids[start:end]
+            step_ids[end:end] = [str(uuid.uuid4()) for _ in range(end - start)]
             patches[end:end] = copy.deepcopy(patches[start:end])
             copied = copy.deepcopy(groups[start:end])
             identifiers = {}
@@ -876,7 +966,7 @@ class ExecutionProfilesPage(QWidget):
                             group['id'] = identifiers.setdefault(group['id'], str(uuid.uuid4()))
                     copied[i] = group_entry(path)
             groups[end:end] = copied
-        self._rebuild_sequence(nodeids, patches, groups)
+        self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
         _, start, end = min(selected, key=lambda row: row[1])
         self._focus_range(end, end - start, edit=edit)
         self._mark_dirty()
@@ -889,9 +979,11 @@ class ExecutionProfilesPage(QWidget):
             return
         patches = self._step_patches()
         groups = self._step_groups()
+        step_ids = self._step_ids()
         self._rebuild_sequence([value for i, value in enumerate(nodeids) if i not in removed],
                                [value for i, value in enumerate(patches) if i not in removed],
-                               [value for i, value in enumerate(groups) if i not in removed])
+                               [value for i, value in enumerate(groups) if i not in removed],
+                               step_ids=[value for i, value in enumerate(step_ids) if i not in removed])
         self._mark_dirty()
 
     @undoable('Reorder sequence')
@@ -910,12 +1002,13 @@ class ExecutionProfilesPage(QWidget):
         other_start, other_end = by_item[id(parent.child(destination))]
         edit = bool(current.data(0, NODEID_ROLE))
         nodeids, patches, groups = self._flatten_sequence(), self._step_patches(), self._step_groups()
+        step_ids = self._step_ids()
         # Echange les plages contigues, avec leurs patches YAML, sans trier.
         left, middle, right = (other_start, start, end) if direction < 0 else (start, end, other_end)
-        for values in (nodeids, patches, groups):
+        for values in (nodeids, patches, groups, step_ids):
             values[left:right] = values[middle:right] + values[left:middle]
         target = other_start if direction < 0 else other_end - (end - start)
-        self._rebuild_sequence(nodeids, patches, groups)
+        self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
         self._focus_range(target, end - start, edit=edit)
         self._mark_dirty()
 
@@ -1025,6 +1118,7 @@ class ExecutionProfilesPage(QWidget):
         self.ungroup_button.setEnabled(any(is_grouped(item) for item in selected))
         self.duplicate_button.setEnabled(bool(selected))
         self.remove_button.setEnabled(bool(selected))
+        self.remove_action.setEnabled(bool(selected))
         if hasattr(self, 'sequence_clipboard'):
             self.sequence_clipboard.update_actions()
 
@@ -1153,6 +1247,7 @@ class ExecutionProfilesPage(QWidget):
     @undoable('Edit group')
     def _apply_group(self, indices, metadata, *, editing=False, parent_path=None):
         nodeids, patches, groups = self._flatten_sequence(), self._step_patches(), self._step_groups()
+        step_ids = self._step_ids()
         if editing:
             own = {key: copy.deepcopy(value) for key, value in metadata.items() if key != 'parents'}
             for index, entry in enumerate(groups):
@@ -1172,8 +1267,8 @@ class ExecutionProfilesPage(QWidget):
                         group['id'] = identifiers.setdefault(group['id'], str(uuid.uuid4()))
                 groups[i] = group_entry(prefix + [copy.deepcopy(metadata)] + suffix)
             order = list(range(indices[0])) + indices + [i for i in range(indices[0], len(nodeids)) if i not in selected]
-            nodeids, patches, groups = ([values[i] for i in order] for values in (nodeids, patches, groups))
-        self._rebuild_sequence(nodeids, patches, groups)
+            nodeids, patches, groups, step_ids = ([values[i] for i in order] for values in (nodeids, patches, groups, step_ids))
+        self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
         self._focus_group(metadata['id'])
         self._mark_dirty()
 
@@ -1258,7 +1353,7 @@ class ExecutionProfilesPage(QWidget):
                                                 self._preview_readers, self)
         dialog.exec()
 
-    def _context_menu(self):
+    def _context_menu(self, target=_CURRENT_INSERTION):
         selected = self.sequence_list.selectedItems()
         menu = QMenu(self)
         named = len(selected) == 1 and not selected[0].data(0, NODEID_ROLE) and bool(selected[0].data(0, _GROUP_ROLE))
@@ -1272,6 +1367,10 @@ class ExecutionProfilesPage(QWidget):
         menu.addAction(self.sequence_clipboard.paste_action)
         menu.addAction(self.sequence_clipboard.paste_into_action)
         menu.addSeparator()
+        destination = self._insertion_point(target)
+        action = menu.addAction(icons.icon('mdi.plus'), 'Add tests / groups…',
+                                lambda: self.add_tests(destination=destination))
+        action.setEnabled(bool(self._available_nodeids))
         action = menu.addAction('Edit group…' if named else 'Create group…', self.edit_group)
         action.setEnabled(bool(selected))
         if named:
@@ -1279,7 +1378,7 @@ class ExecutionProfilesPage(QWidget):
         menu.addAction('Duplicate', self.duplicate_steps).setEnabled(bool(selected))
         menu.addAction('Move to…', self.move_to_group).setEnabled(bool(selected))
         menu.addAction('Ungroup', self.ungroup_steps).setEnabled(self.ungroup_button.isEnabled())
-        menu.addAction('Remove', self.remove_steps).setEnabled(bool(selected))
+        menu.addAction(self.remove_action)
         menu.addSeparator()
         menu.addAction(self.undo_action)
         menu.addAction(self.redo_action)
@@ -1287,10 +1386,13 @@ class ExecutionProfilesPage(QWidget):
 
     def _show_context_menu(self, position):
         item = self.sequence_list.itemAt(position)
-        if item is not None and not item.isSelected():
+        if item is None:
+            self.sequence_list.clearSelection()
+            self.sequence_list.setCurrentItem(None)
+        elif not item.isSelected():
             self.sequence_list.clearSelection()
             self.sequence_list.setCurrentItem(item)
-        menu = self._context_menu()
+        menu = self._context_menu(item)
         menu.exec(self.sequence_list.viewport().mapToGlobal(position))
 
     def copy_elements(self):
@@ -1317,6 +1419,7 @@ class ExecutionProfilesPage(QWidget):
             return
         nodeids, selected = self._selected_ranges()
         patches, groups = self._step_patches(), self._step_groups()
+        step_ids = self._step_ids()
         destination = self._item_group_path(target, include_self=True) if target is not None else []
         _, ranges = self._sequence_ranges()
         end = next((end for item, _, end in ranges if item is target), len(nodeids))
@@ -1330,7 +1433,8 @@ class ExecutionProfilesPage(QWidget):
         remaining = [i for i in range(len(nodeids)) if i not in moving]
         insertion = sum(i < end for i in remaining)
         order = remaining[:insertion] + moved + remaining[insertion:]
-        self._rebuild_sequence(*[[values[i] for i in order] for values in (nodeids, patches, groups)])
+        self._rebuild_sequence(*[[values[i] for i in order] for values in (nodeids, patches, groups)],
+                               step_ids=[step_ids[i] for i in order])
         self._focus_range(insertion, len(moved))
         self._mark_dirty()
 
@@ -1364,10 +1468,11 @@ class ExecutionProfilesPage(QWidget):
         for index in range(self.sequence_list.topLevelItemCount()):
             visit(self.sequence_list.topLevelItem(index), (index,))
         return dict(expanded=expanded, selected=selected, current=current,
-                    scroll=self.sequence_list.verticalScrollBar().value())
+                    scroll=self.sequence_list.verticalScrollBar().value(), stable=sequence_view.capture(self))
 
     def _editor_state(self):
         return dict(sequence=self._flatten_sequence(), patches=self._step_patches(), groups=self._step_groups(),
+                    step_ids=self._step_ids(),
                     name=self.name_edit.text(), description=self.description_edit.toPlainText(),
                     config_name=self.config_edit.text(), config_text=self._configuration_text,
                     config_path=self.config_edit.property('fullPath') or '',
@@ -1385,6 +1490,7 @@ class ExecutionProfilesPage(QWidget):
         self.undo_stack.push(ProfileEdit(self, before, after, label, merge_key))
 
     def _restore_editor_state(self, state):
+        view = sequence_view.merged(state['view'].get('stable'), sequence_view.capture(self))
         self._history_restoring = True
         self._building = True
         try:
@@ -1397,27 +1503,8 @@ class ExecutionProfilesPage(QWidget):
             self.rerun_failures.setValue(state['reruns'])
             self.stop_after_failure.setChecked(state['stop'])
             self.save_logs.setChecked(state['logs'])
-            self._rebuild_sequence(state['sequence'], state['patches'], state['groups'])
-            view = state['view']
-            def find(path):
-                item = self.sequence_list.invisibleRootItem()
-                for index in path:
-                    item = item.child(index) if item is not None else None
-                return item
-            self.sequence_list.collapseAll()
-            self.sequence_list.clearSelection()
-            for path in view['expanded']:
-                item = find(path)
-                if item is not None:
-                    item.setExpanded(True)
-            if view['current'] is not None:
-                self.sequence_list.setCurrentItem(find(view['current']))
-            self.sequence_list.clearSelection()
-            for path in view['selected']:
-                item = find(path)
-                if item is not None:
-                    item.setSelected(True)
-            self.sequence_list.verticalScrollBar().setValue(view['scroll'])
+            self._rebuild_sequence(state['sequence'], state['patches'], state['groups'],
+                                   step_ids=state.get('step_ids'), view=view)
         finally:
             self._building = False
             self._history_restoring = False

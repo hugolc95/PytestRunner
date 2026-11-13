@@ -56,6 +56,7 @@ class QueuedRun:
     env: dict
     profile: object = None
     config_snapshot: Path | None = None
+    profile_selection: object = None
 
 
 class DetachedRun(QMainWindow):
@@ -404,7 +405,7 @@ class RunTabsController(QObject):
         self.refresh_labels()
         self.schedule_save()
 
-    def submit(self, context, request, env, profile=None):
+    def submit(self, context, request, env, profile=None, *, selection=None):
         entry = self.entry_for(context)
         if self.closing or entry is None or self.is_locked(context):
             return False
@@ -424,7 +425,8 @@ class RunTabsController(QObject):
                 ErrorDialog.show_error(context, "Could not queue the run",
                                        "The configuration snapshot could not be saved.", str(exc))
                 return False
-        entry.job = QueuedRun(request, self.configuration_env(context, deepcopy(env)), deepcopy(profile), snapshot)
+        entry.job = QueuedRun(request, self.configuration_env(context, deepcopy(env)), deepcopy(profile), snapshot,
+                              deepcopy(selection))
         if queued:
             entry.state = "waiting"
             self.queue.append(entry)
@@ -452,6 +454,7 @@ class RunTabsController(QObject):
         context._run_id = job.request.run_id
         context._build_number = job.request.build_number
         context._running_execution_profile = job.profile
+        context.profile_run_tree.selection = job.profile_selection
         if job.profile is None:
             accepted = context.service.start(job.request, job.env)
         else:

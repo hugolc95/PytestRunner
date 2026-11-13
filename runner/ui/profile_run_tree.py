@@ -1,7 +1,7 @@
 """Interactions de l'arbre des profils, avec les memes gestes que All tests."""
 import copy
 import json
-from dataclasses import replace
+from dataclasses import dataclass, replace
 
 from PySide6.QtCore import QObject, QPersistentModelIndex, QModelIndex, Qt
 from PySide6.QtWidgets import QApplication, QDialog, QListWidgetItem, QMenu
@@ -18,11 +18,19 @@ class ProfileColumns(TreeColumnLayout):
     SETTINGS_KEY = 'tree/profile_column_widths'
 
 
+@dataclass(frozen=True)
+class ProfileSelectionRun:
+    profile: object
+    positions: tuple[int, ...]
+
+
 class ProfileRunTree(QObject):
     def __init__(self, window):
         super().__init__(window)
         self.window = window
         self.group = QPersistentModelIndex()
+        self.selection = None
+        self._started_occurrences = set()
         tree = window.profile_tree
         tree.setProperty('profileRunTree', True)
         tree.setAllColumnsShowFocus(True)
@@ -99,6 +107,7 @@ class ProfileRunTree(QObject):
         panel.show_group(' / '.join(reversed(path)), row.node.name, model.readers, counts, bad, source, jump,
                          durations=durations, failure_details=details)
         panel.source.edit_button.setEnabled(False)
+        self.show_origins(keys)
         for position in range(panel.detail.failures.count()):
             item = panel.detail.failures.item(position)
             key = item.data(Qt.UserRole)
@@ -114,6 +123,57 @@ class ProfileRunTree(QObject):
 
     def reveal(self, key):
         self.window._reveal_search_match(key)
+
+    def position(self, position):
+        return self.selection.positions[position] if self.selection is not None else position
+
+    def positions(self, start, count):
+        return tuple(self.position(position) for position in range(start, start + count))
+
+    def run_checked(self, keys):
+        w = self.window
+        profile = w._active_execution_profile
+        positions = sorted({w.profile_model.locations[key][0] for key in keys})
+        indices = [position % len(profile.sequence) for position in positions]
+        actual = copy.deepcopy(profile)
+        actual.sequence = [profile.sequence[index] for index in indices]
+        actual.step_overrides = [copy.deepcopy(profile.step_overrides[index]) for index in indices] if profile.step_overrides else []
+        actual.step_groups = [copy.deepcopy(profile.step_groups[index]) for index in indices] if profile.step_groups else []
+        actual.execution = replace(actual.execution, repetitions=1)
+        w._start_profile(actual, selection=ProfileSelectionRun(copy.deepcopy(profile), tuple(positions)))
+
+    def begin_run(self, preserve):
+        self._started_occurrences.clear()
+        model = self.window.profile_model
+        if preserve:
+            model.previous_results = {(key, reader) for key, row in model._by_nodeid.items()
+                                      for reader, status in row.statuses.items() if status.is_final}
+        else:
+            model.previous_results = set()
+        model._stopped = False
+
+    def start_occurrence(self, position, reader):
+        if self.selection is None or (position, reader) in self._started_occurrences:
+            return
+        self._started_occurrences.add((position, reader))
+        w = self.window
+        keys = w.profile_model.occurrence_keys(position)
+        w.profile_model.clear_occurrence(position, reader)
+        for key in keys:
+            w._profile_reports.pop((key, reader), None)
+            w._profile_live_details.pop((key, reader), None)
+            w.profile_model.previous_results.discard((key, reader))
+            if w._profile_logs is not None:
+                w._profile_logs.paths.pop((key, reader), None)
+        if w._profile_selected_key in keys and w._profile_selected_key not in w.profile_model.locations:
+            w.profile_tree.setCurrentIndex(w.profile_model.index_for_nodeid(w.profile_model.key(position)))
+
+    def show_origins(self, keys):
+        w = self.window
+        previous = w.profile_model.previous_results
+        w.profile_results.detail.set_result_origins({reader.index: 'Previous run result · ' + (reader.name or 'Test interpreter')
+            for reader in w.profile_model.readers or (Reader('', 0),)
+            if any((key, reader.index) in previous for key in keys)})
 
     def launch(self, keys, repetitions=1, stop=False):
         w = self.window

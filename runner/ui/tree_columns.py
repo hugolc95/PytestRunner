@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEvent, QObject, QTimer
+from PySide6.QtCore import QEvent, QObject, QTimer, Signal, Qt
 
 
 class NameColumnFitter(QObject):
@@ -19,6 +19,7 @@ class NameColumnFitter(QObject):
     """
 
     MINIMUM = 100
+    user_width_adjusted = Signal(int, int)
 
     def __init__(self, tree, parent=None):
         super().__init__(parent or tree)
@@ -41,10 +42,24 @@ class NameColumnFitter(QObject):
         return False
 
     def _on_section_resized(self, index: int, _old: int, _new: int) -> None:
-        if not self._fitting:
-            # Une autre colonne a change, ou on a tire le bord des noms : la
-            # colonne des noms reprend exactement la place restante.
-            self._timer.start()
+        if self._fitting:
+            return
+        from PySide6.QtWidgets import QApplication
+
+        # Tirer la separation Test / lecteur doit aussi regler le lecteur.
+        # Refaire seulement fit() annulait le geste aussitot a cet endroit.
+        if index == 0 and QApplication.mouseButtons() & Qt.LeftButton:
+            header = self._tree.header()
+            adjacent = next((i for i in range(1, header.count()) if not header.isSectionHidden(i)), None)
+            if adjacent is not None:
+                width = max(header.minimumSectionSize(), header.sectionSize(adjacent) + _old - _new)
+                self._fitting = True
+                try:
+                    header.resizeSection(adjacent, width)
+                finally:
+                    self._fitting = False
+                self.user_width_adjusted.emit(adjacent, header.sectionSize(adjacent))
+        self._timer.start()
 
     def fit(self) -> None:
         header = self._tree.header()
@@ -90,6 +105,7 @@ class TreeColumnLayout(QObject):
         self._widths = self._load()
         header = tree.header()
         header.sectionResized.connect(self._on_section_resized)
+        fitter.user_width_adjusted.connect(self.remember)
         # Le nombre de colonnes suit celui des lecteurs : Duration change
         # d'index, et l'etat masque d'une section resterait sur l'ancien.
         header.sectionCountChanged.connect(lambda *_: self._apply_visibility())
