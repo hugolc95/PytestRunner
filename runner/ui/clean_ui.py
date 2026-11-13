@@ -16,16 +16,13 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
 from runner.domain.models import Status
+from runner.domain import parsing
 from runner.ui import icons
 from runner.ui import tokens as t
 
 
-_START_PREFIX = "PYTESTRUNNER_START\t"
-
-
 def install() -> None:
     """Install the visual refinements before the main window is created."""
-    from runner.domain import execution, reader_isolation
     from runner.ui.main_window import MainWindow
     from runner.ui.tree_model import TestTreeModel
     from runner.ui.widgets import CompassRing
@@ -97,35 +94,6 @@ def install() -> None:
     # ------------------------------------------------------------------
     # Live branch indicator
     # ------------------------------------------------------------------
-    if _START_PREFIX not in reader_isolation._SOURCE:
-        reader_isolation._SOURCE += '''\
-\n
-_START_PREFIX = "PYTESTRUNNER_START"
-
-
-@pytest.hookimpl(tryfirst=True)
-def pytest_runtest_logstart(nodeid, location):
-    """Tell Pytest Runner which test has just started."""
-    if "PYTEST_XDIST_WORKER" not in os.environ:
-        sys.__stdout__.write("\\n%s\\t%s\\n" % (_START_PREFIX, nodeid))
-        sys.__stdout__.flush()
-'''
-
-    # The start marker travels through the live output channel, then is
-    # stripped from the finished report so it never pollutes logs/history.
-    original_reader_run = execution.ReaderRun.run
-
-    def reader_run_without_start_marker(self, on_line, on_outcome, *args, **kwargs):
-        rapport = original_reader_run(self, on_line, on_outcome, *args, **kwargs)
-        if _START_PREFIX in rapport.output:
-            rapport.output = "".join(
-                ligne for ligne in rapport.output.splitlines(keepends=True)
-                if not ligne.strip().startswith(_START_PREFIX)
-            )
-        return rapport
-
-    execution.ReaderRun.run = reader_run_without_start_marker
-
     original_name_data = TestTreeModel._data_colonne_nom
 
     def _branch_for_nodeid(self, nodeid: str) -> tuple:
@@ -264,11 +232,9 @@ def pytest_runtest_logstart(nodeid, location):
         self.service.pause_changed.connect(self._on_pause_changed)
 
         def live_line(reader_index: int, texte: str) -> None:
-            brut = texte.strip()
-            if brut.startswith(_START_PREFIX):
-                nodeid = brut[len(_START_PREFIX):].strip()
-                if nodeid:
-                    pending_running[reader_index] = nodeid
+            activity = parsing.parse_activity_line(texte)
+            if activity is not None:
+                pending_running[reader_index] = activity[0]
             else:
                 pending_output.setdefault(reader_index, []).append(texte)
             if not timer.isActive():

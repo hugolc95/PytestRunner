@@ -222,6 +222,7 @@ class MainWindow(QMainWindow):
         self.service.profile_duration.connect(self._on_profile_test_duration)
         self.service.profile_detail.connect(self._show_profile_detail)
         self.service.profile_execution.connect(self._on_profile_execution)
+        self.service.profile_preparing.connect(self._on_profile_preparing)
         self.service.profile_batch_report.connect(self._on_profile_batch_report)
         self.service.profile_output.connect(self._on_profile_output)
         self._build_menus()
@@ -1453,8 +1454,13 @@ class MainWindow(QMainWindow):
             self.profile_selection_label.setText('No compatible profile. Create or edit one in Execution Profiles.')
         self._set_profile_tree_visible(True)
 
+    def _on_profile_preparing(self, position, attempt, reader) -> None:
+        position = self.profile_run_tree.position(position)
+        self.profile_model.set_preparing(position, reader)
+
     def _on_profile_execution(self, position, attempt, reader, nodeid, status) -> None:
         position = self.profile_run_tree.position(position)
+        self.profile_model.clear_preparing(reader)
         self.profile_run_tree.start_occurrence(position, reader)
         states = getattr(self, '_profile_count_statuses', None)
         if states is not None:
@@ -1479,6 +1485,7 @@ class MainWindow(QMainWindow):
             self._profile_selection_timer.start()
 
     def _on_profile_batch_report(self, position, count, attempt, report) -> None:
+        self.profile_model.clear_preparing(report.reader.index)
         positions = self.profile_run_tree.positions(position, count)
         for current in positions:
             key = self.profile_model.key(current, attempt)

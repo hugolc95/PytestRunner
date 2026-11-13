@@ -234,6 +234,15 @@ def _record_outcome(nodeid, status):
         _OUTCOMES[nodeid] = status
 
 
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_logstart(nodeid, location):
+    # Le controleur xdist recoit aussi ce hook : les workers ne doivent pas
+    # ecrire leurs marqueurs dans les sorties capturees des tests.
+    if "PYTEST_XDIST_WORKER" not in os.environ:
+        sys.__stdout__.write("\\nPYTESTRUNNER_START\\t%s\\n" % nodeid)
+        sys.__stdout__.flush()
+
+
 @pytest.hookimpl(trylast=True)
 def pytest_runtest_logreport(report):
     """Retient le verdict final sans dependre du rendu du terminal pytest."""

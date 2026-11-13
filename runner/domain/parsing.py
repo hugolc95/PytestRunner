@@ -9,6 +9,19 @@ from runner.domain.models import Status
 
 OUTCOME_PREFIX = "PYTESTRUNNER_OUTCOME\t"
 DURATION_PREFIX = "PYTESTRUNNER_DURATION\t"
+START_PREFIX = "PYTESTRUNNER_START\t"
+PREPARE_PREFIX = "PYTESTRUNNER_PREPARE\t"
+
+
+def parse_activity_line(ligne: str) -> tuple[str, bool] | None:
+    """Nodeid et phase de preparation, sans dependre du rendu du terminal."""
+    nue = strip_ansi(ligne).strip()
+    for prefix, preparing in ((START_PREFIX, False), (PREPARE_PREFIX, True)):
+        if nue.startswith(prefix):
+            nodeid = nue[len(prefix):].strip()
+            return (nodeid, preparing) if nodeid else None
+    return None
+
 
 _STATUTS = "PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS"
 

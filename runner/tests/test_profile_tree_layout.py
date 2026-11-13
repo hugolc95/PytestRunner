@@ -85,9 +85,10 @@ def window(qtbot, tmp_path, monkeypatch):
 
 
 @pytest.mark.parametrize('description', ['', 'Protocol and signing checks'])
+@pytest.mark.parametrize('running', [False, True])
 @pytest.mark.parametrize('font_size', [13, 20])
 @pytest.mark.parametrize('theme', ['dark', 'light'])
-def test_group_title_does_not_overlap_checkbox_or_folder(window, description, font_size, theme):
+def test_group_title_does_not_overlap_checkbox_or_folder(window, description, font_size, theme, running):
     w = window
     w.apply_theme(theme)
     p = profile()
@@ -100,6 +101,8 @@ def test_group_title_does_not_overlap_checkbox_or_folder(window, description, fo
     view.setStyleSheet(f'QTreeView {{font-size:{font_size}px;}}')
     view.doItemsLayout()
     index = w.profile_model.index(0, 0)
+    if running:
+        w.profile_model.apply_execution(0, 0, READERS[0].index, NODES[0], Status.RUNNING)
     option = QStyleOptionViewItem()
     option.initFrom(view)
     option.widget = view
@@ -135,7 +138,7 @@ def test_group_title_does_not_overlap_checkbox_or_folder(window, description, fo
     finally:
         painter.end()
     assert len(calls) == (2 if description else 1)
-    assert colors[0] == QColor(t.TEXT)
+    assert colors[0] == QColor(t.ACCENT if running else t.TEXT)
     for rect in calls:
         assert rect.left() > max(check.right(), folder.right())
         assert option.rect.contains(rect)

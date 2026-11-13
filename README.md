@@ -1,5 +1,23 @@
 # Pytest Runner GUI
 
+## Suivi bleu des tests en cours — v1.5.5
+
+Dans **Run Tests**, le test actif et ses groupes restent signalés en bleu,
+dans **All tests** comme dans **Profiles**, en thèmes clair et sombre.
+Le suivi retrouve le bon test lorsque le projet utilise une racine pytest
+différente, notamment avec un **pytest.ini** ou **pyproject.toml** imbriqué,
+et distingue les tests homonymes de plusieurs suites.
+
+La branche est aussi signalée pendant le démarrage du processus et sa
+collecte ; le statut indique alors **Preparing**. Cette préparation conserve
+les résultats précédents des profils jusqu'au démarrage effectif du test.
+Le bleu reste présent pendant le setup, le test et son nettoyage final,
+même si pytest affiche déjà **PASSED** avant la fin du teardown.
+
+Le suivi fonctionne avec plusieurs lecteurs et avec pytest-xdist. Les
+titres des groupes respectent leur état actif, tout en conservant la couleur
+de leur description et leur repère de groupe.
+
 ## Profils : conserver son contexte de travail — v1.5.4
 
 Dans **Run Tests → Profiles**, décocher des occurrences puis cliquer sur

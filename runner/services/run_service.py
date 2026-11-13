@@ -15,7 +15,7 @@ import yaml
 
 from PySide6.QtCore import QObject, QThread, Signal, QTimer
 
-from runner.domain import execution
+from runner.domain import execution, parsing
 from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest, Status
 from runner.domain.execution_profile import merge_configuration, validate_step_overrides, ProfileValidationError
 from runner.domain.reader_isolation import ENV_CONFIG_SOURCE
@@ -127,6 +127,7 @@ class RunService(QObject):
     profile_duration = Signal(int, int, int, str, float)
     profile_detail = Signal(int, str)
     profile_execution = Signal(int, int, int, str, object)  # position, retry, reader, nodeid, status
+    profile_preparing = Signal(int, int, int)  # position, retry, lecteur
     profile_batch_report = Signal(int, int, int, object)  # first position, count, retry, report
     profile_output = Signal(int, int, int, int, str)
     reader_finished = Signal(object)  # ReaderReport
@@ -389,11 +390,16 @@ class RunService(QObject):
             f"\n{detail['nodeid']} · {detail['phase'].upper() or 'SKIPPED'}\n{detail['body']}\n")
 
     def _on_live_line(self, reader_index: int, text: str) -> None:
-        prefix = "PYTESTRUNNER_START\t"
-        if self._profile_active and text.strip().startswith(prefix):
-            nodeid = text.strip()[len(prefix):]
-            self._emit_profile_detail(reader_index, nodeid)
-            self._emit_profile_execution(reader_index, nodeid, Status.RUNNING)
+        activity = parsing.parse_activity_line(text)
+        if self._profile_active and activity is not None:
+            nodeid, preparing = activity
+            self._emit_profile_detail(reader_index, nodeid, preparing=preparing)
+            if preparing:
+                position = self._profile_position(nodeid)
+                if position is not None:
+                    self.profile_preparing.emit(position, self._profile_attempt, reader_index)
+            else:
+                self._emit_profile_execution(reader_index, nodeid, Status.RUNNING)
         elif self._profile_active:
             self.profile_output.emit(self._profile_expanded_length - len(self._profile_queue),
                                      len(self._current_batch), self._profile_attempt, reader_index, text)

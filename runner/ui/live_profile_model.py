@@ -12,7 +12,7 @@ from runner.domain.tree import build_sequence_tree, collapse_single_class
 from runner.domain.execution_profile import profile_group_runs, group_path
 from runner.ui import icons
 from runner.ui import tokens as t
-from runner.ui.profile_group_delegate import GROUP_ROLE, EXCEPTION_ROLE, YAML_ROLE, GROUP_COLOR_ROLE, CONFIG_ISSUES_ROLE
+from runner.ui.profile_group_delegate import GROUP_ROLE, EXCEPTION_ROLE, YAML_ROLE, GROUP_COLOR_ROLE, CONFIG_ISSUES_ROLE, ACTIVE_ROLE
 from runner.domain.profile_configuration import configuration_annotation, aggregate_annotations
 from runner.ui.tree_model import TestTreeModel, _Row, NODEID_ROLE
 
@@ -54,6 +54,8 @@ class LiveProfileModel(TestTreeModel):
         self._stopped = False
         self._interrupted = set()
         self.previous_results = set()
+        self._preparing_by_reader = {}
+        self._preparing_rows = Counter()
 
     @staticmethod
     def key(position, attempt=0):
@@ -80,6 +82,8 @@ class LiveProfileModel(TestTreeModel):
         self.layoutChanged.emit()
 
     def prepare(self, profile, readers):
+        self._preparing_by_reader.clear()
+        self._preparing_rows.clear()
         self.locations = {}
         self._keys_by_position = {}
         self._named_groups = {}
@@ -224,7 +228,7 @@ class LiveProfileModel(TestTreeModel):
         row.statuses[reader] = status
         if (previous is Status.RUNNING) != (status is Status.RUNNING):
             name = self.createIndex(row.row, 0, row)
-            self.dataChanged.emit(name, name, [Qt.DecorationRole, Qt.ForegroundRole])
+            self.dataChanged.emit(name, name, [Qt.DecorationRole, Qt.ForegroundRole, ACTIVE_ROLE])
         columns = [r.index for r in self.readers] or [0]
         if reader not in columns:
             return
@@ -242,7 +246,7 @@ class LiveProfileModel(TestTreeModel):
             is_running = any(self._group_counts.get((parent, index), {}).get(Status.RUNNING, 0) for index in columns)
             if was_running != is_running:
                 name = self.createIndex(parent.row, 0, parent)
-                self.dataChanged.emit(name, name, [Qt.DecorationRole, Qt.ForegroundRole])
+                self.dataChanged.emit(name, name, [Qt.DecorationRole, Qt.ForegroundRole, ACTIVE_ROLE])
             value = worst(s for s, count in counts.items() if count > 0)
             if parent.agg.get(reader) != value:
                 parent.agg[reader] = value
@@ -253,7 +257,42 @@ class LiveProfileModel(TestTreeModel):
     def occurrence_keys(self, position):
         return tuple(self._keys_by_position.get(position, ()))
 
+    def set_preparing(self, position, reader):
+        """Montrer le demarrage sans effacer le resultat du run precedent."""
+        self.clear_preparing(reader)
+        row = self._by_nodeid.get(self.key(position))
+        rows = []
+        while row is not None:
+            rows.append(row)
+            self._preparing_rows[row] += 1
+            row = row.parent
+        self._preparing_by_reader[reader] = rows
+        self._repaint_activity(rows)
+
+    def clear_preparing(self, reader):
+        rows = self._preparing_by_reader.pop(reader, ())
+        for row in rows:
+            self._preparing_rows[row] -= 1
+            if not self._preparing_rows[row]:
+                del self._preparing_rows[row]
+        self._repaint_activity(rows)
+
+    def _repaint_activity(self, rows):
+        for row in rows:
+            index = self.createIndex(row.row, 0, row)
+            self.dataChanged.emit(index, index, [Qt.DecorationRole, Qt.ForegroundRole, ACTIVE_ROLE])
+
+    def _is_active(self, row):
+        if row in self._preparing_rows:
+            return True
+        if not row.children:
+            return Status.RUNNING in row.statuses.values()
+        readers = (reader.index for reader in self.readers) if self.readers else (0,)
+        return any(self._group_counts.get((row, reader), {}).get(Status.RUNNING, 0) for reader in readers)
+
     def clear_statuses(self):
+        for reader in tuple(self._preparing_by_reader):
+            self.clear_preparing(reader)
         self._group_counts.clear()
         self._interrupted.clear()
         self.previous_results.clear()
@@ -328,6 +367,8 @@ class LiveProfileModel(TestTreeModel):
         return row.check_cache
 
     def finish(self):
+        for reader in tuple(self._preparing_by_reader):
+            self.clear_preparing(reader)
         self._stopped = True
         for key, row in self._by_nodeid.items():
             for reader, status in list(row.statuses.items()):
@@ -344,11 +385,10 @@ class LiveProfileModel(TestTreeModel):
             return self._check_state(row)
         if index.column() == self.duration_column:
             return self._data_colonne_duree(row, role)
+        if index.column() == 0 and role == ACTIVE_ROLE:
+            return self._is_active(row)
         if index.column() == 0 and role in (Qt.DecorationRole, Qt.ForegroundRole):
-            readers = [r.index for r in self.readers] or [0]
-            running = (any(self._group_counts.get((row, reader), {}).get(Status.RUNNING, 0) for reader in readers)
-                       if row.children else Status.RUNNING in row.statuses.values())
-            if running:
+            if self._is_active(row):
                 return icons.status_icon(Status.RUNNING, group=True) if role == Qt.DecorationRole else QColor(t.ACCENT)
         group = self._named_groups.get(id(row.node))
         annotation = self._annotations.get(id(row.node), {})

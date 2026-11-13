@@ -21,7 +21,7 @@ from pathlib import Path
 
 from runner.domain import diagnostics, markers, parsing
 from runner.domain.markers import Marker, marker_probe, read_probe, summarize
-from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest, Status
+from runner.domain.models import Outcome, Reader, ReaderReport, RunRequest, Status, worst
 from runner.domain.reader_isolation import ENV_CONFIG, ENV_READER, reader_plugin
 
 # Au-dela, la ligne de commande depasse la limite de Windows (32 768
@@ -439,6 +439,11 @@ class ReaderRun:
                 if self._cancelled:
                     break
 
+                # Une racine pytest locale peut raccourcir deux nodeids
+                # homonymes de suites differentes. Le processus courant sait
+                # quelle suite il execute : resoudre dans ce contexte precis.
+                suite_resolver = parsing.NodeidResolver(suite_nodeids)
+
                 with _fichier_arguments(suite_nodeids) as nodeid_args, diagnostics.diagnostic_probe() as (diagnostic_args, diagnostic_dir, diagnostic_file):
                     command = [
                         self.request.interpreter, "-u", "-m", "pytest",
@@ -483,14 +488,23 @@ class ReaderRun:
                         report.issues.append(message)
                         break
 
+                    on_line(parsing.PREPARE_PREFIX + suite_nodeids[0] + "\n")
                     skip_blank_after_protocol = False
                     streamed_details = set()
+                    fallback_verdicts = {}
                     for line in iter(self._process.stdout.readline, ""):
                         if self._cancelled:
                             break
+                        activity = parsing.parse_activity_line(line)
+                        if activity is not None:
+                            nodeid, preparing = activity
+                            prefix = parsing.PREPARE_PREFIX if preparing else parsing.START_PREFIX
+                            on_line(prefix + suite_resolver.resolve(nodeid) + "\n")
+                            skip_blank_after_protocol = True
+                            continue
                         detail = diagnostics.parse_live_detail(line)
                         if detail is not None:
-                            detail['nodeid'] = resolver.resolve(detail['nodeid'])
+                            detail['nodeid'] = suite_resolver.resolve(detail['nodeid'])
                             if detail['kind'] == 'test':
                                 streamed_details.add(json.dumps(detail, sort_keys=True))
                                 line = diagnostics.PREFIX + json.dumps(detail) + '\n'
@@ -502,12 +516,20 @@ class ReaderRun:
                             skip_blank_after_protocol = True
                             continue
                         result = parsing.parse_status_line(line)
+                        if result is not None and not parsing.strip_ansi(line).strip().startswith(parsing.OUTCOME_PREFIX):
+                            # Le terminal peut annoncer PASSED avant un long
+                            # teardown. Le verdict machine attend la fin des
+                            # trois phases ; garder le texte comme secours
+                            # seulement si un plugin empeche ce verdict final.
+                            nodeid, status = result
+                            nodeid = suite_resolver.resolve(nodeid)
+                            fallback_verdicts[nodeid] = worst((fallback_verdicts.get(nodeid, Status.PENDING), status))
+                            result = None
                         measured = parsing.parse_duration_line(line)
                         if measured is not None:
-                            # Canal a part : la ligne verbeuse de pytest a
-                            # souvent deja livre le verdict, et le renvoyer
-                            # doublerait l'execution dans l'historique.
-                            measured_nodeid = resolver.resolve(measured[0])
+                            # La duree precede le verdict final et ne doit
+                            # jamais compter comme une execution de plus.
+                            measured_nodeid = suite_resolver.resolve(measured[0])
                             live_durations[measured_nodeid] = measured[1]
                             if on_duration is not None:
                                 on_duration(measured_nodeid, measured[1])
@@ -523,7 +545,7 @@ class ReaderRun:
 
                         if result is not None:
                             nodeid, status = result
-                            nodeid = resolver.resolve(nodeid)
+                            nodeid = suite_resolver.resolve(nodeid)
                             previous = verdicts.get(nodeid)
                             if previous is status:
                                 continue
@@ -544,6 +566,12 @@ class ReaderRun:
                             pass
                     self._process.wait()
 
+                    for nodeid, status in fallback_verdicts.items():
+                        if not self._cancelled and nodeid not in verdicts:
+                            verdicts[nodeid] = status
+                            report.counts[status] = report.counts.get(status, 0) + 1
+                            on_outcome(Outcome(nodeid, status, self.reader.index))
+
                     if partial_junit and Path(partial_junit).is_file():
                         partial_junits.append(partial_junit)
 
@@ -551,7 +579,7 @@ class ReaderRun:
                     details = diagnostics.read_diagnostics(diagnostic_file)
                     for detail in details:
                         if detail["kind"] == "test":
-                            detail["nodeid"] = resolver.resolve(detail["nodeid"])
+                            detail["nodeid"] = suite_resolver.resolve(detail["nodeid"])
                             if json.dumps(detail, sort_keys=True) not in streamed_details:
                                 output.append(diagnostics.PREFIX + json.dumps(detail) + "\n")
                     if not self._cancelled:

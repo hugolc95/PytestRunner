@@ -16,6 +16,7 @@ TRANSFER_ROLE = Qt.UserRole + 28
 YAML_ROLE = Qt.UserRole + 29
 GROUP_COLOR_ROLE = Qt.UserRole + 30
 CONFIG_ISSUES_ROLE = Qt.UserRole + 31
+ACTIVE_ROLE = Qt.UserRole + 32
 
 
 class ProfileGroupDelegate(DivergenceDelegate):
@@ -125,7 +126,7 @@ class ProfileGroupDelegate(DivergenceDelegate):
         fm = painter.fontMetrics()
         # Le fond selectionne vient de notre QSS, pas de la palette native :
         # garder sa couleur de texte evite du blanc sur bleu pale en theme clair.
-        painter.setPen(QColor(t.TEXT))
+        painter.setPen(QColor(t.ACCENT if index.data(ACTIVE_ROLE) else t.TEXT))
         # Qt reserve la place exacte de la case ET de l'icone, y compris
         # avec le style Windows et une police agrandie.
         style = option.widget.style() if option.widget else QApplication.style()
