@@ -52,6 +52,10 @@ class ProfileRunTree(QObject):
         checked, total = (w.profile_model if active else w.model).counts()
         noun = 'occurrences' if active else 'tests'
         w.selection_label.setText(f'{checked} of {total} {noun} selected')
+        if active and w.profile_model.campaign_missing:
+            unavailable = sum(key in w.profile_model.campaign_missing and location[1] == 0
+                              for key, location in w.profile_model.locations.items())
+            w.selection_label.setText(f'{checked} of {total} occurrences selected · {unavailable} unavailable (not run)')
         w._update_actions()
 
     def failure(self, key, reader, indexes=None):
@@ -183,6 +187,7 @@ class ProfileRunTree(QObject):
         if profile is None or w.service.busy or not w.workspace:
             return
         positions = list(dict.fromkeys(w.profile_model.locations[key][0] for key in keys if key in w.profile_model.locations
+                                      and key not in w.profile_model.campaign_missing
                                       and w.profile_model._by_nodeid[key] not in w.profile_model._blocked_rows))
         if not positions:
             return
@@ -211,7 +216,7 @@ class ProfileRunTree(QObject):
             return menu
         key = index.internalPointer().node.nodeid
         single = key in model.locations
-        blocked = index.internalPointer() in model._blocked_rows
+        blocked = index.internalPointer() in model._blocked_rows or not any(k not in model.campaign_missing for k in keys)
         active = w.service.busy or w._stress_worker is not None
         action = menu.addAction(icons.icon('mdi.play'), 'Run only this test' if single else 'Run only this',
                                lambda: self.launch(keys))

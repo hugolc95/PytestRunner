@@ -176,6 +176,8 @@ class SyncPlan:
     missing: list[int] = field(default_factory=list)
     candidates: dict[int, list[str]] = field(default_factory=dict)
     problem: str = ''
+    path_changes: dict[int, str] = field(default_factory=dict)
+    source_paths: dict[str, str] = field(default_factory=dict)
 
     @property
     def changed(self):
@@ -183,9 +185,84 @@ class SyncPlan:
 
     @property
     def summary(self):
-        changed = sum(bool(self.candidates.get(position)) for position in self.missing)
-        return (f'{len(self.additions)} new test(s)/case(s) · {changed} changed parameter case(s) · '
-                f'{len(self.missing) - changed} unavailable occurrence(s)')
+        changed = sum(bool(self.candidates.get(p)) for p in self.missing if p not in self.path_changes)
+        unavailable = len(self.missing) - changed - len(self.path_changes)
+        parts = []
+        for count, label in ((len(self.additions), 'new tests/cases'), (len(self.path_changes), 'updated locations'),
+                             (changed, 'changed cases'), (unavailable, 'not found')):
+            if count:
+                parts.append(f'{count} {label}')
+        return ' · '.join(parts) or 'Up to date'
+
+
+def location_matches(sequence, available):
+    """Meme chemin relatif et meme symbole Python ; aucun rapprochement par nom seul."""
+    by_symbol = {}
+    for nodeid in available:
+        path, _, symbol = nodeid.partition('::')
+        by_symbol.setdefault(symbol, []).append((tuple(path.replace('\\', '/').split('/')), nodeid))
+    result = {}
+    present = set(available)
+    for position, nodeid in enumerate(sequence):
+        if nodeid in present:
+            continue
+        path, _, symbol = nodeid.partition('::')
+        parts = tuple(path.replace('\\', '/').split('/'))
+        candidates = [n for other, n in by_symbol.get(symbol, [])
+                      if parts[-min(len(parts), len(other)):] == other[-min(len(parts), len(other)):]]
+        if len(candidates) == 1:
+            result[position] = candidates[0]
+    # Deux fichiers differents ne doivent pas fusionner vers la meme cible.
+    targets = {}
+    for position, candidate in result.items():
+        targets.setdefault(candidate, set()).add(sequence[position])
+    return {p: n for p, n in result.items() if len(targets[n]) == 1}
+
+
+def _source_at_location(source, old, new):
+    old_path, new_path = old.split('::')[0], new.split('::')[0]
+    if source['kind'] == 'file':
+        return new_path if source['selector'] == old_path else None
+    if source['kind'] == 'test':
+        return parameter_base(new) if source['selector'] == parameter_base(old) else None
+    folder = source['selector'].rstrip('/')
+    relative = old_path if folder == '.' else old_path[len(folder) + 1:] if old_path.startswith(folder + '/') else None
+    if relative and (new_path == relative or new_path.endswith('/' + relative)):
+        return new_path[:-len(relative)].rstrip('/') or '.'
+    return None
+
+
+def _relocated_exclusions(source, selector):
+    previous = source['selector']
+    remapped = []
+    for excluded in source['excluded']:
+        if source['kind'] == 'folder':
+            path, _, symbol = excluded.partition('::')
+            relative = path if previous == '.' else path[len(previous) + 1:] if path.startswith(previous + '/') else None
+            remapped.append((('' if selector == '.' else selector + '/') + relative + '::' + symbol) if relative else excluded)
+        else:
+            remapped.append(excluded.replace(previous, selector, 1) if excluded.startswith(previous) else excluded)
+    return remapped
+
+
+def recommended_decisions(profile, plan, *, remove_unmatched=False, refresh_cases=True):
+    """Resoudre les references certaines ; garder les cas ambigus et leur YAML."""
+    result = {}
+    members = profile.tracking.get('members', {})
+    for position in plan.missing:
+        if position in plan.path_changes:
+            result[position] = plan.path_changes[position]
+            continue
+        patch = profile.step_overrides[position] if profile.step_overrides else {}
+        source = members.get(profile.step_ids[position], {}).get('source') if profile.step_ids else None
+        cases = plan.candidates.get(position, [])
+        # Un bloc suivi possede deja ses nouveaux cas dans les ajouts. Les
+        # anciens cas sans exception YAML peuvent etre remplaces en bloc.
+        if cases and source and not patch and refresh_cases:
+            result[position] = 'remove'
+        else:
+            result[position] = 'remove' if remove_unmatched else 'keep'
+    return result
 
 
 def compare(profile, available, workspace='', *, complete=True):
@@ -194,10 +271,11 @@ def compare(profile, available, workspace='', *, complete=True):
         plan.problem = 'Collection incomplete — campaign unchanged. Collect successfully before reviewing changes.'
         return plan
     if profile.tracking and profile.tracking['workspace'] != workspace_key(workspace):
-        plan.problem = 'Different source environment — campaign unchanged. Open the original workspace or explicitly rebind its sources.'
+        plan.problem = 'Different project selected. Open the original project in Run Tests, or choose Contents to link this campaign to the current project.'
         return plan
     available = list(dict.fromkeys(available))
     plan.available = tuple(available)
+    plan.path_changes = location_matches(profile.sequence, available)
     present = set(available)
     by_base = {}
     for nodeid in available:
@@ -208,9 +286,22 @@ def compare(profile, available, workspace='', *, complete=True):
             plan.candidates[position] = by_base.get(parameter_base(nodeid), [])
     if profile.tracking:
         existing_by_source = {}
-        for member in profile.tracking['members'].values():
-            existing_by_source.setdefault(member['source'], set()).add(member['nodeid'])
+        positions = {identifier: p for p, identifier in enumerate(profile.step_ids)}
+        locations = {}
+        for identifier, member in profile.tracking['members'].items():
+            updated = plan.path_changes.get(positions[identifier], member['nodeid'])
+            existing_by_source.setdefault(member['source'], set()).add(updated)
+            if updated in present:
+                locations.setdefault(member['source'], []).append((member['nodeid'], updated))
         for source in profile.tracking['sources']:
+            source = copy.deepcopy(source)
+            targets = {_source_at_location(source, old, new) for old, new in locations.get(source['id'], [])}
+            if len(targets) == 1 and None not in targets:
+                target = next(iter(targets))
+                if target != source['selector']:
+                    plan.source_paths[source['id']] = target
+                    source['excluded'] = _relocated_exclusions(source, target)
+                    source['selector'] = target
             existing = existing_by_source.get(source['id'], set())
             excluded = set(source['excluded'])
             plan.additions.extend((source['id'], nodeid) for nodeid in available
@@ -229,6 +320,12 @@ def apply(profile, plan, additions, decisions, *, transfer=()):
     groups = result.step_groups or [{} for _ in result.sequence]
     members = result.tracking.get('members', {})
     sources = {s['id']: s for s in result.tracking.get('sources', [])}
+    for source_id, selector in plan.source_paths.items():
+        source = sources[source_id]
+        owned = [p for p, i in enumerate(result.step_ids) if members.get(i, {}).get('source') == source_id and p in plan.path_changes]
+        if all(decisions.get(p) == plan.path_changes[p] for p in owned):
+            source['excluded'] = _relocated_exclusions(source, selector)
+            source['selector'] = selector
     chosen = set(additions)
     if not chosen <= set(plan.additions):
         raise ProfileValidationError('The collection changed. Review this campaign again.')
@@ -283,7 +380,7 @@ def apply(profile, plan, additions, decisions, *, transfer=()):
                 keep = False
             elif decision != 'keep':
                 nodeid = decision
-                patch = patch if position in transfer else {}
+                patch = patch if position in transfer or plan.path_changes.get(position) == decision else {}
                 member = members.get(identifier)
                 if member:
                     member['nodeid'] = nodeid

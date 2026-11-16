@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 
 from PySide6.QtCore import QObject, QModelIndex, QTimer
 
-from runner.domain.campaign_sync import compare
+from runner.domain.campaign_sync import compare, location_matches
 from runner.domain.execution_profile import effective_step_overrides, group_path
 
 
@@ -32,8 +32,7 @@ class RunCampaignSync(QObject):
             missing = {key for key, (position, _, _) in w.profile_model.locations.items()
                        if position % len(profile.sequence) in unavailable}
             if w.profile_model.campaign_missing != missing:
-                w.profile_model.campaign_missing = missing
-                w.profile_model.layoutChanged.emit()
+                w.profile_model.set_campaign_missing(missing)
         w.campaign_notice.show_plan(plan, can_undo=profile.profile_id in w.profiles_page.campaign_sync.undo_updates)
 
     def review(self, profile=None):
@@ -115,12 +114,13 @@ class RunCampaignSync(QObject):
             old_ids = [pools[n].popleft() if pools[n] else '' for n in active.sequence]
         new_positions = {identifier: i for i, identifier in enumerate(profile.step_ids)}
         checked_ids = set()
-        checked_keys = set(model.checked_nodeids())
+        checked_keys = {key for key, row in model._by_nodeid.items() if row.checked and row not in model._blocked_rows}
         previous_page = w.pages.currentWidget()
         all_old_ids = set()
         mapping = {}
         old_patches = effective_step_overrides(active) or [{} for _ in active.sequence]
         new_patches = effective_step_overrides(profile) or [{} for _ in profile.sequence]
+        moved = location_matches(active.sequence, profile.sequence)
         for old_pos, identifier in enumerate(old_ids):
             all_old_ids.add(identifier)
             target = new_positions.get(identifier)
@@ -129,7 +129,7 @@ class RunCampaignSync(QObject):
                 if model.key(position) in checked_keys:
                     checked_ids.add((repeat, identifier))
                 if target is not None and repeat < profile.execution.repetitions:
-                    unchanged = (active.sequence[old_pos] == profile.sequence[target]
+                    unchanged = ((active.sequence[old_pos] == profile.sequence[target] or moved.get(old_pos) == profile.sequence[target])
                                  and old_patches[old_pos] == new_patches[target]
                                  and active.configuration_text == profile.configuration_text)
                     for key in model.occurrence_keys(position):

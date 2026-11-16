@@ -57,6 +57,7 @@ class LiveProfileModel(TestTreeModel):
         self._preparing_by_reader = {}
         self._preparing_rows = Counter()
         self.campaign_missing = set()
+        self._campaign_unavailable_rows = set()
 
     @staticmethod
     def key(position, attempt=0):
@@ -83,6 +84,8 @@ class LiveProfileModel(TestTreeModel):
         self.layoutChanged.emit()
 
     def prepare(self, profile, readers):
+        self.campaign_missing = set()
+        self._campaign_unavailable_rows = set()
         self._preparing_by_reader.clear()
         self._preparing_rows.clear()
         self.locations = {}
@@ -341,12 +344,29 @@ class LiveProfileModel(TestTreeModel):
 
     def flags(self, index):
         flags = super().flags(index)
+        if index.isValid() and index.internalPointer() in self._campaign_unavailable_rows:
+            flags &= ~Qt.ItemIsUserCheckable
         if index.isValid() and self.locations.get(index.internalPointer().node.nodeid, (0, 0, ''))[1]:
             flags &= ~Qt.ItemIsUserCheckable
         return flags
 
     def checked_nodeids(self):
-        return [key for key in super().checked_nodeids() if self.locations.get(key, (0, 0, ''))[1] == 0]
+        return [key for key in super().checked_nodeids() if key not in self.campaign_missing
+                and self.locations.get(key, (0, 0, ''))[1] == 0]
+
+    def set_campaign_missing(self, keys):
+        self.campaign_missing = set(keys)
+        self._campaign_unavailable_rows = set()
+        def visit(row):
+            unavailable = row.node.nodeid in self.campaign_missing if row.is_leaf else all([visit(child) for child in row.children])
+            row.check_cache = None
+            if unavailable:
+                self._campaign_unavailable_rows.add(row)
+            return unavailable
+        for root in self._roots:
+            visit(root)
+        self._emit_layout_changed()
+        self._emit_selection()
 
     def counts(self):
         total = sum(self.locations.get(key, (0, 0, ''))[1] == 0 for key in self._by_nodeid)
@@ -356,14 +376,15 @@ class LiveProfileModel(TestTreeModel):
         super().set_checked_nodeids([self.key(self.locations[key][0]) if key in self.locations else key for key in keys])
 
     def _check_state(self, row):
-        if row in self._blocked_rows:
+        if row in self._blocked_rows or row in self._campaign_unavailable_rows:
             return Qt.Unchecked
         if row.is_leaf:
             if self.locations.get(row.node.nodeid, (0, 0, ''))[1]:
                 return None
             return Qt.Checked if row.checked else Qt.Unchecked
         if row.check_cache is None:
-            states = {self._check_state(child) for child in row.children if child not in self._blocked_rows} - {None}
+            states = {self._check_state(child) for child in row.children
+                      if child not in self._blocked_rows and child not in self._campaign_unavailable_rows} - {None}
             row.check_cache = next(iter(states)) if len(states) == 1 else Qt.PartiallyChecked if states else Qt.Unchecked
         return row.check_cache
 

@@ -9,7 +9,7 @@ from runner.domain.workspace import Workspace
 from runner.domain.tree import build_tree
 from runner.domain.models import Reader, Status
 from runner.ui.execution_profiles_page import ExecutionProfilesPage, AddTestsDialog
-from runner.ui.campaign_sync import CampaignReviewDialog, CampaignSourcesDialog
+from runner.ui.campaign_sync import CampaignReviewDialog, CampaignSourcesDialog, AdvancedCampaignReviewDialog
 from runner.ui.main_window import MainWindow
 
 pytestmark = pytest.mark.usefixtures('isolated_run_state')
@@ -40,11 +40,11 @@ def test_editor_notice_and_library_status_are_visible(qtbot, tmp_path):
     assert widget._profile_from_editor().step_ids == value.step_ids
 
 
-def test_review_requires_decisions_and_applies_exact_yaml_choice(qtbot, tmp_path):
+def test_advanced_review_can_transfer_a_specific_yaml_choice(qtbot, tmp_path):
     value = tracked(tmp_path)
     replacement = 'tests/test_a.py::test_a[T0-fast]'
     plan = sync.compare(value, [replacement, value.sequence[1]], str(tmp_path))
-    dialog = CampaignReviewDialog(value, plan)
+    dialog = AdvancedCampaignReviewDialog(value, plan)
     qtbot.addWidget(dialog)
     dialog._apply()
     assert dialog.result_profile is None
@@ -85,11 +85,16 @@ def test_sources_legacy_migration_keeps_current_exclusions(qtbot, tmp_path):
     available = value.sequence + ['tests/test_b.py::test_b']
     dialog = CampaignSourcesDialog(value, [0], available, str(tmp_path))
     qtbot.addWidget(dialog)
-    dialog._follow()
+    dialog.following.setChecked(True)
+    dialog.include_existing.setChecked(False)
+    dialog._save()
     assert dialog.profile.tracking['sources'][0]['excluded'] == ['tests/test_b.py::test_b']
-    dialog._stop()
-    assert not dialog.profile.tracking
-    assert dialog.profile.sequence == value.sequence
+    fixed = CampaignSourcesDialog(dialog.profile, [0], available, str(tmp_path))
+    qtbot.addWidget(fixed)
+    fixed.fixed.setChecked(True)
+    fixed._save()
+    assert not fixed.profile.tracking
+    assert fixed.profile.sequence == value.sequence
 
 
 def test_update_publish_and_undo_keep_editor_view_and_disk(qtbot, tmp_path):
@@ -156,7 +161,7 @@ def test_missing_profile_can_be_opened_for_review(qtbot, monkeypatch, tmp_path):
     window._campaign_collection_complete = True
     window._open_collected_profile(value)
     assert window._active_execution_profile == value
-    assert 'unavailable' in window.campaign_notice.label.text()
+    assert 'not found' in window.campaign_notice.label.text()
 
 
 def test_duplicate_complete_source_and_clipboard_copy_are_independent(qtbot, tmp_path, qapp):

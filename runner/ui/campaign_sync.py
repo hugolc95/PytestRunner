@@ -7,7 +7,7 @@ from pathlib import PurePosixPath
 from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QVBoxLayout, QLabel, QPushButton,
     QDialog, QDialogButtonBox, QTreeWidget, QTreeWidgetItem, QComboBox, QCheckBox,
-    QInputDialog, QListWidget, QLineEdit, QMessageBox)
+    QInputDialog, QListWidget, QLineEdit, QMessageBox, QRadioButton)
 
 from runner.domain import campaign_sync as sync
 from runner.domain.execution_profile import ProfileValidationError, group_path
@@ -34,7 +34,7 @@ class CampaignNotice(QFrame):
         self.label.setWordWrap(True)
         self.label.setTextFormat(Qt.PlainText)
         layout.addWidget(self.label, 1)
-        self.sources = QPushButton('Sources…')
+        self.sources = QPushButton('Contents…')
         self.sources.clicked.connect(self.tracking)
         layout.addWidget(self.sources)
         self.undo_button = QPushButton('Undo update')
@@ -55,11 +55,16 @@ class CampaignNotice(QFrame):
         self.symbol.setPixmap(icons.icon('mdi.update' if warning else 'mdi.check-circle-outline').pixmap(20, 20))
         self.label.setText(plan.problem or ('Campaign update available · ' + plan.summary if plan.changed else 'Campaign updated and reloaded.'))
         self.button.setVisible(plan.changed and not plan.problem)
+        if plan.missing and not plan.additions and not plan.path_changes and not plan.problem:
+            self.label.setText(f'{len(plan.missing)} campaign tests not found · available tests can still run. Check the project and collection settings.')
+            self.button.setText('Check campaign…')
+        else:
+            self.button.setText('Review changes…')
         self.undo_button.setVisible(can_undo)
         self.setVisible(bool(plan.problem or plan.changed or can_undo))
 
 
-class CampaignReviewDialog(QDialog):
+class AdvancedCampaignReviewDialog(QDialog):
     def __init__(self, profile, plan, parent=None, *, locked=False):
         super().__init__(parent)
         self.profile, self.plan, self.result_profile = profile, plan, None
@@ -194,7 +199,7 @@ class CampaignReviewDialog(QDialog):
         self.accept()
 
 
-class CampaignSourcesDialog(QDialog):
+class AdvancedCampaignSourcesDialog(QDialog):
     def __init__(self, profile, positions, available, workspace, parent=None):
         super().__init__(parent)
         self.profile = copy.deepcopy(profile)
@@ -368,6 +373,9 @@ class CampaignSourcesDialog(QDialog):
         self.selection_summary.setText(f'{extra} collected test(s)/case(s) outside this selection. Keep them excluded, or uncheck the option above to propose them in the update review.')
 
 
+from runner.ui.campaign_update_dialogs import CampaignReviewDialog, CampaignSourcesDialog
+
+
 class EditorCampaignSync(QObject):
     def __init__(self, page):
         super().__init__(page)
@@ -420,11 +428,11 @@ class EditorCampaignSync(QObject):
             item.setData(0, CONFIG_ISSUES_ROLE, issues)
         self.notice.show_plan(plan, can_undo=profile.profile_id in self.undo_updates)
         if self.complete and profile.sequence and not profile.tracking and not plan.changed and not plan.problem:
-            self.notice.label.setText('Fixed selection · New tests are not added automatically. Enable source tracking to receive update proposals.')
-            self.notice.sources.setText('Enable tracking…')
+            self.notice.label.setText('This campaign keeps your selected tests. Choose Contents to include new tests from the same folders.')
+            self.notice.sources.setText('Contents…')
             self.notice.show()
         else:
-            self.notice.sources.setText('Sources…')
+            self.notice.sources.setText('Contents…')
 
     def _locked(self, profile):
         host = self.owner
@@ -457,6 +465,11 @@ class EditorCampaignSync(QObject):
             return
         dialog = CampaignReviewDialog(profile, plan, page, locked=self._locked(profile))
         if dialog.exec() != QDialog.Accepted:
+            return
+        if dialog.request_collection:
+            context = self.owner._selected_run_context() if hasattr(self.owner, '_selected_run_context') else None
+            if context is not None and not context.service.busy:
+                context.load_workspace()
             return
         if self._locked(profile):
             ErrorDialog.show_error(page, 'Campaign is running', 'Finish or stop this campaign before applying an update.')

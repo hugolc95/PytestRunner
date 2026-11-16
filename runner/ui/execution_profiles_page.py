@@ -168,7 +168,7 @@ class AddTestsDialog(QDialog):
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         layout.addWidget(self.tree, 1)
 
-        self.follow_selection = QCheckBox('Follow complete folders, files and parameterized tests')
+        self.follow_selection = QCheckBox('Include future tests when selecting a whole folder, file or parameterized test')
         self.follow_selection.setChecked(True)
         self.follow_selection.setToolTip('New tests in complete selected branches are proposed after collection. Specific leaves remain fixed. Uncheck for an entirely fixed selection.')
         layout.addWidget(self.follow_selection)
@@ -1458,7 +1458,7 @@ class ExecutionProfilesPage(QWidget):
             menu.addAction('Create subgroup…', lambda: self.edit_group(subgroup=True))
         menu.addAction('Duplicate', self.duplicate_steps).setEnabled(bool(selected))
         menu.addAction('Move to…', self.move_to_group).setEnabled(bool(selected))
-        menu.addAction(icons.icon('mdi.sync'), 'Selection tracking / sources…', self.manage_campaign_sources)
+        menu.addAction(icons.icon('mdi.sync'), 'Campaign contents…', self.manage_campaign_sources)
         menu.addAction('Ungroup', self.ungroup_steps).setEnabled(self.ungroup_button.isEnabled())
         menu.addAction(self.remove_action)
         menu.addSeparator()
@@ -1619,10 +1619,10 @@ class ExecutionProfilesPage(QWidget):
         if hasattr(self, 'campaign_sync'):
             self.campaign_sync.refresh()
 
-    @undoable('Change campaign sources')
     def manage_campaign_sources(self):
         from runner.ui.campaign_sync import CampaignSourcesDialog
         try:
+            before = self._editor_state()
             profile = self._profile_from_editor()
             _, ranges = self._selected_ranges()
             positions = [i for _, start, end in ranges for i in range(start, end)]
@@ -1633,6 +1633,8 @@ class ExecutionProfilesPage(QWidget):
             if dialog.exec() == QDialog.Accepted:
                 self._tracking = copy.deepcopy(dialog.profile.tracking)
                 self._mark_dirty()
+                self._record_edit(before, 'Change campaign contents')
+                self.save_current()
                 self.campaign_sync.refresh()
         except (OSError, ValueError, ProfileValidationError) as exc:
             ErrorDialog.show_error(self, 'Could not edit campaign sources', str(exc))
