@@ -56,6 +56,7 @@ class LiveProfileModel(TestTreeModel):
         self.previous_results = set()
         self._preparing_by_reader = {}
         self._preparing_rows = Counter()
+        self.campaign_missing = set()
 
     @staticmethod
     def key(position, attempt=0):
@@ -390,6 +391,8 @@ class LiveProfileModel(TestTreeModel):
         if index.column() == 0 and role in (Qt.DecorationRole, Qt.ForegroundRole):
             if self._is_active(row):
                 return icons.status_icon(Status.RUNNING, group=True) if role == Qt.DecorationRole else QColor(t.ACCENT)
+            if row.node.nodeid in self.campaign_missing:
+                return icons.icon('mdi.alert-outline', '#d89a17') if role == Qt.DecorationRole else QColor(t.TEXT_MUTED)
         group = self._named_groups.get(id(row.node))
         annotation = self._annotations.get(id(row.node), {})
         exceptions = self._group_exceptions.get(id(row.node), []) if row.node.children else self._yaml_exceptions.get(row.node.nodeid, [])
@@ -399,7 +402,8 @@ class LiveProfileModel(TestTreeModel):
             if role == GROUP_COLOR_ROLE:
                 return self._group_colors.get(id(row.node), '')
             if role == CONFIG_ISSUES_ROLE:
-                return self._configuration_issues
+                return self._configuration_issues + (['Unavailable in the latest successful collection. Review campaign changes before running.']
+                                                     if row.node.nodeid in self.campaign_missing else [])
             if role == EXCEPTION_ROLE:
                 return exceptions
             if role == Qt.DisplayRole and not group and row.node.nodeid and annotation.get('state') == 'custom':
@@ -416,6 +420,8 @@ class LiveProfileModel(TestTreeModel):
                     title += '\nGroup: ' + membership
                 if self._configuration_issues:
                     title += '\n\nConfiguration problem\n' + '\n'.join(self._configuration_issues)
+                if row.node.nodeid in self.campaign_missing:
+                    title += '\n\nUnavailable in the latest collection. Use Review changes to keep, replace or remove this occurrence.'
                 if annotation.get('tooltip'):
                     title += '\n\n' + annotation['tooltip']
                 if annotation.get('state'):

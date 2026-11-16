@@ -137,6 +137,8 @@ class ProfileRunTree(QObject):
         indices = [position % len(profile.sequence) for position in positions]
         actual = copy.deepcopy(profile)
         actual.sequence = [profile.sequence[index] for index in indices]
+        actual.step_ids = [profile.step_ids[index] for index in indices] if profile.step_ids else []
+        actual.tracking = {}
         actual.step_overrides = [copy.deepcopy(profile.step_overrides[index]) for index in indices] if profile.step_overrides else []
         actual.step_groups = [copy.deepcopy(profile.step_groups[index]) for index in indices] if profile.step_groups else []
         actual.execution = replace(actual.execution, repetitions=1)
@@ -188,6 +190,8 @@ class ProfileRunTree(QObject):
         indices = [position % len(profile.sequence) for position in positions]
         snapshot = copy.deepcopy(profile)
         snapshot.sequence = [profile.sequence[i] for i in indices]
+        snapshot.step_ids = [profile.step_ids[i] for i in indices] if profile.step_ids else []
+        snapshot.tracking = {}
         snapshot.step_overrides = [copy.deepcopy(profile.step_overrides[i]) for i in indices] if profile.step_overrides else []
         snapshot.step_groups = [copy.deepcopy(profile.step_groups[i]) for i in indices] if profile.step_groups else []
         snapshot.execution = replace(snapshot.execution, repetitions=repetitions, stop_after_failure=stop,

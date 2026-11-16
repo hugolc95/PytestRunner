@@ -13,6 +13,8 @@ import re
 import uuid
 import zipfile
 import copy
+import os
+import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
 
@@ -113,6 +115,10 @@ class ExecutionProfile:
     # Alignement par occurrence, comme le YAML : deux memes tests peuvent
     # appartenir a des groupes differents sans partager leur personnalisation.
     step_groups: list[dict] = field(default_factory=list)
+    # Identites stables : une insertion ne deplace pas les regles de suivi
+    # ni les selections des occurrences conservees.
+    step_ids: list[str] = field(default_factory=list)
+    tracking: dict = field(default_factory=dict)
 
     @property
     def total_executions(self) -> int:
@@ -263,7 +269,7 @@ def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
     grouped = any(profile.step_groups)
     return {
         "format": FORMAT,
-        "format_version": 3 if grouped else (2 if customized else FORMAT_VERSION),
+        "format_version": 4 if profile.tracking or profile.step_ids else (3 if grouped else (2 if customized else FORMAT_VERSION)),
         "profile": {
             "id": profile.profile_id,
             "name": profile.name,
@@ -274,14 +280,15 @@ def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
             "sha256": checksum,
         },
         "sequence": [
-            {"step_id": f"step-{index:05d}", "test": nodeid,
+            {"step_id": profile.step_ids[index - 1] if profile.step_ids else f"step-{index:05d}", "test": nodeid,
              **({"configuration_overrides": profile.step_overrides[index - 1] if customized else {}}
-                if customized or grouped else {}),
-             **({"group": profile.step_groups[index - 1]} if grouped else {})}
+                if customized or grouped or profile.tracking or profile.step_ids else {}),
+             **({"group": profile.step_groups[index - 1] if grouped else {}} if grouped or profile.tracking or profile.step_ids else {})}
             for index, nodeid in enumerate(profile.sequence, 1)
         ],
         "execution": asdict(profile.execution),
         "reports": asdict(profile.reports),
+        **({"tracking": profile.tracking} if profile.tracking or profile.step_ids else {}),
     }
 
 
@@ -309,6 +316,8 @@ def validate_profile(profile: ExecutionProfile) -> None:
             f"A profile must contain between 1 and {MAX_STEPS} steps.")
     validate_step_overrides(profile.step_overrides, len(profile.sequence))
     validate_step_groups(profile.step_groups, len(profile.sequence))
+    from runner.domain.campaign_sync import validate_tracking
+    validate_tracking(profile)
     for nodeid in profile.sequence:
         if not isinstance(nodeid, str) or not _NODEID.match(nodeid):
             raise ProfileValidationError(f"Invalid pytest test identifier: {nodeid!r}")
@@ -337,9 +346,18 @@ def export_profile(profile: ExecutionProfile, destination: str | Path) -> Path:
     if len(manifest) > MAX_MANIFEST_BYTES:
         raise ProfileValidationError("The profile manifest is too large.")
     entry_name = profile.configuration_name or _NO_CONFIG_ENTRY
-    with zipfile.ZipFile(target, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("manifest.json", manifest)
-        archive.writestr(f"configuration/{entry_name}", config)
+    # Une erreur disque pendant la synchronisation ne doit pas tronquer la
+    # campagne precedente. Le remplacement reste sur le meme volume.
+    descriptor, temporary_name = tempfile.mkstemp(prefix='.' + target.name, suffix='.tmp', dir=target.parent)
+    os.close(descriptor)
+    temporary = Path(temporary_name)
+    try:
+        with zipfile.ZipFile(temporary, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("manifest.json", manifest)
+            archive.writestr(f"configuration/{entry_name}", config)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
     return target
 
 
@@ -382,11 +400,13 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
                 raise ProfileValidationError("The manifest is not valid JSON.") from exc
             if not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
                 raise ProfileValidationError("This is not a Pytest Runner profile.")
-            if type(manifest.get("format_version")) is not int or manifest.get("format_version") not in (1, 2, 3):
+            if type(manifest.get("format_version")) is not int or manifest.get("format_version") not in (1, 2, 3, 4):
                 raise ProfileValidationError(
                     f"Unsupported profile version: {manifest.get('format_version')!r}.")
             allowed = {"format", "format_version", "profile", "configuration",
                        "sequence", "execution", "reports"}
+            if manifest["format_version"] >= 4:
+                allowed.add("tracking")
             if set(manifest) != allowed:
                 raise ProfileValidationError("The manifest contains unknown fields.")
             meta, config_meta = manifest.get("profile"), manifest.get("configuration")
@@ -415,6 +435,7 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
     overrides: list[dict] = []
     groups: list[dict] = []
     step_ids: set[str] = set()
+    ordered_ids = []
     for step in steps:
         keys = {"step_id", "test"}
         if manifest["format_version"] >= 2:
@@ -427,6 +448,7 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
         if step_id in step_ids:
             raise ProfileValidationError("Sequence step identifiers must be unique.")
         step_ids.add(step_id)
+        ordered_ids.append(step_id)
         nodeids.append(step["test"])
         overrides.append(step.get("configuration_overrides", {}))
         groups.append(step.get("group", {}))
@@ -451,6 +473,8 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
         source="imported",
         step_overrides=overrides if manifest["format_version"] >= 2 else [],
         step_groups=groups if manifest["format_version"] >= 3 else [],
+        step_ids=ordered_ids if manifest["format_version"] >= 4 else [],
+        tracking=manifest.get("tracking", {}),
     )
     validate_profile(profile)
     available = set(available_nodeids)

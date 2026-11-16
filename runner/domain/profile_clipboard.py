@@ -46,7 +46,7 @@ def decode_selection(data):
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise ProfileValidationError('The clipboard does not contain a valid test selection.') from exc
     keys = {'format', 'version', 'copy_id', 'owner', 'source', 'bases', 'items'}
-    if not isinstance(payload, dict) or set(payload) != keys or payload['format'] != FORMAT or type(payload['version']) is not int or payload['version'] != 1:
+    if not isinstance(payload, dict) or set(payload) != keys or payload['format'] != FORMAT or type(payload['version']) is not int or payload['version'] not in (1, 2):
         raise ProfileValidationError('Unsupported test selection format.')
     for key in ('copy_id', 'owner', 'source'):
         if not isinstance(payload[key], str) or not payload[key] or len(payload[key]) > 160:
@@ -62,7 +62,10 @@ def decode_selection(data):
         raise ProfileValidationError('The selection contains no test elements.')
     total = 0
     for item in items:
-        if not isinstance(item, dict) or set(item) != {'kind', 'label', 'sequence', 'patches', 'groups', 'base'}:
+        required = {'kind', 'label', 'sequence', 'patches', 'groups', 'base'}
+        if payload['version'] >= 2:
+            required.add('tracking')
+        if not isinstance(item, dict) or set(item) != required:
             raise ProfileValidationError('Invalid copied element.')
         if not isinstance(item['kind'], str) or item['kind'] not in KINDS or not isinstance(item['label'], str) or len(item['label']) > 16_384:
             raise ProfileValidationError('Invalid copied element type or label.')
@@ -78,6 +81,12 @@ def decode_selection(data):
             raise ProfileValidationError('The copied selection contains too many tests.')
         validate_profile(ExecutionProfile('Clipboard', item['sequence'], '', '',
                                          step_overrides=item['patches'], step_groups=item['groups']))
+        if payload['version'] >= 2 and not isinstance(item['tracking'], dict):
+            raise ProfileValidationError('Invalid copied tracking metadata.')
+        if payload['version'] >= 2 and item['tracking']:
+            tracking = item['tracking']
+            validate_profile(ExecutionProfile('Clipboard tracking', item['sequence'], '', '',
+                step_ids=[str(i) for i in range(size)], tracking=tracking))
     return payload
 
 

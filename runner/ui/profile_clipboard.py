@@ -141,7 +141,26 @@ class SequenceClipboard(QObject):
                                   sequence=nodeids[start:end], patches=patches[start:end],
                                   groups=[group_entry(group_path(entry)[len(prefix):]) for entry in groups[start:end]],
                                   base=context_index[inherited]))
-            payload = dict(format=FORMAT, version=1, copy_id=str(uuid.uuid4()), owner=self.owner,
+                if page._tracking:
+                    ids = page._step_ids()[start:end]
+                    tracking = dict(workspace=page._tracking['workspace'], sources=[], members={})
+                    for source in page._tracking['sources']:
+                        owned = {i for i, m in page._tracking['members'].items() if m['source'] == source['id']}
+                        if owned and owned <= set(ids):
+                            cloned = copy.deepcopy(source)
+                            cloned['group'] = {}
+                            cloned['anchor'] = str(len(ids) - 1)
+                            tracking['sources'].append(cloned)
+                            tracking['members'].update({str(i): dict(source=source['id'], nodeid=items[-1]['sequence'][i])
+                                                        for i, identifier in enumerate(ids) if identifier in owned})
+                    items[-1]['tracking'] = tracking if tracking['sources'] else {}
+            version = 2 if any(item.get('tracking') for item in items) else 1
+            for item in items:
+                if version == 2:
+                    item.setdefault('tracking', {})
+                else:
+                    item.pop('tracking', None)
+            payload = dict(format=FORMAT, version=version, copy_id=str(uuid.uuid4()), owner=self.owner,
                            source=page.name_edit.text().strip() or 'Untitled profile', bases=contexts, items=items)
             encoded = encode_selection(payload)
         except (OSError, UnicodeError, ValueError, RecursionError, yaml.YAMLError, ProfileValidationError) as exc:
@@ -229,6 +248,26 @@ class SequenceClipboard(QObject):
             self._feedback('Could not paste', str(exc), 'error')
             return
         page._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
+        offset = insertion
+        tracking = copy.deepcopy(page._tracking)
+        for item in payload['items']:
+            inherited = item.get('tracking', {})
+            if inherited and (not tracking or tracking['workspace'] == inherited['workspace']):
+                if not tracking:
+                    tracking = dict(workspace=inherited['workspace'], sources=[], members={})
+                for source in inherited['sources']:
+                    owned = [int(i) for i, m in inherited['members'].items() if m['source'] == source['id']]
+                    if owned:
+                        cloned = copy.deepcopy(source)
+                        cloned['id'] = str(uuid.uuid4())
+                        cloned['group'] = copy.deepcopy(groups[offset + owned[0]])
+                        cloned['anchor'] = step_ids[offset + max(owned)]
+                        tracking['sources'].append(cloned)
+                        for index in owned:
+                            identifier = step_ids[offset + index]
+                            tracking['members'][identifier] = dict(source=cloned['id'], nodeid=nodeids[offset + index])
+            offset += len(item['sequence'])
+        page._tracking = tracking
         self._mark_pasted(insertion, count)
         page._mark_dirty()
         size = len(payload['items'])

@@ -243,6 +243,8 @@ class MainWindow(QMainWindow):
         self.tree_results = TreeResultsController(self)
         from runner.ui.tree_toolbar import TreeToolbarController
         self.tree_tools = TreeToolbarController(self)
+        from runner.ui.campaign_run_sync import RunCampaignSync
+        self.campaign_sync = RunCampaignSync(self)
 
     # =====================================================================
     # Construction
@@ -630,7 +632,9 @@ class MainWindow(QMainWindow):
         context = self.run_tabs.current.context if self.run_tabs else self
         nodeids = list(getattr(context.model, "_by_nodeid", {}))
         config = context.workspace.config_path if context.workspace else ""
-        self.profiles_page.set_workspace_context(nodeids, config)
+        self.profiles_page.set_workspace_context(nodeids, config,
+            workspace=context.workspace.path if context.workspace else '',
+            complete=getattr(context, '_campaign_collection_complete', bool(nodeids)))
         self.profiles_page.set_preview_readers([reader.name for reader in context._readers_to_run()])
 
     @Slot(object)
@@ -658,11 +662,10 @@ class MainWindow(QMainWindow):
 
     def _open_collected_profile(self, profile: ExecutionProfile) -> None:
         """Open only after collection has supplied the compatibility information."""
-        missing = sum(nodeid not in self.model._by_nodeid for nodeid in profile.sequence)
-        if missing or not profile.sequence:
+        if not profile.sequence:
             ErrorDialog.show_error(
                 self, "Profile is not compatible",
-                f"{missing} sequence step(s) are missing from this workspace.")
+                "The campaign has no test occurrence.")
             return
         if self.run_tabs and (profile.configuration_name or profile.configuration_text):
             from hashlib import sha256
@@ -1139,6 +1142,9 @@ class MainWindow(QMainWindow):
         self.tree_toolbar.setSizePolicy(toolbar_policy)
         self.tree_toolbar.setVisible(False)
         colonne.addWidget(self.tree_toolbar)
+        from runner.ui.campaign_sync import CampaignNotice
+        self.campaign_notice = CampaignNotice(panneau)
+        colonne.addWidget(self.campaign_notice)
 
         # Resultats de la recherche "In failures" : un extrait par test
         # touche, plutot que de forcer a naviguer un par un avec Entree pour
@@ -1407,6 +1413,8 @@ class MainWindow(QMainWindow):
         self.search._typing_timer.stop()
         self._on_search(self.search.field.text(), reveal=False)
         self._apply_status_filter()
+        if hasattr(self, 'campaign_sync'):
+            self.campaign_sync.refresh()
         if hasattr(self, 'act_run'):
             self._update_actions()
 
@@ -1422,17 +1430,23 @@ class MainWindow(QMainWindow):
         chosen = -1
         for profile in profiles:
             missing = sum(nodeid not in self.model._by_nodeid for nodeid in profile.sequence)
-            available = bool(profile.sequence) and missing == 0
-            self.profile_picker.addItem(profile.name + ('' if available else ' — Incompatible'), profile)
+            available = bool(profile.sequence)
+            from runner.domain.campaign_sync import compare
+            plan = compare(profile, self.model._by_nodeid, self.workspace.path if self.workspace else '',
+                           complete=getattr(self, '_campaign_collection_complete', bool(self.model._by_nodeid)))
+            suffix = ' — Needs attention' if missing else ' — Update available' if plan.additions else ''
+            self.profile_picker.addItem(profile.name + suffix, profile)
             row = self.profile_picker.count() - 1
             item = self.profile_picker.model().item(row)
             item.setEnabled(available)
-            item.setToolTip(f'{missing} missing step(s)' if not available else
-                            f'{len(profile.sequence)} steps × {profile.execution.repetitions} repetitions')
+            item.setToolTip(plan.problem or (plan.summary if plan.changed else
+                            f'{len(profile.sequence)} steps × {profile.execution.repetitions} repetitions'))
             if active and active.profile_id == profile.profile_id:
                 chosen = row
         self.profile_picker.setCurrentIndex(chosen)
         self.profile_picker.blockSignals(False)
+        if hasattr(self, 'campaign_sync'):
+            self.campaign_sync.refresh()
 
     def _choose_header_profile(self, index):
         profile = self.profile_picker.itemData(index)
@@ -1447,7 +1461,9 @@ class MainWindow(QMainWindow):
             self._load_execution_profile(self._active_execution_profile)
             return
         if self._active_execution_profile is None and not self.service.busy:
-            for index in range(self.profile_picker.count()):
+            indices = list(range(self.profile_picker.count()))
+            indices.sort(key=lambda i: any(n not in self.model._by_nodeid for n in self.profile_picker.itemData(i).sequence))
+            for index in indices:
                 if self.profile_picker.model().item(index).isEnabled():
                     self._choose_header_profile(index)
                     return
@@ -2176,6 +2192,9 @@ class MainWindow(QMainWindow):
         else:
             self._on_interpreter_probed(interpreter_mod.cached_probe(python))
 
+        self._campaign_collection_complete = False
+        if hasattr(self, 'campaign_sync'):
+            self.campaign_sync.refresh()
         self.status_label.setText("Collecting tests…")
         self.load_button.setEnabled(False)
         self.progress.setVisible(True)
@@ -2239,6 +2258,7 @@ class MainWindow(QMainWindow):
         if not same_workspace:
             self.model.set_disabled_tests({})
         broken = getattr(collection, "broken_files", {}) or {}
+        self._campaign_collection_complete = not bool(broken)
         self.model.set_tree(add_broken_files(
             collapse_single_class(build_tree(nodeids)),
             {path: f"{item['location']}\n{item['message']}" for path, item in broken.items()}))
@@ -2250,6 +2270,8 @@ class MainWindow(QMainWindow):
         self._refresh_profile_picker()
         self.tree_view_switch.setVisible(self.workspace is not None)
         self._tree_workspace = self.workspace.path if self.workspace else ""
+        if self._selected_run_context() is self:
+            self._refresh_profiles_page()
         lecteurs = self.workspace.readers if self.workspace else ()
         # Les colonnes montrent TOUS les lecteurs declares, y compris ceux
         # qu'on vient de decocher : les faire disparaitre effacerait de l'ecran
@@ -2368,6 +2390,11 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_collect_failed(self, failure) -> None:
         from runner.domain.diagnostics import CollectionError
+        self._campaign_collection_complete = False
+        if hasattr(self, 'campaign_sync'):
+            self.campaign_sync.refresh()
+        if self._selected_run_context() is self:
+            self._refresh_profiles_page()
         message = str(failure) or "Unknown error"
         details = failure.details if isinstance(failure, CollectionError) else message
         headline = failure.headline if isinstance(failure, CollectionError) else message
@@ -2631,10 +2658,7 @@ class MainWindow(QMainWindow):
         missing = [nodeid for nodeid in profile.sequence
                    if nodeid not in getattr(self.model, "_by_nodeid", {})]
         if missing:
-            ErrorDialog.show_error(
-                self, "Profile is not compatible",
-                f"{len(missing)} sequence step(s) no longer exist in this workspace.",
-                "\n".join(missing[:20]))
+            self.campaign_sync.review(profile)
             return
         if not self.results.source.save():
             return

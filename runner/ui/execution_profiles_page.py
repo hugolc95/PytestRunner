@@ -138,6 +138,8 @@ class AddTestsDialog(QDialog):
         self.model.set_all_checked(False)
         self._selection_order = []
         self._last_added = []
+        self.pending_sources = []
+        self._last_sources = []
         self.model.selection_changed.connect(self._remember_selection_order)
         self.proxy = QSortFilterProxyModel(self)
         self.proxy.setSourceModel(self.model)
@@ -165,6 +167,11 @@ class AddTestsDialog(QDialog):
         self.tree.header().setStretchLastSection(False)
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         layout.addWidget(self.tree, 1)
+
+        self.follow_selection = QCheckBox('Follow complete folders, files and parameterized tests')
+        self.follow_selection.setChecked(True)
+        self.follow_selection.setToolTip('New tests in complete selected branches are proposed after collection. Specific leaves remain fixed. Uncheck for an entirely fixed selection.')
+        layout.addWidget(self.follow_selection)
 
         actions = QHBoxLayout()
         self.add_button = QPushButton("Add selected")
@@ -195,6 +202,8 @@ class AddTestsDialog(QDialog):
         selected = list(self._selection_order)
         if selected:
             self._last_added = list(selected)
+            self.pending_sources = self._tracked_selection(selected) if self.follow_selection.isChecked() else []
+            self._last_sources = copy.deepcopy(self.pending_sources)
             self.tests_added.emit(selected)
             self.model.set_all_checked(False)
 
@@ -202,7 +211,33 @@ class AddTestsDialog(QDialog):
         if self._selection_order:
             self._add()
         elif self._last_added:
+            self.pending_sources = copy.deepcopy(self._last_sources) if self.follow_selection.isChecked() else []
             self.tests_added.emit(list(self._last_added))
+
+    def _tracked_selection(self, selected):
+        from runner.domain.disabled_tests import parameter_base
+        chosen, sources = set(selected), []
+        def visit(row):
+            leaves = [leaf.node.nodeid for leaf in row.leaves()]
+            kind = row.node.kind
+            if row.children and leaves and all(n in chosen for n in leaves) and kind in (Kind.FOLDER, Kind.MODULE, Kind.TEST):
+                if kind is Kind.FOLDER:
+                    names, parent = [], row
+                    while parent is not None:
+                        names.append(parent.node.name)
+                        parent = parent.parent
+                    selector, nature = '/'.join(reversed(names)), 'folder'
+                elif kind is Kind.MODULE:
+                    selector, nature = leaves[0].split('::')[0], 'file'
+                else:
+                    selector, nature = parameter_base(leaves[0]), 'test'
+                sources.append((nature, selector, leaves))
+            else:
+                for child in row.children:
+                    visit(child)
+        for row in self.model._roots:
+            visit(row)
+        return sources
 
     def _remember_selection_order(self, *_):
         selected = self.model.checked_nodeids()
@@ -218,6 +253,7 @@ class AddTestsDialog(QDialog):
         source_index = self.proxy.mapToSource(proxy_index).siblingAtColumn(0)
         nodeid = self.model.data(source_index, NODEID_ROLE)
         if nodeid:
+            self.pending_sources = []
             self._last_added = [nodeid]
             self.add_again_button.setEnabled(True)
             self.tests_added.emit([nodeid])
@@ -227,6 +263,7 @@ class ExecutionProfilesPage(QWidget):
     """Profile library, sequence editor, import/export and launch hand-off."""
 
     run_requested = Signal(object)
+    campaign_updated = Signal(object, object)
 
     def __init__(self, store: ProfileStore, parent=None):
         super().__init__(parent)
@@ -243,6 +280,7 @@ class ExecutionProfilesPage(QWidget):
         self._history_restoring = False
         self._saving_refresh = False
         self._initial_unsaved = False
+        self._tracking = {}
         self.undo_stack = QUndoStack(self)
         self.undo_stack.setUndoLimit(50)
         self.undo_stack.indexChanged.connect(self._sync_history_dirty)
@@ -250,6 +288,8 @@ class ExecutionProfilesPage(QWidget):
         self._reorder_timer.setSingleShot(True)
         self._reorder_timer.timeout.connect(self._settle_sequence_order)
         self._build_ui()
+        from runner.ui.campaign_sync import EditorCampaignSync
+        self.campaign_sync = EditorCampaignSync(self)
         self.sequence_clipboard = SequenceClipboard(self)
         self.refresh()
 
@@ -513,11 +553,14 @@ class ExecutionProfilesPage(QWidget):
         self.save_logs.toggled.connect(self._mark_dirty)
         return frame
 
-    def set_workspace_context(self, nodeids: list[str], config_path: str) -> None:
+    def set_workspace_context(self, nodeids: list[str], config_path: str, *, workspace='', complete=True) -> None:
         self._available_nodeids = list(nodeids)
         self._workspace_config = config_path or ""
         self.add_tests_button.setEnabled(bool(nodeids))
         self._selection_changed()
+        self.campaign_sync.workspace = workspace
+        self.campaign_sync.complete = complete
+        self.campaign_sync.refresh()
 
     def refresh(self) -> None:
         current_id = self.current_profile().profile_id if self.current_profile() else ""
@@ -552,11 +595,13 @@ class ExecutionProfilesPage(QWidget):
         view = sequence_view.capture(self) if self._saving_refresh else None
         self._building = True
         self._configuration_text = profile.configuration_text
+        self._tracking = copy.deepcopy(profile.tracking)
         self.config_edit.setProperty("fullPath", "")
         self.name_edit.setText(profile.name)
         self.description_edit.setPlainText(profile.description)
         self.config_edit.setText(profile.configuration_name)
-        self._rebuild_sequence(profile.sequence, profile.step_overrides, profile.step_groups, view=view)
+        self._rebuild_sequence(profile.sequence, profile.step_overrides, profile.step_groups,
+                               step_ids=profile.step_ids or None, view=view)
         self.repetitions.setValue(profile.execution.repetitions)
         self.rerun_failures.setValue(profile.execution.rerun_failures)
         self.stop_after_failure.setChecked(profile.execution.stop_after_failure)
@@ -599,13 +644,15 @@ class ExecutionProfilesPage(QWidget):
             config_name = Path(chosen).name
             config_text = Path(chosen).read_text(encoding="utf-8")
         sequence = self._flatten_sequence()
-        return ExecutionProfile(
+        result = ExecutionProfile(
             profile_id=str(uuid.uuid4()) if new_id or current is None else current.profile_id,
             name=self.name_edit.text().strip(),
             description=self.description_edit.toPlainText().strip(),
             sequence=sequence,
             step_overrides=self._step_patches(),
             step_groups=self._step_groups(),
+            step_ids=self._step_ids(),
+            tracking=copy.deepcopy(self._tracking),
             configuration_name=config_name,
             configuration_text=config_text,
             execution=ExecutionOptions(
@@ -616,8 +663,12 @@ class ExecutionProfilesPage(QWidget):
                 save_complete_logs=self.save_logs.isChecked()),
             source=current.source if current else "local",
         )
+        from runner.domain.campaign_sync import reconcile
+        reconcile(result)
+        return result
 
     def save_current(self) -> bool:
+        previous = copy.deepcopy(self.current_profile())
         try:
             profile = self._profile_from_editor()
             self.store.save(profile)
@@ -636,6 +687,7 @@ class ExecutionProfilesPage(QWidget):
         self.undo_stack.setClean()
         self._sync_history_dirty()
         self._show_notice("Profile saved.", warning=False)
+        self.campaign_updated.emit(profile, previous)
         return True
 
     def save_as(self) -> None:
@@ -706,7 +758,7 @@ class ExecutionProfilesPage(QWidget):
             nonlocal position
             # Le premier ajout reconstruit les items Qt : garder un curseur
             # et le chemin du groupe, jamais l'ancien item du clic droit.
-            if self._insert_tests(nodeids, position, path):
+            if self._insert_tests(nodeids, position, path, tracking_specs=dialog.pending_sources):
                 position += len(nodeids)
         dialog.tests_added.connect(insert)
         try:
@@ -715,7 +767,7 @@ class ExecutionProfilesPage(QWidget):
             dialog.deleteLater()
 
     @undoable('Add tests')
-    def _insert_tests(self, additions, position, path):
+    def _insert_tests(self, additions, position, path, *, tracking_specs=None):
         if not additions:
             return False
         nodeids, patches, groups = self._flatten_sequence(), self._step_patches(), self._step_groups()
@@ -729,6 +781,13 @@ class ExecutionProfilesPage(QWidget):
         groups[position:position] = [group_entry(copy.deepcopy(path)) for _ in additions]
         step_ids[position:position] = [str(uuid.uuid4()) for _ in additions]
         self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
+        if tracking_specs and self.campaign_sync.workspace:
+            from runner.domain.campaign_sync import follow
+            profile = self._profile_from_editor()
+            for kind, selector, members in tracking_specs:
+                follow(profile, [position + n for n, nodeid in enumerate(additions) if nodeid in members],
+                       kind, selector, self.campaign_sync.workspace)
+            self._tracking = profile.tracking
         self._focus_range(position, len(additions))
         self._mark_dirty()
         return True
@@ -948,10 +1007,13 @@ class ExecutionProfilesPage(QWidget):
         groups = self._step_groups()
         if not selected:
             return
+        tracking = copy.deepcopy(self._tracking)
         edit = len(selected) == 1 and bool(selected[0][0].data(0, NODEID_ROLE))
         for selected_item, start, end in sorted(selected, key=lambda row: row[1], reverse=True):
+            originals = step_ids[start:end]
+            duplicates = [str(uuid.uuid4()) for _ in originals]
             nodeids[end:end] = nodeids[start:end]
-            step_ids[end:end] = [str(uuid.uuid4()) for _ in range(end - start)]
+            step_ids[end:end] = duplicates
             patches[end:end] = copy.deepcopy(patches[start:end])
             copied = copy.deepcopy(groups[start:end])
             identifiers = {}
@@ -966,6 +1028,19 @@ class ExecutionProfilesPage(QWidget):
                             group['id'] = identifiers.setdefault(group['id'], str(uuid.uuid4()))
                     copied[i] = group_entry(path)
             groups[end:end] = copied
+            if tracking:
+                members = tracking['members']
+                for source in list(tracking['sources']):
+                    owned = {i for i, m in members.items() if m['source'] == source['id']}
+                    if owned and owned <= set(originals):
+                        cloned = copy.deepcopy(source)
+                        cloned['id'] = str(uuid.uuid4())
+                        cloned['anchor'] = duplicates[-1]
+                        tracking['sources'].append(cloned)
+                        for old_id, new_id in zip(originals, duplicates):
+                            if old_id in owned:
+                                members[new_id] = dict(source=cloned['id'], nodeid=members[old_id]['nodeid'])
+        self._tracking = tracking
         self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
         _, start, end = min(selected, key=lambda row: row[1])
         self._focus_range(end, end - start, edit=edit)
@@ -980,6 +1055,12 @@ class ExecutionProfilesPage(QWidget):
         patches = self._step_patches()
         groups = self._step_groups()
         step_ids = self._step_ids()
+        if self._tracking:
+            positions = {identifier: i for i, identifier in enumerate(step_ids)}
+            for source in self._tracking['sources']:
+                anchor = positions.get(source['anchor'])
+                if anchor in removed:
+                    source['anchor'] = next((step_ids[i] for i in range(anchor - 1, -1, -1) if i not in removed), '__start__')
         self._rebuild_sequence([value for i, value in enumerate(nodeids) if i not in removed],
                                [value for i, value in enumerate(patches) if i not in removed],
                                [value for i, value in enumerate(groups) if i not in removed],
@@ -1377,6 +1458,7 @@ class ExecutionProfilesPage(QWidget):
             menu.addAction('Create subgroup…', lambda: self.edit_group(subgroup=True))
         menu.addAction('Duplicate', self.duplicate_steps).setEnabled(bool(selected))
         menu.addAction('Move to…', self.move_to_group).setEnabled(bool(selected))
+        menu.addAction(icons.icon('mdi.sync'), 'Selection tracking / sources…', self.manage_campaign_sources)
         menu.addAction('Ungroup', self.ungroup_steps).setEnabled(self.ungroup_button.isEnabled())
         menu.addAction(self.remove_action)
         menu.addSeparator()
@@ -1473,6 +1555,7 @@ class ExecutionProfilesPage(QWidget):
     def _editor_state(self):
         return dict(sequence=self._flatten_sequence(), patches=self._step_patches(), groups=self._step_groups(),
                     step_ids=self._step_ids(),
+                    tracking=copy.deepcopy(self._tracking),
                     name=self.name_edit.text(), description=self.description_edit.toPlainText(),
                     config_name=self.config_edit.text(), config_text=self._configuration_text,
                     config_path=self.config_edit.property('fullPath') or '',
@@ -1494,6 +1577,7 @@ class ExecutionProfilesPage(QWidget):
         self._history_restoring = True
         self._building = True
         try:
+            self._tracking = copy.deepcopy(state.get('tracking', {}))
             self._configuration_text = state['config_text']
             self.name_edit.setText(state['name'])
             self.description_edit.setPlainText(state['description'])
@@ -1532,6 +1616,26 @@ class ExecutionProfilesPage(QWidget):
         enabled = bool(count)
         self.run_button.setEnabled(enabled)
         self.export_button.setEnabled(enabled)
+        if hasattr(self, 'campaign_sync'):
+            self.campaign_sync.refresh()
+
+    @undoable('Change campaign sources')
+    def manage_campaign_sources(self):
+        from runner.ui.campaign_sync import CampaignSourcesDialog
+        try:
+            profile = self._profile_from_editor()
+            _, ranges = self._selected_ranges()
+            positions = [i for _, start, end in ranges for i in range(start, end)]
+            if not positions:
+                positions = list(range(len(profile.sequence)))
+            dialog = CampaignSourcesDialog(profile, positions, self._available_nodeids,
+                                           self.campaign_sync.workspace, self)
+            if dialog.exec() == QDialog.Accepted:
+                self._tracking = copy.deepcopy(dialog.profile.tracking)
+                self._mark_dirty()
+                self.campaign_sync.refresh()
+        except (OSError, ValueError, ProfileValidationError) as exc:
+            ErrorDialog.show_error(self, 'Could not edit campaign sources', str(exc))
 
     def export_current(self) -> None:
         try:
@@ -1595,13 +1699,6 @@ class ExecutionProfilesPage(QWidget):
             validate_profile(profile)
         except (OSError, UnicodeError, ProfileValidationError) as exc:
             ErrorDialog.show_error(self, "Profile is not ready", str(exc))
-            return
-        missing = [nodeid for nodeid in profile.sequence
-                   if self._available_nodeids and nodeid not in self._available_nodeids]
-        if missing:
-            ErrorDialog.show_error(
-                self, "Profile is not compatible",
-                f"{len(missing)} sequence step(s) are missing from this workspace.")
             return
         self.run_requested.emit(profile)
 
