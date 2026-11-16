@@ -426,7 +426,7 @@ def test_the_report_holds_together_on_its_own(historique):
     page = html_report(entree("a", reader="R1"), "FAILED t1\n")
 
     assert "<style>" in page
-    for interdit in ("http://", "https://", "<script"):
+    for interdit in ("http://", "https://", "<script src=", "<link"):
         assert interdit not in page, f"le rapport va chercher {interdit}"
 
 
@@ -452,7 +452,8 @@ def test_a_report_with_a_hostile_test_name_stays_safe(historique):
     page = html_report(entree("a", nodeids=("t<script>x</script>",),
                               echecs=("t<script>x</script>",)), "")
 
-    assert "<script>" not in page
+    assert "<script>x</script>" not in page
+    assert page.count("<script") == 3
     assert "&lt;script&gt;" in page
 
 

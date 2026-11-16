@@ -27,6 +27,11 @@ def install() -> None:
         # the end was both wrong for partial selections and expensive on very
         # large suites.
         self._archive_run_nodeids = tuple(request.nodeids)
+        self._archive_request = request
+        presentation = getattr(self, 'reader_atr', None)
+        context = getattr(presentation, '_context', None)
+        self._archive_reader_atrs = ({context[2]: presentation.text()}
+            if context and getattr(presentation, 'state', '') == 'atr' else {})
         self._archive_statuses_by_reader = {}
         self._archive_executions_by_reader = {}
         self._archive_run_name = getattr(self, "_pending_run_name", "")
@@ -71,6 +76,7 @@ def install() -> None:
         for report in rapports:
             if report.cancelled:
                 continue
+            from runner.ui.report_capture import capture_report
             entry = history.RunEntry(
                 id=self._run_id,
                 timestamp=now,
@@ -91,6 +97,7 @@ def install() -> None:
                 profile_name=getattr(self, "_archive_profile_name", ""),
                 run_name=getattr(self, "_archive_run_name", ""),
                 replay_profile=getattr(self, "_archive_replay_profile", None),
+                analysis_data=capture_report(self, report),
             )
             entries.append((entry, report.output if getattr(self, "_archive_save_logs", True) else ""))
         return tuple(entries)

@@ -465,6 +465,7 @@ class ReaderRun:
                         command.append(f"--junitxml={partial_junit}")
 
                     environment = self._environnement(plugin_dir, suite_root)
+                    report.commands.append(list(command))
                     environment[diagnostics.ENV_OUT] = diagnostic_file
                     _prepend_pythonpath(environment, [diagnostic_dir])
                     output_start = len(output)

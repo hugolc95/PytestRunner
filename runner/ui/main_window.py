@@ -4201,6 +4201,16 @@ class MainWindow(QMainWindow):
         self._refresh_interpreter_alert()
 
     def closeEvent(self, event) -> None:
+        report_worker = getattr(getattr(self, 'history_dashboard', None), '_report_export_worker', None)
+        if self._run_host is None and report_worker is not None and report_worker.isRunning():
+            if not getattr(self, '_close_after_report', False):
+                self._close_after_report = True
+                def close_after_export():
+                    self._close_after_report = False
+                    self.close()
+                report_worker.finished.connect(close_after_export)
+            event.ignore()
+            return
         if self._run_host is None and self.run_tabs and not self.run_tabs.shutdown():
             event.ignore()
             return

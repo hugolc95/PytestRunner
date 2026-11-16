@@ -546,6 +546,8 @@ class HistoryWindow(QDialog):
     def __init__(self, history: History, parent=None):
         super().__init__(parent)
         self.history = history
+        self._report_export_worker = None
+        self._report_close_pending = None
         self._groups: list[RunGroup] = []
         self._visible_groups: list[RunGroup] = []
         self._cards: list[tuple[QListWidgetItem, RunCard]] = []
@@ -1570,6 +1572,8 @@ class HistoryWindow(QDialog):
         configuration_action = self.export_menu.addAction("Export configuration YAML…")
         configuration_action.setEnabled(any(e.configuration_text() is not None for e in group.entries))
         configuration_action.triggered.connect(lambda checked=False: self.export_configuration(group))
+        complete_html = self.export_menu.addAction("Export complete HTML report…")
+        complete_html.triggered.connect(lambda checked=False: self.export_html())
         self.export_menu.addSeparator()
         for entry in group.entries:
             if len(group.entries) > 1:
@@ -1706,16 +1710,40 @@ class HistoryWindow(QDialog):
             self.accept()
 
     def export_html(self, entry: RunEntry | None = None) -> None:
-        entry = entry or self._first_entry()
-        if entry is None:
+        if getattr(self, '_report_export_worker', None) is not None:
+            self._say('An HTML report is already being written.')
+            return
+        group = self._current_group()
+        entries = (entry,) if entry is not None else group.entries if group is not None else ()
+        if not entries:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save the report", f"report_{entry.id}.html", "HTML (*.html)")
+            self, "Save the report", f"report_{entries[0].id}.html", "HTML (*.html)")
         if not path:
             return
-        ok, message = report.write_html(entry, Path(path), entry.output())
-        self._say(f"Report written to {path}" if ok else
-                  f"Could not write the report: {message}", not ok)
+        from runner.services.report_service import ReportExportWorker
+        worker = ReportExportWorker(entries, Path(path), self)
+        self._report_export_worker = worker
+        self._say('Writing HTML report…')
+        def finished():
+            ok, message = worker.result
+            self._report_export_worker = None
+            self._say(f"Report written to {path}" if ok else
+                      f"Could not write the report: {message}", not ok)
+            worker.deleteLater()
+            pending = getattr(self, '_report_close_pending', None)
+            if pending is not None:
+                self._report_close_pending = None
+                self.done(pending)
+        worker.finished.connect(finished)
+        worker.start()
+
+    def done(self, result):
+        worker = getattr(self, '_report_export_worker', None)
+        if worker is not None:
+            self._report_close_pending = result
+            return
+        super().done(result)
 
     def export_junit(self, entry: RunEntry | None = None) -> None:
         entry = entry or self._first_entry()

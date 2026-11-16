@@ -83,6 +83,10 @@ class RunEntry:
     executions: tuple[tuple[str, str], ...] = ()
     replay_profile: dict | None = None
     configuration_file: str = ""
+    analysis_file: str = ""
+    # Instantane transitoire : les traces volumineuses vont dans un fichier
+    # annexe, jamais dans l'index charge a l'ouverture de l'historique.
+    analysis_data: dict | None = field(default=None, compare=False, repr=False)
 
     @property
     def total(self) -> int:
@@ -145,6 +149,7 @@ class RunEntry:
             "executions": [list(result) for result in self.executions],
             "replay_profile": self.replay_profile,
             "configuration_file": self.configuration_file,
+            "analysis_file": self.analysis_file,
         }
 
     @classmethod
@@ -173,6 +178,7 @@ class RunEntry:
                 output_file=str(donnees.get("output_file", "")),
                 junit_path=str(donnees.get("junit_path", "")),
                 configuration_file=str(donnees.get("configuration_file", "")),
+                analysis_file=str(donnees.get("analysis_file", "")),
                 locked=bool(donnees.get("locked", False)),
                 run_kind=str(donnees.get("run_kind", "unknown")),
                 profile_name=str(donnees.get("profile_name", "")),
@@ -378,6 +384,9 @@ class History:
 
     def add(self, entry: RunEntry, output: str = "") -> RunEntry:
         """Enregistre un run, avec sa sortie console dans un fichier a part."""
+        if entry.analysis_data is not None:
+            from runner.domain.report_capture import persist_analysis
+            entry = persist_analysis(entry, self.racine)
         config_text = entry.configuration_text()
         if config_text is not None:
             path = self.racine / f"{_sain(entry.id)}_{_sain(entry.reader) or 'no-reader'}.config.yaml"
@@ -461,7 +470,7 @@ class History:
         aucune entree ne designe -- invisibles, et jamais nettoyes.
         """
         for entree in entrees:
-            for chemin in (entree.output_file, entree.junit_path, entree.configuration_file):
+            for chemin in (entree.output_file, entree.junit_path, entree.configuration_file, entree.analysis_file):
                 if not chemin:
                     continue
                 try:

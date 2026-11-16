@@ -180,6 +180,7 @@ class ReaderReport:
     durations: dict[str, float] = field(default_factory=dict)
     # Global errors have no test owner and are shown once at run completion.
     issues: list[str] = field(default_factory=list)
+    commands: list[list[str]] = field(default_factory=list)
 
     @property
     def failed(self) -> int:

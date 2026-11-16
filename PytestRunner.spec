@@ -28,6 +28,7 @@ from build_common import EXCLUDES, EXCLUDES_RUNNER
 # cas sans planter, ce qui rend la panne d'autant plus discrete.
 QTAWESOME_DATA = collect_data_files("qtawesome")
 APP_ICON_DATA = [("assets/pytest_runner.ico", "assets")]
+REPORT_DATA = collect_data_files("runner.report_assets")
 
 # Some runner.ui modules are imported lazily by the main window. PyInstaller's
 # static analysis can miss those imports, which previously produced an EXE
@@ -44,8 +45,8 @@ a = Analysis(
     binaries=[],
     # config.yaml n'est PAS embarque : il est lu dans le workspace de
     # l'utilisateur, pas a cote de l'exe.
-    datas=QTAWESOME_DATA + APP_ICON_DATA,
-    hiddenimports=["yaml", "qtawesome"] + RUNNER_UI_MODULES,
+    datas=QTAWESOME_DATA + APP_ICON_DATA + REPORT_DATA,
+    hiddenimports=["yaml", "qtawesome", "runner.report_assets"] + RUNNER_UI_MODULES,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

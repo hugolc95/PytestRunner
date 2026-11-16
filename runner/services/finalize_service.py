@@ -38,15 +38,23 @@ class RunArchiveWorker(QThread):
             # Windows/AV/disk kills the process while that file is being
             # written, the next application launch still knows what ran and
             # what passed/failed.
-            saved: list[tuple[RunEntry, str]] = []
+            saved = []
             for entry, output in self._entries:
-                saved_entry = history.add(entry, "")
-                saved.append((saved_entry, output))
+                saved_entry = history.add(replace(entry, analysis_data=None), "")
+                saved.append((saved_entry, output, entry.analysis_data))
 
             # Then persist the potentially large outputs.  Update the in-memory
             # entries in one pass and rewrite the history JSON once at the end.
             changed = False
-            for entry, output in saved:
+            for entry, output, analysis in saved:
+                if analysis is not None:
+                    from runner.domain.report_capture import persist_analysis
+                    entry = persist_analysis(replace(entry, analysis_data=analysis), history.racine)
+                    for index, current in enumerate(history._entrees):
+                        if current.id == entry.id and current.reader == entry.reader:
+                            history._entrees[index] = entry
+                            changed = True
+                            break
                 if not output:
                     continue
                 name = f"{entry.id}{'_' + _sain(entry.reader) if entry.reader else ''}.log"
@@ -68,6 +76,8 @@ class RunArchiveWorker(QThread):
         except Exception as exc:  # history is optional; never crash the app
             self._result = (False, str(exc))
             return
+        finally:
+            self._entries = ()
         self._result = (True, "")
 
     def _emit_done_after_finished(self) -> None:

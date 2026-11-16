@@ -1,5 +1,28 @@
 # Pytest Runner GUI
 
+## Rapports HTML d’analyse IN Groupe — v1.6.0
+
+Dans **History → Export → Export complete HTML report…**, un même rapport
+réunit tous les lecteurs du lancement. Les exports par lecteur restent
+accessibles dans leurs sous-menus. La génération se fait en arrière-plan.
+
+Le rapport reprend l’arbre du profil : groupes, sous-groupes, descriptions,
+couleurs, fichiers et cas paramétrés. Les occurrences répétées restent
+indépendantes. Sélectionner un groupe montre son bilan ; sélectionner un
+résultat ouvre les détails de ce lecteur, les tentatives, les traces, les
+logs archivés et le YAML effectif avec l’origine des paramètres.
+
+Le fichier contient le logo IN Groupe et les mêmes pictogrammes que
+l’interface. Il reste utilisable hors ligne, sur ordinateur ou téléphone,
+sans Pytest Runner ni accès au projet d’origine. Il inclut une vue de
+secours sans JavaScript et une présentation d’impression.
+
+Les nouveaux runs conservent leurs données d’analyse dans un fichier annexe
+à l’historique : résultats par occurrence/tentative, durées, logs disponibles
+et commandes réellement lancées. Les anciens historiques restent exportables ;
+les informations absentes sont marquées **Unknown** ou **Not recorded**.
+Les traces ambiguës ne sont pas attribuées au hasard à des tests homonymes.
+
 ## Suivi bleu des tests en cours — v1.5.5
 
 Dans **Run Tests**, le test actif et ses groupes restent signalés en bleu,

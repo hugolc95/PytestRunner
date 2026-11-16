@@ -451,6 +451,7 @@ class RunService(QObject):
                 + report.output)
             aggregate.duration += report.duration
             aggregate.issues.extend(report.issues)
+            aggregate.commands.extend(report.commands)
             aggregate.cancelled = aggregate.cancelled or report.cancelled
 
         if (failed and not self._profile_cancelled

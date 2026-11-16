@@ -380,7 +380,7 @@ def test_junit_action_is_disabled_when_reader_has_no_xml(fenetre):
     assert all(not action.isEnabled() for action in junit_actions)
 
 
-def test_html_export_uses_the_chosen_reader(fenetre, tmp_path, monkeypatch):
+def test_html_export_uses_the_chosen_reader(fenetre, tmp_path, monkeypatch, qtbot):
     target = tmp_path / "report.html"
     monkeypatch.setattr(
         "runner.ui.history_dashboard.QFileDialog.getSaveFileName",
@@ -389,6 +389,7 @@ def test_html_export_uses_the_chosen_reader(fenetre, tmp_path, monkeypatch):
     chosen = fenetre._current_group().entry_for_reader("Reader B")
 
     fenetre.export_html(chosen)
+    qtbot.waitUntil(lambda: fenetre._report_export_worker is None, timeout=15000)
 
     page = target.read_text(encoding="utf-8")
     assert "Reader B" in page and "recent B output" in page
@@ -897,3 +898,49 @@ def test_history_configuration_tab_and_export_use_saved_yaml(qapp, tmp_path, mon
     action.trigger()
     assert target.read_text(encoding="utf-8") == text
     window.close()
+
+
+def test_complete_html_export_contains_all_readers_from_selected_run(fenetre, tmp_path, monkeypatch, qtbot):
+    import json
+    import re
+    target = tmp_path / 'complete.html'
+    monkeypatch.setattr('runner.ui.history_dashboard.QFileDialog.getSaveFileName',
+                        lambda *_a, **_k: (str(target), ''))
+    selected = select_run(fenetre)
+    fenetre.export_html()
+    qtbot.waitUntil(lambda: fenetre._report_export_worker is None, timeout=15000)
+    page = target.read_text(encoding='utf-8')
+    payload = json.loads(re.search(r'id="report-data">(.*?)</script>', page, re.S)[1])
+    assert payload['id'] == selected.id
+    assert set(payload['readers']) == {'Reader A', 'Reader B'}
+    assert 'recent A output' in page and 'recent B output' in page
+    assert 'old A output' not in page
+
+
+def test_report_generation_keeps_ui_responsive_and_defers_close(fenetre, tmp_path, monkeypatch, qtbot):
+    from threading import Event
+    from PySide6.QtCore import QTimer
+    started, released = Event(), Event()
+    def slow_report(*_a, **_k):
+        started.set()
+        if not released.wait(10):
+            return False, 'test gate not released'
+        return True, ''
+    monkeypatch.setattr('runner.services.report_service.write_html', slow_report)
+    monkeypatch.setattr('runner.ui.history_dashboard.QFileDialog.getSaveFileName',
+                        lambda *_a, **_k: (str(tmp_path / 'report.html'), ''))
+    select_run(fenetre)
+    fenetre.show()
+    try:
+        fenetre.export_html()
+        qtbot.waitUntil(started.is_set)
+        heartbeat = []
+        QTimer.singleShot(0, lambda: heartbeat.append(True))
+        qtbot.waitUntil(lambda: bool(heartbeat))
+        fenetre.reject()
+        assert fenetre.isVisible()
+        assert fenetre._report_export_worker is not None
+    finally:
+        released.set()
+        qtbot.waitUntil(lambda: fenetre._report_export_worker is None, timeout=15000)
+    assert not fenetre.isVisible()

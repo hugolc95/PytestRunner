@@ -1,130 +1,111 @@
-"""Rapport HTML autonome pour un run, et recuperation du JUnit XML.
-
-Un rapport sert a etre transmis : joint a un ticket, depose sur un partage,
-ouvert par quelqu'un qui n'a pas l'outil. Il doit donc tenir dans UN fichier,
-sans feuille de style ni police a aller chercher -- une page qui se decompose
-parce que le reseau interne bloque un CDN ne vaut rien comme piece jointe.
-
-Le XML, lui, n'est pas produit ici : pytest l'ecrit nativement avec
-`--junitxml`. L'exporter, c'est le recopier -- aucune dependance, et un
-fichier que les serveurs d'integration savent deja lire.
-"""
-
+"""Rapport d'analyse HTML autonome ; export JUnit sans transformation."""
 from __future__ import annotations
 
+import base64
+import json
 import shutil
 import time
 from html import escape
+from importlib.resources import files
 from pathlib import Path
 
 from runner.domain.duration import format_duration
-from runner.domain.ansi import strip_ansi
 from runner.domain.history import RunEntry
-from runner.domain.models import Status
-
-# Le rapport est lu ailleurs que dans l'outil, souvent imprime ou colle dans
-# un ticket : il garde ses propres couleurs, claires et sobres, plutot que
-# celles du theme en cours.
-_CSS = """
-:root {
-  --bg:#f6f7f9; --surface:#fff; --border:#e3e7ec; --text:#1b2230;
-  --muted:#5b6675; --passed:#2e7d32; --failed:#c62828; --skipped:#a1651a;
-  --error:#7b3fa0;
-}
-* { box-sizing:border-box; }
-body { margin:0; padding:32px; background:var(--bg); color:var(--text);
-       font:14px/1.5 "Segoe UI", system-ui, sans-serif; }
-.wrap { max-width:960px; margin:0 auto; }
-.card { background:var(--surface); border:1px solid var(--border);
-        border-radius:10px; padding:20px 24px; margin-bottom:16px; }
-h1 { font-size:19px; margin:0 0 6px; }
-h2 { font-size:15px; margin:0 0 12px; }
-.meta { color:var(--muted); font-size:13px; }
-.counts { display:flex; gap:12px; flex-wrap:wrap; margin-top:16px; }
-.count { flex:1 1 120px; border:1px solid var(--border); border-radius:8px;
-         padding:12px 14px; }
-.count .n { font-size:24px; font-weight:700; }
-.count .l { color:var(--muted); font-size:12px; text-transform:uppercase;
-            letter-spacing:.04em; }
-.passed .n { color:var(--passed); } .failed .n { color:var(--failed); }
-.skipped .n { color:var(--skipped); } .error .n { color:var(--error); }
-ul { margin:0; padding-left:18px; }
-li { font-family:"Cascadia Mono", Consolas, monospace; font-size:12.5px;
-     padding:2px 0; word-break:break-all; }
-pre { background:#0d0f13; color:#e4e7ec; border-radius:8px; padding:16px;
-      overflow-x:auto; font-family:"Cascadia Mono", Consolas, monospace;
-      font-size:12.5px; line-height:1.45; }
-.badge { display:inline-block; border-radius:999px; padding:3px 10px;
-         font-size:12px; font-weight:600; }
-.ok { background:#e6f4ea; color:var(--passed); }
-.ko { background:#fdecea; color:var(--failed); }
-.rd { background:#e8effc; color:#1f6feb; }
-.empty { color:var(--muted); font-style:italic; }
-"""
+from runner.domain.report_data import report_payload
 
 
-def _compteurs(entry: RunEntry) -> str:
-    cases = []
-    for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR):
-        cases.append(
-            f'<div class="count {statut.name.lower()}">'
-            f'<div class="n">{entry.count(statut)}</div>'
-            f'<div class="l">{statut.name.lower()}</div></div>')
-    return f'<div class="counts">{"".join(cases)}</div>'
+def _resource(name):
+    return files('runner.report_assets').joinpath(name).read_text(encoding='utf-8')
 
 
-def _liste(titre: str, nodeids, vide: str) -> str:
-    if not nodeids:
-        corps = f'<p class="empty">{escape(vide)}</p>'
-    else:
-        corps = "<ul>" + "".join(
-            f"<li>{escape(str(n))}</li>" for n in nodeids) + "</ul>"
-    return f'<div class="card"><h2>{escape(titre)} ({len(nodeids)})</h2>{corps}</div>'
+def _json(data):
+    # Un nodeid parametre peut contenir </script>. JSON ne protege pas le
+    # parseur HTML : neutraliser les delimiteurs avant de l'inserer.
+    return json.dumps(data, ensure_ascii=False, allow_nan=False, default=str).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e').replace('\u2028', '\\u2028').replace('\u2029', '\\u2029')
 
 
-def html_report(entry: RunEntry, output: str = "") -> str:
-    """Le rapport, en un seul fichier HTML."""
-    quand = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(entry.timestamp))
-    reussi = entry.ok
+def _static_tree(data):
+    nodes, rows = data['nodes'], data['rows']
+    def show(identifier):
+        node = nodes[identifier]
+        if node['kind'] != 'test':
+            return '<details open><summary>' + escape(node['name']) + '</summary><div class="static-children">' + ''.join(show(child) for child in node['children']) + '</div></details>'
+        row = rows[node['index']]
+        parts = []
+        for name, result in zip(data['readers'], row['readers']):
+            body = '<p>' + escape(name) + ' · ' + escape(result['status'].upper()) + '</p>'
+            for attempt in result['attempts']:
+                body += '<p>Recorded attempt ' + str(attempt.get('attempt', 0) + 1) + ' · ' + escape(attempt['status']) + '</p>'
+                if attempt.get('trace'):
+                    body += '<pre class="tr-code">' + escape(attempt['trace']) + '</pre>'
+            parts.append(body)
+        return '<details><summary>' + escape(row['nodeid']) + ' · Occurrence ' + str(row['index']+1) + '</summary>' + ''.join(parts) + '</details>'
+    return show('profile')
 
-    etiquettes = [f'<span class="badge {"ok" if reussi else "ko"}">'
-                  f'exit code {entry.exit_code}</span>']
-    if entry.reader:
-        etiquettes.append(f'<span class="badge rd">{escape(entry.reader)}</span>')
 
-    # La sortie est nettoyee de ses sequences ANSI : dans un fichier HTML
-    # elles s'afficheraient telles quelles, en plein milieu du texte.
-    console = escape(strip_ansi(output)) if output else ""
-    bloc_console = (f'<div class="card"><h2>Console output</h2><pre>{console}</pre>'
-                    "</div>") if console else ""
-
+def html_report(entry, output=None):
+    """Accepte un lecteur, ou toutes les entrees d'un meme lancement."""
+    entries = (entry,) if isinstance(entry, RunEntry) else tuple(entry)
+    outputs = [output] if isinstance(entry, RunEntry) and output is not None else None
+    data = report_payload(entries, outputs)
+    logo = 'data:image/png;base64,' + base64.b64encode(files('runner.report_assets').joinpath('in-groupe.png').read_bytes()).decode('ascii')
+    when = time.strftime('%Y-%m-%d %H:%M:%S %z', time.localtime(data['timestamp']))
+    statuses = ('passed', 'failed', 'error', 'skipped', 'notrun', 'unknown')
+    counts = dict(data['counts'])
+    # Les compteurs historiques ne permettent pas d'inventer des verdicts
+    # individuels. Les afficher a part lorsque seuls ces totaux subsistent.
+    if not any(e.analysis_file or e.analysis_data for e in entries):
+        counts.update({status:sum(int(e.counts.get(status.upper(), 0)) for e in entries) for status in statuses[:4]})
+    summary = ''.join('<span data-status="' + status + '" class="tr-' + status + '"><strong>' + str(counts.get(status, 0)) + '</strong> ' + {'notrun':'Not run', 'unknown':'Unknown'}.get(status, status.title()) + '</span>' for status in statuses)
+    label = 'Completed' if data['complete'] else 'Incomplete or older archive'
+    if any(e.exit_code for e in entries):
+        label += ' · Execution errors recorded'
+    console = ''.join('<details><summary>' + escape(name) + '</summary><pre class="tr-code">' + escape(text or 'No console output was archived.') + '</pre></details>' for name, text in zip(data['readers'], data['console']))
+    css = _resource('report.css')
+    js = _resource('report.js')
+    icons = _resource('icons.json')
+    fallback = _static_tree(data)
+    configurations, known = {}, {}
+    for row in data['rows']:
+        for result in row['readers']:
+            yaml = result.pop('yaml')
+            key = known.setdefault(id(yaml), 'c' + str(len(known)))
+            configurations[key] = yaml
+            result['configuration'] = key
+    data['configurations'] = configurations
     return f"""<!DOCTYPE html>
-<html lang="en"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Test report — {escape(quand)}</title>
-<style>{_CSS}</style></head>
-<body><div class="wrap">
-<div class="card">
-  <h1>Test report</h1>
-  <p class="meta">{escape(quand)} · {format_duration(entry.duration)} ·
-     {escape(entry.workspace)}</p>
-  <p style="margin-top:12px">{"".join(etiquettes)}</p>
-  {_compteurs(entry)}
-</div>
-{_liste("Failed tests", entry.failed_nodeids, "Nothing failed in this run.")}
-{_liste("Tests in this run", entry.nodeids, "No test was collected.")}
-{bloc_console}
-</div></body></html>
-"""
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Test report — {escape(data['title'])} — {escape(when)}</title>
+<style>{css}</style></head><body>
+<article id="pytest-tree-report-in" aria-label="IN Groupe test analysis report">
+<header><div class="tr-logo-plate"><img src="{logo}" alt="IN Groupe" width="420" height="253"></div><div class="tr-heading-brand"><div class="tr-brand">PYTEST RUNNER / ANALYSIS REPORT</div><h2>{escape(data['title'])}</h2><div class="tr-meta">{escape(when)} · Build #{data['build'] if data['build'] is not None else 'not recorded'} · {format_duration(data['duration'])}</div><div class="tr-meta">{escape(label)} · {len(data['rows'])} planned occurrences · {len(entries)} reader(s)</div></div></header>
+<div class="tr-summary">{summary}</div><p class="tr-note">Latest verdicts per occurrence and reader. Unknown means the archive cannot establish the result. Archived totals: {escape('; '.join(e.summary for e in entries))}</p>
+<div class="tr-ui" hidden>
+<details class="tr-context"><summary>Run context, environment &amp; recorded commands</summary><div class="tr-context-body"></div></details>
+<div class="tr-toolbar"><input class="tr-search" type="search" aria-label="Search the execution tree" placeholder="Search a group, test, parameter or path…"><select class="tr-reader-filter" aria-label="Filter by reader"></select><select class="tr-status-filter" aria-label="Filter by result"><option value="all">All results</option><option value="issues">Failures / errors</option><option value="notrun">Not run</option><option value="unknown">Unknown</option></select></div>
+<div class="tr-note tr-filter-count" aria-live="polite"></div><div class="tr-cols"><section class="tr-tree-area" aria-label="Execution hierarchy"><div class="tr-tools"><button type="button" class="tr-button" data-action="expand">Expand all</button><button type="button" class="tr-button" data-action="collapse">Collapse all</button></div><div class="tr-tree-head"></div><ul class="tr-tree" aria-label="Profile tree"></ul><div class="tr-legend"></div><div class="tr-caption">Profile order and group colours preserved. Σ time sums recorded latest-attempt durations across displayed readers.</div></section><section class="tr-inspector" aria-label="Selected result details" aria-live="polite"></section></div>
+<details class="tr-context"><summary>Console output — all recorded readers</summary><div class="tr-console"></div></details></div>
+<section class="tr-static"><h3>Execution hierarchy and recorded details</h3><p class="tr-meta">{escape(data['workspace'])}</p>{fallback}<h3>Console output</h3>{console}</section>
+<footer class="tr-footer"><span>IN Groupe · Pytest Runner · Self-contained report</span><span>Missing historical data is marked explicitly.</span></footer></article>
+<script type="application/json" id="report-data">{_json(data)}</script>
+<script type="application/json" id="report-icons">{icons}</script>
+<script>{js}</script></body></html>"""
 
 
-def write_html(entry: RunEntry, destination: Path, output: str = "") -> tuple[bool, str]:
-    """Ecrit le rapport. Rend (succes, message)."""
+def write_html(entry, destination, output=None):
+    """Ecriture atomique ; une erreur ne laisse jamais un demi-rapport."""
+    path = Path(destination)
+    temporary = path.with_name(path.name + '.tmp')
     try:
-        Path(destination).write_text(html_report(entry, output), encoding="utf-8")
-    except OSError as exc:
+        temporary.write_text(html_report(entry, output), encoding='utf-8')
+        temporary.replace(path)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        try:
+            temporary.unlink(missing_ok=True)
+        except OSError:
+            pass
         return False, str(exc)
-    return True, ""
+    return True, ''
 
 
 def write_junit(entry: RunEntry, destination: Path) -> tuple[bool, str]:
