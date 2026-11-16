@@ -1,5 +1,30 @@
 # Rapport HTML d'analyse IN Groupe
 
+## Correctifs v1.6.1
+
+Le tableau YAML montre les valeurs effectives, y compris false, zero et les
+collections vides. Les origines et les configurations completes restent
+disponibles dans des sections depliables. Les durees absentes des snapshots
+sont recuperees depuis les timings pytest archives uniquement si le lien
+occurrence/lecteur/tentative est non ambigu. Un resultat Not run ne reprend
+pas le temps d'une autre execution. Les temps manquants restent explicites.
+
+Les selections et changements d'onglet ne reconstruisent plus l'arbre.
+La console et les longues listes de membres sont chargees a la demande.
+Un controle Chromium local sur 1 500 occurrences synthetiques mesure des
+gestionnaires de clic de 0,4 a 3,2 ms apres correction, contre 193 a 484 ms
+avant ; ces mesures ne prejugent pas des performances sur chaque poste.
+
+Apres export, une confirmation propose d'ouvrir le HTML dans le navigateur
+par defaut. L'export reste sauvegarde si l'ouverture systeme echoue.
+
+Verification de ces correctifs : 32 tests cibles passes, parcours d'export
+avec les quatre modules d'installation dans l'application, puis controles
+Chromium hors ligne en clair/sombre aux largeurs 320, 390, 736 et 1440 px.
+La suite complete n'a pas ete relancee, a la demande de l'utilisateur.
+
+## Fonctionnement du rapport
+
 Depuis History, le menu Export propose **Export complete HTML report…** pour
 les lecteurs du lancement selectionne. Les exports individuels restent dans
 les sous-menus lecteurs. Le rapport se genere dans un thread : l'interface

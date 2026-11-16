@@ -11,6 +11,7 @@ from runner.domain.ansi import strip_ansi
 from runner.domain.execution_profile import group_path, merge_configuration, profile_group_runs
 from runner.domain.models import Kind
 from runner.domain.report_capture import read_analysis
+from runner.domain.report_timing import archived_timings, valid_duration
 from runner.domain.tree import build_sequence_tree, collapse_single_class
 
 
@@ -45,19 +46,26 @@ def _configuration(entry, saved, step, reader):
     if raw is None:
         raw = saved.get('configuration_text') if saved.get('configuration_name') else None
     if raw is None:
-        return dict(base='', effective='', origins=[], notice=NOT_RECORDED)
+        return dict(base='', effective='', origins=[], parameters=[], notice=NOT_RECORDED)
     try:
         base = yaml.safe_load(raw) or {}
         if not isinstance(base, dict):
             raise ValueError('The archived YAML is not a mapping.')
         value = copy.deepcopy(base)
         origins = {}
+        def parameter_path(path, key):
+            key = str(key)
+            segment = '[' + json.dumps(key, ensure_ascii=False) + ']' if any(c in key for c in '.[]') else key
+            return path + segment if segment.startswith('[') else f'{path}.{segment}' if path else segment
         def mark(patch, label, path=''):
             for key, item in patch.items():
-                name = f'{path}.{key}' if path else str(key)
+                name = parameter_path(path, key)
                 if isinstance(item, dict):
                     origins.pop(name, None)
-                    mark(item, label, name)
+                    if item:
+                        mark(item, label, name)
+                    else:
+                        origins[name] = label
                 else:
                     for old in tuple(origins):
                         if old == name or old.startswith(name + '.'):
@@ -79,10 +87,21 @@ def _configuration(entry, saved, step, reader):
                 value[key] = reader
                 mark({key: reader}, 'Reader selected at launch')
                 break
+        parameters = {}
+        def flatten(mapping, path=''):
+            for key, item in mapping.items():
+                name = parameter_path(path, key)
+                if isinstance(item, dict) and item:
+                    flatten(item, name)
+                else:
+                    parameters[name] = item
+        flatten(value)
+        final_origins = {key: origins.get(key, 'Base configuration') for key in parameters}
         return dict(base=raw, effective=yaml.safe_dump(value, sort_keys=False, allow_unicode=True),
-                    origins=[dict(parameter=key, source=source) for key, source in origins.items()], notice='')
+                    origins=[dict(parameter=key, source=source) for key, source in final_origins.items()],
+                    parameters=[dict(parameter=key, value=parameters[key], source=source) for key, source in final_origins.items()], notice='')
     except (yaml.YAMLError, ValueError, TypeError, AttributeError) as exc:
-        return dict(base=raw, effective='', origins=[], notice=f'Archived YAML could not be resolved: {exc}')
+        return dict(base=raw, effective='', origins=[], parameters=[], notice=f'Archived YAML could not be resolved: {exc}')
 
 
 def _tree(sequence, saved, rows):
@@ -163,7 +182,7 @@ def report_payload(entries, outputs=None):
     analyses = [read_analysis(entry) for entry in entries]
     texts = [strip_ansi(outputs[i] if outputs is not None else entry.output()) for i, entry in enumerate(entries)]
     indexes = [failures.index_failures(text) for text in texts]
-    durations = [parsing.parse_durations(text) for text in texts]
+    durations = [archived_timings(text, sequence) for text in texts]
     archived = [dict(entry.counts) for entry in entries]
     frequencies = Counter(sequence)
     legacy_maps = []
@@ -187,18 +206,29 @@ def report_payload(entries, outputs=None):
             occurrences = analysis.get('occurrences', [])
             captured = occurrences[position] if position < len(occurrences) and occurrences[position].get('nodeid') == nodeid else None
             attempts = copy.deepcopy(captured.get('attempts', [])) if captured is not None else _legacy_attempts(entry, position, sequence, frequencies, *legacy_maps[reader])
+            if not attempts and captured is None:
+                attempts = [dict(attempt=attempt, status='unknown', duration=duration,
+                    duration_source='Recovered from archived pytest timing')
+                    for (where, attempt), duration in durations[reader].items()
+                    if where == position and attempt is not None]
+                attempts.sort(key=lambda attempt: attempt['attempt'])
             for attempt in attempts:
                 attempt['status'] = _status(attempt.get('status'))
                 records = attempt.get('details') or []
                 owned = [record for record in records if record.get('nodeid') == nodeid]
-                failure = failures.failure_for(indexes[reader], nodeid) if not owned and frequencies[nodeid] == 1 else None
+                failure = failures.failure_for(indexes[reader], nodeid) if not owned and frequencies[nodeid] == 1 and len(attempts) == 1 else None
                 attempt['trace'] = '\n\n'.join(f"{record.get('phase', '').upper()}\n{record.get('body', '')}" for record in owned)
                 attempt['phase'] = next((record.get('phase', '') for record in owned if record.get('kind') == 'test'), '')
                 attempt['message'] = next((record.get('message', '') for record in owned if record.get('message')), '')
                 if failure:
                     attempt.update(trace=failure.body, phase=failure.phase, message=failure.headline)
-                if 'duration' not in attempt and frequencies[nodeid] == 1:
-                    attempt['duration'] = durations[reader].get(nodeid)
+                if not valid_duration(attempt.get('duration')):
+                    measured = durations[reader].get((position, attempt.get('attempt', 0)))
+                    if measured is None and len(attempts) == 1:
+                        measured = durations[reader].get((position, None))
+                    attempt['duration'] = measured
+                    if measured is not None:
+                        attempt['duration_source'] = 'Recovered from archived pytest timing'
                 if not attempt.get('log') and analysis.get('save_logs', True) and entry.build_number is not None and frequencies[nodeid] == 1:
                     from runner.domain.logs import find_test_log
                     from pathlib import Path

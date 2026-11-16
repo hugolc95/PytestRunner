@@ -2,6 +2,7 @@
 import copy
 
 from runner.domain.models import Status
+from runner.domain.report_timing import valid_duration
 from runner.version import __version__
 
 
@@ -24,8 +25,14 @@ def capture_report(window, report):
                     continue
                 live = window._profile_live_details.get((key, reader), {})
                 path = window._profile_logs.paths.get((key, reader)) if window._profile_logs else None
+                duration = window.profile_model._durations.get(key, {}).get(reader)
+                if not valid_duration(duration):
+                    duration = live.get('duration')
+                if not valid_duration(duration):
+                    batch = window._profile_reports.get((key, reader))
+                    duration = batch.durations.get(nodeid) if batch is not None else None
                 attempts.append(dict(attempt=attempt, status=status.name,
-                    duration=window.profile_model._durations.get(key, {}).get(reader),
+                    duration=duration if valid_duration(duration) else None,
                     details=copy.deepcopy(list(live.get('records', {}).values())),
                     log_path=str(path) if path else ''))
             records.append(dict(position=position, nodeid=nodeid, attempts=attempts,

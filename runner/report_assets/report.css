@@ -43,7 +43,7 @@
 #pytest-tree-report-in .tr-facts dd { margin:0; overflow-wrap:anywhere; }
 #pytest-tree-report-in .tr-cols { display:grid; grid-template-columns:minmax(0,1.2fr) minmax(0,1fr); gap:19px; margin-top:14px; }
 #pytest-tree-report-in .tr-tree-area, #pytest-tree-report-in .tr-inspector { min-width:0; }
-#pytest-tree-report-in .tr-tree-head, #pytest-tree-report-in .tr-line { display:grid; grid-template-columns:minmax(0,1fr) repeat(var(--tr-readers,2),40px) 49px; gap:3px; align-items:center; }
+#pytest-tree-report-in .tr-tree-head, #pytest-tree-report-in .tr-line { display:grid; grid-template-columns:minmax(0,1fr) repeat(var(--tr-readers,2),86px) 92px; gap:3px; align-items:center; }
 #pytest-tree-report-in .tr-tree-head { padding:6px 2px; border-bottom:1px solid var(--tr-line); font-size:11px; color:var(--tr-muted); }
 #pytest-tree-report-in .tr-tree-head > :not(:first-child) { text-align:center; }
 #pytest-tree-report-in .tr-tools { display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin-bottom:7px; }
@@ -69,7 +69,7 @@
 #pytest-tree-report-in .tr-verdict.tr-skipped { color:var(--tr-skip); }
 #pytest-tree-report-in .tr-verdict.tr-notrun, #pytest-tree-report-in .tr-verdict.tr-incomplete { color:var(--tr-muted); }
 #pytest-tree-report-in .tr-verdict[aria-pressed=true] { border-color:var(--tr-blue); background:var(--tr-bg); }
-#pytest-tree-report-in .tr-duration { text-align:right; padding-right:4px; color:var(--tr-muted); font:11px/1.4 ui-monospace,Consolas,monospace; }
+#pytest-tree-report-in .tr-duration { text-align:right; padding-right:4px; color:var(--tr-muted); font:12px/1.4 ui-monospace,Consolas,monospace; font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; }
 #pytest-tree-report-in .tr-breadcrumb { font-size:11px; color:var(--tr-muted); overflow-wrap:anywhere; margin-bottom:7px; }
 #pytest-tree-report-in .tr-heading { font-size:17px; font-weight:500; overflow-wrap:anywhere; margin:0 0 6px; }
 #pytest-tree-report-in .tr-selection-meta { display:flex; flex-wrap:wrap; gap:7px 13px; margin:8px 0 12px; font-size:12px; }
@@ -103,8 +103,8 @@
   #pytest-tree-report-in h2 { font-size:19px; }
   #pytest-tree-report-in .tr-cols { grid-template-columns:minmax(0,1fr); gap:20px; }
   #pytest-tree-report-in .tr-inspector { border-top:1px solid var(--tr-line); padding-top:15px; }
-  #pytest-tree-report-in .tr-tree-head, #pytest-tree-report-in .tr-line { grid-template-columns:minmax(0,1fr) repeat(var(--tr-readers,2),42px); }
-  #pytest-tree-report-in .tr-duration { display:none; }
+  #pytest-tree-report-in .tr-tree-head, #pytest-tree-report-in .tr-line { grid-template-columns:minmax(0,1fr) repeat(var(--tr-readers,2),52px) 78px; }
+
   #pytest-tree-report-in .tr-name-cell { padding-left:calc(var(--depth) * 7px); }
   #pytest-tree-report-in .tr-label > svg, #pytest-tree-report-in .tr-label > i { display:none; }
   #pytest-tree-report-in .tr-search { flex-basis:100%; }
@@ -125,13 +125,13 @@ body { margin:0; padding:18px; background:#edf0f5; }
 #pytest-tree-report-in.report-interactive > .tr-static { display:none; }
 #pytest-tree-report-in .static-children { margin-left:16px; }
 #pytest-tree-report-in .tr-tree-area { overflow-x:auto; }
-#pytest-tree-report-in .tr-tree-head, #pytest-tree-report-in .tr-line { min-width:calc(var(--tr-readers,2) * 40px + 179px); }
+#pytest-tree-report-in .tr-tree-head, #pytest-tree-report-in .tr-line { min-width:calc(var(--tr-readers,2) * 86px + 247px); }
 #pytest-tree-report-in .tr-verdict.tr-unknown { color:var(--tr-muted); }
 #pytest-tree-report-in .tr-unknown { color:var(--tr-muted); }
 #pytest-tree-report-in .tr-console pre { max-height:unset; }
 @media(max-width:720px) {
   body { padding:4px; }
-  #pytest-tree-report-in .tr-tree-head, #pytest-tree-report-in .tr-line { min-width:calc(var(--tr-readers,2) * 42px + 150px); }
+  #pytest-tree-report-in .tr-tree-head, #pytest-tree-report-in .tr-line { min-width:calc(var(--tr-readers,2) * 52px + 224px); }
 }
 @media(prefers-color-scheme:dark) { body { background:#11151c; } }
 @media print {
@@ -146,3 +146,11 @@ body { margin:0; padding:18px; background:#edf0f5; }
 @media print {
   #pytest-tree-report-in .tr-static details::details-content { content-visibility:visible; }
 }
+
+#pytest-tree-report-in .tr-reader-heading { display:block; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+#pytest-tree-report-in .tr-parameters { table-layout:fixed; }
+#pytest-tree-report-in .tr-parameters th:first-child { width:42%; }
+#pytest-tree-report-in .tr-value { font:12px/1.5 ui-monospace,Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; }
+#pytest-tree-report-in #tr-detail-panel details + details { margin-top:8px; }
+#pytest-tree-report-in .tr-member-list { overflow-wrap:anywhere; }
+#pytest-tree-report-in button:not(:disabled), #pytest-tree-report-in summary { cursor:pointer; }

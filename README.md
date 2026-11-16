@@ -1,5 +1,24 @@
 # Pytest Runner GUI
 
+## Rapports HTML plus lisibles et plus fluides — v1.6.1
+
+Dans l'onglet **YAML**, le tableau affiche directement la valeur effective
+de chaque paramètre. L'origine des valeurs et les configurations complètes
+restent consultables dans des sections dépliables.
+
+Les durées enregistrées sont retrouvées dans les sorties pytest archivées
+lorsqu'elles peuvent être associées sans ambiguïté à un test et à sa
+tentative. Les durées absentes restent signalées ; les temps partiels sont
+identifiés. Les noms longs des lecteurs ne chevauchent plus la colonne
+**Duration**, qui reste visible sur téléphone.
+
+Les clics sur les tests, lecteurs et onglets sont plus fluides dans les
+grands rapports. Ils conservent l'état de l'arbre ; les longues listes de
+groupes sont paginées et la console se charge à son ouverture.
+
+Après un export HTML depuis **History**, une petite fenêtre **Export complete**
+propose **Open report** pour ouvrir le fichier dans le navigateur par défaut.
+
 ## Rapports HTML d’analyse IN Groupe — v1.6.0
 
 Dans **History → Export → Export complete HTML report…**, un même rapport

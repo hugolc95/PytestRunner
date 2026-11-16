@@ -11,8 +11,8 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QActionGroup, QColor
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer, Signal, QUrl
+from PySide6.QtGui import QActionGroup, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QButtonGroup,
@@ -1721,6 +1721,8 @@ class HistoryWindow(QDialog):
             self, "Save the report", f"report_{entries[0].id}.html", "HTML (*.html)")
         if not path:
             return
+        if not path.lower().endswith(('.html', '.htm')):
+            path += '.html'
         from runner.services.report_service import ReportExportWorker
         worker = ReportExportWorker(entries, Path(path), self)
         self._report_export_worker = worker
@@ -1735,8 +1737,33 @@ class HistoryWindow(QDialog):
             if pending is not None:
                 self._report_close_pending = None
                 self.done(pending)
+            elif ok and not getattr(self.window(), '_close_after_report', False):
+                self._offer_open_html(Path(path))
         worker.finished.connect(finished)
         worker.start()
+
+    def _offer_open_html(self, path):
+        confirmation = QMessageBox(self)
+        confirmation.setIcon(QMessageBox.Information)
+        confirmation.setWindowTitle('Export complete')
+        confirmation.setTextFormat(Qt.PlainText)
+        confirmation.setText(f'Report exported to:\n{path}')
+        open_button = confirmation.addButton('Open report', QMessageBox.ActionRole)
+        confirmation.addButton(QMessageBox.Close)
+        confirmation.setAttribute(Qt.WA_DeleteOnClose)
+        self._report_export_confirmation = confirmation
+        def clicked(button):
+            if button is open_button:
+                url = QUrl.fromLocalFile(str(Path(path).resolve()))
+                if not QDesktopServices.openUrl(url):
+                    QMessageBox.warning(self, 'Unable to open report',
+                        f'The report was saved, but could not be opened automatically.\n'
+                        f'Open it manually in a browser:\n{path}')
+        confirmation.buttonClicked.connect(clicked)
+        confirmation.finished.connect(lambda *_: setattr(self, '_report_export_confirmation', None))
+        # Meme presentation que l'export Excel, sans boucle modale imbriquee
+        # dans le signal de fin du thread d'export.
+        confirmation.open()
 
     def done(self, result):
         worker = getattr(self, '_report_export_worker', None)
