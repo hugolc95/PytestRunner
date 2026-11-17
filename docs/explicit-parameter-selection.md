@@ -1,7 +1,8 @@
-# Selection precise de cas parametres
+# Selection precise de cas parametres — v1.7.1
 
 Correction preparee sur `codex/preserve-explicit-parameter-selection`, depuis
-la version 1.7.0. Les campagnes de campagnes ne sont pas modifiees.
+la version 1.7.0, puis livree sur main dans la version 1.7.1.
+Les campagnes de campagnes ne sont pas modifiees.
 
 ## Reproduction et causes
 

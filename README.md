@@ -1,5 +1,21 @@
 # Pytest Runner GUI
 
+## Sélections de cas paramétrés conservées — v1.7.1
+
+Dans **Add tests / groups**, un cas choisi individuellement reste une
+sélection précise lorsque le test reçoit de nouveaux paramètres. Choisir
+explicitement une fonction, un fichier ou un dossier complet permet toujours
+de suivre ses futurs cas et tests.
+
+Copier, coller, dupliquer un cas ou enregistrer **Contents…** n’active plus
+implicitement le suivi de toute sa fonction. **Add selected again** respecte
+aussi ce choix après un double-clic. Supprimer un test conserve le suivi
+des autres tests du groupe et ses exclusions.
+
+Pour un ancien cas déjà enregistré comme fonction suivie : sélectionner ce
+cas, ouvrir **Contents…**, choisir **Keep selected cases**, puis sauvegarder.
+[Détails et vérifications](docs/explicit-parameter-selection.md).
+
 ## Mise à jour des campagnes simplifiée — v1.7.0
 
 Dans **Run Tests** et **Execution Profiles**, une collecte réussie propose
