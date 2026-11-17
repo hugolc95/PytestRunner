@@ -7,6 +7,13 @@ une mise à jour globale de la campagne, sans décision obligatoire par test.
 **Contents…** distingue la sélection fixe du suivi des nouveaux tests d’un
 dossier. Les choix avancés restent disponibles pour les remplacements ambigus.
 
+Un test simple devenu paramétré est remplacé par ses cas à **chaque appel**
+dans la campagne, y compris dans les anciens profils. L’ordre, les groupes
+et les réglages YAML de chaque appel sont conservés. Les nouveaux cas sont
+ensuite proposés pour chacun de ces appels ; une sélection explicite de cas
+précis reste fixe. La fenêtre montre directement les changements et le total
+avant/après, sans changer de taille quand on affiche les chemins complets.
+
 Les groupes vides conservent leur présentation et leur YAML ; les brouillons
 restent disponibles quand on change de profil. **Undo update** fonctionne aussi
 après redémarrage et protège les modifications plus récentes.

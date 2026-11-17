@@ -213,6 +213,9 @@ class RunCampaignSync(QObject):
             def new_checked(identifier, position, repeat):
                 source = profile.tracking.get('members', {}).get(identifier, {}).get('source')
                 inherited = [i for i, m in active.tracking.get('members', {}).items() if m['source'] == source] if source else []
+                if not inherited and source:
+                    inherited = [i for i, m in profile.tracking.get('members', {}).items()
+                                 if m['source'] == source and i in all_old_ids]
                 if not inherited and profile.step_groups:
                     path = group_path(profile.step_groups[position])
                     group_id = path[-1]['id'] if path else None

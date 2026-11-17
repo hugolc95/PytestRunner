@@ -169,8 +169,9 @@ def reconcile(profile):
     profile.tracking['members'] = active
     from runner.domain.execution_profile import group_path
     from runner.domain.execution_profile import group_entry
-    metadata = {g['id']: group_entry(group_path(r['group'])[:level + 1])
-                for r in profile.empty_groups for level, g in enumerate(group_path(r['group']))}
+    entries = list(profile.step_groups) + [r['group'] for r in profile.empty_groups]
+    metadata = {g['id']: group_entry(group_path(entry)[:level + 1])
+                for entry in entries for level, g in enumerate(group_path(entry))}
     for source in sources.values():
         if source['group'] and source['group']['id'] in metadata:
             source['group'] = copy.deepcopy(metadata[source['group']['id']])
@@ -178,6 +179,7 @@ def reconcile(profile):
 
 @dataclass
 class SyncPlan:
+    workspace: str = ''
     available: tuple[str, ...] = ()
     additions: list[tuple[str, str]] = field(default_factory=list)
     missing: list[int] = field(default_factory=list)
@@ -186,13 +188,21 @@ class SyncPlan:
     path_changes: dict[int, str] = field(default_factory=dict)
     source_paths: dict[str, str] = field(default_factory=dict)
     suggestions: dict[int, list[str]] = field(default_factory=dict)
+    parameter_updates: dict[int, dict] = field(default_factory=dict)
 
     @property
     def changed(self):
-        return bool(self.additions or self.missing)
+        return bool(self.additions or self.missing or self.parameter_updates)
 
     @property
     def summary(self):
+        if self.parameter_updates:
+            handled = {p for u in self.parameter_updates.values() for p in u['positions']}
+            text = f'Parameters changed · {len(self.parameter_updates)} calls'
+            if self.additions:
+                text += f' · {len(self.additions)} new tests'
+            missing = len(set(self.missing) - handled)
+            return text + (f' · {missing} unavailable' if missing else '')
         changed = sum(bool(self.candidates.get(p)) for p in self.missing if p not in self.path_changes)
         unavailable = len(self.missing) - changed - len(self.path_changes)
         parts = []
@@ -257,16 +267,28 @@ def recommended_decisions(profile, plan, *, remove_unmatched=False, refresh_case
     """Resoudre les references certaines ; garder les cas ambigus et leur YAML."""
     result = {}
     members = profile.tracking.get('members', {})
+    sources = {s['id']: s for s in profile.tracking.get('sources', [])}
+    patches = profile.step_overrides or [{} for _ in profile.sequence]
+    positions = {identifier: p for p, identifier in enumerate(profile.step_ids)}
+    function_defaults = set()
+    refreshed_positions = {p for update in plan.parameter_updates.values() for p in update['positions']}
+    for source in sources.values():
+        owned = [positions[i] for i, m in members.items() if m['source'] == source['id']]
+        if source['kind'] == 'test' and owned and all(patches[p] == patches[owned[0]] for p in owned):
+            function_defaults.add(source['id'])
     for position in plan.missing:
+        if refresh_cases and any(u['whole_test'] and position == p for p, u in plan.parameter_updates.items()):
+            result[position] = 'parameters'
+            continue
         if position in plan.path_changes:
             result[position] = plan.path_changes[position]
             continue
         patch = profile.step_overrides[position] if profile.step_overrides else {}
         source = members.get(profile.step_ids[position], {}).get('source') if profile.step_ids else None
         cases = plan.candidates.get(position, [])
-        # Un bloc suivi possede deja ses nouveaux cas dans les ajouts. Les
-        # anciens cas sans exception YAML peuvent etre remplaces en bloc.
-        if cases and source and not patch and refresh_cases:
+        # Les valeurs communes a la fonction suivent ses nouveaux cas. Une
+        # exception propre a un ancien cas reste a confirmer explicitement.
+        if cases and source and (not patch or source in function_defaults and position in refreshed_positions) and refresh_cases:
             result[position] = 'remove'
         else:
             result[position] = 'remove' if remove_unmatched else 'keep'
@@ -297,7 +319,10 @@ def content_description(profile, positions, group_id=''):
 
 
 def compare(profile, available, workspace='', *, complete=True):
-    plan = SyncPlan()
+    from runner.domain.execution_profile import group_path
+    def group_key(entry):
+        return tuple(g['id'] for g in group_path(entry))
+    plan = SyncPlan(workspace=workspace_key(workspace))
     if not complete:
         plan.problem = 'Collection incomplete — campaign unchanged. Collect successfully before reviewing changes.'
         return plan
@@ -314,6 +339,8 @@ def compare(profile, available, workspace='', *, complete=True):
         by_base.setdefault(parameter_base(nodeid), []).append(nodeid)
         by_symbol.setdefault(nodeid.partition('::')[2], []).append(nodeid)
     base_moves = location_matches([parameter_base(n) for n in profile.sequence], list(dict.fromkeys(parameter_base(n) for n in available)))
+    from runner.domain.campaign_parameters import proposals
+    plan.parameter_updates = proposals(profile, available, base_moves)
     for position, nodeid in enumerate(profile.sequence):
         if nodeid not in present:
             plan.missing.append(position)
@@ -346,12 +373,19 @@ def compare(profile, available, workspace='', *, complete=True):
                     source['selector'] = target
             existing = existing_by_source.get(source['id'], set())
             excluded = set(source['excluded'])
+            managed = {u['base'] for u in plan.parameter_updates.values() if u['source'] == source['id']}
+            if source['kind'] != 'test':
+                groups = profile.step_groups or [{} for _ in profile.sequence]
+                managed.update(u['base'] for first, u in plan.parameter_updates.items()
+                               if group_key(groups[first]) == group_key(source['group']))
+            managed.update(s['selector'] for s in profile.tracking['sources'] if s['kind'] == 'test' and group_key(s['group']) == group_key(source['group']) and s['id'] != source['id'])
             plan.additions.extend((source['id'], nodeid) for nodeid in available
-                                  if nodeid not in existing and nodeid not in excluded and matches(source, nodeid))
+                                  if nodeid not in existing and nodeid not in excluded and parameter_base(nodeid) not in excluded
+                                  and parameter_base(nodeid) not in managed and matches(source, nodeid))
     return plan
 
 
-def apply(profile, plan, additions, decisions, *, transfer=()):
+def apply(profile, plan, additions, decisions, *, transfer=(), refresh_cases=True):
     """Applique seulement les choix revus, jamais des correspondances approximatives."""
     from runner.domain.execution_profile import validate_profile, ProfileValidationError, group_path
     if plan.problem:
@@ -362,6 +396,18 @@ def apply(profile, plan, additions, decisions, *, transfer=()):
     groups = result.step_groups or [{} for _ in result.sequence]
     members = result.tracking.get('members', {})
     sources = {s['id']: s for s in result.tracking.get('sources', [])}
+    original_members = copy.deepcopy(members)
+    for position in plan.missing:
+        if not decisions.get(position):
+            raise ProfileValidationError('Choose an action for every unavailable occurrence.')
+    parameter_rows, parameter_positions = {}, set()
+    if refresh_cases:
+        from runner.domain.campaign_parameters import rows as parameter_rows_for
+        for first, update in plan.parameter_updates.items():
+            values = parameter_rows_for(result, update, decisions, set(transfer) | set(plan.path_changes), members, sources, plan.workspace)
+            if values is not None:
+                parameter_rows[first] = values
+                parameter_positions.update(update['positions'])
     for source_id, selector in plan.source_paths.items():
         source = sources[source_id]
         owned = [p for p, i in enumerate(result.step_ids) if members.get(i, {}).get('source') == source_id and p in plan.path_changes]
@@ -373,6 +419,8 @@ def apply(profile, plan, additions, decisions, *, transfer=()):
         raise ProfileValidationError('The collection changed. Review this campaign again.')
     inserts, rows, replacements = {}, [], {}
     for position in plan.missing:
+        if position in parameter_positions:
+            continue
         decision = decisions.get(position, '')
         if not decision:
             raise ProfileValidationError('Choose an action for every unavailable occurrence.')
@@ -384,17 +432,20 @@ def apply(profile, plan, additions, decisions, *, transfer=()):
                 if p in replacements and i in members}
     positions = {i: n for n, i in enumerate(result.step_ids)}
     ranks = {nodeid: n for n, nodeid in enumerate(plan.available)}
+    effective_nodes = {p: choice for p, choice in decisions.items() if choice in ranks}
+    effective_nodes.update({p: values[0][0] for p, values in parameter_rows.items()})
     empty_slots = {}
     for order, record in enumerate(result.empty_groups):
         for group in group_path(record['group']):
             empty_slots.setdefault(group['id'], (record['position'], order))
     def source_order(source):
-        owned = [positions[i] for i, m in members.items() if m['source'] == source['id'] and i in positions]
+        owned = [positions[i] for i, m in original_members.items() if m['source'] == source['id'] and i in positions]
         empty = empty_slots.get(source['group'].get('id'))
         return (min(owned), 1, 0) if owned else (empty[0], 0, empty[1]) if empty else (len(result.sequence), 2, 0)
     for source in sorted(sources.values(), key=source_order):
-        owned = sorted(positions[i] for i, m in members.items() if m['source'] == source['id'] and i in positions)
-        current = [(p, replacements.get(p, result.sequence[p])) for p in owned if decisions.get(p) != 'remove']
+        owned = sorted(positions[i] for i, m in original_members.items() if m['source'] == source['id'] and i in positions)
+        current = [(p, effective_nodes.get(p, replacements.get(p, result.sequence[p]))) for p in owned
+                   if decisions.get(p) != 'remove' or p in parameter_rows]
         for source_id, nodeid in plan.additions:
             if source_id == source['id'] and (source_id, nodeid) not in chosen and (source_id, nodeid) not in consumed:
                 source['excluded'].append(nodeid)
@@ -424,6 +475,9 @@ def apply(profile, plan, additions, decisions, *, transfer=()):
             source['anchor'] = new_id
     for position, (nodeid, identifier, patch, group) in enumerate(zip(result.sequence, result.step_ids, patches, groups)):
         insert(position)
+        if position in parameter_positions:
+            rows.extend(parameter_rows.get(position, []))
+            continue
         keep = True
         if position in plan.missing:
             decision = decisions.get(position, '')

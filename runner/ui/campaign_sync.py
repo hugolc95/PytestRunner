@@ -54,12 +54,14 @@ class CampaignNotice(QFrame):
             self.style().unpolish(self)
             self.style().polish(self)
         self.symbol.setPixmap(icons.icon('mdi.update' if warning else 'mdi.check-circle-outline').pixmap(20, 20))
-        tone = t.status_color('skipped') if plan.problem or len(plan.missing) > len(plan.path_changes) else t.ACCENT
+        handled = {p for u in plan.parameter_updates.values() for p in u['positions']}
+        tone = t.status_color('skipped') if plan.problem or set(plan.missing) - set(plan.path_changes) - handled else t.ACCENT
         self.setStyleSheet(f'QFrame#ProfileNotice {{background:{t.rgba(tone, .07)};border:none;border-left:2px solid {tone};border-radius:4px;}}')
         self.label.setText(plan.problem or ('Campaign update available · ' + plan.summary if plan.changed else 'Campaign updated and reloaded.'))
         self.button.setVisible(plan.changed and not plan.problem)
-        if plan.missing and not plan.additions and not plan.path_changes and not plan.problem:
-            self.label.setText(f'{len(plan.missing)} campaign tests not found · available tests can still run. Check the project and collection settings.')
+        if plan.missing and not plan.additions and not plan.path_changes and not plan.parameter_updates and not plan.problem:
+            noun = 'test' if len(plan.missing) == 1 else 'tests'
+            self.label.setText(f'{len(plan.missing)} {noun} not found · available tests can still run.')
             self.button.setText('Check campaign…')
         else:
             self.button.setText('Review changes…')
@@ -78,7 +80,8 @@ class AdvancedCampaignReviewDialog(QDialog):
         self.profile, self.plan, self.result_profile = profile, plan, None
         self.locked = locked
         self.setWindowTitle('Update campaign')
-        self.resize(1020, 790)
+        self.setMinimumSize(960, 640)
+        self.resize(960, 640)
         layout = QVBoxLayout(self)
         title = QLabel(profile.name)
         title.setObjectName('PageTitle')
@@ -116,6 +119,11 @@ class AdvancedCampaignReviewDialog(QDialog):
             item.setIcon(0, icons.icon('mdi.plus-circle-outline', t.status_color('passed')))
             item.setToolTip(0, nodeid + '\nInserted in this source block. Group YAML is inherited.')
             self.additions[source_id, nodeid] = item
+        for first, update in plan.parameter_updates.items():
+            entry = profile.step_groups[first] if profile.step_groups else {}
+            item = QTreeWidgetItem(group(entry), [update['base'], f'{len(update["cases"])} parameter cases', 'Settings kept'])
+            item.setIcon(0, icons.icon('mdi.update', t.ACCENT))
+            item.setToolTip(0, '\n'.join(update['cases']))
         for position in plan.missing:
             entry = profile.step_groups[position] if profile.step_groups else {}
             identifier = profile.step_ids[position] if profile.step_ids else ''
@@ -129,6 +137,8 @@ class AdvancedCampaignReviewDialog(QDialog):
             combo.addItem('Choose an action…', '')
             combo.addItem('Remove this occurrence', 'remove')
             combo.addItem('Keep unavailable', 'keep')
+            if any(position == first and u['whole_test'] for first, u in plan.parameter_updates.items()):
+                combo.addItem('Refresh parameter cases', 'parameters')
             for candidate in plan.candidates[position]:
                 combo.addItem('Replace → ' + candidate.split('::')[-1], candidate)
                 combo.setItemData(combo.count() - 1, candidate, Qt.ToolTipRole)
@@ -147,16 +157,17 @@ class AdvancedCampaignReviewDialog(QDialog):
                 check = QCheckBox('Transfer override')
                 check.setToolTip('Only transfer this occurrence\'s YAML to an explicitly selected replacement. Group YAML is always inherited.')
                 check.setEnabled(False)
-                combo.currentIndexChanged.connect(lambda _=0, c=combo, w=check: w.setEnabled(c.currentData() not in ('', 'keep', 'remove', '__browse__')))
+                combo.currentIndexChanged.connect(lambda _=0, c=combo, w=check: w.setEnabled(c.currentData() not in ('', 'keep', 'remove', 'parameters', '__browse__')))
                 self.tree.setItemWidget(item, 2, check)
                 self.transfers[position] = check
-        self.message = QLabel('Unchecked additions remain excluded from this source until you restore them in Sources.')
+        self.refresh_cases = QCheckBox('Refresh parameter cases')
+        self.refresh_cases.setChecked(True)
+        self.refresh_cases.setVisible(bool(plan.parameter_updates))
+        self.refresh_cases.toggled.connect(self._toggle_parameters)
+        layout.addWidget(self.refresh_cases)
+        self.message = QLabel('Unchecked additions stay excluded.')
         self.message.setWordWrap(True)
         layout.addWidget(self.message)
-        preserved = QLabel('Preserved: group order, colours, descriptions, inherited YAML and unchanged occurrences. Historical runs are unchanged.')
-        preserved.setWordWrap(True)
-        preserved.setObjectName('Muted')
-        layout.addWidget(preserved)
         self.buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
         self.apply_button = self.buttons.addButton('Update and reload', QDialogButtonBox.AcceptRole)
         self.apply_button.setObjectName('Primary')
@@ -186,8 +197,27 @@ class AdvancedCampaignReviewDialog(QDialog):
         added = sum(item.checkState(0) == Qt.Checked and key not in replacements for key, item in self.additions.items())
         removed = sum(combo.currentData() == 'remove' for combo in self.decisions.values())
         pending = sum(combo.currentData() in ('', '__browse__') for combo in self.decisions.values())
-        self.summary.setText(self.plan.summary + f'\nAfter your choices: {len(self.profile.sequence) + added - removed} occurrences · {pending} decision(s) remaining')
+        if pending:
+            self.summary.setText(f'{pending} choices to review')
+        else:
+            try:
+                projected = sync.apply(self.profile, self.plan,
+                    [key for key, item in self.additions.items() if item.checkState(0) == Qt.Checked],
+                    {p: c.currentData() for p, c in self.decisions.items()},
+                    transfer=[p for p, c in self.transfers.items() if c.isChecked() and c.isEnabled()],
+                    refresh_cases=self.refresh_cases.isChecked())
+                self.summary.setText(f'{len(projected.sequence)} tests after update')
+            except (ValueError, ProfileValidationError):
+                self.summary.setText('Review your choices')
         self.apply_button.setEnabled(not self.locked and pending == 0)
+
+    def _toggle_parameters(self, enabled):
+        if not enabled:
+            updated = {p for u in self.plan.parameter_updates.values() for p in u['positions']}
+            for position, combo in self.decisions.items():
+                if position in updated and combo.currentData() in ('parameters', 'remove'):
+                    combo.setCurrentIndex(combo.findData('keep'))
+        self._replacements_changed()
 
     def _choose(self, combo):
         if combo.currentData() != '__browse__':
@@ -206,7 +236,8 @@ class AdvancedCampaignReviewDialog(QDialog):
             self.result_profile = sync.apply(self.profile, self.plan,
                 [key for key, item in self.additions.items() if item.checkState(0) == Qt.Checked],
                 {position: combo.currentData() for position, combo in self.decisions.items()},
-                transfer=[position for position, check in self.transfers.items() if check.isChecked() and check.isEnabled()])
+                transfer=[position for position, check in self.transfers.items() if check.isChecked() and check.isEnabled()],
+                refresh_cases=self.refresh_cases.isChecked())
         except (ValueError, ProfileValidationError) as exc:
             self.message.setText(str(exc))
             return
@@ -444,7 +475,8 @@ class EditorCampaignSync(QObject):
             plan = self.plan(profile)
             item = page.profile_list.item(row)
             if item is not None:
-                state = ' · Review' if plan.missing or plan.problem else ' · Update' if plan.additions else ''
+                unresolved = set(plan.missing) - {p for u in plan.parameter_updates.values() for p in u['positions']}
+                state = ' · Review' if unresolved or plan.problem else ' · Update' if plan.changed else ''
                 item.setText(f'{profile.name}\n{len(profile.sequence)} tests{state}')
                 item.setIcon(icons.icon('mdi.update', '#d89a17') if plan.changed else icons.icon('mdi.playlist-edit'))
                 item.setToolTip(profile.name + '\n' + (plan.problem or plan.summary))
@@ -510,6 +542,10 @@ class EditorCampaignSync(QObject):
             profile = page._profile_from_editor()
         else:
             profile = next((p for p in page.store.list() if p.profile_id == profile.profile_id), profile)
+        # Relier aussi les nouveaux cas aux anciennes cases a cocher quand
+        # une campagne v1-v3 est mise a jour depuis un autre profil ouvert.
+        profile = copy.deepcopy(profile)
+        sync.ensure_ids(profile)
         from runner.domain.campaign_revision import digest, record
         expected = digest(page.store, profile.profile_id)
         if current and current.profile_id == profile.profile_id and expected != getattr(page, '_loaded_disk_digest', expected):

@@ -20,14 +20,16 @@ class CampaignReviewDialog(QDialog):
         self.request_collection = False
         self.custom = None
         self.setWindowTitle('Update campaign')
-        self.resize(690, 280)
+        self.setMinimumSize(760, 480)
+        self.resize(760, 480)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(10)
         title = QLabel(profile.name)
         title.setObjectName('PageTitle')
         title.setTextFormat(Qt.PlainText)
-        title.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        title.setToolTip(profile.name)
         layout.addWidget(title)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
@@ -40,27 +42,28 @@ class CampaignReviewDialog(QDialog):
         layout.addWidget(self.diagnosis)
         self.include_new = QCheckBox('Include the new tests and parameter cases')
         self.include_new.setChecked(True)
-        self.include_new.setVisible(bool(plan.additions))
+        self.include_new.setVisible(bool(plan.additions or plan.parameter_updates))
+        self.include_new.setText('Include new cases' if plan.parameter_updates and not plan.additions else 'Include new tests and cases')
         layout.addWidget(self.include_new)
         self.remove_missing = QCheckBox('Also remove tests that could not be matched')
         layout.addWidget(self.remove_missing)
         self.remove_missing.setToolTip('By default, unmatched tests and their settings stay in the campaign. They are left out of runs until found again.')
-        self.details_button = QPushButton('Show changes')
+        self.details_button = QPushButton('Full paths')
         self.details_button.setCheckable(True)
         layout.addWidget(self.details_button, alignment=Qt.AlignLeft)
         self.details = QTreeWidget()
-        self.details.setHeaderLabels(['Change', 'Campaign test'])
-        self.details.setColumnWidth(0, 160)
-        self.details.setMaximumHeight(250)
-        self.details.hide()
-        layout.addWidget(self.details)
+        self.details.setHeaderLabels(['Test', 'Change'])
+        self.details.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.details.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.details.setMinimumHeight(170)
+        self.details.setRootIsDecorated(True)
+        layout.addWidget(self.details, 1)
         self.message = QLabel()
         self.message.setWordWrap(True)
         self.message.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         layout.addWidget(self.message)
-        layout.addStretch(1)
         foot = QHBoxLayout()
-        self.advanced = QPushButton('Advanced choices…')
+        self.advanced = QPushButton('Advanced…')
         self.advanced.setObjectName('Ghost')
         self.advanced.clicked.connect(self._advanced)
         foot.addWidget(self.advanced)
@@ -89,72 +92,89 @@ class CampaignReviewDialog(QDialog):
         self.custom = None
         self._refresh()
 
+    def _refresh_cases(self):
+        return getattr(self, '_custom_refresh_cases', self.include_new.isChecked()) if self.custom else self.include_new.isChecked()
+
     def _refresh(self):
-        additions, decisions, _ = self._choices()
+        additions, decisions, transfer = self._choices()
+        try:
+            projected = sync.apply(self.profile, self.plan, additions, decisions, transfer=transfer,
+                                   refresh_cases=self._refresh_cases())
+        except (ValueError, ProfileValidationError):
+            projected = None
+        self.all_unmatched = bool(self.profile.sequence) and (len(self.plan.missing) == len(self.profile.sequence)
+            and not self.plan.path_changes and not self.plan.additions and not self.plan.parameter_updates)
+        count = len(projected.sequence) if projected else len(self.profile.sequence)
+        changed = bool(projected and (projected.sequence != self.profile.sequence
+            or projected.step_overrides != (self.profile.step_overrides or [{} for _ in self.profile.sequence])
+            or projected.step_groups != (self.profile.step_groups or [{} for _ in self.profile.sequence])))
+        delta = count - len(self.profile.sequence)
+        action = f'{delta:+d} tests' if delta else 'Test references updated'
+        calls = len(self.plan.parameter_updates) if self._refresh_cases() else 0
+        scope = f' · {calls} call' + ('s' if calls != 1 else '') if calls else ''
+        self.summary.setText(f'{action}{scope} · {len(self.profile.sequence)} → {count} tests' if changed else 'Nothing to update')
+        self.diagnosis.hide()
         unresolved = [p for p, choice in decisions.items() if choice == 'keep']
-        updated = sum(choice not in ('keep', 'remove') for choice in decisions.values())
-        removed = sum(choice == 'remove' for choice in decisions.values())
-        consumed = set()
-        for position, choice in decisions.items():
-            identifier = self.profile.step_ids[position] if self.profile.step_ids else ''
-            source = self.profile.tracking.get('members', {}).get(identifier, {}).get('source')
-            if choice not in ('keep', 'remove'):
-                consumed.add((source, choice))
-        added = len(set(additions) - consumed)
-        count = len(self.profile.sequence) + added - removed
-        self.all_unmatched = (len(self.plan.missing) == len(self.profile.sequence) and not self.plan.path_changes and not self.plan.additions)
-        actions = []
-        only_locations = all(p in self.plan.path_changes for p, choice in decisions.items() if choice not in ('keep', 'remove'))
-        update_label = 'test locations to update' if only_locations else 'tests to update'
-        for number, label in ((added, 'tests to add'), (updated, update_label), (removed, 'tests to remove')):
-            if number:
-                actions.append(f'{number} {label}')
-        self.summary.setText((' · '.join(actions) or 'Your campaign selection is kept') + f'\n{count} tests after update')
-        if self.all_unmatched and not self.custom:
-            self.summary.setText(f'None of the {len(self.profile.sequence)} campaign tests were found in the current collection.')
-            self.diagnosis.setText(f'{len(self.plan.available)} tests were collected in the current environment. Check the selected project and collection settings first. Your campaign is kept intact.')
-        elif self.plan.path_changes:
-            self.diagnosis.setText('The file names, test names and parameters match. Only their collection paths changed. Each test keeps its YAML settings.')
-        else:
-            self.diagnosis.setText('New cases use their group settings. Your group order, colours, descriptions and existing results are retained.')
-        if self.plan.suggestions and not self.plan.path_changes and not self.all_unmatched:
-            self.diagnosis.setText('Possible renamed or moved files were found. They stay unchanged until you confirm a replacement in Advanced choices.')
         self.remove_missing.setVisible(bool(unresolved or self.remove_missing.isChecked()) and not self.all_unmatched)
-        self.message.setText((f'{len(unresolved)} unmatched tests will stay in the campaign with their settings. They will not run until found again.' if unresolved and not self.all_unmatched else
-                              'Campaign unchanged.' if self.all_unmatched and not self.custom else ''))
+        self.remove_missing.setText('Remove unavailable tests')
+        self.message.setText(f'{len(unresolved)} unavailable tests kept.' if unresolved else '')
+        if self.all_unmatched and not self.custom:
+            self.summary.setText(f'None of the {len(self.profile.sequence)} tests were found')
+            self.message.setText('Check the project and collect again.')
         if self.locked:
-            self.message.setText('This campaign is running or queued. You can inspect the changes; update it after the run finishes.')
-        elif removed:
-            overrides = sum(bool(self.profile.step_overrides[p]) for p, decision in decisions.items()
-                            if decision == 'remove' and self.profile.step_overrides)
-            if overrides:
-                self.message.setText(f'{overrides} test-specific YAML setting(s) will also be removed. The update can be undone.')
-        self.apply_button.setText('Check project' if self.all_unmatched and not self.custom else 'Update campaign')
-        retained_groups = bool(self.profile.empty_groups or any(self.profile.step_groups) or self.profile.tracking.get('sources'))
-        self.apply_button.setEnabled(not self.locked and (count > 0 or self.all_unmatched or retained_groups))
-        if count == 0 and not self.all_unmatched:
-            self.message.setText('Group settings will be kept. Add tests or collect again before running.' if retained_groups else
-                                 'This would leave the campaign empty. Keep unmatched tests or add current tests instead.')
+            self.message.setText('Campaign running or queued. Update after the run finishes.')
+        if count == 0 and changed:
+            self.message.setText('Groups and settings are kept. Add tests before running.')
         self.message.setVisible(bool(self.message.text()))
-        if self.details.isVisible():
-            self._fill_details()
+        self.apply_button.setText('Check project' if self.all_unmatched and not self.custom else 'Update campaign')
+        self.apply_button.setEnabled(not self.locked and (changed or self.all_unmatched))
+        self._fill_details()
 
     def _fill_details(self):
+        from runner.ui import tokens as t
         self.details.clear()
         additions, decisions, _ = self._choices()
-        for _, nodeid in additions:
-            QTreeWidgetItem(self.details, ['Add', nodeid]).setToolTip(1, nodeid)
+        full = self.details_button.isChecked()
+        parents = {}
+        def parent(entry):
+            path = group_path(entry)
+            key = tuple(g['id'] for g in path)
+            if not key:
+                return self.details
+            if key not in parents:
+                item = QTreeWidgetItem(self.details, [' / '.join(g['name'] for g in path)])
+                item.setIcon(0, icons.icon('mdi.folder-outline', path[-1]['color']))
+                item.setExpanded(True)
+                parents[key] = item
+            return parents[key]
+        def row(entry, nodeid, change, extra=''):
+            label = nodeid if full else nodeid.split('::')[-1]
+            item = QTreeWidgetItem(parent(entry), [label, change])
+            item.setIcon(0, icons.icon('mdi.function-variant', t.ACCENT))
+            item.setToolTip(0, nodeid + ('\n' + extra if extra else ''))
+        handled = set()
+        for first, update in self.plan.parameter_updates.items():
+            if not self._refresh_cases() or update['whole_test'] and decisions.get(first) != 'parameters':
+                continue
+            handled.update(update['positions'])
+            group = self.profile.step_groups[first] if self.profile.step_groups else {}
+            kept = {self.profile.sequence[p] if decisions.get(p, 'keep') == 'keep' else decisions[p]
+                    for p in update['positions'] if decisions.get(p) != 'remove'}
+            target = len(update['cases']) if update['whole_test'] else len(kept | set(update['cases']))
+            row(group, update['base'], f'{len(update["positions"])} → {target} cases', '\n'.join(update['cases']))
+        sources = {s['id']: s for s in self.profile.tracking.get('sources', [])}
+        for source, nodeid in additions:
+            row(sources[source]['group'], nodeid, 'Add')
         for position, choice in decisions.items():
-            state = 'Keep · not run' if choice == 'keep' else 'Remove from campaign' if choice == 'remove' else 'Update location' if position in self.plan.path_changes else 'Replace'
-            row = QTreeWidgetItem(self.details, [state, self.profile.sequence[position]])
-            row.setToolTip(1, self.profile.sequence[position] + ('\n→ ' + choice if choice not in ('keep', 'remove') else ''))
+            if position in handled:
+                continue
+            state = 'Not available' if choice == 'keep' else 'Remove' if choice == 'remove' else 'Update'
+            group = self.profile.step_groups[position] if self.profile.step_groups else {}
+            row(group, self.profile.sequence[position], state,
+                choice if choice not in ('keep', 'remove', 'parameters') else '')
 
-    def _show_details(self, shown):
-        self.details.setVisible(shown)
-        self.details_button.setText('Hide changes' if shown else 'Show changes')
-        if shown:
-            self._fill_details()
-        self.adjustSize()
+    def _show_details(self, _shown):
+        self._fill_details()
 
     def _advanced(self):
         from runner.ui.campaign_sync import AdvancedCampaignReviewDialog
@@ -171,8 +191,10 @@ class CampaignReviewDialog(QDialog):
             combo.setCurrentIndex(index)
             if position in dialog.transfers:
                 dialog.transfers[position].setChecked(position in transfer)
+        dialog.refresh_cases.setChecked(self._refresh_cases())
         dialog.apply_button.setText('Use these choices')
         if dialog.exec() == QDialog.Accepted:
+            self._custom_refresh_cases = dialog.refresh_cases.isChecked()
             self.custom = ([key for key, item in dialog.additions.items() if item.checkState(0) == Qt.Checked],
                            {p: c.currentData() for p, c in dialog.decisions.items()},
                            [p for p, c in dialog.transfers.items() if c.isChecked() and c.isEnabled()])
@@ -187,7 +209,7 @@ class CampaignReviewDialog(QDialog):
             return
         try:
             additions, decisions, transfer = self._choices()
-            self.result_profile = sync.apply(self.profile, self.plan, additions, decisions, transfer=transfer)
+            self.result_profile = sync.apply(self.profile, self.plan, additions, decisions, transfer=transfer, refresh_cases=self._refresh_cases())
         except (ValueError, ProfileValidationError) as exc:
             self.message.setText(str(exc))
             self.message.show()
@@ -202,17 +224,18 @@ class CampaignSourcesDialog(QDialog):
         sync.ensure_ids(self.profile)
         self.positions, self.available, self.workspace = list(positions), list(available), workspace
         self.setWindowTitle('Campaign contents')
-        self.resize(700, 310)
+        self.setMinimumSize(720, 460)
+        self.resize(720, 460)
         layout = QVBoxLayout(self)
-        title = QLabel('Which tests should this campaign include?')
+        title = QLabel('Campaign contents')
         title.setObjectName('PageTitle')
         layout.addWidget(title)
-        self.scope = QLabel(f'{len(self.positions)} selected tests/cases · settings for this campaign only')
+        self.scope = QLabel(f'{len(self.positions)} selected tests')
         self.scope.setWordWrap(True)
         self.scope.setObjectName('Muted')
         layout.addWidget(self.scope)
-        self.fixed = QRadioButton('Keep only the tests I selected')
-        self.following = QRadioButton('Include new tests from these folders or files')
+        self.fixed = QRadioButton('Keep selected cases')
+        self.following = QRadioButton('Include new tests and cases')
         layout.addWidget(self.fixed)
         layout.addWidget(self.following)
         self.description = QLabel()
@@ -226,7 +249,7 @@ class CampaignSourcesDialog(QDialog):
         self.folders.setMinimumHeight(100)
         self.folders.setMaximumHeight(250)
         layout.addWidget(self.folders)
-        self.include_existing = QCheckBox('Also include tests already present in these folders')
+        self.include_existing = QCheckBox('Include other tests already here')
         self.include_existing.setChecked(True)
         layout.addWidget(self.include_existing)
         self.message = QLabel()
@@ -245,6 +268,7 @@ class CampaignSourcesDialog(QDialog):
         buttons.accepted.connect(self._save)
         buttons.rejected.connect(self.reject)
         foot.addWidget(buttons)
+        layout.addStretch(1)
         layout.addLayout(foot)
         self.choices = []
         self._load_choices()
@@ -281,16 +305,17 @@ class CampaignSourcesDialog(QDialog):
         self.following.setEnabled(active or any(c['count'] for c in self.choices))
         self.following.setChecked(active)
         self.fixed.setChecked(not active)
-        self.folders.setFixedHeight(min(250, max(85, 34 + len(self.choices) * 30)))
+        self.folders.setFixedHeight(min(180, max(85, 34 + len(self.choices) * 30)))
 
     def _choice(self, kind, selector, positions, source=None):
         rule = source or dict(kind=kind, selector=selector, recursive=True)
         count = sum(sync.matches(rule, n) for n in self.available)
         groups = source['group'] if source and not positions else self.profile.step_groups[positions[0]] if self.profile.step_groups and positions else {}
         path = group_path(groups)
-        label = (path[-1]['name'] + ' · ' if path else '') + (selector if selector != '.' else 'Project folder')
+        caption = selector.split('::')[-1] if kind == 'test' else selector if selector != '.' else 'Project folder'
+        label = (path[-1]['name'] + ' · ' if path else '') + caption
         item = QTreeWidgetItem(self.folders, [label, str(count)])
-        item.setIcon(0, icons.icon('mdi.folder-outline' if kind == 'folder' else 'mdi.file-code-outline', path[-1]['color'] if path else None))
+        item.setIcon(0, icons.icon('mdi.folder-outline' if kind == 'folder' else 'mdi.function-variant' if kind == 'test' else 'mdi.file-code-outline', path[-1]['color'] if path else None))
         item.setCheckState(0, Qt.Checked)
         item.setToolTip(0, selector + ('\nIncludes subfolders' if rule['recursive'] and kind == 'folder' else ''))
         self.choices.append(dict(kind=kind, selector=selector, positions=positions, source=source, item=item, count=count))
@@ -300,18 +325,16 @@ class CampaignSourcesDialog(QDialog):
         self.folders.setVisible(follow)
         self.include_existing.setVisible(follow and any(not c['source'] for c in self.choices))
         self.advanced.setVisible(follow or bool(self.profile.tracking))
-        self.description.setText('New tests found here will be proposed after collection. Your group settings apply to them.' if follow else
-                                 'Your selection stays as it is. New tests elsewhere are not added.')
-        self.message.setText('If you removed tests intentionally, those exclusions are kept. Advanced settings let you restore them.' if follow and self.profile.tracking else '')
+        self.description.setText('New tests are proposed after collection.' if follow else '')
+        self.message.setText('')
         foreign = bool(self.profile.tracking and self.profile.tracking['workspace'] != sync.workspace_key(self.workspace))
         self.use_project.setVisible(foreign)
         if foreign:
-            self.message.setText('This campaign is linked to another project. Choose whether to use the current project before saving changes.')
+            self.message.setText('Campaign linked to another project.')
         elif not self.profile.sequence and not self.profile.tracking:
-            self.message.setText('This campaign has no tests yet. Add tests in Execution Profiles to choose which folders it should follow.')
+            self.message.setText('Add tests to choose folders to follow.')
         elif not self.following.isEnabled():
-            self.message.setText('These campaign tests were not found in the current collection. Check the selected project or update their locations first.')
-        self.adjustSize()
+            self.message.setText('Tests not found. Check the project first.')
 
     def _use_project(self):
         self.profile.tracking['workspace'] = sync.workspace_key(self.workspace)

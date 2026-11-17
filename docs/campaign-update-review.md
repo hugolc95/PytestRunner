@@ -9,15 +9,22 @@ Apres une collecte reussie, **Run Tests** et **Execution Profiles** signalent
 les changements. **Review changes…** presente un resume au futur : tests a
 ajouter, emplacements a mettre a jour, tests a retirer et taille finale.
 **Update campaign** applique les changements en une validation, sans choix
-obligatoire par test. **Show changes** ouvre une liste en lecture seule.
+obligatoire par test. La liste des changements est visible directement ;
+**Full paths** affiche les chemins complets sans redimensionner la fenetre.
 Les remplacements manuels et le transfert explicite du YAML restent dans
-**Advanced choices…**.
+**Advanced…**.
 
 **Contents…** separe deux comportements : garder une selection fixe, ou
 inclure les futurs tests des dossiers/fichiers choisis. La liste des sources
 n'apparait que dans le second mode. **Save campaign** sauvegarde le contenu
 et le brouillon courant ensemble. Les cases de Run Tests choisissent le
 prochain lancement ; elles ne suppriment aucun test de la campagne.
+
+Un ancien appel de fonction sans parametres est remplace par ses nouveaux
+cas a chacun de ses emplacements. Chaque appel garde son groupe, son ordre,
+son YAML et sa selection. Les futurs cas sont ensuite suivis pour chacun
+de ces appels, sans ajouter les autres tests du projet aux anciennes
+selections fixes. Les cas precis choisis individuellement restent fixes.
 
 Le survol colore d'un groupe explique son mode, ses emplacements suivis,
 ses exclusions et ses valeurs YAML. Un ajout ou changement de chemin est
@@ -36,6 +43,8 @@ utilisent des libelles courts ou des icones avec infobulles et noms accessibles.
 | Ajout de tests dans un dossier suivi | Ajouts proposes ensemble, reglages du groupe herites, ordre existant conserve | `test_campaign_sync.py`, parcours reel |
 | Selection precise | Aucun nouveau test ajoute hors des sources suivies | `test_campaign_sync.py`, `test_campaign_update_ux.py` |
 | Nouveaux cas parametres | Renouvellement des cas suivis sans imposer un choix par cas | `test_campaign_update_ux.py` |
+| Ancien HMAC devenu parametre | 13 appels remplaces chacun par 3 cas : 273 → 299 tests. Un quatrieme cas ajoute ensuite a chacun : 312 tests. YAML et ordre conserves | `test_campaign_hmac_update.py`, parcours pytest reel |
+| Fenetres de mise a jour et de contenu | Liste concise visible directement ; modes et chemins complets ne redimensionnent pas les fenetres. Redimensionnement manuel possible | `test_campaign_hmac_update.py`, captures reelles |
 | Exception YAML sur un cas disparu | Cas et YAML conserves par defaut ; transfert vers un remplacement explicite dans Advanced | `test_campaign_update_ux.py`, `test_campaign_sync.py` |
 | Racine de collecte differente | Correspondance uniquement si le chemin relatif et le symbole correspondent sans ambiguite ; YAML, identites et exclusions conserves | 38 chemins corriges dans l'application ; `test_campaign_update_ux.py` |
 | Fichier renomme/deplace | Suggestions si le symbole correspond ; jamais appliquees automatiquement sur un simple nom | `campaign_sync.compare`, options avancees |
@@ -71,6 +80,11 @@ necessaire pour ces essais ; le comportement materiel ATR ne fait pas partie
 de cette modification.
 
 Dossier de captures : `/workspace/campaign-complete-captures/`.
+
+Correction HMAC et fenetres : `/workspace/campaign-hmac-captures/`.
+Collectes reelles de 21, 23 puis 24 tests ; campagne de 273, 299 puis 312
+tests. Trois cas HMAC executes avec leurs positions et leur YAML reels.
+`verification.json` contient les compteurs, tailles et erreurs du parcours.
 
 - 01 : avertissement dans Run Tests avant correction.
 - 02–03 : Contents en selection fixe puis en suivi de dossiers.
