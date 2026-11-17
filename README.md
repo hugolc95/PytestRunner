@@ -1,6 +1,6 @@
 # Pytest Runner GUI
 
-## Mise à jour des campagnes — branche d’essai
+## Mise à jour des campagnes simplifiée — v1.7.0
 
 Dans **Run Tests** et **Execution Profiles**, une collecte réussie propose
 une mise à jour globale de la campagne, sans décision obligatoire par test.
@@ -13,6 +13,9 @@ et les réglages YAML de chaque appel sont conservés. Les nouveaux cas sont
 ensuite proposés pour chacun de ces appels ; une sélection explicite de cas
 précis reste fixe. La fenêtre montre directement les changements et le total
 avant/après, sans changer de taille quand on affiche les chemins complets.
+
+Les profils existants restent lisibles. Les profils utilisant le suivi des
+sources ou conservant des groupes vides nécessitent la version 1.7.0 ou plus.
 
 Les groupes vides conservent leur présentation et leur YAML ; les brouillons
 restent disponibles quand on change de profil. **Undo update** fonctionne aussi

@@ -1,7 +1,7 @@
-# Mise a jour des campagnes — branche d'evaluation
+# Mise a jour des campagnes — v1.7.0
 
-Branche : `codex/campaign-update-review`. Verification le 17 novembre 2026.
-Pas de merge, de tag ni de changement de version pour cette evaluation.
+Version 1.7.0, preparee depuis `codex/campaign-update-review` puis livree
+sur `main`. Verification le 17 novembre 2026.
 
 ## Ce que voit l'utilisateur
 
@@ -106,7 +106,7 @@ complete lancee.
 
 Les anciens profils restent lus. Les profils avec suivi/identites utilisent
 le format portable v4 ; ceux conservant des groupes vides utilisent v5.
-Ces formats necessitent cette branche pour etre ouverts. Un profil exporte
+Ces formats necessitent Pytest Runner 1.7.0 ou plus pour etre ouverts. Un profil exporte
 sans ces fonctions garde son format anterieur.
 
 Le suivi reagit aux collectes reussies : il ne surveille pas le disque en
