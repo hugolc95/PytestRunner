@@ -84,6 +84,7 @@ class LiveProfileModel(TestTreeModel):
         self.layoutChanged.emit()
 
     def prepare(self, profile, readers):
+        self.campaign_profile = profile
         self.campaign_missing = set()
         self._campaign_unavailable_rows = set()
         self._preparing_by_reader.clear()
@@ -142,6 +143,8 @@ class LiveProfileModel(TestTreeModel):
                     for node in nested:
                         self._hidden_folder_depths[id(node)] = hidden
                 siblings.extend(nested)
+            from runner.domain.empty_groups import add_nodes
+            add_nodes(children, self._named_groups, profile.empty_groups)
             leaves = [leaf for child in children for leaf in child.leaves()]
             leaf_exceptions = {}
             leaf_annotations = {}
@@ -344,6 +347,8 @@ class LiveProfileModel(TestTreeModel):
 
     def flags(self, index):
         flags = super().flags(index)
+        if index.isValid() and index.internalPointer().is_leaf and not index.internalPointer().node.nodeid:
+            flags &= ~Qt.ItemIsUserCheckable
         if index.isValid() and index.internalPointer() in self._campaign_unavailable_rows:
             flags &= ~Qt.ItemIsUserCheckable
         if index.isValid() and self.locations.get(index.internalPointer().node.nodeid, (0, 0, ''))[1]:
@@ -376,6 +381,8 @@ class LiveProfileModel(TestTreeModel):
         super().set_checked_nodeids([self.key(self.locations[key][0]) if key in self.locations else key for key in keys])
 
     def _check_state(self, row):
+        if row.is_leaf and not row.node.nodeid:
+            return None
         if row in self._blocked_rows or row in self._campaign_unavailable_rows:
             return Qt.Unchecked
         if row.is_leaf:
@@ -403,6 +410,14 @@ class LiveProfileModel(TestTreeModel):
         if not index.isValid():
             return None
         row = index.internalPointer()
+        from runner.ui.profile_group_delegate import TRACKING_ROLE
+        if role == TRACKING_ROLE and index.column() == 0 and hasattr(self, 'campaign_profile'):
+            from runner.domain.campaign_sync import content_description
+            length = len(self.campaign_profile.sequence)
+            positions = {self.locations[r.node.nodeid][0] % length for r in row.leaves()
+                         if r.node.nodeid in self.locations} if length else set()
+            group_id = self._named_groups.get(id(row.node), {}).get('id', '')
+            return content_description(self.campaign_profile, positions, group_id)
         if index.column() == 0 and role == Qt.CheckStateRole:
             return self._check_state(row)
         if index.column() == self.duration_column:

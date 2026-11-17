@@ -93,8 +93,8 @@ def test_incomplete_missing_decision_and_empty_campaign_are_rejected(tmp_path):
     plan = sync.compare(value, [], str(tmp_path))
     with pytest.raises(ProfileValidationError):
         sync.apply(value, plan, [], {0: 'remove'})
-    with pytest.raises(ProfileValidationError):
-        sync.apply(value, plan, [], {0: 'remove', 1: 'remove'})
+    empty = sync.apply(value, plan, [], {0: 'remove', 1: 'remove'})
+    assert not empty.sequence and empty.tracking['sources']
     kept = sync.apply(value, plan, [], {0: 'keep', 1: 'keep'})
     assert kept.sequence == value.sequence
 

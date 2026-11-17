@@ -11,16 +11,20 @@ def capture_report(window, report):
     played = tuple(getattr(window, '_archive_run_nodeids', ()))
     profile = getattr(window, '_running_execution_profile', None)
     records = []
+    scope = getattr(window, '_archive_campaign', None)
     if profile is not None:
         current = getattr(window, '_profile_count_statuses', {}) or {}
-        for position, nodeid in enumerate(played):
-            original = window.profile_run_tree.position(position)
+        sequence = scope['sequence'] if scope else played
+        selected = set(scope['selected']) if scope else set(range(len(sequence)))
+        unavailable = set(scope['unavailable']) if scope else set()
+        for position, nodeid in enumerate(sequence):
+            original = position if scope else window.profile_run_tree.position(position)
             keys = sorted(window.profile_model.occurrence_keys(original),
                           key=lambda key: window.profile_model.locations[key][1])
             attempts = []
             for key in keys:
                 attempt = window.profile_model.locations[key][1]
-                status = current.get((original, attempt, reader))
+                status = current.get((original, attempt, reader)) if position in selected else None
                 if status is None:
                     continue
                 live = window._profile_live_details.get((key, reader), {})
@@ -35,8 +39,16 @@ def capture_report(window, report):
                     duration=duration if valid_duration(duration) else None,
                     details=copy.deepcopy(list(live.get('records', {}).values())),
                     log_path=str(path) if path else ''))
+                if not status.is_final:
+                    attempts[-1]['status'] = 'NOTRUN'
+                    attempts[-1]['duration'] = None
+            unfinished = not attempts or attempts[-1]['status'] == 'NOTRUN'
+            reason = ('Unavailable at launch' if position in unavailable else
+                      'Not selected for this run' if position not in selected else 'Not reached before the run ended')
+            if attempts and unfinished:
+                reason = 'Stopped before this test finished'
             records.append(dict(position=position, nodeid=nodeid, attempts=attempts,
-                                not_run=not attempts))
+                                not_run=unfinished, reason=reason if unfinished else ''))
     else:
         statuses = getattr(window, '_archive_statuses_by_reader', {}).get(reader, {})
         for position, nodeid in enumerate(played):
@@ -45,7 +57,12 @@ def capture_report(window, report):
             records.append(dict(position=position, nodeid=nodeid, attempts=attempts, not_run=not attempts))
     atrs = getattr(window, '_archive_reader_atrs', {})
     request = getattr(window, '_archive_request', None)
+    from runner.ui.campaign_archive import result as campaign_result
+    coverage = campaign_result(window, reader)
+    if coverage and getattr(report, 'cancelled', False):
+        coverage.update(stopped=True, complete=False)
     return dict(schema=1, occurrences=records,
+                coverage=coverage, campaign_profile=scope['profile'] if scope else None,
                 app_version=__version__, interpreter=request.interpreter if request else '',
                 atr=atrs.get(report.reader.name, ''),
                 commands=copy.deepcopy(report.commands), issues=list(report.issues),

@@ -17,6 +17,7 @@ YAML_ROLE = Qt.UserRole + 29
 GROUP_COLOR_ROLE = Qt.UserRole + 30
 CONFIG_ISSUES_ROLE = Qt.UserRole + 31
 ACTIVE_ROLE = Qt.UserRole + 32
+TRACKING_ROLE = Qt.UserRole + 54
 
 
 class ProfileGroupDelegate(DivergenceDelegate):
@@ -25,7 +26,8 @@ class ProfileGroupDelegate(DivergenceDelegate):
             return super().helpEvent(event, view, option, index)
         annotation = index.data(YAML_ROLE) or {}
         problems = index.data(CONFIG_ISSUES_ROLE) or []
-        if not annotation.get('state') and not problems:
+        content = index.data(TRACKING_ROLE) or ''
+        if not annotation.get('state') and not problems and not content:
             return super().helpEvent(event, view, option, index)
         nodeid = index.data(NODEID_ROLE)
         metadata = self._group(index) or {}
@@ -40,6 +42,7 @@ class ProfileGroupDelegate(DivergenceDelegate):
         disabled = getattr(index.model(), 'disabled_data', None)
         extra = disabled(nodeid, Qt.ToolTipRole) if callable(disabled) and nodeid else ''
         rich = profile_yaml_tooltip(title, annotation, membership=' / '.join(reversed(groups)),
+                                    content=content,
                                     description=metadata.get('description', ''), problems=problems,
                                     read_only=bool(view.property('profileYamlReadOnly')), extra=extra or '',
                                     font_scale=QFontInfo(view.font()).pixelSize() / t.TEXT_MD)

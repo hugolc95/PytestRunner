@@ -7,7 +7,7 @@ import copy
 import yaml
 from pathlib import Path
 
-from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal, QItemSelectionModel
+from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal, QItemSelectionModel, QEvent
 from PySide6.QtGui import QAction, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -49,7 +49,7 @@ from runner.domain.execution_profile import (
     profile_group_runs,
     group_path, group_entry, inherited_configuration, merge_configuration,
 )
-from runner.domain.models import Kind
+from runner.domain.models import Kind, Status
 from runner.domain.profile_configuration import configuration_details, configuration_annotation, aggregate_annotations
 from runner.domain.tree import build_tree, build_sequence_tree, group_hierarchically
 from runner.ui import icons
@@ -281,6 +281,9 @@ class ExecutionProfilesPage(QWidget):
         self._saving_refresh = False
         self._initial_unsaved = False
         self._tracking = {}
+        self._empty_groups = []
+        self._drafts = {}
+        self._loaded_profile_id = None
         self.undo_stack = QUndoStack(self)
         self.undo_stack.setUndoLimit(50)
         self.undo_stack.indexChanged.connect(self._sync_history_dirty)
@@ -308,6 +311,14 @@ class ExecutionProfilesPage(QWidget):
         copy_box.addWidget(subtitle)
         heading.addLayout(copy_box)
         heading.addStretch(1)
+        self.contents_button = QPushButton('Contents…')
+        self.contents_button.clicked.connect(lambda: self.manage_campaign_sources())
+        heading.addWidget(self.contents_button)
+        self.undo_update_button = QPushButton('Undo update')
+        self.undo_update_button.setObjectName('Ghost')
+        self.undo_update_button.clicked.connect(lambda: self.campaign_sync.undo())
+        self.undo_update_button.hide()
+        heading.addWidget(self.undo_update_button)
         self.import_button = QPushButton("Import")
         self.import_button.setIcon(icons.icon("mdi.import"))
         self.export_button = QPushButton("Export")
@@ -381,6 +392,19 @@ class ExecutionProfilesPage(QWidget):
 
     def _build_library(self) -> QWidget:
         frame, layout = self._surface("Saved profiles")
+        self.update_feedback = QLabel()
+        self.update_feedback.setTextFormat(Qt.PlainText)
+        self.update_feedback.setWordWrap(True)
+        self.update_feedback.hide()
+        self.update_feedback_timer = QTimer(self)
+        self.update_feedback_timer.setSingleShot(True)
+        self.update_feedback_timer.timeout.connect(self.update_feedback.hide)
+        layout.addWidget(self.update_feedback)
+        self.reload_button = QPushButton('Reload saved version')
+        self.reload_button.setToolTip('Reload the version on disk. Your unsaved draft can be kept as a copy first.')
+        self.reload_button.clicked.connect(self.reload_current_campaign)
+        self.reload_button.hide()
+        layout.addWidget(self.reload_button)
         self.profile_list = QListWidget()
         self.profile_list.setObjectName("ProfileLibrary")
         layout.addWidget(self.profile_list, 1)
@@ -388,6 +412,8 @@ class ExecutionProfilesPage(QWidget):
 
     def _build_sequence(self) -> QWidget:
         frame, layout = self._surface("Test sequence")
+        self._sequence_frame = frame
+        frame.installEventFilter(self)
         title = layout.takeAt(0).widget()
         header = QHBoxLayout()
         header.addWidget(title)
@@ -432,9 +458,13 @@ class ExecutionProfilesPage(QWidget):
         tools = QHBoxLayout()
         self.parameters_button = QPushButton("YAML parameters…")
         self.parameters_button.setIcon(icons.icon("mdi.tune"))
+        self.parameters_button.setToolTip('Edit YAML parameters for the selected test or group')
+        self.parameters_button.setAccessibleName('Edit YAML parameters')
         self.parameters_button.clicked.connect(self.edit_step_parameters)
         self.group_button = QPushButton("Create group…")
         self.group_button.setIcon(icons.icon("mdi.folder-plus-outline"))
+        self.group_button.setToolTip('Create a group from the selected tests')
+        self.group_button.setAccessibleName('Create group')
         self.group_button.clicked.connect(self.edit_group)
         self.subgroup_button = QToolButton()
         self.subgroup_button.setIcon(icons.icon("mdi.folder-plus-outline"))
@@ -472,7 +502,13 @@ class ExecutionProfilesPage(QWidget):
         self.add_tests_button.setIcon(icons.icon("mdi.plus"))
         self.add_tests_button.setToolTip('Add at the selected group or test. With no selection, add at the end of the profile.')
         self.duplicate_button = QPushButton("Duplicate")
+        self.duplicate_button.setIcon(icons.icon('mdi.content-copy'))
+        self.duplicate_button.setToolTip('Duplicate the selected tests or groups')
+        self.duplicate_button.setAccessibleName('Duplicate')
         self.remove_button = QPushButton("Remove")
+        self.remove_button.setIcon(icons.icon('mdi.trash-can-outline'))
+        self.remove_button.setAccessibleName('Remove')
+        self.add_tests_button.setAccessibleName('Add tests or groups')
         self.remove_button.setObjectName("Ghost")
         self.remove_button.setToolTip('Remove selected tests or groups (Del). Undo: Ctrl+Z.')
         actions.addWidget(self.add_tests_button)
@@ -500,6 +536,20 @@ class ExecutionProfilesPage(QWidget):
         self.sequence_list.model().rowsMoved.connect(self._on_sequence_reordered)
         self.sequence_list.order_changed.connect(self._on_sequence_reordered)
         return frame
+
+    def eventFilter(self, watched, event):
+        if watched is getattr(self, '_sequence_frame', None) and event.type() == QEvent.Resize:
+            QTimer.singleShot(0, self._adapt_sequence_tools)
+        return super().eventFilter(watched, event)
+
+    def _adapt_sequence_tools(self):
+        # Un panneau retreci garde des actions entieres, jamais des mots coupes.
+        compact = self._sequence_frame.width() < 560
+        self.parameters_button.setText('YAML…' if compact else 'YAML parameters…')
+        self.group_button.setText('Group…' if compact else 'Create group…')
+        self.add_tests_button.setText('Add…' if compact else 'Add tests / groups')
+        self.duplicate_button.setText('' if compact else 'Duplicate')
+        self.remove_button.setText('' if compact else 'Remove')
 
     def _build_options(self) -> QWidget:
         frame, layout = self._surface("Profile options")
@@ -564,7 +614,11 @@ class ExecutionProfilesPage(QWidget):
 
     def refresh(self) -> None:
         current_id = self.current_profile().profile_id if self.current_profile() else ""
+        old_profiles = self._profiles
         self._profiles = self.store.list()
+        saved = {p.profile_id for p in self._profiles}
+        self._profiles.extend(p for p in old_profiles if p.profile_id not in saved and
+                              (p.profile_id in self._drafts or p.profile_id == self._loaded_profile_id and self._dirty))
         self.profile_list.blockSignals(True)
         self.profile_list.clear()
         selected = -1
@@ -589,19 +643,46 @@ class ExecutionProfilesPage(QWidget):
     def _load_row(self, row: int) -> None:
         if not 0 <= row < len(self._profiles):
             return
-        self._populate(self._profiles[row])
+        if self._loaded_profile_id and self._dirty and not self._saving_refresh:
+            self._drafts[self._loaded_profile_id] = (copy.deepcopy(self._editor_state()), self._initial_unsaved, getattr(self, '_loaded_disk_digest', None))
+        profile = self._profiles[row]
+        from runner.domain.execution_profile import inspect_profile
+        if self.store._path(profile.profile_id).is_file():
+            try:
+                profile = inspect_profile(self.store._path(profile.profile_id)).profile
+                self._profiles[row] = profile
+            except ProfileValidationError:
+                pass
+        self._populate(profile)
+        draft = self._drafts.pop(profile.profile_id, None) if not self._saving_refresh else None
+        if draft:
+            before = self._editor_state()
+            state, initial, digest = draft
+            self._restore_editor_state(state)
+            self._record_edit(before, 'Restore unsaved campaign draft')
+            self._initial_unsaved = initial
+            self._loaded_disk_digest = digest
+            self._dirty = True
+            self._update_summary()
 
     def _populate(self, profile: ExecutionProfile) -> None:
+        self.notice.hide()
+        self.update_feedback.hide()
+        self.reload_button.hide()
+        self._loaded_profile_id = profile.profile_id
+        from runner.domain.campaign_revision import digest
+        self._loaded_disk_digest = digest(self.store, profile.profile_id)
         view = sequence_view.capture(self) if self._saving_refresh else None
         self._building = True
         self._configuration_text = profile.configuration_text
         self._tracking = copy.deepcopy(profile.tracking)
+        self._empty_groups = copy.deepcopy(profile.empty_groups)
         self.config_edit.setProperty("fullPath", "")
         self.name_edit.setText(profile.name)
         self.description_edit.setPlainText(profile.description)
         self.config_edit.setText(profile.configuration_name)
         self._rebuild_sequence(profile.sequence, profile.step_overrides, profile.step_groups,
-                               step_ids=profile.step_ids or None, view=view)
+                               step_ids=profile.step_ids or None, view=view, empty_groups=profile.empty_groups)
         self.repetitions.setValue(profile.execution.repetitions)
         self.rerun_failures.setValue(profile.execution.rerun_failures)
         self.stop_after_failure.setChecked(profile.execution.stop_after_failure)
@@ -653,6 +734,7 @@ class ExecutionProfilesPage(QWidget):
             step_groups=self._step_groups(),
             step_ids=self._step_ids(),
             tracking=copy.deepcopy(self._tracking),
+            empty_groups=self._empty_group_records(),
             configuration_name=config_name,
             configuration_text=config_text,
             execution=ExecutionOptions(
@@ -671,9 +753,17 @@ class ExecutionProfilesPage(QWidget):
         previous = copy.deepcopy(self.current_profile())
         try:
             profile = self._profile_from_editor()
+            from runner.domain.campaign_revision import digest
+            expected = getattr(self, '_loaded_disk_digest', None)
+            if digest(self.store, profile.profile_id) != expected:
+                raise ProfileValidationError('This campaign was edited on disk. Reload it before saving; your current draft has been kept.')
             self.store.save(profile)
         except (OSError, UnicodeError, ProfileValidationError) as exc:
-            ErrorDialog.show_error(self, "Could not save profile", str(exc))
+            if 'edited on disk' in str(exc):
+                self.reload_button.show()
+                self._show_notice('This campaign changed on disk. Your draft is kept. Reload the saved version, or use Save as to keep a separate copy.', warning=True)
+            else:
+                ErrorDialog.show_error(self, "Could not save profile", str(exc))
             return False
         row = self.profile_list.currentRow()
         self._profiles[row] = profile
@@ -684,11 +774,34 @@ class ExecutionProfilesPage(QWidget):
         finally:
             self._saving_refresh = False
         self._initial_unsaved = False
+        self._drafts.pop(profile.profile_id, None)
+        self.reload_button.hide()
         self.undo_stack.setClean()
         self._sync_history_dirty()
         self._show_notice("Profile saved.", warning=False)
         self.campaign_updated.emit(profile, previous)
         return True
+
+    def reload_current_campaign(self):
+        profile = self.current_profile()
+        if profile is None:
+            return
+        if self._dirty:
+            answer = QMessageBox.question(self, 'Reload saved campaign',
+                'Reloading replaces the current unsaved draft. Use Save as first if you want to keep a separate copy. Reload now?',
+                QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+            if answer != QMessageBox.Yes:
+                return
+        self._drafts.pop(profile.profile_id, None)
+        self._dirty = False
+        self.campaign_sync.undo_updates.pop(profile.profile_id, None)
+        self._saving_refresh = True
+        try:
+            self.refresh()
+        finally:
+            self._saving_refresh = False
+        self.reload_button.hide()
+        self._show_notice('Saved campaign reloaded.', warning=False)
 
     def save_as(self) -> None:
         try:
@@ -708,6 +821,8 @@ class ExecutionProfilesPage(QWidget):
         answer = QMessageBox.question(
             self, "Delete profile", f'Delete "{profile.name}" from this computer?')
         if answer == QMessageBox.Yes:
+            self._dirty = False
+            self._drafts.pop(profile.profile_id, None)
             self.store.delete(profile.profile_id)
             self.refresh()
 
@@ -899,8 +1014,18 @@ class ExecutionProfilesPage(QWidget):
     def _step_ids(self):
         return [item.data(0, sequence_view.STEP_ID_ROLE) for item in self._step_items()]
 
-    def _rebuild_sequence(self, nodeids: list[str], patches=None, groups=None, *, step_ids=None, view=None) -> None:
+    def _empty_group_records(self):
+        from runner.ui.profile_empty_groups import capture
+        return capture(self)
+
+    def _rebuild_sequence(self, nodeids: list[str], patches=None, groups=None, *, step_ids=None, view=None, empty_groups=None) -> None:
         self._reorder_timer.stop()
+        if empty_groups is None:
+            empty_groups = self._empty_group_records()
+            if step_ids is not None:
+                from runner.domain.empty_groups import reposition
+                empty_groups = reposition(empty_groups, self._step_ids(), step_ids)
+        self._empty_groups = copy.deepcopy(empty_groups)
         if view is None and not self._building:
             view = sequence_view.capture(self)
         if step_ids is None and list(nodeids) == self._flatten_sequence() and (not self._building or self._saving_refresh):
@@ -931,6 +1056,8 @@ class ExecutionProfilesPage(QWidget):
             if step_ids is not None:
                 for item, identifier in zip(self._step_items(), step_ids):
                     item.setData(0, sequence_view.STEP_ID_ROLE, identifier)
+            from runner.ui.profile_empty_groups import add as add_empty_groups
+            add_empty_groups(self, self._empty_groups)
             sequence_view.restore(self, view)
         finally:
             self.sequence_list.blockSignals(blocked)
@@ -964,7 +1091,7 @@ class ExecutionProfilesPage(QWidget):
             else:
                 for i in range(item.childCount()):
                     visit(item.child(i))
-            if len(nodeids) > start:
+            if len(nodeids) > start or item.data(0, _GROUP_ROLE):
                 ranges.append((item, start, len(nodeids)))
         for i in range(self.sequence_list.topLevelItemCount()):
             visit(self.sequence_list.topLevelItem(i))
@@ -1008,8 +1135,28 @@ class ExecutionProfilesPage(QWidget):
         if not selected:
             return
         tracking = copy.deepcopy(self._tracking)
+        empty_groups = self._empty_group_records()
         edit = len(selected) == 1 and bool(selected[0][0].data(0, NODEID_ROLE))
         for selected_item, start, end in sorted(selected, key=lambda row: row[1], reverse=True):
+            if start == end:
+                identifier = (selected_item.data(0, _GROUP_ROLE) or {}).get('id')
+                aliases = {}
+                def cloned(entry):
+                    path, inside = group_path(entry), False
+                    for g in path:
+                        inside |= g['id'] == identifier
+                        if inside:
+                            g['id'] = aliases.setdefault(g['id'], str(uuid.uuid4()))
+                    return group_entry(path)
+                for record in list(empty_groups):
+                    if identifier in [g['id'] for g in group_path(record['group'])]:
+                        empty_groups.append(dict(position=end, group=cloned(record['group'])))
+                for source in list(tracking.get('sources', [])):
+                    if identifier in [g['id'] for g in group_path(source['group'])]:
+                        new_source = copy.deepcopy(source)
+                        new_source.update(id=str(uuid.uuid4()), group=cloned(source['group']))
+                        tracking['sources'].append(new_source)
+                continue
             originals = step_ids[start:end]
             duplicates = [str(uuid.uuid4()) for _ in originals]
             nodeids[end:end] = nodeids[start:end]
@@ -1041,7 +1188,7 @@ class ExecutionProfilesPage(QWidget):
                             if old_id in owned:
                                 members[new_id] = dict(source=cloned['id'], nodeid=members[old_id]['nodeid'])
         self._tracking = tracking
-        self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
+        self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids, empty_groups=empty_groups)
         _, start, end = min(selected, key=lambda row: row[1])
         self._focus_range(end, end - start, edit=edit)
         self._mark_dirty()
@@ -1050,21 +1197,31 @@ class ExecutionProfilesPage(QWidget):
     def remove_steps(self) -> None:
         nodeids, selected = self._selected_ranges()
         removed = {i for _, start, end in selected for i in range(start, end)}
-        if not removed:
+        if not selected:
             return
+        previous = self._profile_from_editor()
+        deleted_groups = {(item.data(0, _GROUP_ROLE) or {}).get('id') for item, _, _ in selected}
+        deleted_groups.discard(None)
         patches = self._step_patches()
         groups = self._step_groups()
         step_ids = self._step_ids()
+        new_nodeids = [n for i, n in enumerate(nodeids) if i not in removed]
+        new_groups = [g for i, g in enumerate(groups) if i not in removed]
+        new_ids = [identifier for i, identifier in enumerate(step_ids) if i not in removed]
+        from runner.domain.empty_groups import retained
+        empty_groups = [r for r in retained(previous, new_nodeids, new_groups, step_ids, new_ids)
+                        if not deleted_groups.intersection(g['id'] for g in group_path(r['group']))]
         if self._tracking:
+            self._tracking['sources'] = [s for s in self._tracking['sources']
+                if not deleted_groups.intersection(g['id'] for g in group_path(s['group']))]
             positions = {identifier: i for i, identifier in enumerate(step_ids)}
             for source in self._tracking['sources']:
                 anchor = positions.get(source['anchor'])
                 if anchor in removed:
                     source['anchor'] = next((step_ids[i] for i in range(anchor - 1, -1, -1) if i not in removed), '__start__')
-        self._rebuild_sequence([value for i, value in enumerate(nodeids) if i not in removed],
+        self._rebuild_sequence(new_nodeids,
                                [value for i, value in enumerate(patches) if i not in removed],
-                               [value for i, value in enumerate(groups) if i not in removed],
-                               step_ids=[value for i, value in enumerate(step_ids) if i not in removed])
+                               new_groups, step_ids=new_ids, empty_groups=empty_groups)
         self._mark_dirty()
 
     @undoable('Reorder sequence')
@@ -1081,6 +1238,15 @@ class ExecutionProfilesPage(QWidget):
         by_item = {id(item): (start, end) for item, start, end in ranges}
         start, end = by_item[id(current)]
         other_start, other_end = by_item[id(parent.child(destination))]
+        if end == start or other_end == other_start:
+            item = parent.takeChild(index)
+            parent.insertChild(destination, item)
+            identifier = (item.data(0, _GROUP_ROLE) or {}).get('id')
+            self._rebuild_sequence(self._flatten_sequence(), self._step_patches(), self._step_groups(), step_ids=self._step_ids())
+            if identifier:
+                self._focus_group(identifier)
+            self._mark_dirty()
+            return
         edit = bool(current.data(0, NODEID_ROLE))
         nodeids, patches, groups = self._flatten_sequence(), self._step_patches(), self._step_groups()
         step_ids = self._step_ids()
@@ -1124,7 +1290,7 @@ class ExecutionProfilesPage(QWidget):
                                                         step.data(0, _OVERRIDES_ROLE) or {}))
         for item, start, end in ranges:
             label = item.data(0, _LABEL_ROLE) or ''
-            number = f"{start + 1:02d}" if end - start == 1 else f"{start + 1:02d}–{end:02d}"
+            number = '—' if end == start else f"{start + 1:02d}" if end - start == 1 else f"{start + 1:02d}–{end:02d}"
             metadata = item.data(0, _GROUP_ROLE) or {}
             is_test = bool(item.data(0, NODEID_ROLE))
             path = self._item_group_path(item, include_self=not is_test)
@@ -1271,6 +1437,7 @@ class ExecutionProfilesPage(QWidget):
     @undoable('Change group YAML')
     def _apply_group_yaml(self, identifier, patch, *, replace=False):
         groups, patches = self._step_groups(), self._step_patches()
+        empty_groups = self._empty_group_records()
         paths = list(dict(yaml_fields(patch)))
         for index, entry in enumerate(groups):
             path = group_path(entry)
@@ -1284,7 +1451,16 @@ class ExecutionProfilesPage(QWidget):
             if inside and replace:
                 patches[index] = self._without_parameters(patches[index], paths)
             groups[index] = group_entry(path)
-        self._rebuild_sequence(self._flatten_sequence(), patches, groups)
+        for record in empty_groups:
+            path, inside = group_path(record['group']), False
+            for group in path:
+                if group['id'] == identifier:
+                    group['configuration_overrides'] = copy.deepcopy(patch)
+                    inside = True
+                elif inside and replace:
+                    group['configuration_overrides'] = self._without_parameters(group.get('configuration_overrides', {}), paths)
+            record['group'] = group_entry(path)
+        self._rebuild_sequence(self._flatten_sequence(), patches, groups, empty_groups=empty_groups)
         self._focus_group(identifier)
 
     def _focus_group(self, identifier):
@@ -1306,9 +1482,9 @@ class ExecutionProfilesPage(QWidget):
     def edit_group(self, checked=False, *, subgroup=False):
         nodeids, ranges = self._selected_ranges()
         indices = sorted({i for _, start, end in ranges for i in range(start, end)})
-        if not indices:
-            return
         selected = self.sequence_list.selectedItems()
+        if not indices and not (len(selected) == 1 and selected[0].data(0, _GROUP_ROLE)):
+            return
         existing = selected[0].data(0, _GROUP_ROLE) if len(selected) == 1 and not selected[0].data(0, NODEID_ROLE) and not subgroup else None
         entries = self._step_groups()
         prefix = self._common_group_path([group_path(entries[i]) for i in indices])
@@ -1319,7 +1495,7 @@ class ExecutionProfilesPage(QWidget):
         if not existing and len(prefix) >= 20:
             self._show_notice("Groups may contain at most 20 nested levels.", warning=True)
             return
-        nonadjacent = indices != list(range(indices[0], indices[-1] + 1))
+        nonadjacent = bool(indices) and indices != list(range(indices[0], indices[-1] + 1))
         dialog = ProfileGroupDialog(len(indices), existing, will_reorder=nonadjacent, parent=self,
                                     parent_name=' / '.join(g['name'] for g in prefix) or 'Profile root')
         if dialog.exec() == QDialog.Accepted:
@@ -1329,11 +1505,19 @@ class ExecutionProfilesPage(QWidget):
     def _apply_group(self, indices, metadata, *, editing=False, parent_path=None):
         nodeids, patches, groups = self._flatten_sequence(), self._step_patches(), self._step_groups()
         step_ids = self._step_ids()
+        empty_groups = self._empty_group_records()
         if editing:
             own = {key: copy.deepcopy(value) for key, value in metadata.items() if key != 'parents'}
             for index, entry in enumerate(groups):
                 path = group_path(entry)
                 groups[index] = group_entry([own if group['id'] == metadata['id'] else group for group in path])
+            from runner.ui.profile_empty_groups import change_metadata
+            empty_groups = change_metadata(empty_groups, metadata['id'], lambda _: own)
+        elif not indices:
+            prefix = parent_path or []
+            position = next((r['position'] for r in empty_groups if prefix and r['group']['id'] == prefix[-1]['id']), len(nodeids))
+            empty_groups = [r for r in empty_groups if not prefix or r['group']['id'] != prefix[-1]['id']]
+            empty_groups.append(dict(position=position, group=group_entry(prefix + [copy.deepcopy(metadata)])))
         else:
             selected = set(indices)
             prefix = parent_path if parent_path is not None else self._common_group_path([group_path(groups[i]) for i in indices])
@@ -1349,7 +1533,7 @@ class ExecutionProfilesPage(QWidget):
                 groups[i] = group_entry(prefix + [copy.deepcopy(metadata)] + suffix)
             order = list(range(indices[0])) + indices + [i for i in range(indices[0], len(nodeids)) if i not in selected]
             nodeids, patches, groups, step_ids = ([values[i] for i in order] for values in (nodeids, patches, groups, step_ids))
-        self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
+        self._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids, empty_groups=empty_groups)
         self._focus_group(metadata['id'])
         self._mark_dirty()
 
@@ -1556,6 +1740,7 @@ class ExecutionProfilesPage(QWidget):
         return dict(sequence=self._flatten_sequence(), patches=self._step_patches(), groups=self._step_groups(),
                     step_ids=self._step_ids(),
                     tracking=copy.deepcopy(self._tracking),
+                    empty_groups=self._empty_group_records(),
                     name=self.name_edit.text(), description=self.description_edit.toPlainText(),
                     config_name=self.config_edit.text(), config_text=self._configuration_text,
                     config_path=self.config_edit.property('fullPath') or '',
@@ -1588,7 +1773,7 @@ class ExecutionProfilesPage(QWidget):
             self.stop_after_failure.setChecked(state['stop'])
             self.save_logs.setChecked(state['logs'])
             self._rebuild_sequence(state['sequence'], state['patches'], state['groups'],
-                                   step_ids=state.get('step_ids'), view=view)
+                                   step_ids=state.get('step_ids'), view=view, empty_groups=state.get('empty_groups', []))
         finally:
             self._building = False
             self._history_restoring = False
@@ -1615,7 +1800,7 @@ class ExecutionProfilesPage(QWidget):
             f"{total} execution{'s' if total != 1 else ''}{dirty}")
         enabled = bool(count)
         self.run_button.setEnabled(enabled)
-        self.export_button.setEnabled(enabled)
+        self.export_button.setEnabled(enabled or bool(self._empty_group_records()) or bool(self._tracking.get('sources')))
         if hasattr(self, 'campaign_sync'):
             self.campaign_sync.refresh()
 
@@ -1710,3 +1895,11 @@ class ExecutionProfilesPage(QWidget):
         self.notice.style().polish(self.notice)
         self.notice_label.setText(text)
         self.notice.show()
+
+    def _show_update_feedback(self, text: str, detail: str) -> None:
+        self.notice.hide()
+        self.update_feedback.setText(text)
+        self.update_feedback.setToolTip(detail)
+        self.update_feedback.setStyleSheet(f'color:{t.status_color(Status.PASSED)};')
+        self.update_feedback.show()
+        self.update_feedback_timer.start(8000)

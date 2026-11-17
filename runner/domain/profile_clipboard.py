@@ -46,7 +46,7 @@ def decode_selection(data):
     except (ValueError, UnicodeError, RecursionError) as exc:
         raise ProfileValidationError('The clipboard does not contain a valid test selection.') from exc
     keys = {'format', 'version', 'copy_id', 'owner', 'source', 'bases', 'items'}
-    if not isinstance(payload, dict) or set(payload) != keys or payload['format'] != FORMAT or type(payload['version']) is not int or payload['version'] not in (1, 2):
+    if not isinstance(payload, dict) or set(payload) != keys or payload['format'] != FORMAT or type(payload['version']) is not int or payload['version'] not in (1, 2, 3):
         raise ProfileValidationError('Unsupported test selection format.')
     for key in ('copy_id', 'owner', 'source'):
         if not isinstance(payload[key], str) or not payload[key] or len(payload[key]) > 160:
@@ -65,6 +65,8 @@ def decode_selection(data):
         required = {'kind', 'label', 'sequence', 'patches', 'groups', 'base'}
         if payload['version'] >= 2:
             required.add('tracking')
+        if payload['version'] >= 3:
+            required.add('empty_groups')
         if not isinstance(item, dict) or set(item) != required:
             raise ProfileValidationError('Invalid copied element.')
         if not isinstance(item['kind'], str) or item['kind'] not in KINDS or not isinstance(item['label'], str) or len(item['label']) > 16_384:
@@ -74,19 +76,20 @@ def decode_selection(data):
         if not isinstance(item['sequence'], list) or not isinstance(item['patches'], list) or not isinstance(item['groups'], list):
             raise ProfileValidationError('Invalid copied sequence.')
         size = len(item['sequence'])
-        if size == 0 or len(item['patches']) != size or len(item['groups']) != size:
+        empty = item.get('empty_groups', [])
+        if (size == 0 and not empty) or len(item['patches']) != size or len(item['groups']) != size:
             raise ProfileValidationError('Copied parameters must match the occurrence count.')
         total += size
         if total > MAX_STEPS:
             raise ProfileValidationError('The copied selection contains too many tests.')
         validate_profile(ExecutionProfile('Clipboard', item['sequence'], '', '',
-                                         step_overrides=item['patches'], step_groups=item['groups']))
+                                         step_overrides=item['patches'], step_groups=item['groups'], empty_groups=empty))
         if payload['version'] >= 2 and not isinstance(item['tracking'], dict):
             raise ProfileValidationError('Invalid copied tracking metadata.')
         if payload['version'] >= 2 and item['tracking']:
             tracking = item['tracking']
             validate_profile(ExecutionProfile('Clipboard tracking', item['sequence'], '', '',
-                step_ids=[str(i) for i in range(size)], tracking=tracking))
+                step_ids=[str(i) for i in range(size)], tracking=tracking, empty_groups=empty))
     return payload
 
 

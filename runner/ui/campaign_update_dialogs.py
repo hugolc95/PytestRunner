@@ -68,6 +68,7 @@ class CampaignReviewDialog(QDialog):
         self.buttons = QDialogButtonBox(QDialogButtonBox.Cancel)
         self.apply_button = self.buttons.addButton('Update campaign', QDialogButtonBox.AcceptRole)
         self.apply_button.setObjectName('Primary')
+        self.apply_button.setDefault(True)
         self.buttons.rejected.connect(self.reject)
         self.apply_button.clicked.connect(self._apply)
         foot.addWidget(self.buttons)
@@ -103,10 +104,12 @@ class CampaignReviewDialog(QDialog):
         count = len(self.profile.sequence) + added - removed
         self.all_unmatched = (len(self.plan.missing) == len(self.profile.sequence) and not self.plan.path_changes and not self.plan.additions)
         actions = []
-        for number, label in ((added, 'new tests/cases'), (updated, 'test locations updated'), (removed, 'removed from campaign')):
+        only_locations = all(p in self.plan.path_changes for p, choice in decisions.items() if choice not in ('keep', 'remove'))
+        update_label = 'test locations to update' if only_locations else 'tests to update'
+        for number, label in ((added, 'tests to add'), (updated, update_label), (removed, 'tests to remove')):
             if number:
                 actions.append(f'{number} {label}')
-        self.summary.setText((' · '.join(actions) or 'Your campaign selection is kept') + f'\n{count} tests/cases after update')
+        self.summary.setText((' · '.join(actions) or 'Your campaign selection is kept') + f'\n{count} tests after update')
         if self.all_unmatched and not self.custom:
             self.summary.setText(f'None of the {len(self.profile.sequence)} campaign tests were found in the current collection.')
             self.diagnosis.setText(f'{len(self.plan.available)} tests were collected in the current environment. Check the selected project and collection settings first. Your campaign is kept intact.')
@@ -114,6 +117,8 @@ class CampaignReviewDialog(QDialog):
             self.diagnosis.setText('The file names, test names and parameters match. Only their collection paths changed. Each test keeps its YAML settings.')
         else:
             self.diagnosis.setText('New cases use their group settings. Your group order, colours, descriptions and existing results are retained.')
+        if self.plan.suggestions and not self.plan.path_changes and not self.all_unmatched:
+            self.diagnosis.setText('Possible renamed or moved files were found. They stay unchanged until you confirm a replacement in Advanced choices.')
         self.remove_missing.setVisible(bool(unresolved or self.remove_missing.isChecked()) and not self.all_unmatched)
         self.message.setText((f'{len(unresolved)} unmatched tests will stay in the campaign with their settings. They will not run until found again.' if unresolved and not self.all_unmatched else
                               'Campaign unchanged.' if self.all_unmatched and not self.custom else ''))
@@ -124,10 +129,12 @@ class CampaignReviewDialog(QDialog):
                             if decision == 'remove' and self.profile.step_overrides)
             if overrides:
                 self.message.setText(f'{overrides} test-specific YAML setting(s) will also be removed. The update can be undone.')
-        self.apply_button.setText('Collect again' if self.all_unmatched and not self.custom else 'Update campaign')
-        self.apply_button.setEnabled(not self.locked and (count > 0 or self.all_unmatched))
+        self.apply_button.setText('Check project' if self.all_unmatched and not self.custom else 'Update campaign')
+        retained_groups = bool(self.profile.empty_groups or any(self.profile.step_groups) or self.profile.tracking.get('sources'))
+        self.apply_button.setEnabled(not self.locked and (count > 0 or self.all_unmatched or retained_groups))
         if count == 0 and not self.all_unmatched:
-            self.message.setText('This would leave the campaign empty. Keep unmatched tests or add current tests instead.')
+            self.message.setText('Group settings will be kept. Add tests or collect again before running.' if retained_groups else
+                                 'This would leave the campaign empty. Keep unmatched tests or add current tests instead.')
         self.message.setVisible(bool(self.message.text()))
         if self.details.isVisible():
             self._fill_details()
@@ -254,7 +261,7 @@ class CampaignSourcesDialog(QDialog):
         covered = set()
         for source in tracking.get('sources', []):
             positions = [p for p in self.positions if members.get(self.profile.step_ids[p], {}).get('source') == source['id']]
-            if positions:
+            if positions or not self.profile.sequence or len(self.positions) == len(self.profile.sequence) and not any(m['source'] == source['id'] for m in members.values()):
                 self._choice(source['kind'], source['selector'], positions, source)
                 covered.update(positions)
         locations = sync.location_matches(self.profile.sequence, self.available)
@@ -279,7 +286,7 @@ class CampaignSourcesDialog(QDialog):
     def _choice(self, kind, selector, positions, source=None):
         rule = source or dict(kind=kind, selector=selector, recursive=True)
         count = sum(sync.matches(rule, n) for n in self.available)
-        groups = self.profile.step_groups[positions[0]] if self.profile.step_groups else {}
+        groups = source['group'] if source and not positions else self.profile.step_groups[positions[0]] if self.profile.step_groups and positions else {}
         path = group_path(groups)
         label = (path[-1]['name'] + ' · ' if path else '') + (selector if selector != '.' else 'Project folder')
         item = QTreeWidgetItem(self.folders, [label, str(count)])
@@ -300,6 +307,8 @@ class CampaignSourcesDialog(QDialog):
         self.use_project.setVisible(foreign)
         if foreign:
             self.message.setText('This campaign is linked to another project. Choose whether to use the current project before saving changes.')
+        elif not self.profile.sequence and not self.profile.tracking:
+            self.message.setText('This campaign has no tests yet. Add tests in Execution Profiles to choose which folders it should follow.')
         elif not self.following.isEnabled():
             self.message.setText('These campaign tests were not found in the current collection. Check the selected project or update their locations first.')
         self.adjustSize()

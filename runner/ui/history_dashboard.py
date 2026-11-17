@@ -149,7 +149,12 @@ class RunGroup:
 
     @property
     def ok(self) -> bool:
-        return self.issues == 0
+        return self.issues == 0 and all(entry.ok for entry in self.entries)
+
+    @property
+    def coverage_summary(self):
+        from runner.domain.campaign_coverage import summary
+        return summary([entry.campaign_coverage for entry in self.entries])
 
     @property
     def locked(self) -> bool:
@@ -273,6 +278,10 @@ class RunCard(QFrame):
         self.origin_label = self._label(kind, t.TEXT_XS, 700, origin_color)
         self.origin_label.setToolTip(group.origin_label)
         top.addWidget(self.origin_label)
+        if group.coverage_summary:
+            badge = self._label('STOPPED' if any(e.campaign_coverage.get('stopped') for e in group.entries) else 'INCOMPLETE', t.TEXT_XS, 600, lambda: t.status_color(Status.SKIPPED))
+            badge.setToolTip(group.coverage_summary)
+            top.addWidget(badge)
         top.addStretch(1)
         if group.build_number is not None:
             top.addWidget(self._label(f"#{group.build_number:04d}", t.TEXT_XS, 700,
@@ -1419,7 +1428,15 @@ class HistoryWindow(QDialog):
         counts = {status: sum(entry.count(status) for entry in entries) for status in Status}
         for status, value in self.result_values.items():
             value.setText(str(counts[status]))
-        self.ribbon.set_counts(counts)
+        if any(entry.campaign_coverage for entry in entries):
+            from collections import Counter
+            ribbon_counts = Counter(Status.__members__.get(status, Status.PENDING)
+                for entry in entries for _, status in HistoryExecutionModel.records(entry))
+            self.ribbon.set_counts(ribbon_counts)
+            self.ribbon.setToolTip(' · '.join(f'{value} {"not run" if status is Status.PENDING else status.label.lower()}'
+                                            for status, value in ribbon_counts.items()))
+        else:
+            self.ribbon.set_counts(counts)
         total = sum(counts.values())
         executed = counts[Status.PASSED] + counts[Status.FAILED] + counts[Status.ERROR]
         self.success_value.setText(
@@ -1431,6 +1448,14 @@ class HistoryWindow(QDialog):
             f"{len(entries)} reader{'s' if len(entries) != 1 else ''} · "
             + (f"Build #{group.build_number:04d} · " if group.build_number is not None else "")
             + f"Run ID {group.id}")
+        from runner.domain.campaign_coverage import summary as coverage_summary
+        coverage = coverage_summary([entry.campaign_coverage for entry in entries])
+        if coverage:
+            planned = max(entry.campaign_coverage.get('planned', 0) for entry in entries)
+            self.detail_meta.setText(self.detail_meta.text().replace(f'{len(group.nodeids)} tests', f'{planned} planned tests', 1))
+            self.success_value.setText(coverage + '\nSuccess rate above applies only to executed tests.' if not executed else
+                f'{counts[Status.PASSED]} passed among executed tests · ' + coverage)
+            self.execution_title.setText('Campaign results · includes tests not run')
         self._style_result_counts()
 
     def _filter_results(self, status):

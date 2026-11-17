@@ -84,6 +84,7 @@ class RunEntry:
     replay_profile: dict | None = None
     configuration_file: str = ""
     analysis_file: str = ""
+    campaign_coverage: dict = field(default_factory=dict)
     # Instantane transitoire : les traces volumineuses vont dans un fichier
     # annexe, jamais dans l'index charge a l'ouverture de l'historique.
     analysis_data: dict | None = field(default=None, compare=False, repr=False)
@@ -106,10 +107,12 @@ class RunEntry:
 
     @property
     def summary(self) -> str:
+        from runner.domain.campaign_coverage import summary
+        detail = summary([self.campaign_coverage])
         return (f"{self.count(Status.PASSED)} passed, "
                 f"{self.count(Status.FAILED)} failed, "
                 f"{self.count(Status.SKIPPED)} skipped, "
-                f"{self.count(Status.ERROR)} error")
+                f"{self.count(Status.ERROR)} error" + (' · ' + detail if detail else ''))
 
     def output(self) -> str:
         """La sortie console du run, relue depuis son fichier."""
@@ -150,6 +153,7 @@ class RunEntry:
             "replay_profile": self.replay_profile,
             "configuration_file": self.configuration_file,
             "analysis_file": self.analysis_file,
+            "campaign_coverage": self.campaign_coverage,
         }
 
     @classmethod
@@ -179,6 +183,7 @@ class RunEntry:
                 junit_path=str(donnees.get("junit_path", "")),
                 configuration_file=str(donnees.get("configuration_file", "")),
                 analysis_file=str(donnees.get("analysis_file", "")),
+                campaign_coverage=dict(donnees.get('campaign_coverage') or {}),
                 locked=bool(donnees.get("locked", False)),
                 run_kind=str(donnees.get("run_kind", "unknown")),
                 profile_name=str(donnees.get("profile_name", "")),

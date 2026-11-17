@@ -74,9 +74,10 @@ def install() -> None:
         entries: list[tuple[RunEntry, str]] = []
         now = time.time()
         for report in rapports:
-            if report.cancelled:
+            if report.cancelled and not getattr(self, '_archive_campaign', None):
                 continue
             from runner.ui.report_capture import capture_report
+            analysis = capture_report(self, report)
             entry = history.RunEntry(
                 id=self._run_id,
                 timestamp=now,
@@ -97,7 +98,8 @@ def install() -> None:
                 profile_name=getattr(self, "_archive_profile_name", ""),
                 run_name=getattr(self, "_archive_run_name", ""),
                 replay_profile=getattr(self, "_archive_replay_profile", None),
-                analysis_data=capture_report(self, report),
+                analysis_data=analysis,
+                campaign_coverage=analysis.get('coverage', {}),
             )
             entries.append((entry, report.output if getattr(self, "_archive_save_logs", True) else ""))
         return tuple(entries)
@@ -130,6 +132,12 @@ def install() -> None:
             summary = failures
         else:
             summary = "All tests passed"
+
+        from runner.ui.campaign_archive import result as campaign_result
+        from runner.domain.campaign_coverage import summary as coverage_summary
+        incomplete = coverage_summary([campaign_result(self, r.reader.index) for r in rapports])
+        if incomplete:
+            summary = ('Executed tests passed · ' if summary == 'All tests passed' else summary + ' · ') + incomplete
 
         self._set_status_idle(f"{summary} · {format_duration(self._seconds, precision=0)}")
         self.elapsed_label.clear()

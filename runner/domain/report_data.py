@@ -20,7 +20,7 @@ NOT_RECORDED = 'Not recorded in this archive.'
 
 def _status(value):
     value = str(value or '').lower()
-    return value if value in ('passed', 'failed', 'error', 'skipped') else 'unknown'
+    return value if value in ('passed', 'failed', 'error', 'skipped', 'notrun') else 'unknown'
 
 
 def _legacy_attempts(entry, position, sequence, frequencies, by_node, ordered):
@@ -131,6 +131,8 @@ def _tree(sequence, saved, rows):
                 while len(nested) == 1 and nested[0].kind is Kind.FOLDER and nested[0].children:
                     nested = nested[0].children
             siblings.extend(nested)
+        from runner.domain.empty_groups import add_nodes
+        add_nodes(children, named, saved.get('empty_groups', []))
         if repetitions > 1:
             from runner.domain.models import TestNode
             roots.append(TestNode(f'Repetition {repetition + 1} / {repetitions}', Kind.FOLDER, children=children))
@@ -172,14 +174,15 @@ def report_payload(entries, outputs=None):
     first = entries[0]
     if any(entry.id != first.id or entry.workspace != first.workspace for entry in entries):
         raise ValueError('An HTML report can only combine readers from the same run.')
-    saved = next((entry.replay_profile for entry in entries if entry.replay_profile), {}) or {}
+    analyses = [read_analysis(entry) for entry in entries]
+    saved = next((a.get('campaign_profile') for a in analyses if a.get('campaign_profile')), None)
+    saved = saved or next((entry.replay_profile for entry in entries if entry.replay_profile), {}) or {}
     sequence = list(saved.get('sequence') or first.nodeids)
     repeat = (saved.get('execution') or {}).get('repetitions', 1)
     sequence *= max(1, int(repeat)) if saved.get('sequence') else 1
     if not sequence:
         sequence = [nodeid for nodeid, _ in first.executions] or list(dict.fromkeys(n for entry in entries for n in entry.test_statuses))
     readers = [entry.reader or 'Test interpreter' for entry in entries]
-    analyses = [read_analysis(entry) for entry in entries]
     texts = [strip_ansi(outputs[i] if outputs is not None else entry.output()) for i, entry in enumerate(entries)]
     indexes = [failures.index_failures(text) for text in texts]
     durations = [archived_timings(text, sequence) for text in texts]
@@ -254,7 +257,7 @@ def report_payload(entries, outputs=None):
                 configuration_cache[configuration_key] = _configuration(entry, saved, step, entry.reader)
             row['readers'].append(dict(status=status, attempts=attempts,
                 yaml=configuration_cache[configuration_key],
-                notice='' if captured is not None else 'Older archive: occurrence-level details were not recorded.'))
+                notice=captured.get('reason', '') if captured is not None else 'Older archive: occurrence-level details were not recorded.'))
         rows.append(row)
     nodes = _tree(sequence, saved, rows)
     nodes['profile']['name'] = first.run_name or first.profile_name or saved.get('name') or 'Test run'
@@ -272,5 +275,6 @@ def report_payload(entries, outputs=None):
                 build=first.build_number, readers=readers, badges=badge_labels(readers), rows=rows, nodes=nodes, counts=dict(counts),
                 archived_counts=archived, contexts=contexts, console=texts,
                 configuration_name=saved.get('configuration_name', ''),
-                complete=not counts['notrun'] and not counts['unknown'],
+                coverage=[entry.campaign_coverage for entry in entries],
+                complete=bool(sequence) and not counts['notrun'] and not counts['unknown'],
                 run_kind=first.run_kind, profile_recorded=bool(saved))

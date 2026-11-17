@@ -34,6 +34,8 @@ def _static_tree(data):
         parts = []
         for name, result in zip(data['readers'], row['readers']):
             body = '<p>' + escape(name) + ' · ' + escape(result['status'].upper()) + '</p>'
+            if result.get('notice'):
+                body += '<p>' + escape(result['notice']) + '</p>'
             for attempt in result['attempts']:
                 body += '<p>Recorded attempt ' + str(attempt.get('attempt', 0) + 1) + ' · ' + escape(attempt['status']) + '</p>'
                 if attempt.get('trace'):
@@ -58,7 +60,13 @@ def html_report(entry, output=None):
         counts.update({status:sum(int(e.counts.get(status.upper(), 0)) for e in entries) for status in statuses[:4]})
     summary = ''.join('<span data-status="' + status + '" class="tr-' + status + '"><strong>' + str(counts.get(status, 0)) + '</strong> ' + {'notrun':'Not run', 'unknown':'Unknown'}.get(status, status.title()) + '</span>' for status in statuses)
     label = 'Completed' if data['complete'] else 'Incomplete or older archive'
-    if any(e.exit_code for e in entries):
+    from runner.domain.campaign_coverage import summary as coverage_summary
+    coverage_label = coverage_summary(data.get('coverage', []))
+    if coverage_label:
+        label = coverage_label
+    if any(e.campaign_coverage.get('stopped') for e in entries):
+        label += ' · Run stopped'
+    elif any(e.exit_code for e in entries):
         label += ' · Execution errors recorded'
     console = ''.join('<details><summary>' + escape(name) + '</summary><pre class="tr-code">' + escape(text or 'No console output was archived.') + '</pre></details>' for name, text in zip(data['readers'], data['console']))
     css = _resource('report.css')

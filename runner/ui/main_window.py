@@ -662,7 +662,7 @@ class MainWindow(QMainWindow):
 
     def _open_collected_profile(self, profile: ExecutionProfile) -> None:
         """Open only after collection has supplied the compatibility information."""
-        if not profile.sequence:
+        if not profile.sequence and not profile.empty_groups and not profile.tracking.get('sources'):
             ErrorDialog.show_error(
                 self, "Profile is not compatible",
                 "The campaign has no test occurrence.")
@@ -1430,7 +1430,7 @@ class MainWindow(QMainWindow):
         chosen = -1
         for profile in profiles:
             missing = sum(nodeid not in self.model._by_nodeid for nodeid in profile.sequence)
-            available = bool(profile.sequence)
+            available = bool(profile.sequence or profile.empty_groups or profile.tracking.get('sources'))
             from runner.domain.campaign_sync import compare
             plan = compare(profile, self.model._by_nodeid, self.workspace.path if self.workspace else '',
                            complete=getattr(self, '_campaign_collection_complete', bool(self.model._by_nodeid)))
@@ -2917,6 +2917,8 @@ class MainWindow(QMainWindow):
         profile = self._running_execution_profile
         selection = self.profile_run_tree.selection if profile is not None else None
         display_profile = selection.profile if selection is not None else profile
+        from runner.ui.campaign_archive import begin as begin_campaign_archive
+        begin_campaign_archive(self, display_profile, selection)
         preserve_profile = selection is not None and getattr(self, '_displayed_profile', None) == display_profile
         preserve_results = preserve_results or preserve_profile
         if not preserve_profile:
@@ -3197,6 +3199,11 @@ class MainWindow(QMainWindow):
             resume = echecs
         else:
             resume = "All tests passed"
+        from runner.ui.campaign_archive import result as campaign_result
+        from runner.domain.campaign_coverage import summary as coverage_summary
+        incomplete = coverage_summary([campaign_result(self, r.reader.index) for r in rapports])
+        if incomplete:
+            resume = ('Executed tests passed · ' if resume == 'All tests passed' else resume + ' · ') + incomplete
         self._set_status_idle(f"{resume} · {format_duration(self._seconds, precision=0)}")
         # La duree est deja dans le resume : la laisser aussi a cote
         # l'afficherait deux fois.
@@ -3254,13 +3261,15 @@ class MainWindow(QMainWindow):
         if self._run_id is None or self.workspace is None:
             return
 
+        from runner.ui.report_capture import capture_report
         profile = self._running_execution_profile
         joues = (
             list(profile.sequence) * profile.execution.repetitions
             if profile is not None else list(getattr(self, "_archive_run_nodeids", self.model.nodeids())))
         for rapport in rapports:
-            if rapport.cancelled:
+            if rapport.cancelled and not getattr(self, '_archive_campaign', None):
                 continue
+            analysis = capture_report(self, rapport)
             entree = history.RunEntry(
                 id=self._run_id,
                 timestamp=time.time(),
@@ -3279,6 +3288,8 @@ class MainWindow(QMainWindow):
                 run_kind="profile" if profile is not None else "classic",
                 profile_name=profile.name if profile is not None else "",
                 replay_profile=getattr(self, "_archive_replay_profile", None),
+                campaign_coverage=analysis['coverage'],
+                analysis_data=analysis,
             )
             output = (rapport.output if profile is None
                       or profile.reports.save_complete_logs else "")

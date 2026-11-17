@@ -13,6 +13,7 @@ from runner.domain import campaign_sync as sync
 from runner.domain.execution_profile import ProfileValidationError, group_path
 from runner.domain.disabled_tests import parameter_base
 from runner.ui import icons, tokens as t
+from PySide6.QtGui import QAction, QKeySequence
 from runner.ui.widgets import ErrorDialog
 
 
@@ -46,13 +47,15 @@ class CampaignNotice(QFrame):
         layout.addWidget(self.button)
         self.hide()
 
-    def show_plan(self, plan, *, can_undo=False):
+    def show_plan(self, plan, *, can_undo=False, empty_action=''):
         warning = bool(plan.problem or plan.changed)
         if self.property('warning') != warning:
             self.setProperty('warning', warning)
             self.style().unpolish(self)
             self.style().polish(self)
         self.symbol.setPixmap(icons.icon('mdi.update' if warning else 'mdi.check-circle-outline').pixmap(20, 20))
+        tone = t.status_color('skipped') if plan.problem or len(plan.missing) > len(plan.path_changes) else t.ACCENT
+        self.setStyleSheet(f'QFrame#ProfileNotice {{background:{t.rgba(tone, .07)};border:none;border-left:2px solid {tone};border-radius:4px;}}')
         self.label.setText(plan.problem or ('Campaign update available · ' + plan.summary if plan.changed else 'Campaign updated and reloaded.'))
         self.button.setVisible(plan.changed and not plan.problem)
         if plan.missing and not plan.additions and not plan.path_changes and not plan.problem:
@@ -61,7 +64,12 @@ class CampaignNotice(QFrame):
         else:
             self.button.setText('Review changes…')
         self.undo_button.setVisible(can_undo)
-        self.setVisible(bool(plan.problem or plan.changed or can_undo))
+        self.setVisible(bool(plan.problem or plan.changed or empty_action))
+        if empty_action:
+            self.label.setText('No tests currently available. Group settings are kept.')
+            self.symbol.setPixmap(icons.icon('mdi.information-outline').pixmap(20, 20))
+            self.button.setVisible(True)
+            self.button.setText(empty_action)
 
 
 class AdvancedCampaignReviewDialog(QDialog):
@@ -124,12 +132,18 @@ class AdvancedCampaignReviewDialog(QDialog):
             for candidate in plan.candidates[position]:
                 combo.addItem('Replace → ' + candidate.split('::')[-1], candidate)
                 combo.setItemData(combo.count() - 1, candidate, Qt.ToolTipRole)
+            for candidate in plan.suggestions.get(position, []):
+                if combo.findData(candidate) < 0:
+                    combo.addItem('Possible move → ' + candidate, candidate)
+                    combo.setItemData(combo.count() - 1, 'Suggested only. Confirm the replacement; the campaign has not changed.', Qt.ToolTipRole)
             combo.addItem('Choose another collected test…', '__browse__')
             combo.currentIndexChanged.connect(lambda _=0, c=combo: self._choose(c))
             self.tree.setItemWidget(item, 1, combo)
             self.decisions[position] = combo
             combo.currentIndexChanged.connect(self._replacements_changed)
-            if profile.step_overrides and profile.step_overrides[position]:
+            if position in plan.path_changes and profile.step_overrides and profile.step_overrides[position]:
+                item.setText(2, 'Kept with this test')
+            elif profile.step_overrides and profile.step_overrides[position]:
                 check = QCheckBox('Transfer override')
                 check.setToolTip('Only transfer this occurrence\'s YAML to an explicitly selected replacement. Group YAML is always inherited.')
                 check.setEnabled(False)
@@ -384,11 +398,37 @@ class EditorCampaignSync(QObject):
         self.workspace = ''
         self.complete = False
         self.undo_updates = {}
+        self._undo_cache = {}
+        self.undo_action = QAction('Undo last campaign update', page.sequence_list)
+        self.undo_action.setShortcut(QKeySequence.Undo)
+        self.undo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        self.undo_action.triggered.connect(self.undo)
+        page.sequence_list.addAction(self.undo_action)
         self.notice = CampaignNotice(page)
+        self.notice.sources.hide()
         page.layout().insertWidget(1, self.notice)
         self.notice.review.connect(self.review)
         self.notice.undo.connect(self.undo)
         self.notice.tracking.connect(page.manage_campaign_sources)
+
+    def has_undo(self, identifier):
+        from runner.domain.campaign_revision import previous, fingerprint
+        try:
+            stat = self.page.store._path(identifier).stat()
+            key = identifier, stat.st_mtime_ns, stat.st_size
+        except OSError:
+            return False
+        if key not in self._undo_cache:
+            available = previous(self.page.store, identifier) is not None
+            if not available and identifier in self.undo_updates:
+                from runner.domain.execution_profile import inspect_profile
+                try:
+                    current = inspect_profile(self.page.store._path(identifier)).profile
+                    available = fingerprint(current) == fingerprint(self.undo_updates[identifier][1])
+                except (OSError, ProfileValidationError):
+                    available = False
+            self._undo_cache[key] = available
+        return self._undo_cache[key]
 
     def plan(self, profile):
         return sync.compare(profile, self.page._available_nodeids, self.workspace, complete=self.complete)
@@ -407,7 +447,7 @@ class EditorCampaignSync(QObject):
                 state = ' · Review' if plan.missing or plan.problem else ' · Update' if plan.additions else ''
                 item.setText(f'{profile.name}\n{len(profile.sequence)} tests{state}')
                 item.setIcon(icons.icon('mdi.update', '#d89a17') if plan.changed else icons.icon('mdi.playlist-edit'))
-                item.setToolTip(plan.problem or plan.summary)
+                item.setToolTip(profile.name + '\n' + (plan.problem or plan.summary))
         profile = page.current_profile()
         if profile is None:
             self.notice.hide()
@@ -418,21 +458,27 @@ class EditorCampaignSync(QObject):
             self.notice.hide()
             return
         plan = self.plan(profile)
-        warning = 'Unavailable in the latest collection. Review campaign changes before running.'
+        warning = 'Unavailable in the latest collection. Available campaign tests can still run.'
         from runner.ui.profile_group_delegate import CONFIG_ISSUES_ROLE
+        from runner.ui.profile_group_delegate import TRACKING_ROLE
         unavailable = set(plan.missing)
         for position, item in enumerate(page._step_items()):
             issues = [text for text in (item.data(0, CONFIG_ISSUES_ROLE) or []) if text != warning]
             if position in unavailable:
                 issues.append(warning)
             item.setData(0, CONFIG_ISSUES_ROLE, issues)
-        self.notice.show_plan(plan, can_undo=profile.profile_id in self.undo_updates)
-        if self.complete and profile.sequence and not profile.tracking and not plan.changed and not plan.problem:
-            self.notice.label.setText('This campaign keeps your selected tests. Choose Contents to include new tests from the same folders.')
-            self.notice.sources.setText('Contents…')
-            self.notice.show()
-        else:
-            self.notice.sources.setText('Contents…')
+        for item, start, end in page._sequence_ranges()[1]:
+            group_id = (item.data(0, Qt.UserRole + 26) or {}).get('id', '')
+            mode = sync.content_description(profile, range(start, end), group_id)
+            item.setData(0, TRACKING_ROLE, mode)
+            plain = item.toolTip(0).split('\n\nCampaign contents:', 1)[0]
+            item.setToolTip(0, plain + '\n\nCampaign contents:\n' + mode)
+        can_undo = self.has_undo(profile.profile_id)
+        self.page.undo_update_button.setVisible(can_undo)
+        self.page.undo_update_button.setEnabled(not self._locked(profile) and not self.page._dirty)
+        self.undo_action.setEnabled(can_undo and self.page.undo_stack.count() == 0 and not self._locked(profile) and not self.page._dirty)
+        empty_action = ('Collect again' if profile.tracking.get('sources') else 'Add tests') if not profile.sequence and not plan.additions else ''
+        self.notice.show_plan(plan, can_undo=False, empty_action=empty_action)
 
     def _locked(self, profile):
         host = self.owner
@@ -447,6 +493,12 @@ class EditorCampaignSync(QObject):
         profile = profile or page.current_profile()
         if profile is None:
             return
+        if not profile.sequence and not self.plan(profile).additions:
+            if profile.tracking.get('sources') and hasattr(self.owner, '_selected_run_context'):
+                self.owner._selected_run_context().load_workspace()
+            else:
+                page.add_tests()
+            return
         current = page.current_profile()
         if current and current.profile_id == profile.profile_id:
             if page._dirty:
@@ -456,6 +508,14 @@ class EditorCampaignSync(QObject):
                 if answer != QMessageBox.Save or not page.save_current():
                     return
             profile = page._profile_from_editor()
+        else:
+            profile = next((p for p in page.store.list() if p.profile_id == profile.profile_id), profile)
+        from runner.domain.campaign_revision import digest, record
+        expected = digest(page.store, profile.profile_id)
+        if current and current.profile_id == profile.profile_id and expected != getattr(page, '_loaded_disk_digest', expected):
+            page.reload_button.show()
+            page._show_notice('This campaign changed on disk. Use Reload saved version before updating. Your current editor contents are kept.', warning=True)
+            return
         plan = self.plan(profile)
         if plan.problem:
             ErrorDialog.show_error(page, 'Campaign cannot be compared', plan.problem)
@@ -469,7 +529,9 @@ class EditorCampaignSync(QObject):
         if dialog.request_collection:
             context = self.owner._selected_run_context() if hasattr(self.owner, '_selected_run_context') else None
             if context is not None and not context.service.busy:
-                context.load_workspace()
+                self.owner._show_page('workspace')
+                context.workspace_combo.setFocus()
+                context.workspace_combo.showPopup()
             return
         if self._locked(profile):
             ErrorDialog.show_error(page, 'Campaign is running', 'Finish or stop this campaign before applying an update.')
@@ -480,7 +542,7 @@ class EditorCampaignSync(QObject):
             return
         result = dialog.result_profile
         try:
-            page.store.save(result)
+            record(page.store, result, profile, expected)
         except (OSError, ValueError, ProfileValidationError) as exc:
             ErrorDialog.show_error(page, 'Could not update campaign', str(exc))
             return
@@ -504,16 +566,21 @@ class EditorCampaignSync(QObject):
             page.undo_stack.clear()
         self.refresh()
         page.campaign_updated.emit(result, previous)
-        page._show_notice('Campaign saved and reloaded. Undo update is available.', warning=False)
+        page._show_update_feedback('Campaign updated', 'Saved and reloaded. Use Undo update to restore the previous campaign, even after restarting the application.')
 
     def undo(self, profile_id=None):
         page = self.page
         current = page.current_profile()
         identifier = profile_id or (current.profile_id if current else '')
         pair = self.undo_updates.get(identifier)
-        if not pair:
-            return
-        before, after = pair
+        from runner.domain.campaign_revision import previous
+        if pair:
+            before, after = pair
+        else:
+            before = previous(page.store, identifier)
+            after = next((p for p in page.store.list() if p.profile_id == identifier), None)
+            if before is None or after is None:
+                return
         if self._locked(after) or (current and current.profile_id == identifier and page._dirty):
             ErrorDialog.show_error(page, 'Could not undo update', 'Finish the run and save or undo local edits before restoring the previous campaign.')
             return
@@ -528,6 +595,6 @@ class EditorCampaignSync(QObject):
         except (OSError, ProfileValidationError) as exc:
             ErrorDialog.show_error(page, 'Could not undo update', str(exc))
             return
-        self.undo_updates.pop(identifier)
+        self.undo_updates.pop(identifier, None)
         self._publish(before, after)
-        page._show_notice('Campaign update undone.', warning=False)
+        page._show_update_feedback('Update undone', 'The previous campaign has been restored and saved.')

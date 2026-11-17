@@ -22,7 +22,7 @@ def _text(value, limit=None):
     return escape(text).replace('\n', '<br>').replace('/', '/\u200b').replace('.', '.\u200b')
 
 
-def profile_yaml_tooltip(title, annotation, *, membership='', description='', problems=(), read_only=False, extra='', font_scale=1):
+def profile_yaml_tooltip(title, annotation, *, membership='', description='', problems=(), read_only=False, extra='', font_scale=1, content=''):
     scale = max(1, font_scale)
     def px(size):
         return int(size * scale + .5)
@@ -40,9 +40,14 @@ def profile_yaml_tooltip(title, annotation, *, membership='', description='', pr
     if description:
         parts.append(f'<br><span style="font-size:{px(11)}px; color:{muted}">{_text(description, 150)}</span>')
     parts.append('</td></tr>' + _gap(8))
+    if content:
+        parts.append(f'<tr><td><span style="color:{t.ACCENT};font-size:{px(10)}px;font-weight:600">CAMPAIGN CONTENTS</span><br>'
+                     f'<span style="color:{foreground};font-size:{px(12)}px">{_text(content, 500)}</span></td></tr>' + _gap(8))
     if problems:
-        color = t.status_color(Status.FAILED)
-        parts.append(f'<tr><td><b style="color:{color}">Configuration problem</b><br>'
+        unavailable = all(str(p).startswith('Unavailable') for p in problems)
+        color = t.status_color(Status.SKIPPED if unavailable else Status.FAILED)
+        caption = 'Test unavailable' if unavailable else 'Configuration problem'
+        parts.append(f'<tr><td><b style="color:{color}">{caption}</b><br>'
                      f'<span style="color:{foreground}">{_text(chr(10).join(problems), 650)}</span></td></tr>')
     else:
         custom = annotation.get('custom_entries', [])

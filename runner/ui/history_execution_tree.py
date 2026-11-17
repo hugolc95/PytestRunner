@@ -19,6 +19,11 @@ class HistoryExecutionModel(TestTreeModel):
 
     @staticmethod
     def records(entry):
+        from runner.domain.report_capture import read_analysis
+        analysis = read_analysis(entry) if entry.campaign_coverage else {}
+        if analysis.get('campaign_profile'):
+            return [(row['nodeid'], row['attempts'][-1]['status'] if row.get('attempts') else 'NOTRUN')
+                    for row in analysis.get('occurrences', [])]
         if entry.executions:
             records = list(entry.executions)
         else:
@@ -43,6 +48,10 @@ class HistoryExecutionModel(TestTreeModel):
     def set_entry(self, entry):
         self._contexts = {}
         records = self.records(entry)
+        from runner.domain.report_capture import read_analysis
+        analysis = read_analysis(entry) if entry.campaign_coverage else {}
+        self._campaign_recorded = bool(analysis.get('campaign_profile'))
+        self._reasons = {str(p + 1): row.get('reason', '') for p, row in enumerate(analysis.get('occurrences', []))}
         roots = build_sequence_tree(nodeid for nodeid, _ in records)
         original_ids = {}
         statuses = {}
@@ -72,6 +81,15 @@ class HistoryExecutionModel(TestTreeModel):
     def set_entries(self, entries):
         """One global row per test, then readers and repeated attempts underneath."""
         per_reader = []
+        self._campaign_recorded = any(entry.campaign_coverage for entry in entries)
+        self._reasons = {}
+        self._reader_reasons = {}
+        from runner.domain.report_capture import read_analysis
+        for index, entry in enumerate(entries):
+            analysis = read_analysis(entry) if entry.campaign_coverage else {}
+            for row in analysis.get('occurrences', []):
+                if row.get('reason'):
+                    self._reader_reasons[index, row['nodeid']] = row['reason']
         order = dict.fromkeys(nodeid for entry in entries for nodeid, _ in self.records(entry))
         for entry in entries:
             grouped = {}
@@ -165,11 +183,24 @@ class HistoryExecutionModel(TestTreeModel):
         if role == NODEID_ROLE:
             return self._original_ids.get(row.node.nodeid, '')
         if role == Qt.ToolTipRole:
+            if index.column() == 1:
+                return self.data(index, Qt.DisplayRole)
             return self._original_ids.get(row.node.nodeid, row.node.name)
         if index.column() == 1:
             status = self.status_for(row, 0)
             if role == Qt.DisplayRole:
+                if status is Status.PENDING:
+                    reason = getattr(self, '_reasons', {}).get(row.node.nodeid)
+                    reader = getattr(self, '_contexts', {}).get(row.node.nodeid)
+                    nodeid = self._original_ids.get(row.node.nodeid)
+                    reason = reason or getattr(self, '_reader_reasons', {}).get((reader, nodeid))
+                    if reason:
+                        return 'Not run · ' + reason
+                    if getattr(self, '_campaign_recorded', False):
+                        return 'Not all tests run' if row.children else 'Not run'
                 return self._unknown_label if status is Status.PENDING else status.label
             if role == Qt.ForegroundRole:
+                if status is Status.PENDING and getattr(self, '_campaign_recorded', False):
+                    return QColor(t.TEXT_MUTED)
                 return QColor(t.status_color(status))
         return super().data(index, role)

@@ -1,5 +1,20 @@
 # Pytest Runner GUI
 
+## Mise à jour des campagnes — branche d’essai
+
+Dans **Run Tests** et **Execution Profiles**, une collecte réussie propose
+une mise à jour globale de la campagne, sans décision obligatoire par test.
+**Contents…** distingue la sélection fixe du suivi des nouveaux tests d’un
+dossier. Les choix avancés restent disponibles pour les remplacements ambigus.
+
+Les groupes vides conservent leur présentation et leur YAML ; les brouillons
+restent disponibles quand on change de profil. **Undo update** fonctionne aussi
+après redémarrage et protège les modifications plus récentes.
+
+Une exécution partielle affiche **Campaign incomplete** dans l’interface,
+l’historique et le rapport HTML. Les tests non exécutés restent dans l’arbre
+du rapport avec leur motif. [Comportements et vérifications](docs/campaign-update-review.md).
+
 ## Rapports HTML plus lisibles et plus fluides — v1.6.1
 
 Dans l'onglet **YAML**, le tableau affiche directement la valeur effective

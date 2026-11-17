@@ -141,25 +141,33 @@ class SequenceClipboard(QObject):
                                   sequence=nodeids[start:end], patches=patches[start:end],
                                   groups=[group_entry(group_path(entry)[len(prefix):]) for entry in groups[start:end]],
                                   base=context_index[inherited]))
+                empty = [dict(position=max(0, r['position'] - start), group=group_entry(group_path(r['group'])[len(prefix):]))
+                         for r in page._empty_group_records() if start <= r['position'] <= end
+                         and any(g['id'] == (item.data(0, _GROUP_ROLE) or {}).get('id') for g in group_path(r['group']))]
+                if empty:
+                    items[-1]['empty_groups'] = empty
                 if page._tracking:
                     ids = page._step_ids()[start:end]
                     tracking = dict(workspace=page._tracking['workspace'], sources=[], members={})
                     for source in page._tracking['sources']:
                         owned = {i for i, m in page._tracking['members'].items() if m['source'] == source['id']}
-                        if owned and owned <= set(ids):
+                        empty_ids = {g['id'] for r in empty for g in group_path(r['group'])}
+                        if owned and owned <= set(ids) or not owned and source['group'] and source['group']['id'] in empty_ids:
                             cloned = copy.deepcopy(source)
-                            cloned['group'] = {}
+                            cloned['group'] = group_entry(group_path(source['group'])[len(prefix):]) if not owned else {}
                             cloned['anchor'] = str(len(ids) - 1)
                             tracking['sources'].append(cloned)
                             tracking['members'].update({str(i): dict(source=source['id'], nodeid=items[-1]['sequence'][i])
                                                         for i, identifier in enumerate(ids) if identifier in owned})
                     items[-1]['tracking'] = tracking if tracking['sources'] else {}
-            version = 2 if any(item.get('tracking') for item in items) else 1
+            version = 3 if any(item.get('empty_groups') for item in items) else 2 if any(item.get('tracking') for item in items) else 1
             for item in items:
-                if version == 2:
+                if version >= 2:
                     item.setdefault('tracking', {})
                 else:
                     item.pop('tracking', None)
+                if version >= 3:
+                    item.setdefault('empty_groups', [])
             payload = dict(format=FORMAT, version=version, copy_id=str(uuid.uuid4()), owner=self.owner,
                            source=page.name_edit.text().strip() or 'Untitled profile', bases=contexts, items=items)
             encoded = encode_selection(payload)
@@ -209,7 +217,18 @@ class SequenceClipboard(QObject):
             base = page._base_configuration()
             additions, overrides, memberships = [], [], []
             aliases, changes = {}, []
+            empty_groups = page._empty_group_records()
+            copied_empty = []
             for item in payload['items']:
+                for record in item.get('empty_groups', []):
+                    relative = group_path(record['group'])
+                    for group in relative:
+                        group['id'] = aliases.setdefault(group['id'], str(uuid.uuid4()))
+                    copied_empty.append(dict(position=insertion + len(additions) + record['position'], group=group_entry(copy.deepcopy(destination) + relative)))
+                inherited_tracking = item.get('tracking', {})
+                current_project = page._tracking.get('workspace') or page.campaign_sync.workspace
+                if inherited_tracking and current_project and inherited_tracking['workspace'] != current_project:
+                    changes.append('Content rules come from another project. Pasted tests stay fixed until you choose Contents for this campaign.')
                 source_base = inherited_base(payload, item)
                 for nodeid, patch, entry in zip(item['sequence'], item['patches'], item['groups']):
                     relative = group_path(entry)
@@ -239,7 +258,8 @@ class SequenceClipboard(QObject):
             patches[insertion:insertion] = overrides
             groups[insertion:insertion] = memberships
             step_ids[insertion:insertion] = [str(uuid.uuid4()) for _ in additions]
-            validate_profile(ExecutionProfile('Pasted sequence', nodeids, '', '', step_overrides=patches, step_groups=groups))
+            validate_profile(ExecutionProfile('Pasted sequence', nodeids, '', '', step_overrides=patches, step_groups=groups,
+                                              empty_groups=empty_groups + copied_empty))
             if changes or missing:
                 dialog = PasteSequenceDialog(count, payload['source'], label, changes, missing, page)
                 if dialog.exec() != QDialog.Accepted:
@@ -247,7 +267,7 @@ class SequenceClipboard(QObject):
         except (OSError, UnicodeError, ValueError, RecursionError, yaml.YAMLError, ProfileValidationError) as exc:
             self._feedback('Could not paste', str(exc), 'error')
             return
-        page._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids)
+        page._rebuild_sequence(nodeids, patches, groups, step_ids=step_ids, empty_groups=empty_groups + copied_empty)
         offset = insertion
         tracking = copy.deepcopy(page._tracking)
         for item in payload['items']:
@@ -266,9 +286,23 @@ class SequenceClipboard(QObject):
                         for index in owned:
                             identifier = step_ids[offset + index]
                             tracking['members'][identifier] = dict(source=cloned['id'], nodeid=nodeids[offset + index])
+                    elif source['group']:
+                        cloned = copy.deepcopy(source)
+                        cloned['id'] = str(uuid.uuid4())
+                        relative = group_path(cloned['group'])
+                        for group in relative:
+                            group['id'] = aliases.setdefault(group['id'], str(uuid.uuid4()))
+                        cloned['group'] = group_entry(copy.deepcopy(destination) + relative)
+                        cloned['anchor'] = step_ids[offset - 1] if offset else '__start__'
+                        tracking['sources'].append(cloned)
             offset += len(item['sequence'])
         page._tracking = tracking
-        self._mark_pasted(insertion, count)
+        if count:
+            self._mark_pasted(insertion, count)
+        elif copied_empty:
+            page._focus_group(group_path(copied_empty[-1]['group'])[len(destination)]['id'])
+            if page.sequence_list.currentItem():
+                page.sequence_list.currentItem().setData(0, TRANSFER_ROLE, 'pasted')
         page._mark_dirty()
         size = len(payload['items'])
         self._feedback(f'Pasted {size} element' + ('s' if size != 1 else '') + f' · {count} test' + ('s' if count != 1 else ''),

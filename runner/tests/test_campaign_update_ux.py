@@ -34,7 +34,7 @@ def test_unknown_project_does_not_offer_to_delete_all_38_tests(qtbot, tmp_path):
     qtbot.addWidget(dialog)
     assert dialog.findChildren(QComboBox) == []
     assert dialog.remove_missing.isHidden()
-    assert dialog.apply_button.text() == 'Collect again'
+    assert dialog.apply_button.text() == 'Check project'
     assert '38' in dialog.summary.text()
     dialog._apply()
     assert dialog.request_collection

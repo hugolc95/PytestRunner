@@ -119,6 +119,7 @@ class ExecutionProfile:
     # ni les selections des occurrences conservees.
     step_ids: list[str] = field(default_factory=list)
     tracking: dict = field(default_factory=dict)
+    empty_groups: list[dict] = field(default_factory=list)
 
     @property
     def total_executions(self) -> int:
@@ -269,7 +270,7 @@ def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
     grouped = any(profile.step_groups)
     return {
         "format": FORMAT,
-        "format_version": 4 if profile.tracking or profile.step_ids else (3 if grouped else (2 if customized else FORMAT_VERSION)),
+        "format_version": 5 if profile.empty_groups else (4 if profile.tracking or profile.step_ids else (3 if grouped else (2 if customized else FORMAT_VERSION))),
         "profile": {
             "id": profile.profile_id,
             "name": profile.name,
@@ -282,13 +283,14 @@ def _manifest(profile: ExecutionProfile, checksum: str) -> dict:
         "sequence": [
             {"step_id": profile.step_ids[index - 1] if profile.step_ids else f"step-{index:05d}", "test": nodeid,
              **({"configuration_overrides": profile.step_overrides[index - 1] if customized else {}}
-                if customized or grouped or profile.tracking or profile.step_ids else {}),
-             **({"group": profile.step_groups[index - 1] if grouped else {}} if grouped or profile.tracking or profile.step_ids else {})}
+                if customized or grouped or profile.tracking or profile.step_ids or profile.empty_groups else {}),
+             **({"group": profile.step_groups[index - 1] if grouped else {}} if grouped or profile.tracking or profile.step_ids or profile.empty_groups else {})}
             for index, nodeid in enumerate(profile.sequence, 1)
         ],
         "execution": asdict(profile.execution),
         "reports": asdict(profile.reports),
-        **({"tracking": profile.tracking} if profile.tracking or profile.step_ids else {}),
+        **({"tracking": profile.tracking} if profile.tracking or profile.step_ids or profile.empty_groups else {}),
+        **({"empty_groups": profile.empty_groups} if profile.empty_groups else {}),
     }
 
 
@@ -311,11 +313,17 @@ def validate_profile(profile: ExecutionProfile) -> None:
             raise ProfileValidationError(f"The YAML configuration is invalid: {exc}") from exc
         if not isinstance(parsed_config, dict):
             raise ProfileValidationError("The YAML configuration must contain a mapping.")
-    if not profile.sequence or len(profile.sequence) > MAX_STEPS:
+    if (not profile.sequence and not profile.empty_groups and not (isinstance(profile.tracking, dict) and profile.tracking.get('sources'))) or len(profile.sequence) > MAX_STEPS:
         raise ProfileValidationError(
             f"A profile must contain between 1 and {MAX_STEPS} steps.")
     validate_step_overrides(profile.step_overrides, len(profile.sequence))
     validate_step_groups(profile.step_groups, len(profile.sequence))
+    if not isinstance(profile.empty_groups, list) or len(profile.empty_groups) > MAX_STEPS:
+        raise ProfileValidationError('Invalid empty campaign groups.')
+    for record in profile.empty_groups:
+        if not isinstance(record, dict) or set(record) != {'position', 'group'} or type(record['position']) is not int or not 0 <= record['position'] <= MAX_STEPS or not record['group']:
+            raise ProfileValidationError('Invalid empty campaign group.')
+    validate_step_groups((profile.step_groups or [{} for _ in profile.sequence]) + [r['group'] for r in profile.empty_groups], len(profile.sequence) + len(profile.empty_groups))
     from runner.domain.campaign_sync import validate_tracking
     validate_tracking(profile)
     for nodeid in profile.sequence:
@@ -400,13 +408,15 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
                 raise ProfileValidationError("The manifest is not valid JSON.") from exc
             if not isinstance(manifest, dict) or manifest.get("format") != FORMAT:
                 raise ProfileValidationError("This is not a Pytest Runner profile.")
-            if type(manifest.get("format_version")) is not int or manifest.get("format_version") not in (1, 2, 3, 4):
+            if type(manifest.get("format_version")) is not int or manifest.get("format_version") not in (1, 2, 3, 4, 5):
                 raise ProfileValidationError(
                     f"Unsupported profile version: {manifest.get('format_version')!r}.")
             allowed = {"format", "format_version", "profile", "configuration",
                        "sequence", "execution", "reports"}
             if manifest["format_version"] >= 4:
                 allowed.add("tracking")
+            if manifest['format_version'] >= 5:
+                allowed.add('empty_groups')
             if set(manifest) != allowed:
                 raise ProfileValidationError("The manifest contains unknown fields.")
             meta, config_meta = manifest.get("profile"), manifest.get("configuration")
@@ -475,6 +485,7 @@ def inspect_profile(path: str | Path, available_nodeids=()) -> ProfileValidation
         step_groups=groups if manifest["format_version"] >= 3 else [],
         step_ids=ordered_ids if manifest["format_version"] >= 4 else [],
         tracking=manifest.get("tracking", {}),
+        empty_groups=manifest.get('empty_groups', []),
     )
     validate_profile(profile)
     available = set(available_nodeids)
