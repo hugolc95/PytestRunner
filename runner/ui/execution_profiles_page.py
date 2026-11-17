@@ -54,12 +54,13 @@ from runner.domain.profile_configuration import configuration_details, configura
 from runner.domain.tree import build_tree, build_sequence_tree, group_hierarchically
 from runner.ui import icons
 from runner.ui import tokens as t
-from runner.ui.tree_model import NODEID_ROLE, TestTreeModel
+from runner.ui.tree_model import NODEID_ROLE
 from runner.ui.widgets import ErrorDialog
 from runner.ui.profile_dialogs import StepParametersDialog, ProfileGroupDialog, ConfirmGroupMoveDialog, EffectiveConfigurationDialog, MoveToGroupDialog, yaml_fields, format_value
 from runner.ui.profile_group_delegate import ProfileGroupDelegate, EXCEPTION_ROLE, YAML_ROLE, GROUP_COLOR_ROLE, CONFIG_ISSUES_ROLE
 from runner.ui.profile_history import ProfileEdit, undoable
 from runner.ui.profile_clipboard import SequenceClipboard
+from runner.ui.profile_selection_model import ProfileSelectionModel
 from runner.ui import profile_sequence_view as sequence_view
 
 _OVERRIDES_ROLE = Qt.UserRole + 20
@@ -133,7 +134,7 @@ class AddTestsDialog(QDialog):
         self.search.setClearButtonEnabled(True)
         layout.addWidget(self.search)
 
-        self.model = TestTreeModel(self)
+        self.model = ProfileSelectionModel(self)
         self.model.set_tree(build_tree(nodeids))
         self.model.set_all_checked(False)
         self._selection_order = []
@@ -168,9 +169,11 @@ class AddTestsDialog(QDialog):
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         layout.addWidget(self.tree, 1)
 
-        self.follow_selection = QCheckBox('Include future tests when selecting a whole folder, file or parameterized test')
-        self.follow_selection.setChecked(True)
-        self.follow_selection.setToolTip('New tests in complete selected branches are proposed after collection. Specific leaves remain fixed. Uncheck for an entirely fixed selection.')
+        self.follow_selection = QCheckBox('Follow selected folders, files and functions')
+        self._follow_preference = True
+        self.follow_selection.setEnabled(False)
+        self.follow_selection.setToolTip('Check a branch to follow future tests. Individual cases stay fixed.')
+        self.follow_selection.toggled.connect(self._follow_mode_changed)
         layout.addWidget(self.follow_selection)
 
         actions = QHBoxLayout()
@@ -217,10 +220,11 @@ class AddTestsDialog(QDialog):
     def _tracked_selection(self, selected):
         from runner.domain.disabled_tests import parameter_base
         chosen, sources = set(selected), []
-        def visit(row):
+        def visit(row, inherited=False):
             leaves = [leaf.node.nodeid for leaf in row.leaves()]
             kind = row.node.kind
-            if row.children and leaves and all(n in chosen for n in leaves) and kind in (Kind.FOLDER, Kind.MODULE, Kind.TEST):
+            whole = inherited or row in self.model.explicit_branches
+            if whole and leaves and all(n in chosen for n in leaves) and kind in (Kind.FOLDER, Kind.MODULE, Kind.TEST):
                 if kind is Kind.FOLDER:
                     names, parent = [], row
                     while parent is not None:
@@ -234,7 +238,7 @@ class AddTestsDialog(QDialog):
                 sources.append((nature, selector, leaves))
             else:
                 for child in row.children:
-                    visit(child)
+                    visit(child, whole)
         for row in self.model._roots:
             visit(row)
         return sources
@@ -247,16 +251,27 @@ class AddTestsDialog(QDialog):
         self._selection_order.extend(nodeid for nodeid in selected if nodeid not in previous)
         self.add_button.setEnabled(bool(selected))
         self.add_again_button.setEnabled(bool(selected or self._last_added))
+        branches = bool(self._tracked_selection(selected)) or bool(not selected and self._last_sources)
+        blocked = self.follow_selection.blockSignals(True)
+        self.follow_selection.setEnabled(branches)
+        self.follow_selection.setChecked(self._follow_preference if branches else False)
+        self.follow_selection.blockSignals(blocked)
         self.add_button.setText(f"Add selected ({len(selected)})" if selected else "Add selected")
+
+    def _follow_mode_changed(self, checked):
+        if self.follow_selection.isEnabled():
+            self._follow_preference = checked
 
     def _add_clicked_test(self, proxy_index) -> None:
         source_index = self.proxy.mapToSource(proxy_index).siblingAtColumn(0)
         nodeid = self.model.data(source_index, NODEID_ROLE)
         if nodeid:
             self.pending_sources = []
+            self._last_sources = []
             self._last_added = [nodeid]
             self.add_again_button.setEnabled(True)
             self.tests_added.emit([nodeid])
+            self._remember_selection_order()
 
 
 class ExecutionProfilesPage(QWidget):
@@ -1175,7 +1190,7 @@ class ExecutionProfilesPage(QWidget):
                             group['id'] = identifiers.setdefault(group['id'], str(uuid.uuid4()))
                     copied[i] = group_entry(path)
             groups[end:end] = copied
-            if tracking:
+            if tracking and not selected_item.data(0, NODEID_ROLE):
                 members = tracking['members']
                 for source in list(tracking['sources']):
                     owned = {i for i, m in members.items() if m['source'] == source['id']}
@@ -1200,7 +1215,11 @@ class ExecutionProfilesPage(QWidget):
         if not selected:
             return
         previous = self._profile_from_editor()
-        deleted_groups = {(item.data(0, _GROUP_ROLE) or {}).get('id') for item, _, _ in selected}
+        from runner.domain.campaign_sync import exclude_removed_fixed_cases
+        exclude_removed_fixed_cases(previous, removed)
+        self._tracking = copy.deepcopy(previous.tracking)
+        deleted_groups = {(item.data(0, _GROUP_ROLE) or {}).get('id') for item, _, _ in selected
+                          if not item.data(0, NODEID_ROLE)}
         deleted_groups.discard(None)
         patches = self._step_patches()
         groups = self._step_groups()

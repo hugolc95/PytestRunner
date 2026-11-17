@@ -302,6 +302,12 @@ class CampaignSourcesDialog(QDialog):
         for (_, kind, selector), positions in grouped.items():
             self._choice(kind, selector, positions)
         active = any(choice['source'] for choice in self.choices)
+        if active:
+            # Enregistrer un suivi existant ne doit pas elargir les autres
+            # cas fixes de la campagne sans que l'utilisateur les coche.
+            for choice in self.choices:
+                if not choice['source']:
+                    choice['item'].setCheckState(0, Qt.Unchecked)
         self.following.setEnabled(active or any(c['count'] for c in self.choices))
         self.following.setChecked(active)
         self.fixed.setChecked(not active)

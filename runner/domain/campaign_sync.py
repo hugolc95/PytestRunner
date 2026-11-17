@@ -136,6 +136,30 @@ def prune_sources(profile):
                                     if i in identifiers and m['source'] in known}
 
 
+def exclude_removed_fixed_cases(profile, removed):
+    """Un fichier suivi ne doit pas elargir une selection precise apres son retrait."""
+    if not profile.tracking or not removed:
+        return
+    from runner.domain.execution_profile import group_path
+    members = profile.tracking['members']
+    positions = {identifier: p for p, identifier in enumerate(profile.step_ids)}
+    groups = profile.step_groups or [{} for _ in profile.sequence]
+    def group_key(entry):
+        return tuple(g['id'] for g in group_path(entry))
+    for position in removed:
+        nodeid = profile.sequence[position]
+        base = parameter_base(nodeid)
+        if base == nodeid or profile.step_ids[position] in members:
+            continue
+        for source in profile.tracking['sources']:
+            if source['kind'] == 'test' or group_key(source['group']) != group_key(groups[position]) or not matches(source, nodeid):
+                continue
+            followed = any(m['source'] == source['id'] and parameter_base(m['nodeid']) == base
+                           and positions[i] not in removed for i, m in members.items())
+            if not followed and base not in source['excluded']:
+                source['excluded'].append(base)
+
+
 def reconcile(profile):
     """Une suppression volontaire devient une exclusion propre a sa source."""
     if not profile.tracking:
@@ -378,6 +402,9 @@ def compare(profile, available, workspace='', *, complete=True):
                 groups = profile.step_groups or [{} for _ in profile.sequence]
                 managed.update(u['base'] for first, u in plan.parameter_updates.items()
                                if group_key(groups[first]) == group_key(source['group']))
+                managed.update(base_moves.get(p, parameter_base(n)) for p, n in enumerate(profile.sequence)
+                               if n != parameter_base(n) and profile.step_ids[p] not in profile.tracking['members']
+                               and group_key(groups[p]) == group_key(source['group']))
             managed.update(s['selector'] for s in profile.tracking['sources'] if s['kind'] == 'test' and group_key(s['group']) == group_key(source['group']) and s['id'] != source['id'])
             plan.additions.extend((source['id'], nodeid) for nodeid in available
                                   if nodeid not in existing and nodeid not in excluded and parameter_base(nodeid) not in excluded
@@ -392,6 +419,7 @@ def apply(profile, plan, additions, decisions, *, transfer=(), refresh_cases=Tru
         raise ProfileValidationError(plan.problem)
     result = copy.deepcopy(profile)
     ensure_ids(result)
+    exclude_removed_fixed_cases(result, {p for p in plan.missing if decisions.get(p) == 'remove'})
     patches = result.step_overrides or [{} for _ in result.sequence]
     groups = result.step_groups or [{} for _ in result.sequence]
     members = result.tracking.get('members', {})

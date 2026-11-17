@@ -141,12 +141,12 @@ class SequenceClipboard(QObject):
                                   sequence=nodeids[start:end], patches=patches[start:end],
                                   groups=[group_entry(group_path(entry)[len(prefix):]) for entry in groups[start:end]],
                                   base=context_index[inherited]))
-                empty = [dict(position=max(0, r['position'] - start), group=group_entry(group_path(r['group'])[len(prefix):]))
+                empty = [] if nodeid else [dict(position=max(0, r['position'] - start), group=group_entry(group_path(r['group'])[len(prefix):]))
                          for r in page._empty_group_records() if start <= r['position'] <= end
                          and any(g['id'] == (item.data(0, _GROUP_ROLE) or {}).get('id') for g in group_path(r['group']))]
                 if empty:
                     items[-1]['empty_groups'] = empty
-                if page._tracking:
+                if page._tracking and not nodeid:
                     ids = page._step_ids()[start:end]
                     tracking = dict(workspace=page._tracking['workspace'], sources=[], members={})
                     for source in page._tracking['sources']:
@@ -271,7 +271,7 @@ class SequenceClipboard(QObject):
         offset = insertion
         tracking = copy.deepcopy(page._tracking)
         for item in payload['items']:
-            inherited = item.get('tracking', {})
+            inherited = item.get('tracking', {}) if item['kind'] not in ('case', 'test') else {}
             if inherited and (not tracking or tracking['workspace'] == inherited['workspace']):
                 if not tracking:
                     tracking = dict(workspace=inherited['workspace'], sources=[], members={})
