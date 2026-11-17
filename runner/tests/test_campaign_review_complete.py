@@ -316,7 +316,7 @@ def test_history_distinguishes_current_not_run_from_old_unknowns(qtbot, tmp_path
     assert '2 planned tests' in dialog.detail_meta.text()
     model = dialog.execution_model
     branch_result = model.index(0, 1).data()
-    assert 'not run' in branch_result and 'older' not in branch_result
+    assert branch_result == 'Not all tests run'
     dialog._select_execution_reader(0)
     item = model.index_for_nodeid('2')
     assert 'Not selected' in model.index(item.row(), 1, item.parent()).data()
