@@ -1,5 +1,18 @@
 # Pytest Runner GUI
 
+## Compteurs de répétitions cohérents — v1.7.6
+
+Les actions **Run N times** et **Run until it fails** affichent un bilan dédié :
+répétitions terminées, lecteurs, exécutions et verdicts. La progression avance
+après chaque lecteur. Les cartes **Results · Previous run** conservent le
+résumé du run précédent, sans mélanger ses chiffres avec ceux des répétitions.
+Une répétition interrompue entre deux lecteurs ne compte pas comme terminée.
+Le bilan reste visible après l'arrêt et disparaît au prochain run normal.
+
+Correction du point **M4** de l'audit 1.7.1. Vérification par 27 tests ciblés
+et dans l'application réelle : plusieurs lecteurs, échecs, annulation et arrêt
+au premier échec.
+
 ## Environnement Python vérifié avant enregistrement — v1.7.5
 
 Dans **Python Environment**, **Save** devient disponible seulement après

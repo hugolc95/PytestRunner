@@ -207,6 +207,7 @@ class MainWindow(QMainWindow):
         # l'anneau et les pastilles du haut : l'arbre, lui, ne garde que le
         # dernier verdict de l'unique test rejoue -- "1 passed" pour 10 runs.
         self._stress_counts: dict | None = None
+        self._stress_previous_counts = None
         self._stress_nodeid = ""
         self._stress_mode = MODE_UNTIL_FAIL
         self._stress_cap = 0
@@ -293,6 +294,9 @@ class MainWindow(QMainWindow):
         from runner.ui.run_header import StructuredRunHeader
         self.run_header = StructuredRunHeader(self, command_bar, run_bar)
         colonne.insertWidget(0, self.run_header)
+        from runner.ui.stress_progress import StressProgress
+        self.stress_progress = StressProgress()
+        colonne.addWidget(self.stress_progress)
 
         self.split = QSplitter(Qt.Horizontal, self.workspace_page)
         self.split.setChildrenCollapsible(False)
@@ -2301,6 +2305,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'disabled_tests'):
             self.disabled_tests.refresh()
         self._stress_counts = None
+        self._stress_previous_counts = None
+        self.stress_progress.hide()
+        self.run_header.set_repeat_context(False)
         self._refresh_profile_picker()
         self.tree_view_switch.setVisible(self.workspace is not None)
         self._tree_workspace = self.workspace.path if self.workspace else ""
@@ -3071,6 +3078,9 @@ class MainWindow(QMainWindow):
             self.model.clear_statuses()
         self.model.clear_stress_annotation()
         self._stress_counts = None
+        self._stress_previous_counts = None
+        self.stress_progress.hide()
+        self.run_header.set_repeat_context(False)
         self.results.begin_run(preserve_results=preserve_results,
                                nodeids=tuple(self.model._by_nodeid))
         self.results.select_run_readers(request.readers)
@@ -3140,6 +3150,9 @@ class MainWindow(QMainWindow):
         total = sum(rendus.values())
         passed = rendus.get(Status.PASSED, 0)
         self.compass_pct.setText(f"{round(100 * passed / total)}%" if total else "—")
+
+        if self._stress_previous_counts is not None:
+            return
 
         faits = self._completed_executions()
         if getattr(self, '_profile_count_statuses', None) is not None:
@@ -3253,6 +3266,8 @@ class MainWindow(QMainWindow):
         return any(modele.is_divergent(f) for f in modele.ordered_leaves())
 
     def _completed_executions(self) -> int:
+        if self._stress_previous_counts is not None:
+            return self._stress_previous_completed
         if getattr(self, '_profile_count_statuses', None) is not None:
             return sum(self._profile_verdict_counts.values())
         if self._stress_counts is not None:
@@ -3262,6 +3277,8 @@ class MainWindow(QMainWindow):
 
     def _run_status_counts(self) -> dict:
         """Shared snapshot for the result counters and completion notification."""
+        if self._stress_previous_counts is not None:
+            return dict(self._stress_previous_counts)
         if getattr(self, '_profile_count_statuses', None) is not None:
             return dict(self._profile_verdict_counts)
         if self._stress_counts is not None:
@@ -3678,17 +3695,25 @@ class MainWindow(QMainWindow):
         self._stress_passed = 0
         self._stress_failed = []
         self._stress_id = history.nouvel_identifiant()
+        if self._stress_previous_counts is None:
+            self._stress_previous_completed = self._completed_executions()
+            self._stress_previous_counts = self._run_status_counts()
         if hasattr(self, 'tree_results'):
             from dataclasses import replace
             self.tree_results.start_run(replace(requete, run_id=self._stress_id))
         self._stress_aggregate: dict[int, dict] = {}
+        self._stress_readers = lecteurs
         self._stress_counts = {}
+        self.stress_progress.begin(nodeid, cap, len(lecteurs), mode)
+        self.run_header.set_repeat_context(True, bool(self._stress_previous_counts))
 
         self._stress_worker = StressRunWorker(
             requete, lecteurs,
             self.run_tabs.configuration_env(self, self.workspace.env) if self.run_tabs else self.workspace.env,
             mode, cap, self)
         self._stress_worker.attempt_done.connect(self._sur_tentative_stress)
+        self._stress_worker.reader_started.connect(self._sur_debut_execution_stress)
+        self._stress_worker.reader_done.connect(self._sur_execution_stress)
         self._stress_worker.finished_stress.connect(self._sur_fin_stress)
 
         self._set_status_live(self._stress_detail(mode, nodeid, 0, cap))
@@ -3700,7 +3725,7 @@ class MainWindow(QMainWindow):
         self._clear_status_filter()
         self.progress.setVisible(True)
         self.progress.setRange(0, cap * len(lecteurs))
-        self.remaining_pill.setVisible(True)
+        self.remaining_pill.setVisible(False)
         self._rafraichir_compteurs()
         self._update_actions()
         if self.run_tabs:
@@ -3712,13 +3737,26 @@ class MainWindow(QMainWindow):
         il partage la ligne avec le nom du test. Le detail complet est dans
         la barre de statut -- voir `_stress_detail`."""
         prefixe = "Stress" if mode == MODE_UNTIL_FAIL else "Run"
-        return f"{prefixe} {ran + 1}/{cap}"
+        return f"{prefixe} {min(ran + 1, cap)}/{cap}"
 
     def _stress_detail(self, mode: str, nodeid: str, ran: int, cap: int) -> str:
         court = nodeid.split("::", 1)[-1].replace("::", " › ")
         verbe = "Stress-testing" if mode == MODE_UNTIL_FAIL else "Running"
         mot = "attempt" if mode == MODE_UNTIL_FAIL else "run"
-        return f"{verbe} {court} — {mot} {ran + 1} of {cap}"
+        return f"{verbe} {court} — {mot} {min(ran + 1, cap)} of {cap}"
+
+    def _sur_debut_execution_stress(self, number, reader):
+        self.stress_progress.set_current(number, reader.name or 'Test interpreter')
+        if hasattr(self.model, 'set_running_test'):
+            self.model.set_running_test(reader.index, self._stress_nodeid)
+
+    def _sur_execution_stress(self, number, result):
+        if hasattr(self.model, 'clear_running_reader'):
+            self.model.clear_running_reader(result.reader.index)
+        self.model.apply_outcome(self._stress_nodeid, result.status, result.reader.index)
+        self._stress_counts[result.status] = self._stress_counts.get(result.status, 0) + 1
+        self.stress_progress.update_counts(self._stress_ran, self._stress_counts)
+        self.progress.setValue(sum(self._stress_counts.values()))
 
     def _sur_tentative_stress(self, tentative: StressAttempt) -> None:
         self._stress_ran = tentative.number
@@ -3730,13 +3768,8 @@ class MainWindow(QMainWindow):
         # Le point sur l'arbre suit le verdict propre a CHAQUE lecteur : un
         # flaky qui ne rate que sur l'un d'eux ne doit pas se voir imputer aux
         # autres, qui ont reellement passe cette tentative.
-        for resultat in tentative.reports:
-            self.model.apply_outcome(
-                self._stress_nodeid, resultat.status, resultat.reader.index)
-            self._stress_counts[resultat.status] = (
-                self._stress_counts.get(resultat.status, 0) + 1)
-
         self._accumuler_stress(tentative)
+        self.stress_progress.update_counts(self._stress_ran, self._stress_counts)
 
         self._set_status_live(self._stress_detail(
             self._stress_mode, self._stress_nodeid, self._stress_ran, self._stress_cap))
@@ -3798,6 +3831,8 @@ class MainWindow(QMainWindow):
 
     def _sur_fin_stress(self, resume: StressSummary) -> None:
         self._stress_worker = None
+        if hasattr(self.model, 'clear_running_tests'):
+            self.model.clear_running_tests()
         if hasattr(self, 'tree_results'):
             self.tree_results.completed()
         nodeid = self._stress_nodeid
@@ -3828,6 +3863,8 @@ class MainWindow(QMainWindow):
         self._set_status_idle(detail)
         self.model.set_stress_annotation(nodeid, compact)
         self.results.detail.show_stress_done(nodeid, resume)
+        self.stress_progress.finish(resume)
+        self._set_status_idle(self.stress_progress.summary())
         self.progress.setVisible(False)
         self.remaining_pill.setVisible(False)
         self._update_actions()

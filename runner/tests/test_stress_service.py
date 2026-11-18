@@ -170,3 +170,20 @@ def test_cancelling_stops_before_the_next_attempt(tmp_path, monkeypatch):
     resume = resumes[0]
     assert resume.ran == numero_annulation
     assert resume.cancelled
+
+
+def test_reader_progress_is_live_and_partial_repetition_is_not_complete(tmp_path, monkeypatch):
+    _popen_scripte(monkeypatch, ['PASSED'] * 6)
+    readers = (Reader('A', 0), Reader('B', 1), Reader('C', 2))
+    worker = StressRunWorker(_requete(tmp_path), readers, {}, MODE_N_TIMES, cap=2)
+    completed, summaries = [], []
+    def stop_after_one(number, result):
+        completed.append((number, result.reader.name))
+        worker.cancel()
+    worker.reader_done.connect(stop_after_one)
+    worker.finished_stress.connect(summaries.append)
+    worker.run()
+    assert completed == [(1, 'A')]
+    assert summaries[0].ran == 0
+    assert summaries[0].passed == 0
+    assert summaries[0].cancelled

@@ -288,6 +288,9 @@ class RunTabsController(QObject):
         context._profile_batch_output.clear()
         context._profile_pending_console.clear()
         context._stress_counts = None
+        context._stress_previous_counts = None
+        context.stress_progress.hide()
+        context.run_header.set_repeat_context(False)
         retain = (hasattr(context, 'tree_results') and context.tree_results.enabled
                   and context.workspace is not None
                   and context.workspace.path == getattr(context, '_tree_workspace', None))

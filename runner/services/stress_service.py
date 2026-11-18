@@ -29,6 +29,8 @@ class StressRunWorker(QThread):
     """Relance un seul nodeid jusqu'a l'echec, ou exactement `cap` fois."""
 
     attempt_done = Signal(object)      # StressAttempt
+    reader_started = Signal(int, object)
+    reader_done = Signal(int, object)
     finished_stress = Signal(object)   # StressSummary
 
     def __init__(self, request: RunRequest, readers: tuple[Reader, ...], env: dict,
@@ -61,6 +63,7 @@ class StressRunWorker(QThread):
                 if self._cancelled:
                     break
 
+                self.reader_started.emit(numero, lecteur)
                 self._current_run = ReaderRun(self._request, lecteur, self._env)
                 statut_vu = {}
 
@@ -80,9 +83,17 @@ class StressRunWorker(QThread):
                 # les yeux dessus.
                 statut = statut_vu.get(
                     "status", Status.PASSED if rapport.ok else Status.ERROR)
-                resultats.append(StressReaderResult(lecteur, rapport, statut))
+                if rapport.cancelled:
+                    break
+                resultat = StressReaderResult(lecteur, rapport, statut)
+                resultats.append(resultat)
+                self.reader_done.emit(numero, resultat)
 
             if not resultats:
+                break
+            # Une repetition interrompue au milieu des lecteurs n'est pas
+            # complete ; les executions deja terminees restent visibles.
+            if len(resultats) != len(self._readers):
                 break
             ran = numero
             ok = all(r.ok for r in resultats)

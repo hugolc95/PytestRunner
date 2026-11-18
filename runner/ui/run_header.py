@@ -225,6 +225,7 @@ class StructuredRunHeader(QWidget):
         # Share the heading row with the ring instead of reserving a separate
         # line above it. Result actions stay together on the left.
         result_heading = results.takeAt(0).widget()
+        self.result_heading = result_heading
         result_actions = QVBoxLayout()
         result_actions.setSpacing(t.SPACE_1)
         result_actions.addWidget(result_heading, 0, Qt.AlignTop)
@@ -271,6 +272,10 @@ class StructuredRunHeader(QWidget):
             else:
                 self.execution_fields.addWidget(self.run_config_button)
             self.run_config_button.show()
+
+    def set_repeat_context(self, active, has_previous=True):
+        self.result_heading.setText('RESULTS · PREVIOUS RUN' if active and has_previous else
+                        'RESULTS · NO PREVIOUS RUN' if active else 'RESULTS')
 
     @staticmethod
     def _panel(title):

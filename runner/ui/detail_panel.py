@@ -511,15 +511,15 @@ class DetailPanel(QWidget):
         self._remplir_entete_stress(nodeid)
 
         if mode == MODE_UNTIL_FAIL:
-            self.stress_sub.setText(f"Stress run in progress — attempt {ran + 1} of {cap}")
+            self.stress_sub.setText(f"Stress run in progress — attempt {min(ran + 1, cap)} of {cap}")
         else:
-            self.stress_sub.setText(f"Run N times — run {ran + 1} of {cap} under way")
+            self.stress_sub.setText(f"Run N times — run {min(ran + 1, cap)} of {cap} under way")
 
         self.stress_ribbon.set_counts({
             Status.PASSED: passed, Status.FAILED: failed_attempts,
             Status.PENDING: max(0, cap - ran),
         })
-        morceaux = [f"<b>{ran}</b> of {cap}",
+        morceaux = [f"<b>{ran}</b> of {cap} repetitions",
                    f'<span style="color:{t.status_color(Status.PASSED)}">'
                    f"<b>{passed}</b> passed</span>"]
         if failed_attempts:
@@ -559,14 +559,14 @@ class DetailPanel(QWidget):
             Status.PASSED: resume.passed, Status.FAILED: echecs,
             Status.PENDING: max(0, resume.cap - resume.ran),
         })
-        morceaux = [f"<b>{resume.ran}</b> runs",
+        morceaux = [f"<b>{resume.ran}</b> repetitions",
                    f'<span style="color:{t.status_color(Status.PASSED)}">'
                    f"<b>{resume.passed}</b> passed</span>"]
         if echecs:
             morceaux.append(f'<span style="color:{t.status_color(Status.FAILED)}">'
                             f"<b>{echecs}</b> failed</span>")
         self.stress_counters.setText("&nbsp;&nbsp;&nbsp;".join(morceaux))
-        self.stress_note.setText("")
+        self.stress_note.setText('A repetition passes only when all its readers pass.')
 
         if echecs:
             self.stress_failures_title.setText(
