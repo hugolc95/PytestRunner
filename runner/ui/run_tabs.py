@@ -1001,6 +1001,7 @@ class RunTabsController(QObject):
         for entry in self.entries:
             context = entry.context
             context.reader_selector.stop_discovery()
+            context._recollect_after_interpreter_change = False
             context.reader_atr.release()
             context._elapsed.stop()
             if context.service.busy:
@@ -1011,6 +1012,7 @@ class RunTabsController(QObject):
                 ready = context._stress_worker.wait(3000) and ready
             if context._collector is not None and context._collector.isRunning():
                 ready = context._collector.wait(3000) and ready
+            ready = context.python_editor.wait_for_probe(3000) and ready
             for archive in tuple(getattr(context, '_archive_workers', ())):
                 remaining = max(0, int((archive_deadline - time.monotonic()) * 1000))
                 ready = archive.wait(remaining) and ready

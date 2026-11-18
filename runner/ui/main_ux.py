@@ -58,7 +58,7 @@ def install() -> None:
     def build_command_bar_selected(self):
         bar=original_build_command_bar(self); self.workspace_combo.setMaximumWidth(680)
         self.browse_button.setText(""); self.browse_button.setIcon(icons.icon("mdi.folder-open-outline",t.TEXT_MUTED)); self.browse_button.setIconSize(QSize(17,17)); self.browse_button.setFixedWidth(34); self.browse_button.setToolTip("Browse for another workspace")
-        self.load_button.setText(""); self.load_button.setObjectName("Ghost"); self.load_button.setIcon(icons.icon("mdi.refresh",t.TEXT_MUTED)); self.load_button.setIconSize(QSize(17,17)); self.load_button.setFixedWidth(34); self.load_button.setToolTip("Reload tests from this workspace  (Ctrl+O)")
+        self.load_button.setText(""); self.load_button.setObjectName("Ghost"); self.load_button.setIcon(icons.icon("mdi.refresh",t.TEXT_MUTED)); self.load_button.setIconSize(QSize(17,17)); self.load_button.setFixedWidth(34); self.load_button.setToolTip("Reload tests from this workspace  (Ctrl+R)")
         results_label=QLabel("RESULTS"); results_label.setObjectName("Faint"); results_label.setToolTip("Run progress and verdict counters"); self._main_results_label=results_label
         layout=bar.layout(); index=layout.indexOf(self.compass_ring)
         if index>=0: layout.insertWidget(index,results_label)
@@ -98,26 +98,14 @@ def install() -> None:
         original_history_restyle(self)
     HistoryWindow.restyle=history_restyle_selected
 
-    # The embedded Python page is built before the persisted theme is restored.
-    # Its per-widget styles therefore kept dark-theme text after switching to
-    # light. Repaint every explicit label from the active tokens on each theme
-    # change instead of relying on the construction-time values.
+    original_interpreter_restyle = InterpreterDialog.restyle
     def interpreter_restyle(self):
+        original_interpreter_restyle(self)
         labels=self.findChildren(QLabel)
         for label in labels:
             if label is self.status_label or label is self.override_label:
                 continue
             label.setStyleSheet(f"color:{t.TEXT};background:transparent;")
-        status_text=self.status_label.text()
-        if status_text:
-            # Probe errors are already identifiable by their content/state in
-            # normal use; use the normal readable text colour for neutral info.
-            self.status_label.setStyleSheet(f"color:{t.TEXT_MUTED};background:transparent;")
-        else:
-            self.status_label.setStyleSheet(f"color:{t.TEXT_MUTED};background:transparent;")
-        if self.override_label.isVisible():
-            self.override_label.setStyleSheet(
-                f"color:{t.status_color(Status.SKIPPED)};background:transparent;")
     InterpreterDialog.restyle=interpreter_restyle
 
     original_restyle=MainWindow._restyle

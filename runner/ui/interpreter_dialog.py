@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import os
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtWidgets import (
     QDialog,
     QFileDialog,
@@ -44,14 +44,22 @@ class InterpreterDialog(QDialog):
         self.resize(640, 260)
         self._probe: ProbeWorker | None = None
         self._status_is_error = False
+        self._status_is_valid = False
+        self._generation = 0
+        self._probe_generation = -1
+        self._probe_key = None
+        self._validated_key = None
+        self._pending_check = None
+        self._save_requested = False
+        self._close_result = None
+        self._auto_check = QTimer(self)
+        self._auto_check.setSingleShot(True)
+        self._auto_check.setInterval(350)
+        self._auto_check.timeout.connect(self.test_now)
 
         self.explanation = QLabel(
-            "The interface and the tests run in two separate processes: pytest "
-            "is started as a subprocess. You can therefore use a different "
-            "Python here than the interface's — for example a 64-bit Python "
-            "for tests that load native DLLs."
-            "<br><br>"
-            "This interpreter must have <b>pytest</b> installed.")
+            "Choose the Python environment used to collect and run tests."
+            "<br>It must have <b>pytest</b> installed.")
         self.explanation.setWordWrap(True)
         self.explanation.setTextFormat(Qt.RichText)
 
@@ -65,6 +73,7 @@ class InterpreterDialog(QDialog):
         browse_button.clicked.connect(self._browse)
 
         test_button = QPushButton("Test")
+        self.test_button = test_button
         test_button.setObjectName("Ghost")
         test_button.clicked.connect(self.test_now)
 
@@ -76,6 +85,7 @@ class InterpreterDialog(QDialog):
 
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
+        self.status_label.setTextFormat(Qt.PlainText)
         self.status_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
 
         self.override_label = QLabel("")
@@ -90,6 +100,7 @@ class InterpreterDialog(QDialog):
 
         self.save_button = QPushButton("Save")
         self.save_button.setObjectName("Primary")
+        self.save_button.setEnabled(False)
         self.save_button.clicked.connect(self._save)
 
         self.cancel_button = QPushButton("Cancel")
@@ -111,6 +122,7 @@ class InterpreterDialog(QDialog):
         colonne.addStretch(1)
         colonne.addLayout(ligne_boutons)
         self.restyle()
+        self.path_field.textChanged.connect(self._path_changed)
 
         if not embedded:
             self.test_now()
@@ -121,14 +133,18 @@ class InterpreterDialog(QDialog):
         self.explanation.setStyleSheet(f"color:{t.TEXT};background:transparent;")
         self.status_label.setStyleSheet(
             f"color:{t.status_color(Status.FAILED)};background:transparent;"
-            if self._status_is_error else theme.muted())
+            if self._status_is_error else
+            f"color:{t.status_color(Status.PASSED)};background:transparent;"
+            if self._status_is_valid else theme.muted())
         self.override_label.setStyleSheet(
             f"color:{t.status_color(Status.SKIPPED)};background:transparent;")
 
     def _save(self) -> None:
-        self.saved.emit(self.interpreter_path())
-        if not self._embedded:
-            self.accept()
+        if self._validated_key != self._choice_key() or not self.save_button.isEnabled():
+            return
+        # Verifier encore en fond au moment de sauver : pytest peut avoir
+        # ete retire ou l'executable supprime depuis le dernier Test.
+        self._begin_check(save=True)
 
     def interpreter_path(self) -> str:
         return self.path_field.text().strip()
@@ -143,35 +159,113 @@ class InterpreterDialog(QDialog):
             self.test_now()
 
     def test_now(self) -> None:
-        chemin = self.interpreter_path() or default()
+        self._begin_check()
 
+    def _choice_key(self):
+        text = self.interpreter_path()
+        return text, text or default()
+
+    def _path_changed(self) -> None:
+        self._generation += 1
+        self._validated_key = None
+        self._save_requested = False
+        self._pending_check = None
+        self.save_button.setEnabled(False)
+        self.save_button.setToolTip('Checking this environment before saving')
+        self._say('Checking interpreter…')
+        self._auto_check.start()
+
+    def _begin_check(self, *, save=False):
+        self._auto_check.stop()
+        self._generation += 1
+        self._validated_key = None
+        self._save_requested = save
+        self.save_button.setEnabled(False)
+        self._pending_check = self._choice_key()
+        chemin = self._pending_check[1]
         if not chemin:
+            self._pending_check = None
+            self._save_requested = False
             self._say("No Python found automatically: specify the path to "
                       "python.exe.", erreur=True)
             return
-
         self._say(f"Checking {chemin}…")
+        self._start_pending_check()
 
-        if self._probe is not None and self._probe.isRunning():
+    def _start_pending_check(self):
+        # Le resultat et la fin du QThread sont deux signaux distincts :
+        # attendre finished avant de remplacer son objet ou lancer le suivant.
+        if self._probe is not None or self._pending_check is None:
             return
+        self._probe_key, self._pending_check = self._pending_check, None
+        self._probe_generation = self._generation
         self._probe = ProbeWorker(
-            chemin, self, timeout=timeout_seconds(self, "interpreter_timeout"))
+            self._probe_key[1], self, timeout=timeout_seconds(self, "interpreter_timeout"))
+        worker = self._probe
         self._probe.done.connect(self._on_probed)
+        worker.finished.connect(self._probe_finished)
         self._probe.start()
 
     def _on_probed(self, info: InterpreterInfo) -> None:
-        self._say(f"{info.path}\n{info.summary()}",
-                  erreur=not info.ok or not info.pytest_version)
+        if (self._probe_generation != self._generation or self._probe_key != self._choice_key()
+                or info.path != self._probe_key[1]):
+            return
+        self._validated_key = self._probe_key if info.usable else None
+        self.save_button.setEnabled(info.usable)
+        self.save_button.setToolTip('Save this verified environment' if info.usable else
+                                    'Choose a working Python environment with pytest installed')
+        self.status_label.setToolTip(info.path)
+        self._say(('Ready · ' if info.usable else 'Python interpreter not usable\n') + info.summary(),
+                  erreur=not info.usable, valid=info.usable)
+        if self._save_requested and info.usable:
+            self._save_requested = False
+            self._say('Configuration saved.\n' + info.summary(), valid=True)
+            self.saved.emit(self.interpreter_path())
+            if not self._embedded:
+                self.accept()
+        elif not info.usable:
+            self._save_requested = False
 
-    def wait_for_probe(self, timeout_ms: int = 3000) -> None:
+    def _probe_finished(self):
+        worker = self.sender()
+        if worker is None:
+            return
+        if self._probe is worker:
+            self._probe = None
+        worker.deleteLater()
+        if self._close_result is not None:
+            result, self._close_result = self._close_result, None
+            super().done(result)
+            return
+        self._start_pending_check()
+
+    def wait_for_probe(self, timeout_ms: int = 3000) -> bool:
+        self._auto_check.stop()
+        self._pending_check = None
+        self._save_requested = False
         if self._probe is not None:
-            self._probe.wait(timeout_ms)
+            return self._probe.wait(timeout_ms)
+        return True
 
     def done(self, result: int) -> None:
-        self.wait_for_probe()
+        self._auto_check.stop()
+        self._pending_check = None
+        if self._probe is not None:
+            # Ne pas detruire un QThread encore actif ni bloquer Qt en
+            # attendant un Python lent. finished achevera la fermeture.
+            self._close_result = result
+            self._generation += 1
+            self._save_requested = False
+            self.save_button.setEnabled(False)
+            self.path_field.setEnabled(False)
+            self.test_button.setEnabled(False)
+            self.cancel_button.setEnabled(False)
+            self._say('Finishing interpreter check…')
+            return
         super().done(result)
 
-    def _say(self, texte: str, erreur: bool = False) -> None:
+    def _say(self, texte: str, erreur: bool = False, *, valid: bool = False) -> None:
         self._status_is_error = erreur
+        self._status_is_valid = valid
         self.status_label.setText(texte)
         self.restyle()

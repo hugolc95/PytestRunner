@@ -1,5 +1,21 @@
 # Pytest Runner GUI
 
+## Environnement Python vérifié avant enregistrement — v1.7.5
+
+Dans **Python Environment**, **Save** devient disponible seulement après
+validation de Python et de pytest. Modifier le chemin invalide immédiatement
+la vérification précédente. Une dernière vérification est effectuée avant
+l'enregistrement, en arrière-plan pour garder l'interface réactive.
+
+Les erreurs restent rouges en thème clair et sombre. Un Python inexistant
+ou sans pytest est signalé comme **Python interpreter not usable**, plutôt
+que comme une erreur de collecte. Le réglage global est vérifié séparément
+de l'interpréteur imposé par le YAML du workspace. Changer de Python pendant
+une collecte relance celle-ci avec le nouvel environnement.
+
+L'infobulle de **Collect** indique désormais le bon raccourci : **Ctrl+R**.
+Corrections des points **M2 et M3** de l'audit 1.7.1.
+
 ## Verdict de collecte et workspace fiables — v1.7.4
 
 Un run dont certains fichiers n'ont pas pu être collectés affiche désormais

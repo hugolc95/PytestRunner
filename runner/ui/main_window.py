@@ -70,7 +70,6 @@ from runner.domain.workspace import (
     Workspace,
     fichiers_config,
 )
-from runner.services.interpreter_service import ProbeWorker
 from runner.ui.timeouts import seconds as timeout_seconds
 from runner.services.run_service import CollectWorker, RunService
 from runner.services.stress_service import StressRunWorker
@@ -159,6 +158,7 @@ class MainWindow(QMainWindow):
         self._collection_errors = {}
         self._run_collection_errors = {}
         self._collecting = False
+        self._recollect_after_interpreter_change = False
         self.service = RunService(self)
         self.history = run_host.history if run_host is not None else history.History()
         # Identifiant du run en cours : partage par tous ses lecteurs,
@@ -167,7 +167,6 @@ class MainWindow(QMainWindow):
         self._build_number: int | None = None
         self._collector: CollectWorker | None = None
         self._pending_execution_profile: ExecutionProfile | None = None
-        self._interpreter_prober: ProbeWorker | None = None
         self._matches: list[str] = []
         self._markers_by_nodeid: dict[str, tuple[str, ...]] = {}
         self._match_index = -1
@@ -177,6 +176,7 @@ class MainWindow(QMainWindow):
         # Reglage global, distinct de celui qu'un workspace peut imposer dans
         # sa configuration -- celui-la garde toujours la priorite.
         self._interpreter_override = ""
+        self._unusable_interpreter = ''
         # Statut dont on ne montre que les tests, ou None pour tout montrer.
         self._status_filter: Status | None = None
         self._elapsed = QTimer(self)
@@ -734,22 +734,25 @@ class MainWindow(QMainWindow):
             self.python_editor.override_label.setText(
                 "The workspace YAML file currently overrides this "
                 f"interpreter: {declare}")
-        chemin = self._effective_interpreter()
-        info = interpreter_mod.cached_probe(chemin) if chemin else None
-        if info is not None:
-            self.python_editor._on_probed(info)
-        elif chemin:
-            self.python_editor.status_label.setText(
-                "Click Test to verify this environment.")
+        # Le champ edite le reglage global, meme si le YAML impose un autre
+        # Python au projet courant. Ne jamais valider le premier avec le
+        # resultat du second.
+        self.python_editor.test_now()
 
     def _save_python_from_page(self, path: str) -> None:
         nouveau = path.strip()
         change = nouveau != self._interpreter_override
+        was_unusable = bool(self._unusable_interpreter)
         self._interpreter_override = nouveau
         self.settings.setValue(K_INTERPRETER, nouveau)
-        self.python_editor.status_label.setText("Configuration saved.")
         self._refresh_interpreter_alert()
-        if change and self.workspace is not None and not self.workspace.declared_interpreter:
+        if (change or was_unusable) and self.workspace is not None and not self.workspace.declared_interpreter:
+            self._reload_interpreter_workspace()
+
+    def _reload_interpreter_workspace(self):
+        if self._collecting:
+            self._recollect_after_interpreter_change = True
+        else:
             self.load_workspace()
 
     def _choose_yaml_for_page(self) -> None:
@@ -851,7 +854,7 @@ class MainWindow(QMainWindow):
         self.browse_button.clicked.connect(self.browse_workspace)
 
         self.load_button = QPushButton("Load")
-        self.load_button.setToolTip("Collect the tests of this workspace  (Ctrl+O)")
+        self.load_button.setToolTip("Collect the tests of this workspace  (Ctrl+R)")
         self.load_button.clicked.connect(self.load_workspace)
 
         # A cote de Load, avec le workspace : la configuration decrit CE
@@ -1813,6 +1816,9 @@ class MainWindow(QMainWindow):
         suite ou aller la configurer.
         """
         chemin = self._effective_interpreter()
+        if chemin and chemin == self._unusable_interpreter:
+            self._set_interpreter_alert('Python interpreter not usable. Check Python Environment before running tests.')
+            return ''
         if chemin:
             return chemin
         self._set_interpreter_alert(
@@ -1825,7 +1831,10 @@ class MainWindow(QMainWindow):
         self.interpreter_alert.setVisible(bool(message))
 
     def _on_interpreter_probed(self, info) -> None:
-        if info.ok and info.pytest_version:
+        if info.path != self._effective_interpreter():
+            return
+        self._unusable_interpreter = '' if info.usable else info.path
+        if info.usable:
             self._set_interpreter_alert()
             return
         detail = info.error or "pytest is not installed in this environment."
@@ -1846,7 +1855,7 @@ class MainWindow(QMainWindow):
             # Un changement d'interpreteur invalide tout ce que l'arbre montrait
             # jusqu'ici : les nodeids collectes ailleurs peuvent ne plus exister.
             if self.workspace is not None and not self.workspace.declared_interpreter:
-                self.load_workspace()
+                self._reload_interpreter_workspace()
         self._refresh_interpreter_alert()
 
     def _refresh_interpreter_alert(self) -> None:
@@ -2194,22 +2203,12 @@ class MainWindow(QMainWindow):
             return
         self._remember_workspace(chemin)
 
+        # Une nouvelle collecte doit pouvoir reessayer apres une installation
+        # de pytest ou une reparation externe du meme environnement.
+        self._unusable_interpreter = ''
         python = self._require_interpreter()
         if not python:
             return
-
-        # Sonde en fond si le resultat n'est pas deja connu : lancer un
-        # sous-processus a chaque `_start()` gelerait l'interface (voir
-        # `interpreter.py`). La collecte qui suit prend de toute facon plus
-        # longtemps que ce sondage, le cache est pret bien avant le premier
-        # "Run tests".
-        if interpreter_mod.cached_probe(python) is None:
-            self._interpreter_prober = ProbeWorker(
-                python, self, timeout=timeout_seconds(self, "interpreter_timeout"))
-            self._interpreter_prober.done.connect(self._on_interpreter_probed)
-            self._interpreter_prober.start()
-        else:
-            self._on_interpreter_probed(interpreter_mod.cached_probe(python))
 
         self._campaign_collection_complete = False
         if hasattr(self, 'campaign_sync'):
@@ -2224,15 +2223,21 @@ class MainWindow(QMainWindow):
             self.run_tabs.configuration_env(self, self.workspace.env) if self.run_tabs else self.workspace.env,
             self, timeout=timeout_seconds(self, "collection_timeout"))
         self._collecting = True
+        self._collector._interpreter_timeout = timeout_seconds(self, 'interpreter_timeout')
+        if hasattr(self._collector, 'interpreter_checked'):
+            self._collector.interpreter_checked.connect(self._on_interpreter_probed)
         self._collector.collected.connect(self._on_collected)
         getattr(self._collector, "diagnostic_failed", self._collector.failed).connect(self._on_collect_failed)
-        self._collector.finished.connect(self._update_actions)
+        if hasattr(self._collector, 'finished'):
+            self._collector.finished.connect(self._finish_collection)
         self._collector.start()
         self._update_actions()
         self._refresh_primary_reader()
 
     @Slot(object)
     def _on_collected(self, collection) -> None:
+        if self._recollect_after_interpreter_change:
+            return
         if self.run_tabs and not self.run_tabs.ensure_configuration(self):
             return
         if self.workspace is not None:
@@ -2420,10 +2425,15 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_collect_failed(self, failure) -> None:
+        if self._recollect_after_interpreter_change:
+            return
         from runner.domain.diagnostics import CollectionError
+        from runner.domain.interpreter import InterpreterUnavailable
+        interpreter_problem = isinstance(failure, InterpreterUnavailable)
+        title = 'Python interpreter not usable' if interpreter_problem else 'Collection failed'
         self._collecting = False
         self._campaign_collection_complete = False
-        self._collection_errors = {'__collection__': {
+        self._collection_errors = {} if interpreter_problem else {'__collection__': {
             'location': self.workspace.path if self.workspace else '',
             'message': str(failure), 'body': getattr(failure, 'details', str(failure))}}
         if hasattr(self, 'campaign_sync'):
@@ -2438,7 +2448,7 @@ class MainWindow(QMainWindow):
         self.progress.setVisible(False)
         self.progress.setRange(0, 100)
         self.load_button.setEnabled(True)
-        self.status_label.setText("Collection failed")
+        self.status_label.setText(title)
         failed_workspace = self.workspace.path if self.workspace else ""
         if getattr(self, "_tree_workspace", "") != failed_workspace:
             # L'arbre montre encore les tests du workspace precedent alors que
@@ -2459,18 +2469,28 @@ class MainWindow(QMainWindow):
         preferences = (getattr(self, "preferences", None)
                        or getattr(self._run_host, "preferences", None))
         if preferences is not None:
-            preferences.context_record(self, "errors", "Collection failed\n" + details)
+            preferences.context_record(self, "errors", title + '\n' + details)
             if isinstance(failure, CollectionError):
                 for name, text in (("stdout", failure.stdout), ("stderr", failure.stderr)):
                     if text.strip():
                         preferences.context_record(self, "output", f"Collection {name}:\n{text}")
         ErrorDialog.show_diagnostics(
-            self, "Collection failed", details,
+            self, title, details,
             preferences.show_errors if preferences is not None else None,
             summary=headline, workspace=getattr(failure, "workspace", "") or
                 (self.workspace.path if self.workspace else ""))
         self._update_actions()
         self._refresh_collection_warning()
+
+    def _finish_collection(self):
+        if self.sender() is not self._collector:
+            return
+        if self._recollect_after_interpreter_change:
+            self._recollect_after_interpreter_change = False
+            self._collecting = False
+            self.load_workspace()
+        else:
+            self._update_actions()
 
     def _workspace_ready(self) -> bool:
         if self.workspace is None:
@@ -4263,7 +4283,7 @@ class MainWindow(QMainWindow):
         self.profile_picker.setEnabled(not occupe)
         self.profile_tree_button.setEnabled(not occupe or self._running_execution_profile is not None)
         self.profile_picker.setToolTip('Profile selection is locked while a run is active.' if occupe else 'Choose a saved execution profile')
-        ready = self._workspace_ready()
+        ready = self._workspace_ready() and self._effective_interpreter() != self._unusable_interpreter
         self.run_button.setEnabled(charge and a_lancer and not occupe and cible and ready)
         self.stop_button.setEnabled(occupe)
         self.pause_button.setEnabled(self.service.busy and not self.service._stopping)
@@ -4294,7 +4314,9 @@ class MainWindow(QMainWindow):
             self.run_tabs.apply_context_actions(self)
             self.run_tabs.refresh_labels()
         if charge and not ready:
-            self.run_button.setToolTip('Collect this folder before running tests')
+            self.run_button.setToolTip('Check Python Environment before running tests'
+                if self._effective_interpreter() == self._unusable_interpreter else
+                'Collect this folder before running tests')
         if hasattr(self, 'tree_results'):
             self.tree_results.refresh()
 

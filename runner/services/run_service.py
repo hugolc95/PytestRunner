@@ -33,6 +33,7 @@ class CollectWorker(QThread):
     collected = Signal(object)
     failed = Signal(str)
     diagnostic_failed = Signal(object)
+    interpreter_checked = Signal(object)
 
     def __init__(self, workspace: str, interpreter: str, env: dict, parent=None,
                  timeout: float = 120.0):
@@ -41,15 +42,24 @@ class CollectWorker(QThread):
         self._interpreter = interpreter
         self._env = env
         self._timeout = timeout
+        self._interpreter_timeout = min(15.0, timeout)
 
     def run(self) -> None:  # pragma: no cover - execute dans un thread Qt
         try:
+            from runner.domain.interpreter import cached_probe, probe, InterpreterUnavailable
+            cached = cached_probe(self._interpreter)
+            info = probe(self._interpreter, timeout=self._interpreter_timeout,
+                         use_cache=cached is None or cached.usable)
+            self.interpreter_checked.emit(info)
+            if not info.usable:
+                raise InterpreterUnavailable(info)
             collection = execution.collect(self._workspace, self._interpreter,
                                            self._env, timeout=self._timeout)
         except Exception as exc:
             from runner.domain.diagnostics import CollectionError
             import traceback
-            failure = exc if isinstance(exc, CollectionError) else CollectionError(
+            from runner.domain.interpreter import InterpreterUnavailable
+            failure = exc if isinstance(exc, (CollectionError, InterpreterUnavailable)) else CollectionError(
                 f"{type(exc).__name__}: {exc}", workspace=self._workspace,
                 interpreter=self._interpreter, traceback_text=traceback.format_exc())
             self.diagnostic_failed.emit(failure)

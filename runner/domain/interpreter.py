@@ -68,6 +68,10 @@ class InterpreterInfo:
     def ok(self) -> bool:
         return not self.error
 
+    @property
+    def usable(self) -> bool:
+        return self.ok and self.bits in (32, 64) and bool(self.version and self.pytest_version)
+
     def summary(self) -> str:
         """Resume en une ligne, affiche sous le champ de saisie."""
         if self.error:
@@ -78,6 +82,14 @@ class InterpreterInfo:
         morceaux.append("pytest-xdist present" if self.has_xdist
                         else "pytest-xdist missing")
         return " · ".join(morceaux)
+
+
+class InterpreterUnavailable(RuntimeError):
+    """Echec avant toute collecte : ne pas le presenter comme un test casse."""
+
+    def __init__(self, info: InterpreterInfo):
+        self.info = info
+        super().__init__(f'Python interpreter not usable\n{info.path}\n{info.summary()}')
 
 
 _PROBE_CODE = (
@@ -106,7 +118,7 @@ def _cache_key(path: str) -> tuple:
     try:
         stat = os.stat(path)
         return (path, stat.st_mtime, stat.st_size)
-    except OSError:
+    except (OSError, ValueError):
         return (path, None, None)
 
 
@@ -148,6 +160,8 @@ def probe(path: str, timeout: float = 15.0, use_cache: bool = True) -> Interpret
 
 
 def _run_probe(path: str, timeout: float) -> InterpreterInfo:
+    if is_frozen() and os.path.normcase(os.path.abspath(path)) == os.path.normcase(os.path.abspath(sys.executable)):
+        return InterpreterInfo(path=path, error='This is Pytest Runner, not a Python interpreter.')
     try:
         process = subprocess.run(
             [path, "-c", _PROBE_CODE], capture_output=True, text=True,
@@ -160,7 +174,7 @@ def _run_probe(path: str, timeout: float) -> InterpreterInfo:
     except subprocess.TimeoutExpired:
         return InterpreterInfo(path=path,
                                error=f"No response from the interpreter: {path}")
-    except OSError as exc:
+    except (OSError, ValueError, UnicodeError) as exc:
         return InterpreterInfo(path=path, error=f"Could not start {path}: {exc}")
 
     lignes = process.stdout.splitlines()

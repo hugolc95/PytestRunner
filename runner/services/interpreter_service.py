@@ -27,4 +27,8 @@ class ProbeWorker(QThread):
         # l'etat reel maintenant (pytest vient peut-etre d'etre installe). Le
         # resultat alimente quand meme le cache partage, donc le prochain
         # lancement de tests reste instantane.
-        self.done.emit(interpreter.probe(self._path, timeout=self._timeout, use_cache=False))
+        try:
+            info = interpreter.probe(self._path, timeout=self._timeout, use_cache=False)
+        except Exception as exc:
+            info = interpreter.InterpreterInfo(path=self._path, error=f'Could not inspect this interpreter: {exc}')
+        self.done.emit(info)
