@@ -29,6 +29,9 @@
 #pytest-tree-report-in .tr-skipped { color:var(--tr-skip); }
 #pytest-tree-report-in .tr-notrun { color:var(--tr-muted); }
 #pytest-tree-report-in .tr-note { font-size:11px; color:var(--tr-muted); }
+#pytest-tree-report-in .tr-context.tr-collection-warning { border:1px solid var(--tr-skip); border-radius:6px; padding:10px 14px; margin:12px 0; background:var(--tr-raised); }
+#pytest-tree-report-in .tr-context.tr-collection-warning > summary { color:var(--tr-skip); font-weight:700; }
+#pytest-tree-report-in .tr-context.tr-collection-warning .tr-code { max-height:300px; overflow:auto; }
 #pytest-tree-report-in button, #pytest-tree-report-in input, #pytest-tree-report-in select { font:inherit; color:inherit; }
 #pytest-tree-report-in .tr-button, #pytest-tree-report-in .tr-tab { border:1px solid var(--tr-line); border-radius:6px; background:var(--tr-bg); padding:6px 9px; display:inline-flex; align-items:center; justify-content:center; gap:5px; }
 #pytest-tree-report-in .tr-button[aria-pressed=true], #pytest-tree-report-in .tr-tab[aria-selected=true] { border-color:var(--tr-blue); background:var(--tr-selected); color:var(--tr-blue); }

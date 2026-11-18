@@ -91,6 +91,7 @@ class RunEntry:
     configuration_file: str = ""
     analysis_file: str = ""
     campaign_coverage: dict = field(default_factory=dict)
+    collection_errors: dict = field(default_factory=dict)
     # Instantane transitoire : les traces volumineuses vont dans un fichier
     # annexe, jamais dans l'index charge a l'ouverture de l'historique.
     analysis_data: dict | None = field(default=None, compare=False, repr=False)
@@ -104,7 +105,8 @@ class RunEntry:
 
     @property
     def ok(self) -> bool:
-        return self.exit_code == 0 and self.count(Status.FAILED) == 0 and self.count(Status.ERROR) == 0
+        return (not self.collection_errors and self.exit_code == 0
+                and self.count(Status.FAILED) == 0 and self.count(Status.ERROR) == 0)
 
     @property
     def label(self) -> str:
@@ -115,6 +117,8 @@ class RunEntry:
     def summary(self) -> str:
         from runner.domain.campaign_coverage import summary
         detail = summary([self.campaign_coverage])
+        from runner.domain.collection_state import summary as collection_summary
+        detail = ' · '.join(filter(None, (detail, collection_summary(self.collection_errors))))
         return (f"{self.count(Status.PASSED)} passed, "
                 f"{self.count(Status.FAILED)} failed, "
                 f"{self.count(Status.SKIPPED)} skipped, "
@@ -160,6 +164,7 @@ class RunEntry:
             "configuration_file": self.configuration_file,
             "analysis_file": self.analysis_file,
             "campaign_coverage": self.campaign_coverage,
+            "collection_errors": self.collection_errors,
         }
 
     @classmethod
@@ -190,6 +195,7 @@ class RunEntry:
                 configuration_file=str(donnees.get("configuration_file", "")),
                 analysis_file=str(donnees.get("analysis_file", "")),
                 campaign_coverage=dict(donnees.get('campaign_coverage') or {}),
+                collection_errors=dict(donnees.get('collection_errors') or {}),
                 locked=bool(donnees.get("locked", False)),
                 run_kind=str(donnees.get("run_kind", "unknown")),
                 profile_name=str(donnees.get("profile_name", "")),

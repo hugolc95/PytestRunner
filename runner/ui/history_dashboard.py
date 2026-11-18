@@ -154,7 +154,13 @@ class RunGroup:
     @property
     def coverage_summary(self):
         from runner.domain.campaign_coverage import summary
-        return summary([entry.campaign_coverage for entry in self.entries])
+        from runner.domain.collection_state import summary as collection_summary
+        return ' · '.join(filter(None, (summary([entry.campaign_coverage for entry in self.entries]),
+                                       collection_summary(self.collection_errors))))
+
+    @property
+    def collection_errors(self):
+        return {path: error for entry in self.entries for path, error in entry.collection_errors.items()}
 
     @property
     def locked(self) -> bool:
@@ -775,6 +781,11 @@ class HistoryWindow(QDialog):
         self.logs_button.setObjectName("Ghost")
         self.logs_button.setFixedWidth(76)
         self.logs_button.clicked.connect(self.open_logs)
+        self.collection_errors_button = QPushButton()
+        self.collection_errors_button.setObjectName('Ghost')
+        self.collection_errors_button.setIcon(icons.icon('mdi.alert-outline', t.divergent_color()))
+        self.collection_errors_button.clicked.connect(self._show_collection_errors)
+        self.collection_errors_button.hide()
         self.export_button = QToolButton()
         self.export_button.setText("Export")
         self.export_button.setObjectName("HistoryAction")
@@ -786,6 +797,7 @@ class HistoryWindow(QDialog):
         top = QHBoxLayout()
         top.addLayout(names)
         top.addStretch(1)
+        top.addWidget(self.collection_errors_button)
         top.addWidget(self.logs_button)
         top.addWidget(self.rerun_button)
         top.addWidget(self.export_button)
@@ -1334,6 +1346,10 @@ class HistoryWindow(QDialog):
         self.detail_stack.setCurrentWidget(self.detail)
         entry = group.entries[0] if group.entries else None
         self.detail_title.setText(group.display_name)
+        from runner.domain.collection_state import summary as collection_summary
+        self.collection_errors_button.setText(collection_summary(group.collection_errors))
+        self.collection_errors_button.setVisible(bool(group.collection_errors))
+        self.collection_errors_button.setToolTip('Show the collection errors recorded at launch')
         self.rename_edit.hide()
         self.detail_subtitle.setText(
             f"{_when(group.timestamp)}  ·  {group.origin_label}  ·  {group.workspace}")
@@ -1461,7 +1477,20 @@ class HistoryWindow(QDialog):
             self.success_value.setText(coverage + '\nSuccess rate above applies only to executed tests.' if not executed else
                 f'{counts[Status.PASSED]} passed among executed tests · ' + coverage)
             self.execution_title.setText('Campaign results · includes tests not run')
+        if group.collection_errors:
+            from runner.domain.collection_state import summary as collection_summary
+            self.success_value.setText('Collection incomplete · ' + collection_summary(group.collection_errors)
+                + f'\n{counts[Status.PASSED]} passed among {executed} executed results')
+        self.ribbon.set_collection_warning(bool(group.collection_errors))
         self._style_result_counts()
+
+    def _show_collection_errors(self):
+        from runner.domain.collection_state import details, summary
+        from runner.ui.widgets import ErrorDialog
+        group = self._current_group()
+        if group is not None:
+            ErrorDialog.show_diagnostics(self, 'Collection incomplete', details(group.collection_errors),
+                                         summary=summary(group.collection_errors), workspace=group.workspace)
 
     def _filter_results(self, status):
         self._result_filter = None if self._result_filter is status else status

@@ -269,6 +269,7 @@ def report_payload(entries, outputs=None):
             session=session or NOT_RECORDED, commands=analysis.get('commands', []),
             issues=analysis.get('issues', []), app_version=analysis.get('app_version') or NOT_RECORDED))
     counts = Counter(result['status'] for row in rows for result in row['readers'])
+    collection_errors = {path: error for entry in entries for path, error in entry.collection_errors.items()}
     from runner.domain.reader_labels import badge_labels
     return dict(schema=1, id=first.id, title=nodes['profile']['name'], workspace=first.workspace,
                 timestamp=max(entry.timestamp for entry in entries), duration=max(entry.duration for entry in entries),
@@ -276,5 +277,6 @@ def report_payload(entries, outputs=None):
                 archived_counts=archived, contexts=contexts, console=texts,
                 configuration_name=saved.get('configuration_name', ''),
                 coverage=[entry.campaign_coverage for entry in entries],
-                complete=bool(sequence) and not counts['notrun'] and not counts['unknown'],
+                complete=bool(sequence) and not counts['notrun'] and not counts['unknown'] and not collection_errors,
+                collection_errors=collection_errors,
                 run_kind=first.run_kind, profile_recorded=bool(saved))

@@ -156,6 +156,9 @@ class MainWindow(QMainWindow):
 
         self.settings = QSettings(ORG, APP)
         self.workspace: Workspace | None = None
+        self._collection_errors = {}
+        self._run_collection_errors = {}
+        self._collecting = False
         self.service = RunService(self)
         self.history = run_host.history if run_host is not None else history.History()
         # Identifiant du run en cours : partage par tous ses lecteurs,
@@ -839,6 +842,8 @@ class MainWindow(QMainWindow):
         self.workspace_combo.setMaximumWidth(560)
         self.workspace_combo.setMinimumWidth(260)
         self.workspace_combo.lineEdit().returnPressed.connect(self.load_workspace)
+        self.workspace_combo.editTextChanged.connect(lambda *_: self._update_actions()
+            if hasattr(self, 'run_button') else None)
 
         self.browse_button = QPushButton("Browse…")
         self.browse_button.setObjectName("Ghost")
@@ -888,6 +893,11 @@ class MainWindow(QMainWindow):
         }
         for pastille in self.pills.values():
             pastille.filter_clicked.connect(self.filter_by_status)
+        self.collection_errors_button = QPushButton()
+        self.collection_errors_button.setObjectName('Ghost')
+        self.collection_errors_button.setIcon(icons.icon('mdi.alert-outline', t.divergent_color()))
+        self.collection_errors_button.clicked.connect(self._show_collection_errors)
+        self.collection_errors_button.hide()
 
         # Cette barre ne parle que du WORKSPACE : ou il est, et ce qui le
         # decrit. Les actions de run ont leur propre rangee, juste en dessous.
@@ -2164,10 +2174,19 @@ class MainWindow(QMainWindow):
             self.browse_workspace()
             return
         if not Path(chemin).is_dir():
-            ErrorDialog.show_error(self, "Cannot load", "That path is not a folder.",
-                                   chemin)
+            # Le champ doit continuer a nommer le projet reellement charge.
+            # Garder l'arbre avec le chemin invalide autorisait un autre run
+            # que celui que l'utilisateur croyait lancer.
+            self.workspace_combo.setCurrentText(self.workspace.path if self.workspace else '')
+            self._pending_history_run = None
+            self._pending_execution_profile = None
+            message = 'That path is not a folder.'
+            if self.workspace is not None:
+                message += ' The current workspace is kept.'
+            ErrorDialog.show_error(self, "Cannot load", message, chemin)
+            self._update_actions()
             return
-        if self._collector is not None and self._collector.isRunning():
+        if self._collecting or (self._collector is not None and self._collector.isRunning()):
             return
 
         self.workspace = Workspace.load(chemin, self._config_retenue(chemin))
@@ -2204,15 +2223,23 @@ class MainWindow(QMainWindow):
             self.workspace.path, python,
             self.run_tabs.configuration_env(self, self.workspace.env) if self.run_tabs else self.workspace.env,
             self, timeout=timeout_seconds(self, "collection_timeout"))
+        self._collecting = True
         self._collector.collected.connect(self._on_collected)
         getattr(self._collector, "diagnostic_failed", self._collector.failed).connect(self._on_collect_failed)
+        self._collector.finished.connect(self._update_actions)
         self._collector.start()
+        self._update_actions()
         self._refresh_primary_reader()
 
     @Slot(object)
     def _on_collected(self, collection) -> None:
         if self.run_tabs and not self.run_tabs.ensure_configuration(self):
             return
+        if self.workspace is not None:
+            self.workspace_combo.setCurrentText(self.workspace.path)
+        notice = getattr(self, '_inline_notice', None)
+        if notice is not None:
+            notice.hide_notice()
         environment = (self.workspace.path, self.workspace.config_path,
                        deepcopy(self.workspace.settings), self._effective_interpreter()) if self.workspace else None
         previous_environment = getattr(self, "_collected_environment", None)
@@ -2238,6 +2265,7 @@ class MainWindow(QMainWindow):
         selection = self.tree.selectionModel()
         signals_blocked = selection.blockSignals(True)
         if not same_workspace:
+            self._run_collection_errors = {}
             self._active_execution_profile = None
             self._displayed_profile = None
             self._profile_selected_key = None
@@ -2258,6 +2286,7 @@ class MainWindow(QMainWindow):
         if not same_workspace:
             self.model.set_disabled_tests({})
         broken = getattr(collection, "broken_files", {}) or {}
+        self._collection_errors = deepcopy(broken)
         self._campaign_collection_complete = not bool(broken)
         self.model.set_tree(add_broken_files(
             collapse_single_class(build_tree(nodeids)),
@@ -2346,7 +2375,9 @@ class MainWindow(QMainWindow):
                         " could not be collected")
         self.status_label.setText(f"{nom} — {details}")
         self.setWindowTitle(f"{WINDOW_TITLE} — {nom}" if nom else WINDOW_TITLE)
+        self._collecting = False
         self._update_actions()
+        self._refresh_collection_warning()
         pending_profile = getattr(self, "_pending_execution_profile", None)
         if pending_profile is not None:
             self._pending_execution_profile = None
@@ -2390,7 +2421,11 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _on_collect_failed(self, failure) -> None:
         from runner.domain.diagnostics import CollectionError
+        self._collecting = False
         self._campaign_collection_complete = False
+        self._collection_errors = {'__collection__': {
+            'location': self.workspace.path if self.workspace else '',
+            'message': str(failure), 'body': getattr(failure, 'details', str(failure))}}
         if hasattr(self, 'campaign_sync'):
             self.campaign_sync.refresh()
         if self._selected_run_context() is self:
@@ -2435,6 +2470,39 @@ class MainWindow(QMainWindow):
             summary=headline, workspace=getattr(failure, "workspace", "") or
                 (self.workspace.path if self.workspace else ""))
         self._update_actions()
+        self._refresh_collection_warning()
+
+    def _workspace_ready(self) -> bool:
+        if self.workspace is None:
+            return False
+        if self._collecting or (self._collector is not None and self._collector.isRunning()):
+            return False
+        text = self.workspace_combo.currentText().strip()
+        if not text:
+            return False
+        try:
+            # Pas de resolve()/stat() dans ce chemin appele a chaque frappe :
+            # un workspace reseau ne doit pas bloquer les actions de l'UI.
+            return (getattr(self, '_tree_workspace', '') == self.workspace.path
+                    and os.path.normcase(os.path.abspath(text))
+                    == os.path.normcase(os.path.abspath(self.workspace.path)))
+        except (OSError, ValueError):
+            return False
+
+    def _refresh_collection_warning(self) -> None:
+        from runner.domain.collection_state import summary
+        errors = self._run_collection_errors or self._collection_errors
+        text = summary(errors)
+        self.collection_errors_button.setText(text)
+        self.collection_errors_button.setToolTip('Show collection errors. These files were not executed.')
+        self.collection_errors_button.setVisible(bool(errors))
+        self.compass_ring.set_collection_warning(text)
+
+    def _show_collection_errors(self) -> None:
+        from runner.domain.collection_state import details, summary
+        errors = self._run_collection_errors or self._collection_errors
+        ErrorDialog.show_diagnostics(self, 'Collection incomplete', details(errors),
+            summary=summary(errors), workspace=self.workspace.path if self.workspace else '')
 
     def _size_reader_columns(self, tree=None, model=None) -> None:
         """Chaque colonne de lecteur prend la largeur de son titre, UNE fois.
@@ -2653,6 +2721,9 @@ class MainWindow(QMainWindow):
         if (self.workspace is None or self.service.busy
                 or self.run_tabs and self.run_tabs.is_locked(self)):
             return
+        if not self._workspace_ready():
+            self.status_label.setText('Collect the selected workspace before running tests')
+            return
         if not self.disabled_tests.check_launch(profile.sequence, strict=True):
             return
         missing = [nodeid for nodeid in profile.sequence
@@ -2686,6 +2757,7 @@ class MainWindow(QMainWindow):
             run_id=self._run_id,
             junit_dir=str(self.history.racine),
             build_number=self._build_number,
+            collection_errors=deepcopy(self._collection_errors),
         )
         if self.run_tabs:
             self.run_tabs.submit(self, request, self.workspace.env, profile, selection=selection)
@@ -2720,6 +2792,9 @@ class MainWindow(QMainWindow):
         if (self.workspace is None or not nodeids or self.service.busy
                 or self.run_tabs and self.run_tabs.is_locked(self)):
             return
+        if not self._workspace_ready():
+            self.status_label.setText('Collect the selected workspace before running tests')
+            return
         nodeids = self.disabled_tests.check_launch(nodeids)
         if not nodeids:
             return
@@ -2752,6 +2827,7 @@ class MainWindow(QMainWindow):
             run_id=self._run_id,
             junit_dir=str(self.history.racine),
             build_number=self._build_number,
+            collection_errors=deepcopy(self._collection_errors),
         )
         # Bind the context-menu intent to this request, including queued runs.
         self._preserve_results_run_id = requete.run_id if preserve_results else ""
@@ -2902,6 +2978,8 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_run_started(self, request: RunRequest) -> None:
+        self._run_collection_errors = deepcopy(getattr(request, 'collection_errors', {}))
+        self._refresh_collection_warning()
         preserve_results = (getattr(self, '_preserve_results_run_id', '') == request.run_id
                             and bool(request.run_id))
         self._preserve_results_run_id = ''
@@ -3199,6 +3277,11 @@ class MainWindow(QMainWindow):
             resume = echecs
         else:
             resume = "All tests passed"
+        from runner.domain.collection_state import summary as collection_summary
+        collection = collection_summary(self._run_collection_errors)
+        if collection:
+            resume = ('Executed tests passed' if resume == 'All tests passed' else resume)
+            resume += ' · Collection incomplete · ' + collection
         from runner.ui.campaign_archive import result as campaign_result
         from runner.domain.campaign_coverage import summary as coverage_summary
         incomplete = coverage_summary([campaign_result(self, r.reader.index) for r in rapports])
@@ -3289,6 +3372,7 @@ class MainWindow(QMainWindow):
                 profile_name=profile.name if profile is not None else "",
                 replay_profile=getattr(self, "_archive_replay_profile", None),
                 campaign_coverage=analysis['coverage'],
+                collection_errors=deepcopy(self._run_collection_errors),
                 analysis_data=analysis,
             )
             output = (rapport.output if profile is None
@@ -3535,6 +3619,9 @@ class MainWindow(QMainWindow):
                 or self._stress_worker is not None
                 or self.run_tabs and (self.run_tabs.busy or self.run_tabs.is_locked(self))):
             return
+        if not self._workspace_ready():
+            self.status_label.setText('Collect the selected workspace before running tests')
+            return
         if not self.disabled_tests.check_launch([nodeid], strict=True):
             return
 
@@ -3561,6 +3648,9 @@ class MainWindow(QMainWindow):
 
         from runner.domain.history_profile import capture_profile
         self._stress_replay_profile = capture_profile(requete)
+        self._stress_collection_errors = deepcopy(self._collection_errors)
+        self._run_collection_errors = deepcopy(self._collection_errors)
+        self._refresh_collection_warning()
         self._stress_nodeid = nodeid
         self._stress_mode = mode
         self._stress_cap = cap
@@ -3670,6 +3760,7 @@ class MainWindow(QMainWindow):
         for cumul in self._stress_aggregate.values():
             entree = history.RunEntry(
                 replay_profile=getattr(self, "_stress_replay_profile", None),
+                collection_errors=deepcopy(getattr(self, '_stress_collection_errors', {})),
                 id=self._stress_id,
                 timestamp=time.time(),
                 workspace=self.workspace.path,
@@ -3710,6 +3801,10 @@ class MainWindow(QMainWindow):
             detail = (f"{resume.ran} of {resume.cap} runs complete — {court} — "
                      f"{resume.passed} passed · {echecs} failed · {taux}% pass rate")
 
+        from runner.domain.collection_state import summary as collection_summary
+        collection = collection_summary(getattr(self, '_stress_collection_errors', {}))
+        if collection:
+            detail += ' · Collection incomplete · ' + collection
         self._set_status_idle(detail)
         self.model.set_stress_annotation(nodeid, compact)
         self.results.detail.show_stress_done(nodeid, resume)
@@ -4168,14 +4263,15 @@ class MainWindow(QMainWindow):
         self.profile_picker.setEnabled(not occupe)
         self.profile_tree_button.setEnabled(not occupe or self._running_execution_profile is not None)
         self.profile_picker.setToolTip('Profile selection is locked while a run is active.' if occupe else 'Choose a saved execution profile')
-        self.run_button.setEnabled(charge and a_lancer and not occupe and cible)
+        ready = self._workspace_ready()
+        self.run_button.setEnabled(charge and a_lancer and not occupe and cible and ready)
         self.stop_button.setEnabled(occupe)
         self.pause_button.setEnabled(self.service.busy and not self.service._stopping)
         self.launch_stack.setCurrentWidget(
             self.pause_button if self.service.busy else self.run_button)
         self.act_run.setEnabled(self.run_button.isEnabled())
         self.act_stop.setEnabled(occupe)
-        rejouable = (charge and not occupe and cible
+        rejouable = (charge and not occupe and cible and ready
                      and bool(self.profile_run_tree.failed_keys() if self.profile_tree_button.isChecked()
                               else self.model.failed_nodeids()))
         self.act_rerun.setEnabled(rejouable)
@@ -4197,6 +4293,8 @@ class MainWindow(QMainWindow):
         if self.run_tabs:
             self.run_tabs.apply_context_actions(self)
             self.run_tabs.refresh_labels()
+        if charge and not ready:
+            self.run_button.setToolTip('Collect this folder before running tests')
         if hasattr(self, 'tree_results'):
             self.tree_results.refresh()
 

@@ -232,6 +232,7 @@ class StructuredRunHeader(QWidget):
         result_buttons.setSpacing(t.SPACE_2)
         self._move(result_buttons, window.view_failures_button)
         self._move(result_buttons, window.view_differences_button)
+        self._move(result_buttons, window.collection_errors_button)
         result_buttons.addStretch()
         result_actions.addLayout(result_buttons)
         result_actions.addStretch()

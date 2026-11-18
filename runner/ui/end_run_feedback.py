@@ -101,6 +101,7 @@ def install() -> None:
                 replay_profile=copy.deepcopy(getattr(self, "_archive_replay_profile", None)),
                 analysis_data=analysis,
                 campaign_coverage=analysis.get('coverage', {}),
+                collection_errors=copy.deepcopy(getattr(self, '_run_collection_errors', {})),
             )
             entries.append((entry, report.output if getattr(self, "_archive_save_logs", True) else ""))
         return tuple(entries)
@@ -133,6 +134,12 @@ def install() -> None:
             summary = failures
         else:
             summary = "All tests passed"
+
+        from runner.domain.collection_state import summary as collection_summary
+        collection = collection_summary(getattr(self, '_run_collection_errors', {}))
+        if collection:
+            summary = ('Executed tests passed' if summary == 'All tests passed' else summary)
+            summary += ' · Collection incomplete · ' + collection
 
         from runner.ui.campaign_archive import result as campaign_result
         from runner.domain.campaign_coverage import summary as coverage_summary

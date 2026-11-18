@@ -147,6 +147,7 @@ class RunRequest:
     # horodate), il est stable dans les chemins de logs et partage par tous les
     # lecteurs du lancement.
     build_number: int | None = None
+    collection_errors: dict = field(default_factory=dict)
 
     @property
     def total_tests(self) -> int:

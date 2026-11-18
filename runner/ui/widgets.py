@@ -338,8 +338,14 @@ class CompassRing(QWidget):
         taux = round(100 * passed / total) if total else 0
         self.setToolTip(
             f"{taux}% pass — " +
-            "  ".join(f"{self._counts[s]} {s.label.lower()}" for s in self.ORDER))
+            "  ".join(f"{self._counts[s]} {s.label.lower()}" for s in self.ORDER)
+            + (f" · Collection incomplete: {self._collection_warning}"
+               if getattr(self, '_collection_warning', '') else ''))
         self.update()
+
+    def set_collection_warning(self, text: str) -> None:
+        self._collection_warning = text
+        self.set_counts(self._counts)
 
     def restyle(self) -> None:
         """Rejoue le dessin : les couleurs par statut dependent du theme."""
@@ -371,7 +377,9 @@ class CompassRing(QWidget):
             if not valeur:
                 continue
             portee = round(360 * 16 * valeur / total)
-            trait.setColor(QColor(t.status_color(statut)))
+            colour = (t.divergent_color() if statut == Status.PASSED
+                      and getattr(self, '_collection_warning', '') else t.status_color(statut))
+            trait.setColor(QColor(colour))
             peintre.setPen(trait)
             peintre.drawArc(zone, depart, -portee)
             depart -= portee
@@ -1084,6 +1092,10 @@ class StatusRibbon(QWidget):
     def restyle(self) -> None:
         self.update()
 
+    def set_collection_warning(self, warning: bool) -> None:
+        self._collection_warning = warning
+        self.update()
+
     def paintEvent(self, event) -> None:
         from PySide6.QtGui import QColor, QPainter
 
@@ -1118,7 +1130,9 @@ class StatusRibbon(QWidget):
             if not nombre:
                 continue
             part = largeur * nombre / total
-            peintre.setBrush(QColor(t.status_color(statut)))
+            colour = (t.divergent_color() if statut == Status.PASSED
+                      and getattr(self, '_collection_warning', False) else t.status_color(statut))
+            peintre.setBrush(QColor(colour))
             # Un demi-pixel de recouvrement : sans lui, l'arrondi des bornes
             # laisse une raie du fond entre deux segments voisins.
             peintre.drawRect(int(depart), 0, int(part + 1), hauteur)

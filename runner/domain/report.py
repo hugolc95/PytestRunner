@@ -64,6 +64,13 @@ def html_report(entry, output=None):
     coverage_label = coverage_summary(data.get('coverage', []))
     if coverage_label:
         label = coverage_label
+    from runner.domain.collection_state import details as collection_details, summary as collection_summary
+    collection = data.get('collection_errors', {})
+    if collection:
+        label = 'Incomplete · ' + collection_summary(collection)
+    collection_section = ('<details class="tr-context tr-collection-warning"><summary>Collection incomplete · '
+        + escape(collection_summary(collection)) + '</summary><pre class="tr-code">'
+        + escape(collection_details(collection)) + '</pre></details>') if collection else ''
     if any(e.campaign_coverage.get('stopped') for e in entries):
         label += ' · Run stopped'
     elif any(e.exit_code for e in entries):
@@ -87,7 +94,7 @@ def html_report(entry, output=None):
 <style>{css}</style></head><body>
 <article id="pytest-tree-report-in" aria-label="IN Groupe test analysis report">
 <header><div class="tr-logo-plate"><img src="{logo}" alt="IN Groupe" width="420" height="253"></div><div class="tr-heading-brand"><div class="tr-brand">PYTEST RUNNER / ANALYSIS REPORT</div><h2>{escape(data['title'])}</h2><div class="tr-meta">{escape(when)} · Build #{data['build'] if data['build'] is not None else 'not recorded'} · {format_duration(data['duration'])}</div><div class="tr-meta">{escape(label)} · {len(data['rows'])} planned occurrences · {len(entries)} reader(s)</div></div></header>
-<div class="tr-summary">{summary}</div><p class="tr-note">Latest verdicts per occurrence and reader. Unknown means the archive cannot establish the result. Archived totals: {escape('; '.join(e.summary for e in entries))}</p>
+<div class="tr-summary">{summary}</div>{collection_section}<p class="tr-note">Latest verdicts per occurrence and reader. Unknown means the archive cannot establish the result. Archived totals: {escape('; '.join(e.summary for e in entries))}</p>
 <div class="tr-ui" hidden>
 <details class="tr-context"><summary>Run context, environment &amp; recorded commands</summary><div class="tr-context-body"></div></details>
 <div class="tr-toolbar"><input class="tr-search" type="search" aria-label="Search the execution tree" placeholder="Search a group, test, parameter or path…"><select class="tr-reader-filter" aria-label="Filter by reader"></select><select class="tr-status-filter" aria-label="Filter by result"><option value="all">All results</option><option value="issues">Failures / errors</option><option value="notrun">Not run</option><option value="unknown">Unknown</option></select></div>

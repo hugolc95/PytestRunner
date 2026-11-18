@@ -360,8 +360,15 @@ class RunTabsController(QObject):
         if source.workspace is not None:
             context.workspace = deepcopy(source.workspace)
             context.workspace_combo.setCurrentText(context.workspace.path)
-            context._on_collected(Collection(
-                tuple(source.model._by_nodeid), deepcopy(source._markers_by_nodeid)))
+            if (getattr(source, '_tree_workspace', '') == source.workspace.path
+                    and not getattr(source, '_collecting', False)):
+                errors = deepcopy(getattr(source, '_collection_errors', {}))
+                context._on_collected(Collection(
+                    tuple(source.model._by_nodeid), deepcopy(source._markers_by_nodeid),
+                    broken_files={path: error for path, error in errors.items() if path != '__collection__'}))
+                context._collection_errors = errors
+                context._campaign_collection_complete = not bool(errors)
+                context._refresh_collection_warning()
             context.model.set_all_checked(False)
             context.readers_bar.select_names(context.workspace.readers, [
                 reader.name for reader in source.workspace.readers
@@ -712,6 +719,8 @@ class RunTabsController(QObject):
         for entry in self.entries:
             context = entry.context
             workspace = context.workspace
+            collected = bool(workspace and getattr(context, '_tree_workspace', '') == workspace.path
+                             and not getattr(context, '_collecting', False))
             geometry = entry.floating.saveGeometry().toBase64().data().decode("ascii") if entry.floating else ""
             data.append(dict(
                 identifier=entry.identifier,
@@ -722,10 +731,11 @@ class RunTabsController(QObject):
                 workspace=workspace.path if workspace else "",
                 config=workspace.config_path if workspace else "",
                 name=context._pending_run_name,
-                nodeids=list(context.model._by_nodeid),
+                nodeids=list(context.model._by_nodeid) if collected else [],
+                collection_errors=context._collection_errors if collected else {},
                 markers=context._markers_by_nodeid,
-                checked=context.model.checked_nodeids(),
-                profile=asdict(context._active_execution_profile) if context._active_execution_profile else None,
+                checked=context.model.checked_nodeids() if collected else [],
+                profile=asdict(context._active_execution_profile) if collected and context._active_execution_profile else None,
                 profile_visible=context.profile_tree_button.isChecked(),
                 profile_checked=context.profile_model.checked_nodeids(),
                 readers=context.readers_bar.selected_indexes(),
@@ -775,7 +785,14 @@ class RunTabsController(QObject):
                     context._tree_workspace = None
                     nodeids = item.get("nodeids", [])
                     if isinstance(nodeids, list) and all(isinstance(node, str) for node in nodeids):
-                        context._on_collected(Collection(tuple(nodeids), item.get("markers", {})))
+                        errors = item.get('collection_errors', {})
+                        errors = {str(path): {key: str(error.get(key, '')) for key in ('location', 'message', 'body')}
+                                  for path, error in errors.items() if isinstance(error, dict)} if isinstance(errors, dict) else {}
+                        context._on_collected(Collection(tuple(nodeids), item.get("markers", {}),
+                            broken_files={path: error for path, error in errors.items() if path != '__collection__'}))
+                        context._collection_errors = errors
+                        context._campaign_collection_complete = not bool(errors)
+                        context._refresh_collection_warning()
                     context.model.set_checked_nodeids(item.get("checked", []))
                 context._interpreter_override = item.get("interpreter", "")
                 for key, widget in (("splitter", context.split), ("columns", context.tree.header())):
@@ -879,6 +896,11 @@ class RunTabsController(QObject):
         if entry.state == "stopped":
             return "Stopped", t.divergent_color(), "mdi.stop-circle-outline"
         if entry.state == "finished":
+            from runner.domain.collection_state import summary as collection_summary
+            collection = collection_summary(getattr(entry.context, '_run_collection_errors', {}))
+            if collection:
+                return ((f'Failed · {failures} · {collection}', t.status_color(Status.FAILED), 'mdi.alert-circle-outline')
+                        if failures else (f'Incomplete · {collection}', t.divergent_color(), 'mdi.alert-outline'))
             if failures:
                 return f"Failed · {failures}", t.status_color(Status.FAILED), "mdi.alert-circle-outline"
             if sum(counts.values()) < entry.progress[1]:

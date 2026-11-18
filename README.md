@@ -1,5 +1,21 @@
 # Pytest Runner GUI
 
+## Verdict de collecte et workspace fiables — v1.7.4
+
+Un run dont certains fichiers n'ont pas pu être collectés affiche désormais
+**Incomplete** en orange, même si tous les tests exécutés réussissent. Le
+bouton **files not collected** donne accès aux erreurs. Cet avertissement
+reste présent dans l'historique et les rapports HTML, y compris pour les
+profils, les nouveaux onglets et les exécutions répétées. Les compteurs
+continuent de représenter uniquement les tests réellement exécutés.
+
+Un chemin invalide remet le champ sur le workspace réellement chargé. Les
+tests de l'ancien projet ne peuvent pas être lancés lorsque le champ désigne
+un nouveau dossier encore non collecté, y compris par raccourci ou clic
+droit. La bannière d'erreur disparaît après une collecte réussie.
+
+Corrections des points **C2 et M1** de l'audit 1.7.1.
+
 ## Historique stable après une relance — v1.7.3
 
 L'utilisation des filtres et de la recherche dans **History**, suivie d'un
