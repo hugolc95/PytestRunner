@@ -560,6 +560,9 @@ class HistoryWindow(QDialog):
         self._groups: list[RunGroup] = []
         self._visible_groups: list[RunGroup] = []
         self._cards: list[tuple[QListWidgetItem, RunCard]] = []
+        self._card_hosts: dict[int, QWidget] = {}
+        self._card_cache = QWidget(self)
+        self._card_cache.hide()
         self._listed_groups: list[RunGroup] = []
         self._listed_visible_groups: list[RunGroup] = []
         self._items_by_id: dict[str, QListWidgetItem] = {}
@@ -572,6 +575,7 @@ class HistoryWindow(QDialog):
         # pouvait ensuite etre reutilisee par la boucle exterieure, encore en
         # cours, via son propre instantane (perime) de `self._cards`.
         self._populating = False
+        self._materializing = False
         self._filter_reader = ""
         self._compare_mode = False
         self._adjusting_selection = False
@@ -1115,18 +1119,8 @@ class HistoryWindow(QDialog):
         self._populating = True
         self.run_list.blockSignals(True)
         if self._listed_groups != self._groups:
-            # `removeItemWidget()` DOIT venir avant `clear()`/`deleteLater()` :
-            # Qt suit les widgets d'index dans la meme structure interne que
-            # les editeurs persistants, et `updateEditorGeometries()` la
-            # reparcourt a chaque fois que la vue redevient visible. Sans ce
-            # detachement explicite -- deja fait correctement dans
-            # `_materialize_cards()` -- `clear()` peut laisser une reference
-            # pendante vers une carte deja detruite, invisible tant qu'on
-            # reste sur la page mais qui fait planter l'appli (segfault natif,
-            # pas une exception Python) au prochain retour sur Historique.
             for item, card in self._cards:
-                self.run_list.removeItemWidget(item)
-                card.setParent(None)
+                self._unmount_card(item)
                 card.deleteLater()
             while self.run_list.count():
                 self.run_list.takeItem(0)
@@ -1148,26 +1142,15 @@ class HistoryWindow(QDialog):
                 self._items_by_id[group.id] = item
             self._listed_groups = list(self._groups)
 
-        # Les objets lourds sont conserves, seuls les items legers quittent et
-        # rejoignent la liste. Les filtres ne reconstruisent donc plus aucune
-        # carte, tout en gardant une liste ne contenant que les resultats (ce
-        # qui simplifie clavier, selection et accessibilite).
-        #
-        # Rejouer ce remue-menage (tout retirer, tout rajouter) alors que la
-        # liste VISIBLE n'a pas change est a la fois inutile et risque : fait
-        # juste apres qu'une page redevienne visible (par exemple en
-        # regardant l'Historique pendant qu'un run tourne encore), la vue
-        # n'a pas fini de stabiliser sa mise en page, et ce retrait/rajout
-        # d'items pouvait laisser une reference perimee dans le suivi interne
-        # des "editeurs" de Qt -- invisible jusqu'au prochain retour sur la
-        # page, qui plantait alors nativement (segfault, pas une exception
-        # Python). Rien n'a besoin de bouger si la liste affichee est deja
-        # la bonne.
+        # Garder les cartes encore utiles, mais pas les widgets d'index :
+        # removeItemWidget() programme TOUJOURS leur destruction. Reattacher
+        # le meme widget ne l'annule pas et provoquait le crash au retour sur
+        # Historique. Seuls leurs conteneurs jetables appartiennent a Qt.
         if self._visible_groups != self._listed_visible_groups:
             while self.run_list.count():
                 item = self.run_list.item(0)
                 if item.data(Qt.UserRole) is not None:
-                    self.run_list.removeItemWidget(item)
+                    self._unmount_card(item)
                 self.run_list.takeItem(0)
             cards = {id(item): card for item, card in self._cards}
             previous_day = ""
@@ -1180,7 +1163,7 @@ class HistoryWindow(QDialog):
                 self.run_list.addItem(item)
                 card = cards.get(id(item))
                 if card is not None:
-                    self.run_list.setItemWidget(item, card)
+                    self._mount_card(item, card)
             self._listed_visible_groups = list(self._visible_groups)
         self.run_list.blockSignals(False)
         self._populating = False
@@ -1239,13 +1222,37 @@ class HistoryWindow(QDialog):
         qu'une dizaine. Les items restent tous presents pour le clavier et les
         filtres ; les widgets suivent simplement le viewport.
         """
-        if self._populating:
-            # `_populate_list()` a deja prevu son propre appel une fois les
-            # lignes stabilisees ; un signal de sa scrollbar (que son
-            # `blockSignals()` ne couvre pas) peut en rappeler un second en
-            # PLEIN milieu de son remplissage, sur des lignes pas encore a
-            # leur place -- source du crash natif corrige ici.
+        if self._populating or self._materializing:
             return
+        self._materializing = True
+        try:
+            self._materialize_visible_cards()
+        finally:
+            self._materializing = False
+
+    def _mount_card(self, item: QListWidgetItem, card: RunCard) -> None:
+        host = QWidget(self.run_list.viewport())
+        layout = QVBoxLayout(host)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.setAlignment(Qt.AlignTop)
+        layout.addWidget(card)
+        self._card_hosts[id(item)] = host
+        self.run_list.setItemWidget(item, host)
+        card.show()
+
+    def _unmount_card(self, item: QListWidgetItem) -> None:
+        host = self._card_hosts.pop(id(item), None)
+        if host is None:
+            return
+        # Sortir la carte AVANT que Qt ne detruise son ancien conteneur.
+        # Le parent cache garde une propriete Qt explicite, sans fenetre
+        # orpheline ni suppression differee a annuler artificiellement.
+        card = host.layout().takeAt(0).widget()
+        card.setParent(self._card_cache)
+        self.run_list.removeItemWidget(item)
+
+    def _materialize_visible_cards(self) -> None:
         count = self.run_list.count()
         if not count:
             return
@@ -1275,9 +1282,7 @@ class HistoryWindow(QDialog):
             if row in wanted:
                 kept.append((item, card))
             else:
-                if row >= 0:
-                    self.run_list.removeItemWidget(item)
-                card.setParent(None)
+                self._unmount_card(item)
                 card.deleteLater()
         self._cards = kept
         existing = {id(item) for item, _card in kept}
@@ -1291,7 +1296,7 @@ class HistoryWindow(QDialog):
             card.set_selected(id(item) in selected)
             card.lock_toggled.connect(self._toggle_lock)
             card.delete_requested.connect(self.delete_run)
-            self.run_list.setItemWidget(item, card)
+            self._mount_card(item, card)
             self._cards.append((item, card))
 
     def _first_run_item(self) -> QListWidgetItem | None:

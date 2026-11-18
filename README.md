@@ -1,5 +1,15 @@
 # Pytest Runner GUI
 
+## Historique stable après une relance — v1.7.3
+
+L'utilisation des filtres et de la recherche dans **History**, suivie d'un
+**Re-run** et d'un retour dans l'historique pendant l'exécution, ne provoque
+plus la fermeture de l'application. Les cartes des runs restent disponibles
+lors des changements de filtre, du défilement et des mises à jour de la liste.
+
+Correction du point **C1** de l'audit 1.7.1, vérifiée sur le parcours complet
+dans l'application réelle et par des tests de non-régression ciblés.
+
 ## Sauvegarde des résultats accélérée — v1.7.2
 
 Après l'exécution, les cases du tree redeviennent modifiables immédiatement :
