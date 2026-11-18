@@ -11,6 +11,7 @@ from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
 import json
 from pathlib import Path
+import time
 from uuid import uuid4
 
 from PySide6.QtCore import QObject, QTimer, Qt
@@ -492,12 +493,8 @@ class RunTabsController(QObject):
     def finished(self, entry, reports):
         if entry.state != "running":
             return
-        worker = getattr(entry.context, "_archive_worker", None)
-        if worker is not None:
-            entry.state = "finalizing"
-            worker.done.connect(lambda *_: self.complete(entry, reports))
-            self.refresh()
-            return
+        # Les donnees terminees sont deja capturees. L'archivage ne doit pas
+        # garder les cases verrouillees ni retarder la file d'execution.
         self.complete(entry, reports)
 
     def complete(self, entry, reports):
@@ -672,7 +669,8 @@ class RunTabsController(QObject):
 
     def close_tab(self, index):
         entry = self.entries[index]
-        if len(self.entries) == 1 or entry.state in ("running", "finalizing"):
+        if (len(self.entries) == 1 or entry.state in ("running", "finalizing")
+                or getattr(entry.context, '_archive_workers', ())):
             return
         collector = entry.context._collector
         if collector is not None and collector.isRunning():
@@ -936,7 +934,9 @@ class RunTabsController(QObject):
             for side in (QTabBar.LeftSide, QTabBar.RightSide):
                 close = self.tabs.tabButton(index, side)
                 if close is not None:
-                    close.setEnabled(len(self.entries) > 1 and entry.state not in ("running", "finalizing"))
+                    saving = bool(getattr(entry.context, '_archive_workers', ()))
+                    close.setEnabled(len(self.entries) > 1 and entry.state not in ("running", "finalizing") and not saving)
+                    close.setToolTip('Saving results in background…' if saving else 'Close run')
             if entry.floating:
                 entry.floating.setWindowTitle(f"{entry.name} · {state} — Pytest Runner")
                 entry.floating.title.setText(f"{entry.name} · {state}")
@@ -964,7 +964,10 @@ class RunTabsController(QObject):
                 getattr(self.window, name).setEnabled(getattr(selected, name).isEnabled())
         if hasattr(self, "summary"):
             active = f"{self.active.name} running · " if self.active else ""
-            self.summary.setText(f"{active}{len(self.queue)} waiting" + (" · queue paused" if self.paused else ""))
+            saving = sum(len(getattr(entry.context, '_archive_workers', ())) for entry in self.entries)
+            saving_text = 'Saving results…' if saving == 1 else f'Saving {saving} runs…'
+            self.summary.setText(f"{active}{len(self.queue)} waiting" + (" · queue paused" if self.paused else "")
+                                 + (f' · {saving_text}' if saving else ''))
 
     def shutdown(self):
         self.save_timer.stop()
@@ -972,6 +975,7 @@ class RunTabsController(QObject):
         self.closing = True
         self.timer.stop()
         ready = True
+        archive_deadline = time.monotonic() + 3
         for entry in self.entries:
             context = entry.context
             context.reader_selector.stop_discovery()
@@ -985,9 +989,9 @@ class RunTabsController(QObject):
                 ready = context._stress_worker.wait(3000) and ready
             if context._collector is not None and context._collector.isRunning():
                 ready = context._collector.wait(3000) and ready
-            archive = getattr(context, "_archive_worker", None)
-            if archive is not None:
-                ready = archive.wait(3000) and ready
+            for archive in tuple(getattr(context, '_archive_workers', ())):
+                remaining = max(0, int((archive_deadline - time.monotonic()) * 1000))
+                ready = archive.wait(remaining) and ready
             if entry.floating:
                 entry.floating.hide()
             context.results.source.save()

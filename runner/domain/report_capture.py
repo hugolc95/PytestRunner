@@ -5,21 +5,24 @@ import json
 from pathlib import Path
 
 
-def persist_analysis(entry, directory):
+def persist_analysis(entry, directory, *, log_index=None):
     from runner.domain.history import _sain
     data = copy.deepcopy(entry.analysis_data)
     data.setdefault('warnings', [])
     used = set()
+    contents = {}
     for occurrence in data.get('occurrences', []):
         for attempt in occurrence.get('attempts', []):
             if not data.get('save_logs', True):
                 attempt['log_notice'] = 'Complete logs were disabled in this profile at launch.'
             path = attempt.get('log_path')
             if not path and data.get('save_logs', True) and entry.build_number is not None and entry.log_root:
-                from runner.domain.logs import find_test_log
+                from runner.domain.log_index import RunLogIndex
                 try:
-                    found = find_test_log(Path(entry.log_root), occurrence.get('nodeid', ''), entry.reader,
-                                          build_number=entry.build_number, excluded=frozenset(used))
+                    if log_index is None:
+                        log_index = RunLogIndex(Path(entry.log_root), entry.build_number)
+                    found = log_index.find(occurrence.get('nodeid', ''), entry.reader,
+                                           excluded=used)
                     path = str(found) if found is not None else ''
                     attempt['log_path'] = path
                 except OSError:
@@ -29,7 +32,9 @@ def persist_analysis(entry, directory):
                     resolved = Path(path).resolve()
                     # Un log partage reste partage : ne pas le presenter
                     # comme une capture exclusive d'une autre occurrence.
-                    attempt['log'] = resolved.read_text(encoding='utf-8', errors='replace')
+                    if resolved not in contents:
+                        contents[resolved] = resolved.read_text(encoding='utf-8', errors='replace')
+                    attempt['log'] = contents[resolved]
                     if resolved in used:
                         attempt['log_shared'] = True
                     used.add(resolved)
@@ -38,7 +43,10 @@ def persist_analysis(entry, directory):
     path = Path(directory) / f'{_sain(entry.id)}_{_sain(entry.reader) or "no-reader"}.analysis.json'
     temporary = path.with_suffix('.tmp')
     try:
-        temporary.write_text(json.dumps(data, ensure_ascii=False, allow_nan=False), encoding='utf-8')
+        # Ecrire par morceaux evite une enorme chaine JSON temporaire et une
+        # longue phase de serialisation qui monopolise le GIL sur de gros logs.
+        with temporary.open('w', encoding='utf-8') as stream:
+            json.dump(data, stream, ensure_ascii=False, allow_nan=False)
         temporary.replace(path)
     except (OSError, ValueError, TypeError):
         try:

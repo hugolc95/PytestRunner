@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import copy
 
 from PySide6.QtCore import QTimer
 
@@ -97,7 +98,7 @@ def install() -> None:
                 run_kind=getattr(self, "_archive_run_kind", "unknown"),
                 profile_name=getattr(self, "_archive_profile_name", ""),
                 run_name=getattr(self, "_archive_run_name", ""),
-                replay_profile=getattr(self, "_archive_replay_profile", None),
+                replay_profile=copy.deepcopy(getattr(self, "_archive_replay_profile", None)),
                 analysis_data=analysis,
                 campaign_coverage=analysis.get('coverage', {}),
             )
@@ -158,36 +159,48 @@ def install() -> None:
         self._archive_failed_by_reader = {}
 
         def finish_lightweight_bookkeeping() -> None:
-            self.results.refresh_logs()
+            if not self.service.busy:
+                self.results.refresh_logs()
             self._update_actions()
 
         if not entries:
             QTimer.singleShot(0, finish_lightweight_bookkeeping)
             return
 
-        # History can be read while the worker runs, but destructive history
-        # actions must not race with its atomic JSON replacement.
-        self.history_button.setEnabled(False)
         worker = RunArchiveWorker(
             self.history.racine, self.history.max_entrees, entries, self)
+        workers = getattr(self, '_archive_workers', None)
+        if workers is None:
+            workers = self._archive_workers = []
+        workers.append(worker)
         self._archive_worker = worker
+        archive_id = entries[0][0].id
+        self.history.pending_archives.add(archive_id)
 
         def archive_done(ok: bool, detail: str) -> None:
             self.history.reload()
-            self._archive_worker = None
-            self.history_button.setEnabled(True)
+            workers.remove(worker)
+            self._archive_worker = workers[-1] if workers else None
+            self.history.pending_archives.discard(archive_id)
             if not ok:
-                # Archiving is non-fatal, but losing a run must no longer be
-                # silent. Keep the main result visible and report the storage
-                # problem in the status line.
-                self.status_label.setText(
-                    "Run finished, but history could not be fully saved"
-                    + (f": {detail}" if detail else ""))
-            finish_lightweight_bookkeeping()
+                # Signaler la perte sans remplacer le statut du run suivant
+                # ni bloquer l'interface pendant une nouvelle execution.
+                from PySide6.QtWidgets import QMessageBox
+                from PySide6.QtCore import Qt
+                dialog = QMessageBox(QMessageBox.Warning, 'Results could not be fully saved',
+                    'The run finished, but its history could not be fully saved.'
+                    + (f'\n{detail}' if detail else ''), QMessageBox.Ok, self)
+                dialog.setAttribute(Qt.WA_DeleteOnClose)
+                dialog.show()
+            # Une ancienne sauvegarde peut finir pendant le run suivant : ne
+            # jamais rafraichir ses logs ni changer son statut ou sa selection.
+            self._update_actions()
+            worker.deleteLater()
 
         self._archive_done_slot = archive_done
         worker.done.connect(archive_done)
         worker.start()
+        QTimer.singleShot(0, finish_lightweight_bookkeeping)
 
     MainWindow._on_run_started = remember_run_for_archive
     MainWindow._on_outcome = remember_outcome_for_archive

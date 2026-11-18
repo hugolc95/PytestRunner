@@ -1742,6 +1742,13 @@ class HistoryWindow(QDialog):
         entries = (entry,) if entry is not None else group.entries if group is not None else ()
         if not entries:
             return
+        if any(e.id in self.history.pending_archives for e in entries):
+            self._say('This run is still being saved. Export will be available when saving finishes.')
+            return
+        # La selection peut dater du commit des metadonnees, avant que les
+        # fichiers annexes aient fini d'etre ecrits en arriere-plan.
+        current = {(e.id, e.reader): e for e in self.history.entries()}
+        entries = tuple(current.get((e.id, e.reader), e) for e in entries)
         path, _ = QFileDialog.getSaveFileName(
             self, "Save the report", f"report_{entries[0].id}.html", "HTML (*.html)")
         if not path:

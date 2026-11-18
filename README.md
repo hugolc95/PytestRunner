@@ -1,5 +1,22 @@
 # Pytest Runner GUI
 
+## Sauvegarde des résultats accélérée — v1.7.2
+
+Après l'exécution, les cases du tree redeviennent modifiables immédiatement :
+vous pouvez préparer et lancer la sélection suivante pendant la sauvegarde.
+La file d'attente continue également sans attendre l'archivage. Un indicateur
+discret en bas de la fenêtre signale les sauvegardes encore en cours.
+
+L'enregistrement des grandes suites recherche les logs une seule fois par run,
+au lieu de reparcourir les dossiers pour chaque test et chaque lecteur. Les
+résultats terminés restent indépendants des nouvelles sélections ; les runs,
+leurs paramètres et leurs logs sont conservés séparément dans l'historique.
+Les logs de cas comme `[0]` et `[10]` ne sont plus confondus lors de l'archivage.
+
+L'export HTML d'un run encore en cours de sauvegarde demande d'attendre la fin
+de son enregistrement pour produire un rapport complet. Les autres runs
+restent exportables.
+
 ## Sélections de cas paramétrés conservées — v1.7.1
 
 Dans **Add tests / groups**, un cas choisi individuellement reste une

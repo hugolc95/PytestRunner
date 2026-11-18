@@ -42,7 +42,7 @@ class RunCampaignSync(QObject):
         if not plan.problem:
             unavailable = set(plan.missing)
             missing = {key for key, (position, _, _) in w.profile_model.locations.items()
-                       if position % len(profile.sequence) in unavailable}
+                       if profile.sequence and position % len(profile.sequence) in unavailable}
             if w.profile_model.campaign_missing != missing:
                 w.profile_model.set_campaign_missing(missing)
         can_undo = w.profiles_page.campaign_sync.has_undo(profile.profile_id)

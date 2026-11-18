@@ -396,6 +396,32 @@ def test_html_export_uses_the_chosen_reader(fenetre, tmp_path, monkeypatch, qtbo
     assert "Report written" in fenetre.status.text()
 
 
+def test_html_export_waits_for_the_selected_archive_only(fenetre, monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail('An incomplete archive must not open the export dialog')
+    monkeypatch.setattr('runner.ui.history_dashboard.QFileDialog.getSaveFileName', unexpected)
+    select_run(fenetre)
+    fenetre.history.pending_archives.add('recent')
+    fenetre.export_html()
+    assert 'still being saved' in fenetre.status.text()
+
+
+def test_html_export_uses_completed_files_after_selecting_pending_metadata(fenetre, tmp_path, monkeypatch, qtbot):
+    from dataclasses import replace
+    target = tmp_path / 'completed-report.html'
+    monkeypatch.setattr('runner.ui.history_dashboard.QFileDialog.getSaveFileName',
+                        lambda *args, **kwargs: (str(target), ''))
+    monkeypatch.setattr(fenetre, '_offer_open_html', lambda *_: None)
+    select_run(fenetre)
+    stale = fenetre._current_group().entry_for_reader('Reader B')
+    output = tmp_path / 'completed-output.log'
+    output.write_text('Output attached after selecting this run')
+    fenetre.history.attach_archive([replace(stale, output_file=str(output))])
+    fenetre.export_html(stale)
+    qtbot.waitUntil(lambda: fenetre._report_export_worker is None, timeout=15000)
+    assert 'Output attached after selecting this run' in target.read_text(encoding='utf-8')
+
+
 # ------------------------------------------------------------------ actions
 
 def test_rerun_emits_the_whole_group(fenetre, qtbot):

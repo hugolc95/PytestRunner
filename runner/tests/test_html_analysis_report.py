@@ -182,10 +182,10 @@ def test_background_archive_commits_metadata_before_reading_analysis(qtbot, tmp_
     root = tmp_path / 'history'
     real = report_capture.persist_analysis
     observed = []
-    def persist(e, directory):
+    def persist(e, directory, **kwargs):
         stored = History(directory).find(e.id)
         observed.append(stored is not None and not stored.analysis_file)
-        return real(e, directory)
+        return real(e, directory, **kwargs)
     monkeypatch.setattr(report_capture, 'persist_analysis', persist)
     worker = RunArchiveWorker(root, 100, ((entry(tmp_path), 'recorded stdout'),))
     done = []

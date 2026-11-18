@@ -19,6 +19,8 @@ import itertools
 import json
 import os
 import time
+from contextlib import contextmanager
+from threading import RLock
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -30,6 +32,10 @@ MAX_ENTREES = 300
 
 # Runs examines par defaut pour reperer un test instable.
 FENETRE_FLAKY = 50
+
+# L'interface et l'archivage ont chacun une instance History. Les mutations
+# de l'index sont serialisees ; la capture des logs reste hors de ce verrou.
+_INDEX_LOCK = RLock()
 
 
 def dossier() -> Path:
@@ -258,6 +264,7 @@ class History:
         self.racine = Path(racine) if racine is not None else dossier()
         self.racine.mkdir(parents=True, exist_ok=True)
         self.max_entrees = max_entrees
+        self.pending_archives: set[str] = set()
         self._entrees: list[RunEntry] = []
         self._charger()
 
@@ -366,6 +373,28 @@ class History:
 
     # ------------------------------------------------------------ ecriture
 
+    @contextmanager
+    def _mutation(self):
+        with _INDEX_LOCK:
+            self.reload()
+            yield
+            self._enregistrer()
+
+    def attach_archive(self, entries: list[RunEntry]) -> None:
+        """Fusionne les fichiers captures sans ecraser un run plus recent."""
+        updates = {(entry.id, entry.reader): entry for entry in entries}
+        with self._mutation():
+            kept = set()
+            for index, current in enumerate(self._entrees):
+                archived = updates.get((current.id, current.reader))
+                if archived is not None:
+                    kept.add((current.id, current.reader))
+                    self._entrees[index] = replace(current,
+                        analysis_file=archived.analysis_file, output_file=archived.output_file)
+            # Clear / Delete pendant la capture ne doit pas recreer des
+            # fichiers devenus invisibles, ni ressusciter le run supprime.
+            self._oublier(entry for key, entry in updates.items() if key not in kept)
+
     def _enregistrer(self) -> None:
         """Ecrit par un temporaire remplace d'un bloc.
 
@@ -374,10 +403,9 @@ class History:
         """
         temporaire = self.fichier.with_suffix(".tmp")
         try:
-            temporaire.write_text(
-                json.dumps([e.to_json() for e in self._entrees],
-                           indent=2, ensure_ascii=False),
-                encoding="utf-8")
+            with temporaire.open('w', encoding='utf-8') as stream:
+                json.dump([e.to_json() for e in self._entrees], stream,
+                          indent=2, ensure_ascii=False)
             temporaire.replace(self.fichier)
         except OSError:
             # L'historique est un confort : il ne doit jamais faire echouer un
@@ -414,18 +442,19 @@ class History:
             except OSError:
                 entry = replace(entry, output_file="")
 
-        self._entrees.insert(0, entry)
-        self._oublier(self._entrees[self.max_entrees:])
-        self._entrees = self._entrees[:self.max_entrees]
-        self._enregistrer()
+        with self._mutation():
+            self._entrees.insert(0, entry)
+            self._entrees.sort(key=lambda e: e.timestamp, reverse=True)
+            self._oublier(self._entrees[self.max_entrees:])
+            self._entrees = self._entrees[:self.max_entrees]
         return entry
 
     def clear(self) -> None:
         """Efface tout SAUF les runs verrouilles, fichiers de sortie compris."""
-        a_effacer = [e for e in self._entrees if not e.locked]
-        self._oublier(a_effacer)
-        self._entrees = [e for e in self._entrees if e.locked]
-        self._enregistrer()
+        with self._mutation():
+            a_effacer = [e for e in self._entrees if not e.locked]
+            self._oublier(a_effacer)
+            self._entrees = [e for e in self._entrees if e.locked]
 
     def set_locked(self, identifiant: str, verrouille: bool) -> int:
         """Verrouille ou deverrouille un lancement entier (toutes ses
@@ -435,23 +464,22 @@ class History:
         cadenas protege seulement du "tout effacer" en un clic, pas d'un
         choix delibere de retirer ce run precis.
         """
-        touchees = 0
-        nouvelles = []
-        for entree in self._entrees:
-            if entree.id == identifiant and entree.locked != verrouille:
-                entree = replace(entree, locked=verrouille)
-                touchees += 1
-            nouvelles.append(entree)
-        if touchees:
+        with self._mutation():
+            touchees = 0
+            nouvelles = []
+            for entree in self._entrees:
+                if entree.id == identifiant and entree.locked != verrouille:
+                    entree = replace(entree, locked=verrouille)
+                    touchees += 1
+                nouvelles.append(entree)
             self._entrees = nouvelles
-            self._enregistrer()
         return touchees
 
     def rename_run(self, identifiant: str, name: str) -> None:
         name = name.strip()[:100]
-        self._entrees = [replace(e, run_name=name) if e.id == identifiant else e
-                        for e in self._entrees]
-        self._enregistrer()
+        with self._mutation():
+            self._entrees = [replace(e, run_name=name) if e.id == identifiant else e
+                            for e in self._entrees]
 
     def remove_run(self, identifiant: str) -> int:
         """Efface un lancement complet, donc toutes ses entrees Reader.
@@ -460,12 +488,10 @@ class History:
         une seule ligne laisserait un demi-run dans la nouvelle vue groupee et
         ferait croire que l'autre lecteur n'avait jamais ete execute.
         """
-        retirees = [e for e in self._entrees if e.id == identifiant]
-        if not retirees:
-            return 0
-        self._oublier(retirees)
-        self._entrees = [e for e in self._entrees if e.id != identifiant]
-        self._enregistrer()
+        with self._mutation():
+            retirees = [e for e in self._entrees if e.id == identifiant]
+            self._oublier(retirees)
+            self._entrees = [e for e in self._entrees if e.id != identifiant]
         return len(retirees)
 
     def _oublier(self, entrees) -> None:

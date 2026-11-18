@@ -62,7 +62,7 @@ def capture_report(window, report):
     if coverage and getattr(report, 'cancelled', False):
         coverage.update(stopped=True, complete=False)
     return dict(schema=1, occurrences=records,
-                coverage=coverage, campaign_profile=scope['profile'] if scope else None,
+                coverage=coverage, campaign_profile=copy.deepcopy(scope['profile']) if scope else None,
                 app_version=__version__, interpreter=request.interpreter if request else '',
                 atr=atrs.get(report.reader.name, ''),
                 commands=copy.deepcopy(report.commands), issues=list(report.issues),
