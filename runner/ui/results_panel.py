@@ -26,7 +26,12 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPushButton,
+    QScrollArea,
+    QFrame,
+    QSizePolicy,
+    QToolButton,
     QSplitter,
     QTabBar,
     QTabWidget,
@@ -75,6 +80,9 @@ class ReaderViews(QWidget):
         self._readers: tuple[Reader, ...] = ()
         self._difference_groups: list[tuple[frozenset[int], ...]] = []
         self._difference_index = -1
+        self._compare_orientation = None
+        self._wrap_lines = False
+        self._syncing_wrap = False
 
         self.views: list[ConsoleView] = []
         self.headers: list[QLabel] = []
@@ -94,12 +102,35 @@ class ReaderViews(QWidget):
         self.compare.setObjectName("IconSm")
         self.compare.setIcon(icons.icon("mdi.view-split-vertical", t.TEXT_MUTED))
         self.compare.setCheckable(True)
+        self.compare.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         self.compare.setToolTip(
             "Compare reader logs and highlight meaningful differences"
             if highlight_differences else
             "Compare every reader  (Ctrl+Shift+D)")
         self.compare.setVisible(False)
         self.compare.toggled.connect(self._on_compare_toggled)
+        self.layout_button = QToolButton()
+        self.layout_button.setObjectName('IconSm')
+        self.layout_button.setIcon(icons.icon('mdi.view-dashboard-outline', t.TEXT_MUTED))
+        self.layout_button.setToolTip('Comparison layout: automatic, side by side or stacked')
+        self.layout_button.setPopupMode(QToolButton.InstantPopup)
+        self.layout_menu = QMenu(self.layout_button)
+        self.layout_button.setMenu(self.layout_menu)
+        self._layout_actions = []
+        for text, orientation in (('Automatic', None), ('Side by side', Qt.Horizontal), ('Stacked', Qt.Vertical)):
+            action = self.layout_menu.addAction(text)
+            action.setCheckable(True)
+            action.setChecked(orientation is None)
+            action.triggered.connect(lambda checked=False, choice=orientation: self.set_compare_layout(choice))
+            self._layout_actions.append((action, orientation))
+        self.layout_button.hide()
+        self.wrap_all = QPushButton()
+        self.wrap_all.setObjectName('IconSm')
+        self.wrap_all.setIcon(icons.icon('mdi.wrap', t.TEXT_MUTED))
+        self.wrap_all.setToolTip('Wrap long lines in all reader logs')
+        self.wrap_all.setCheckable(True)
+        self.wrap_all.toggled.connect(self._set_wrap_all)
+        self.wrap_all.hide()
 
         # Pas de bouton d'ouverture ici : il en faut UN PAR CONSOLE, pose dans
         # la barre de chaque vue a cote de son bouton de copie (voir
@@ -134,6 +165,7 @@ class ReaderViews(QWidget):
             lambda: self.navigate_difference(1))
 
         self.difference_navigation = QWidget()
+        self.difference_navigation.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Fixed)
         navigation = QHBoxLayout(self.difference_navigation)
         navigation.setContentsMargins(0, 0, 0, 0)
         navigation.setSpacing(t.SPACE_1)
@@ -155,6 +187,12 @@ class ReaderViews(QWidget):
         barre.addWidget(self.tabs, 1)
         barre.addWidget(self.difference_navigation)
         barre.addWidget(self.compare)
+        barre.addWidget(self.layout_button)
+        barre.addWidget(self.wrap_all)
+        self._comparison_space = QWidget()
+        self._comparison_space.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._comparison_space.hide()
+        barre.addWidget(self._comparison_space, 1)
 
         self.split = QSplitter(orientation, self)
         self.split.setChildrenCollapsible(False)
@@ -163,7 +201,17 @@ class ReaderViews(QWidget):
         colonne.setContentsMargins(0, 0, 0, 0)
         colonne.setSpacing(t.SPACE_1)
         colonne.addLayout(barre)
-        colonne.addWidget(self.split, 1)
+        self._comparison_scroll = None
+        if self._highlight_differences:
+            # Les largeurs minimales des colonnes appartiennent au defilement
+            # local, jamais au separateur principal arbre/resultats.
+            self._comparison_scroll = QScrollArea()
+            self._comparison_scroll.setWidgetResizable(True)
+            self._comparison_scroll.setFrameShape(QFrame.NoFrame)
+            self._comparison_scroll.setWidget(self.split)
+            colonne.addWidget(self._comparison_scroll, 1)
+        else:
+            colonne.addWidget(self.split, 1)
 
         self._add_view()
 
@@ -171,10 +219,15 @@ class ReaderViews(QWidget):
 
     def _add_view(self) -> ConsoleView:
         vue = ConsoleView(show_lens=self._show_lens, parent=self.split)
+        vue.wrap_button.setChecked(self._wrap_lines)
+        vue.wrap_button.toggled.connect(self._set_wrap_all)
 
         entete = QLabel()
         entete.setVisible(False)
         entete.setObjectName("Faint")
+        entete.setTextFormat(Qt.PlainText)
+        entete.setWordWrap(True)
+        entete.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
 
         boite = QWidget()
         col = QVBoxLayout(boite)
@@ -299,6 +352,61 @@ class ReaderViews(QWidget):
             visible = position < nombre and (comparer or nombre == 1 or position == courant)
             boite.setVisible(visible)
             self.headers[position].setVisible(visible and comparer and nombre > 1)
+        self._adapt_comparison()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._adapt_comparison()
+
+    def set_compare_layout(self, orientation):
+        self._compare_orientation = orientation
+        for action, value in self._layout_actions:
+            action.setChecked(value == orientation)
+        self._adapt_comparison()
+
+    def _adapt_comparison(self):
+        if not self._highlight_differences:
+            return
+        active = self.compare.isChecked() and len(self._readers) > 1
+        self.tabs.setVisible(len(self._readers) > 1 and not active)
+        self.layout_button.setVisible(active)
+        self.wrap_all.setVisible(active)
+        self._comparison_space.setVisible(active)
+        self.compare.setObjectName('Ghost')
+        self.compare.setText(f'Comparing {len(self._readers)} readers' if active else 'Compare')
+        self.compare.setToolTip('Exit comparison · comparison stays active when selecting another test'
+                                if active else 'Compare reader logs')
+        self.compare.setStyleSheet(f'color:{t.ACCENT};background:{t.ACCENT_SOFT};' if active else '')
+        orientation = self._compare_orientation
+        if orientation is None:
+            orientation = Qt.Horizontal if self.width() >= 360 * len(self._readers) else Qt.Vertical
+        if not active:
+            orientation = Qt.Horizontal
+        if self.split.orientation() != orientation:
+            self.split.setOrientation(orientation)
+        minimum = 360 if active and orientation == Qt.Horizontal else 0
+        for view in self.views:
+            view.parentWidget().setMinimumWidth(minimum)
+        self.split.setMinimumWidth(minimum * len(self._readers))
+        key = active, orientation, len(self._readers)
+        if key != getattr(self, '_comparison_layout_key', None):
+            self._comparison_layout_key = key
+            self.split.setSizes([1000] * max(1, len(self._readers)))
+        self.layout_button.setToolTip('Comparison layout: ' + (
+            'side by side' if orientation == Qt.Horizontal else 'stacked') +
+            (' (automatic)' if self._compare_orientation is None else ''))
+
+    def _set_wrap_all(self, checked):
+        if self._syncing_wrap:
+            return
+        self._syncing_wrap = True
+        try:
+            self._wrap_lines = checked
+            self.wrap_all.setChecked(checked)
+            for view in self.views:
+                view.wrap_button.setChecked(checked)
+        finally:
+            self._syncing_wrap = False
 
     def _on_compare_toggled(self, checked: bool) -> None:
         self.difference_navigation.setVisible(
@@ -471,6 +579,7 @@ class ReaderViews(QWidget):
         self.next_difference.setEnabled(enabled)
         shown = self._difference_index + 1 if enabled else 0
         self.difference_counter.setText(f"{shown} / {count}")
+        self.difference_counter.setToolTip(f'{count} meaningful difference(s) · F7 / Shift+F7')
 
     def _restyle_reader_names(self) -> None:
         courant = self.tabs.currentIndex()
@@ -511,6 +620,9 @@ class ReaderViews(QWidget):
             icons.icon("mdi.chevron-down", t.TEXT_MUTED))
         self._restyle_reader_names()
         self._update_difference_highlights()
+        self.layout_button.setIcon(icons.icon('mdi.view-dashboard-outline', t.TEXT_MUTED))
+        self.wrap_all.setIcon(icons.icon('mdi.wrap', t.TEXT_MUTED))
+        self._adapt_comparison()
 
     def clear(self) -> None:
         for vue in self.views:

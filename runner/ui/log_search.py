@@ -49,6 +49,8 @@ class LogSearchBar(QWidget):
         self.counter.setAlignment(Qt.AlignCenter)
         self.previous = self._button("mdi.chevron-up", "Previous match (Shift+Enter / Shift+F3)", -1)
         self.next = self._button("mdi.chevron-down", "Next match (Enter / F3)", 1)
+        self.previous.hide()
+        self.next.hide()
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -179,14 +181,20 @@ class LogSearchBar(QWidget):
         self._update_counter()
 
     def _update_counter(self):
+        searching = bool(self.field.text())
+        self.previous.setVisible(searching)
+        self.next.setVisible(searching)
         if self.field.text():
             total = len(self._matches)
             self.counter.setText(f"{self._index + 1}/{total}")
             self.counter.setToolTip(
                 f"{total} matches in the displayed log" if total else "No matches in the displayed log")
         else:
+            # Le detail complet reste au survol ; le libelle court evite
+            # "errors in..." et preserve la largeur du champ de recherche.
+            status = self._status.split(' in ', 1)[0]
             self.counter.setText(self.counter.fontMetrics().elidedText(
-                self._status, Qt.ElideRight, self.counter.maximumWidth()))
+                status, Qt.ElideRight, self.counter.maximumWidth()))
             self.counter.setToolTip(self._status)
 
     def selections(self):

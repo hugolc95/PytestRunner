@@ -1,5 +1,24 @@
 # Pytest Runner GUI
 
+## Comparaison des logs sans écraser l'arbre — v1.7.8
+
+**Compare** conserve la largeur de l'arbre et de sa recherche. Sur un panneau
+étroit, les logs s'empilent automatiquement ; sur un panneau large, ils sont
+côte à côte. Le menu de disposition permet aussi de choisir **Automatic**,
+**Side by side** ou **Stacked**. Une disposition côte à côte trop large défile
+localement, sans déplacer le séparateur principal.
+
+**Comparing N readers** indique clairement le mode actif, y compris après un
+changement de test. Le bouton commun de retour à la ligne s'applique à tous
+les logs ; changer ce réglage dans une console l'applique aussi aux autres.
+Chaque lecteur garde sa recherche, ses erreurs, sa copie et son ouverture
+externe. Les flèches de recherche apparaissent lorsqu'une recherche est saisie,
+pour garder un champ lisible au repos.
+
+Correction **M6** de l'audit 1.7.1. Validation : 30 tests ciblés et vérifications
+dans l'application réelle avec trois lecteurs, recherches, changement de test,
+dispositions automatique/manuelles et thèmes clair/sombre.
+
 ## Interface utilisable en petite fenêtre — v1.7.7
 
 La fenêtre peut être réduite à 800 × 560 et utilisée en demi-écran à 960 px.
