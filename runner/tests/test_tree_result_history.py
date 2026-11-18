@@ -492,7 +492,7 @@ def test_single_reader_run_selects_its_logs_without_changing_test_or_checks(
     window._select_test(index)
     window.results.show_tab(ONGLET_LOGS)
     window.results._on_reader((active + 1) % 3)
-    window.results.logs.compare.setChecked(True)
+    window.results.open_log_comparison()
     window.readers_bar.select_names(window.workspace.readers, [names[active]])
     monkeypatch.setattr(window.service, 'start', lambda request, env:
                         (window.service.started.emit(request) or True))

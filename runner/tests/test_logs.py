@@ -465,20 +465,22 @@ def test_each_log_view_has_its_own_open_button(panneau, tmp_path, monkeypatch):
     )
     panneau.set_log_root(tmp_path)
     panneau.show_logs_for(NODEID_SIMPLE, panneau._readers)
-    panneau.logs.compare.setChecked(True)
+    panneau.open_log_comparison()
+    compared = panneau._comparison_window.readers
 
     opened = []
     monkeypatch.setattr(
-        "runner.ui.results_panel.open_in_notepad_plus_plus",
+        "runner.ui.log_comparison.open_in_notepad_plus_plus",
         lambda parent, path: opened.append(path) or True,
     )
 
     # Les deux consoles sont visibles en meme temps : chacune doit ouvrir SON
     # fichier, sans dependre de l'onglet selectionne.
-    panneau.logs.open_buttons[1].click()
-    panneau.logs.open_buttons[0].click()
+    compared.open_buttons[1].click()
+    compared.open_buttons[0].click()
 
     assert opened == [ecrits["LecteurB"], ecrits["LecteurA"]]
+    panneau.close_comparison()
 
 
 def test_an_open_button_lives_in_the_toolbar_of_its_own_console(panneau, tmp_path):

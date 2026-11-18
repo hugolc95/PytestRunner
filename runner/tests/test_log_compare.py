@@ -88,7 +88,7 @@ def test_comparison_opens_on_the_difference_containing_an_error(qapp):
     assert views.views[1].view.textCursor().blockNumber() == 3
 
 
-def test_comparison_keeps_the_tree_width_and_offers_local_horizontal_scrolling(qtbot):
+def test_comparison_opens_separately_and_keeps_the_main_log_and_tree(qtbot):
     from runner.ui.main_window import MainWindow
     from runner.ui.results_panel import ONGLET_LOGS
     window = MainWindow()
@@ -101,15 +101,20 @@ def test_comparison_keeps_the_tree_width_and_offers_local_horizontal_scrolling(q
     qtbot.waitUntil(lambda: window.results.logs.width() > 300)
     previous = window.split.sizes()[0]
     views = window.results.logs
-    views.compare.setChecked(True)
-    qtbot.waitUntil(lambda: views.split.orientation() == Qt.Vertical)
+    views.compare.click()
+    comparison = window.results._comparison_window
+    assert comparison.isWindow() and comparison.isVisible()
+    assert comparison is not window
     assert window.split.sizes()[0] >= previous - 4
-    assert 'Comparing 3 readers' == views.compare.text()
-    views.set_compare_layout(Qt.Horizontal)
-    qtbot.waitUntil(lambda: views._comparison_scroll.horizontalScrollBar().maximum() > 0)
+    assert not views.tabs.isHidden()
+    assert not views.compare.isCheckable()
+    assert sum(not v.parentWidget().isHidden() for v in views.views) == 1
+    qtbot.mouseClick(views.compare, Qt.LeftButton)
+    assert window.results._comparison_window is comparison
+    comparison.readers.set_compare_layout(Qt.Horizontal)
     assert window.split.sizes()[0] >= previous - 4
-    views.compare.setChecked(False)
-    qtbot.waitUntil(lambda: views._comparison_scroll.horizontalScrollBar().maximum() == 0)
+    comparison.close()
+    assert window.results._comparison_window is None
     assert not views.tabs.isHidden()
 
 

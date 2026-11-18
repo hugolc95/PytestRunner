@@ -317,15 +317,16 @@ def test_log_compare_highlights_the_meaningful_error_not_durations(panel):
     panel.logs.set_text(0, left)
     panel.logs.set_text(1, right)
 
-    panel.logs.compare.setChecked(True)
+    panel.open_log_comparison()
+    compared = panel._comparison_window.readers
 
-    left_highlights = panel.logs.views[0].view.extraSelections()
-    right_highlights = panel.logs.views[1].view.extraSelections()
+    left_highlights = compared.views[0].view.extraSelections()
+    right_highlights = compared.views[1].view.extraSelections()
     assert left_highlights == []
     assert [item.cursor.block().text() for item in right_highlights] == [
         "ERRO - Wrong Status Word, received: 6FEE ; authorized : {'9EEE'}"]
 
-    panel.logs.compare.setChecked(False)
+    panel.close_comparison()
     assert panel.logs.views[1].view.extraSelections() == []
 
 

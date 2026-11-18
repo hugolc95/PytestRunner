@@ -1,5 +1,25 @@
 # Pytest Runner GUI
 
+## Comparaison des logs dans une fenêtre indépendante — v1.7.9
+
+Dans **Logs**, **Compare…** ouvre une fenêtre indépendante, déplaçable et
+redimensionnable, par exemple sur un autre écran. L'arbre et la consultation
+d'un seul log restent disponibles dans la fenêtre principale.
+
+La comparaison suit le test sélectionné dans ce run. Décochez **Follow selected
+test** pour la figer ; **Load selected test** permet de charger explicitement
+un autre test. Les campagnes affichent aussi la répétition et l'étape pour
+identifier chaque appel d'un même test.
+
+Chaque lecteur garde sa recherche et son ouverture de fichier. La navigation
+entre différences, le retour à la ligne commun et les dispositions côte à côte
+ou empilées restent disponibles. **Ctrl+Shift+D** ouvre ou retrouve cette fenêtre ;
+**Ctrl+W** la ferme. Sa taille et sa position sont mémorisées.
+
+Révision de **M6**, validée avec 40 tests ciblés et dans l'application réelle :
+trois lecteurs, sélection et comparaison figée, raccourcis, fermeture/réouverture,
+arrêt de l'application et thèmes clair/sombre.
+
 ## Comparaison des logs sans écraser l'arbre — v1.7.8
 
 **Compare** conserve la largeur de l'arbre et de sa recherche. Sur un panneau

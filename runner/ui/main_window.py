@@ -1614,6 +1614,7 @@ class MainWindow(QMainWindow):
         self.profile_results.set_log_files(
             self._profile_logs.for_execution(key, self.profile_model.readers)
             if self._profile_logs is not None else {})
+        self.profile_results._comparison_context = self.profile_selection_label.text()
         self.profile_results.show_test(nodeid, self.profile_model.statuses_for_nodeid(key),
                                        self.workspace.path if self.workspace else '')
         if hasattr(self, 'disabled_tests'):
@@ -4440,4 +4441,6 @@ class MainWindow(QMainWindow):
         if self._stress_worker is not None:
             self._stress_worker.cancel()
             self._stress_worker.wait(3000)
+        self.results.close_comparison()
+        self.profile_results.close_comparison()
         super().closeEvent(event)

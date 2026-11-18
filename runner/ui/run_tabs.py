@@ -688,6 +688,8 @@ class RunTabsController(QObject):
             return
         if not entry.context.results.source.save():
             return
+        entry.context.results.close_comparison()
+        entry.context.profile_results.close_comparison()
         self.edit_waiting(entry)
         if entry.floating:
             self.reattach(entry)
@@ -1029,5 +1031,7 @@ class RunTabsController(QObject):
             self.window.status_label.setText("Stopping workers… close again when they have finished")
             return False
         for entry in self.entries:
+            entry.context.results.close_comparison()
+            entry.context.profile_results.close_comparison()
             self.release_snapshot(entry)
         return True

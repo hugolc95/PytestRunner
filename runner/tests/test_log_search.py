@@ -244,11 +244,11 @@ def test_each_reader_has_its_own_search_and_output_is_unchanged(qtbot):
     panel.logs.set_text(1, "beta\nalpha beta")
     find(panel.logs.views[0], "alpha")
     find(panel.logs.views[1], "beta")
-    panel.logs.compare.setChecked(True)
+    panel.open_log_comparison()
     for console in panel.logs.views:
         assert console.search.counter.text() == "1/2"
         assert console.view.extraSelections()
-    panel.logs.compare.setChecked(False)
+    panel.close_comparison()
     panel.logs.tabs.setCurrentIndex(1)
     assert panel.logs.views[1].search.field.text() == "beta"
     assert panel.logs.views[0].search.field.text() == "alpha"

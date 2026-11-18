@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QHBoxLayout,
@@ -66,6 +66,8 @@ class ReaderViews(QWidget):
 
     reader_selected = Signal(int)
     open_file_requested = Signal(int)
+    comparison_requested = Signal()
+    contents_changed = Signal()
 
     def __init__(self, orientation=Qt.Vertical, sync_scroll: bool = False,
                  show_lens: bool = True, highlight_differences: bool = False,
@@ -83,6 +85,8 @@ class ReaderViews(QWidget):
         self._compare_orientation = None
         self._wrap_lines = False
         self._syncing_wrap = False
+        self._compare_in_window = False
+        self._comparison_open = False
 
         self.views: list[ConsoleView] = []
         self.headers: list[QLabel] = []
@@ -109,6 +113,7 @@ class ReaderViews(QWidget):
             "Compare every reader  (Ctrl+Shift+D)")
         self.compare.setVisible(False)
         self.compare.toggled.connect(self._on_compare_toggled)
+        self.compare.clicked.connect(self._on_compare_clicked)
         self.layout_button = QToolButton()
         self.layout_button.setObjectName('IconSm')
         self.layout_button.setIcon(icons.icon('mdi.view-dashboard-outline', t.TEXT_MUTED))
@@ -341,6 +346,17 @@ class ReaderViews(QWidget):
             and self._highlight_differences)
         self._restyle_reader_names()
         self._apply_layout()
+        self.contents_changed.emit()
+
+    def enable_window_comparison(self):
+        self._compare_in_window = True
+        self.compare.setChecked(False)
+        self.compare.setCheckable(False)
+        self._adapt_comparison()
+
+    def _on_compare_clicked(self):
+        if self._compare_in_window:
+            self.comparison_requested.emit()
 
     def _apply_layout(self) -> None:
         nombre = max(1, len(self._readers))
@@ -377,6 +393,10 @@ class ReaderViews(QWidget):
         self.compare.setToolTip('Exit comparison · comparison stays active when selecting another test'
                                 if active else 'Compare reader logs')
         self.compare.setStyleSheet(f'color:{t.ACCENT};background:{t.ACCENT_SOFT};' if active else '')
+        if self._compare_in_window:
+            self.compare.setText('Show comparison' if self._comparison_open else 'Compare…')
+            self.compare.setToolTip('Open reader log comparison in a separate window · Ctrl+Shift+D')
+            self.compare.setIcon(icons.icon('mdi.open-in-new', t.TEXT_MUTED))
         orientation = self._compare_orientation
         if orientation is None:
             orientation = Qt.Horizontal if self.width() >= 360 * len(self._readers) else Qt.Vertical
@@ -457,6 +477,10 @@ class ReaderViews(QWidget):
         menu.exec_(view.mapToGlobal(position))
 
     def toggle_compare(self) -> None:
+        if self._compare_in_window:
+            if self.compare.isVisible():
+                self.comparison_requested.emit()
+            return
         if self.compare.isVisible():
             self.compare.setChecked(not self.compare.isChecked())
 
@@ -476,6 +500,7 @@ class ReaderViews(QWidget):
         index = self._reader_position(index)
         if 0 <= index < len(self.views):
             self.views[index].append(texte)
+            self.contents_changed.emit()
 
     def set_text(self, index: int, texte: str, entete: str = "",
                  chemin: str = "") -> None:
@@ -491,6 +516,7 @@ class ReaderViews(QWidget):
             self.headers[index].setToolTip(chemin)
             self._update_external_buttons()
             self._update_difference_highlights()
+            self.contents_changed.emit()
 
     def _reader_position(self, index):
         if not self._readers:
@@ -500,6 +526,8 @@ class ReaderViews(QWidget):
 
     def _update_difference_highlights(self, reveal: bool = False) -> None:
         """Compare les logs et colore seulement les ecarts significatifs."""
+        if getattr(self, '_suspend_difference_refresh', False):
+            return
         active = (self._highlight_differences and self.compare.isChecked()
                   and len(self._readers) > 1)
         if not active:
@@ -625,6 +653,7 @@ class ReaderViews(QWidget):
         self._adapt_comparison()
 
     def clear(self) -> None:
+        self.context_nodeid = ''
         for vue in self.views:
             vue.clear()
         if self._external_open:
@@ -641,6 +670,7 @@ class ReaderViews(QWidget):
             else:
                 entete.clear()
         self._update_difference_highlights()
+        self.contents_changed.emit()
 
 
 class ResultsPanel(QWidget):
@@ -667,6 +697,10 @@ class ResultsPanel(QWidget):
         self._markers: tuple[str, ...] = ()
         self._recent_runs: dict[int, list[bool]] = {}
         self._last_seen: float | None = None
+        self._comparison_window = None
+        self._comparison_timer = QTimer(self)
+        self._comparison_timer.setSingleShot(True)
+        self._comparison_timer.timeout.connect(self._update_comparison_window)
 
         self.detail = DetailPanel(self)
         self.detail.open_output.connect(self.show_output)
@@ -679,6 +713,9 @@ class ResultsPanel(QWidget):
             Qt.Horizontal, sync_scroll=True, show_lens=False,
             highlight_differences=True, external_open=True, parent=self)
         self.logs.open_file_requested.connect(self._open_log_in_notepad_plus_plus)
+        self.logs.enable_window_comparison()
+        self.logs.comparison_requested.connect(self.open_log_comparison)
+        self.logs.contents_changed.connect(self._queue_comparison_update)
 
         # Les trois panneaux suivent le meme lecteur : lire le log de l'un en
         # regardant la sortie de l'autre n'a pas de sens.
@@ -733,6 +770,44 @@ class ResultsPanel(QWidget):
             vues.restyle()
         self.source.restyle()
         self._restyle_local()
+        if self._comparison_window is not None:
+            self._comparison_window.restyle()
+
+    def open_log_comparison(self):
+        if len(self._readers) < 2:
+            return
+        if self._comparison_window is None:
+            from runner.ui.log_comparison import LogComparisonWindow
+            self._comparison_window = LogComparisonWindow(self)
+            self._comparison_window.closed.connect(self._comparison_closed)
+        self.logs._comparison_open = True
+        self.logs._adapt_comparison()
+        window = self._comparison_window
+        window.update_from_source()
+        if window.isMinimized():
+            window.showNormal()
+        else:
+            window.show()
+        window.raise_()
+        window.activateWindow()
+
+    def _comparison_closed(self):
+        self._comparison_window = None
+        self._comparison_timer.stop()
+        self.logs._comparison_open = False
+        self.logs._adapt_comparison()
+
+    def close_comparison(self):
+        if self._comparison_window is not None:
+            self._comparison_window.close()
+
+    def _queue_comparison_update(self):
+        if self._comparison_window is not None:
+            self._comparison_timer.start(0)
+
+    def _update_comparison_window(self):
+        if self._comparison_window is not None:
+            self._comparison_window.update_from_source()
 
     def _restyle_local(self) -> None:
         for position, glyphe in (
@@ -779,6 +854,7 @@ class ResultsPanel(QWidget):
         """Nouvelle collecte : les lecteurs changent, la selection ne vaut plus."""
         self._readers = tuple(readers)
         self._nodeid = ""
+        self._comparison_context = ''
         self._statuses = {}
         self._sorties.clear()
         self._index_echecs.clear()
@@ -794,6 +870,7 @@ class ResultsPanel(QWidget):
         self.source.clear()
         self.output.set_readers(readers)
         self.logs.set_readers(readers)
+        self.logs.clear()
 
     def begin_run(self, *, preserve_results=False, nodeids=()) -> None:
         """Vide les vues sans changer d'onglet.
@@ -877,6 +954,7 @@ class ResultsPanel(QWidget):
                   last_seen: float | None = None) -> None:
         """Selectionne un test : sa fiche, sa source, et ses logs."""
         self._nodeid = nodeid
+        self._comparison_workspace = workspace
         self._statuses = dict(statuses)
         self._markers = markers
         self._recent_runs = recent_runs or {}
@@ -900,6 +978,7 @@ class ResultsPanel(QWidget):
         a aucun qui reponde pour un lot entier.
         """
         self._nodeid = ""
+        self._comparison_context = ''
         self._statuses = {}
         cibles = readers or (Reader("", 0),)
         durees = durations if durations is not None else {
@@ -913,6 +992,7 @@ class ResultsPanel(QWidget):
                               source: Path | None = None) -> None:
         """Un fichier que pytest n'a pas pu importer : son erreur, et sa source."""
         self._nodeid = ""
+        self._comparison_context = ''
         self._statuses = {}
         self.detail.show_collection_error(path, name, message)
         self.source.show_file(source, "")
@@ -991,7 +1071,10 @@ class ResultsPanel(QWidget):
 
     def show_logs_for(self, nodeid: str, readers: tuple[Reader, ...]) -> None:
         """Charge le .log de ce test, un par lecteur."""
+        self.logs.context_nodeid = nodeid
+        self._queue_comparison_update()
         if not nodeid or self._log_root is None:
+            self.logs.clear()
             return
 
         cibles = readers or (Reader("", 0),)
