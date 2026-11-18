@@ -1,5 +1,24 @@
 # Pytest Runner GUI
 
+## Couleurs des lecteurs et verdicts distinctes — v1.7.10
+
+En thèmes daltoniens, **Passed** devient turquoise ; les cases cochées et les
+boutons d'action restent bleus. Les échecs, tests ignorés et erreurs gardent
+leurs couleurs propres, avec un contraste renforcé en thème sombre.
+
+Dans les quatre thèmes, les lecteurs utilisent désormais des bleus et des
+gris bleutés : leurs noms ne reprennent plus les couleurs des verdicts. Cette
+identité reste cohérente entre les en-têtes du tree, les contrôles lecteurs,
+les détails, les onglets de sortie et la fenêtre de comparaison des logs.
+Les noms et les icônes restent disponibles pour reconnaître chaque élément.
+
+Les différences de logs utilisent une couleur distincte de **Skipped** dans
+les palettes daltoniennes. Les libellés de lecteurs conservent un contraste
+d'au moins 4,5:1 sur leur fond, y compris lorsqu'ils sont sélectionnés.
+
+Correction **M7** de l'audit 1.7.1. Validation : 58 tests ciblés et un run réel
+de 20 exécutions sur cinq lecteurs, avec les quatre verdicts et les quatre thèmes.
+
 ## Comparaison des logs dans une fenêtre indépendante — v1.7.9
 
 Dans **Logs**, **Compare…** ouvre une fenêtre indépendante, déplaçable et

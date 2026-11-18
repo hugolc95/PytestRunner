@@ -1,6 +1,7 @@
 """Regression tests for colorblind-friendly light and dark palettes."""
 from __future__ import annotations
 import pytest
+from colorsys import rgb_to_hsv
 from runner.domain.models import Status
 from runner.ui import tokens as t
 @pytest.fixture(autouse=True)
@@ -44,3 +45,41 @@ def test_reader_colors_are_distinct(name):
     t.set_theme(name); colors={t.reader_color(i) for i in range(len(t.READER_COLORS))}; assert len(colors)==len(t.READER_COLORS)>=5
 def test_tree_icons_use_balanced_intermediate_size():
     assert t.TREE_ICON_SIZE==18
+
+
+def _hue(color):
+    return rgb_to_hsv(*(int(color[i:i+2], 16) / 255 for i in (1, 3, 5)))[0] * 360
+
+
+@pytest.mark.parametrize('name', ['dark', 'light', 'dark_colorblind', 'light_colorblind'])
+def test_reader_identity_avoids_verdict_colors_and_keeps_readable_labels(name):
+    t.set_theme(name)
+    verdicts = {t.status_color(status) for status in Status if status.is_final}
+    for color in t.READER_COLORS:
+        assert color not in verdicts
+        assert 190 <= _hue(color) <= 235
+        assert _contrast(color, t.BG_SURFACE) >= 4.5
+        selected = t.blend(color, t.BG_SURFACE, .14)
+        assert _contrast(color, selected) >= 4.5
+    assert t.reader_color(len(t.READER_COLORS)) == t.reader_color(0)
+
+
+@pytest.mark.parametrize('name', ['dark_colorblind', 'light_colorblind', 'colorblind'])
+def test_passed_cannot_be_confused_with_checkboxes_or_launch_controls(name):
+    t.set_theme(name)
+    passed = t.status_color(Status.PASSED)
+    assert 145 <= _hue(passed) <= 180
+    for control in (t.ACCENT, t.RUN):
+        assert 195 <= _hue(control) <= 235
+        assert abs(_hue(passed) - _hue(control)) >= 30
+    for status in Status:
+        if status.is_final:
+            assert _contrast(t.status_color(status), t.BG_SURFACE) >= 4.5
+
+
+@pytest.mark.parametrize('name', ['dark_colorblind', 'light_colorblind'])
+def test_difference_highlight_is_not_a_verdict_color(name):
+    t.set_theme(name)
+    color = t.divergent_color()
+    assert color not in {t.status_color(status) for status in Status if status.is_final}
+    assert _contrast(color, t.BG_SURFACE) >= 4.5

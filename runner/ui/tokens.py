@@ -8,15 +8,35 @@ TEXT_XS=11; TEXT_SM=12; TEXT_MD=13; TEXT_LG=15
 CONTROL_SM=28; CONTROL_MD=32; CONTROL_LG=36; ICON_BUTTON=32
 TREE_ICON_SIZE=18
 TREE_INDENTATION=12
-DARK={"BG_APP":"#171a21","BG_SURFACE":"#20242d","BG_RAISED":"#292e38","BG_HOVER":"#343b47","BG_INPUT":"#14171d","BORDER":"#303744","BORDER_STRONG":"#46505f","TEXT":"#e4e7ec","TEXT_MUTED":"#9aa3b2","TEXT_FAINT":"#687383","ACCENT":"#4c8dff","ACCENT_HOVER":"#5f9bff","ACCENT_PRESSED":"#3f7ae6","ACCENT_SOFT":"#253451","ON_ACCENT":"#06101f","RUN":"#2f9150","RUN_HOVER":"#37a75d","RUN_PRESSED":"#277b43","ON_RUN":"#06120a","STATUS_COLORS":{Status.PASSED:"#4fae63",Status.FAILED:"#ef5f57",Status.SKIPPED:"#b98a3f",Status.ERROR:"#a97fd0",Status.RUNNING:"#4c8dff",Status.PENDING:"#596372"},"READER_COLORS":("#4c8dff","#39c5bb","#e0a33e","#c98bdb","#7ec87e"),"ANSI_COLORS":{"black":"#687383","red":"#ef5f57","green":"#4fae63","yellow":"#d8a13c","blue":"#4c8dff","magenta":"#c98bdb","cyan":"#39c5bb","white":"#e4e7ec"},"ANSI_BRIGHT":{"black":"#8791a1","red":"#ff8078","green":"#71c983","yellow":"#f0bd5c","magenta":"#dda6ea","blue":"#7aabff","cyan":"#5adbd1","white":"#ffffff"},"SYNTAX":{"keyword":"#c792ea","builtin":"#82aaff","string":"#c3e88d","docstring":"#8798aa","comment":"#687383","number":"#f78c6c","decorator":"#ffcb6b","function":"#82aaff","classname":"#ffcb6b","self":"#f07178"},"GUTTER_BG":"#171a21","GUTTER_TEXT":"#596372","GUTTER_CURRENT":"#9aa3b2","CURRENT_LINE":"#252b36"}
-LIGHT={"BG_APP":"#eef1f6","BG_SURFACE":"#ffffff","BG_RAISED":"#ffffff","BG_HOVER":"#e3e9f1","BG_INPUT":"#ffffff","BORDER":"#d8dee7","BORDER_STRONG":"#b3bdca","TEXT":"#1b2230","TEXT_MUTED":"#5b6675","TEXT_FAINT":"#8a94a3","ACCENT":"#1f6feb","ACCENT_HOVER":"#2f7ff5","ACCENT_PRESSED":"#1859c4","ACCENT_SOFT":"#dbe8fd","ON_ACCENT":"#ffffff","RUN":"#2e7d32","RUN_HOVER":"#358c3a","RUN_PRESSED":"#256628","ON_RUN":"#ffffff","STATUS_COLORS":{Status.PASSED:"#2e7d32",Status.FAILED:"#c62828",Status.SKIPPED:"#a1651a",Status.ERROR:"#7b3fa0",Status.RUNNING:"#1f6feb",Status.PENDING:"#a8b1bd"},"READER_COLORS":("#1f6feb","#0f8b80","#a1651a","#7b3fa0","#2e7d32"),"ANSI_COLORS":{"black":"#3a4250","red":"#c62828","green":"#2e7d32","yellow":"#8a6100","blue":"#1f6feb","magenta":"#7b3fa0","cyan":"#0f7a80","white":"#5b6675"},"ANSI_BRIGHT":{"black":"#5b6675","red":"#e04343","green":"#3d9942","yellow":"#a87a10","magenta":"#9a55c4","blue":"#3a86f5","cyan":"#1596a0","white":"#1b2230"},"SYNTAX":{"keyword":"#0033b3","builtin":"#0f7a80","string":"#067d17","docstring":"#6a7b8a","comment":"#8a94a3","number":"#1750eb","decorator":"#9e6b00","function":"#795e26","classname":"#267f99","self":"#8250df"},"GUTTER_BG":"#eef1f6","GUTTER_TEXT":"#a3adba","GUTTER_CURRENT":"#5b6675","CURRENT_LINE":"#eaf1fb"}
-# Okabe-Ito inspired status colors. Background/layout comes from the base theme.
-_CB_DARK={"ACCENT":"#56b4e9","ACCENT_HOVER":"#70c4ef","ACCENT_PRESSED":"#3698ce","ACCENT_SOFT":"#243d4c","ON_ACCENT":"#06101f","RUN":"#0072b2","RUN_HOVER":"#1386c8","RUN_PRESSED":"#005f96","ON_RUN":"#ffffff","STATUS_COLORS":{Status.PASSED:"#56b4e9",Status.FAILED:"#d55e00",Status.SKIPPED:"#f0e442",Status.ERROR:"#cc79a7",Status.RUNNING:"#1386c8",Status.PENDING:"#7d8794"},"READER_COLORS":("#56b4e9","#e69f00","#009e73","#cc79a7","#f0e442")}
-# Light accessibility palette intentionally separates every verdict into a
-# different hue family. Failed is vivid orange; Skipped is purple, avoiding
-# the previous red/brown vs amber/brown ambiguity reported by colorblind users.
-# All text/status colours keep strong contrast on white surfaces.
-_CB_LIGHT={"ACCENT":"#0052cc","ACCENT_HOVER":"#0048b3","ACCENT_PRESSED":"#003f99","ACCENT_SOFT":"#dbe7ff","ON_ACCENT":"#ffffff","RUN":"#006d77","RUN_HOVER":"#005f68","RUN_PRESSED":"#00515a","ON_RUN":"#ffffff","STATUS_COLORS":{Status.PASSED:"#0052cc",Status.FAILED:"#a83200",Status.SKIPPED:"#5b2aa8",Status.ERROR:"#8a1c62",Status.RUNNING:"#006d77",Status.PENDING:"#505a66"},"READER_COLORS":("#0052cc","#a83200","#006d77","#8a1c62","#5b2aa8")}
+# L'identite d'un lecteur reste dans les bleus/gris, quel que soit le theme.
+# Reserver les teintes chaudes, vertes et roses aux verdicts evite qu'un nom
+# de lecteur ressemble a un echec, un succes ou une erreur.
+_READERS_DARK = ('#94b9df', '#c7d6e5', '#86a3be', '#abb2c6', '#76b0c3')
+_READERS_LIGHT = ('#315f86', '#455363', '#366c80', '#566896', '#536a7d')
+DARK={"BG_APP":"#171a21","BG_SURFACE":"#20242d","BG_RAISED":"#292e38","BG_HOVER":"#343b47","BG_INPUT":"#14171d","BORDER":"#303744","BORDER_STRONG":"#46505f","TEXT":"#e4e7ec","TEXT_MUTED":"#9aa3b2","TEXT_FAINT":"#687383","ACCENT":"#4c8dff","ACCENT_HOVER":"#5f9bff","ACCENT_PRESSED":"#3f7ae6","ACCENT_SOFT":"#253451","ON_ACCENT":"#06101f","RUN":"#2f9150","RUN_HOVER":"#37a75d","RUN_PRESSED":"#277b43","ON_RUN":"#06120a","STATUS_COLORS":{Status.PASSED:"#4fae63",Status.FAILED:"#ef5f57",Status.SKIPPED:"#b98a3f",Status.ERROR:"#a97fd0",Status.RUNNING:"#4c8dff",Status.PENDING:"#596372"},"READER_COLORS":_READERS_DARK,"ANSI_COLORS":{"black":"#687383","red":"#ef5f57","green":"#4fae63","yellow":"#d8a13c","blue":"#4c8dff","magenta":"#c98bdb","cyan":"#39c5bb","white":"#e4e7ec"},"ANSI_BRIGHT":{"black":"#8791a1","red":"#ff8078","green":"#71c983","yellow":"#f0bd5c","magenta":"#dda6ea","blue":"#7aabff","cyan":"#5adbd1","white":"#ffffff"},"SYNTAX":{"keyword":"#c792ea","builtin":"#82aaff","string":"#c3e88d","docstring":"#8798aa","comment":"#687383","number":"#f78c6c","decorator":"#ffcb6b","function":"#82aaff","classname":"#ffcb6b","self":"#f07178"},"GUTTER_BG":"#171a21","GUTTER_TEXT":"#596372","GUTTER_CURRENT":"#9aa3b2","CURRENT_LINE":"#252b36"}
+LIGHT={"BG_APP":"#eef1f6","BG_SURFACE":"#ffffff","BG_RAISED":"#ffffff","BG_HOVER":"#e3e9f1","BG_INPUT":"#ffffff","BORDER":"#d8dee7","BORDER_STRONG":"#b3bdca","TEXT":"#1b2230","TEXT_MUTED":"#5b6675","TEXT_FAINT":"#8a94a3","ACCENT":"#1f6feb","ACCENT_HOVER":"#2f7ff5","ACCENT_PRESSED":"#1859c4","ACCENT_SOFT":"#dbe8fd","ON_ACCENT":"#ffffff","RUN":"#2e7d32","RUN_HOVER":"#358c3a","RUN_PRESSED":"#256628","ON_RUN":"#ffffff","STATUS_COLORS":{Status.PASSED:"#2e7d32",Status.FAILED:"#c62828",Status.SKIPPED:"#a1651a",Status.ERROR:"#7b3fa0",Status.RUNNING:"#1f6feb",Status.PENDING:"#a8b1bd"},"READER_COLORS":_READERS_LIGHT,"ANSI_COLORS":{"black":"#3a4250","red":"#c62828","green":"#2e7d32","yellow":"#8a6100","blue":"#1f6feb","magenta":"#7b3fa0","cyan":"#0f7a80","white":"#5b6675"},"ANSI_BRIGHT":{"black":"#5b6675","red":"#e04343","green":"#3d9942","yellow":"#a87a10","magenta":"#9a55c4","blue":"#3a86f5","cyan":"#1596a0","white":"#1b2230"},"SYNTAX":{"keyword":"#0033b3","builtin":"#0f7a80","string":"#067d17","docstring":"#6a7b8a","comment":"#8a94a3","number":"#1750eb","decorator":"#9e6b00","function":"#795e26","classname":"#267f99","self":"#8250df"},"GUTTER_BG":"#eef1f6","GUTTER_TEXT":"#a3adba","GUTTER_CURRENT":"#5b6675","CURRENT_LINE":"#eaf1fb"}
+# En mode daltonien, les controles restent bleus et PASSED est turquoise.
+# Un succes ne reprend ni le fond des cases cochees ni celui du bouton Run.
+_CB_DARK = {
+    "ACCENT": "#56b4e9", "ACCENT_HOVER": "#70c4ef", "ACCENT_PRESSED": "#3698ce",
+    "ACCENT_SOFT": "#243d4c", "ON_ACCENT": "#06101f",
+    "RUN": "#0072b2", "RUN_HOVER": "#1386c8", "RUN_PRESSED": "#005f96", "ON_RUN": "#ffffff",
+    "STATUS_COLORS": {Status.PASSED: "#4ec3a6", Status.FAILED: "#f28c50",
+                      Status.SKIPPED: "#f0e442", Status.ERROR: "#de9abd",
+                      Status.RUNNING: "#1386c8", Status.PENDING: "#7d8794"},
+    "READER_COLORS": _READERS_DARK,
+}
+# Conserver une famille differente pour FAILED (orange) et SKIPPED (violet)
+# en clair : brun et ocre se confondaient dans les premieres palettes.
+_CB_LIGHT = {
+    "ACCENT": "#0052cc", "ACCENT_HOVER": "#0048b3", "ACCENT_PRESSED": "#003f99",
+    "ACCENT_SOFT": "#dbe7ff", "ON_ACCENT": "#ffffff",
+    "RUN": "#0052cc", "RUN_HOVER": "#0048b3", "RUN_PRESSED": "#003f99", "ON_RUN": "#ffffff",
+    "STATUS_COLORS": {Status.PASSED: "#006453", Status.FAILED: "#a83200",
+                      Status.SKIPPED: "#5b2aa8", Status.ERROR: "#8a1c62",
+                      Status.RUNNING: "#0052cc", Status.PENDING: "#505a66"},
+    "READER_COLORS": _READERS_LIGHT,
+}
 def _accessible(base, overlay):
     p=dict(base); p.update(overlay)
     p["ANSI_COLORS"]=dict(base["ANSI_COLORS"],red=overlay["STATUS_COLORS"][Status.FAILED],green=overlay["STATUS_COLORS"][Status.PASSED],yellow=overlay["STATUS_COLORS"][Status.SKIPPED],blue=overlay["STATUS_COLORS"][Status.RUNNING],magenta=overlay["STATUS_COLORS"][Status.ERROR])
@@ -55,7 +75,7 @@ def divergent_color()->str:
     """Teinte des lignes dont les lecteurs ne rendent pas le meme verdict.
 
     Ambre : ni le rouge d'un echec, ni le bleu de la selection. Les palettes
-    daltoniennes prennent le jaune d'Okabe-Ito, distinct de tous leurs statuts.
+    daltoniennes reservent une teinte hors de leurs verdicts pour les ecarts.
     """
-    if is_colorblind():return "#f0e442" if is_dark() else "#b59f00"
+    if is_colorblind():return "#ba9fff" if is_dark() else "#756400"
     return "#e0a526" if is_dark() else "#c98a00"
