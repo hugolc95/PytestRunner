@@ -116,6 +116,7 @@ class StructuredRunHeader(QWidget):
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(t.SPACE_3)
         self._compact = None
+        self._dense = None
 
         self.environment, environment = self._panel("ENVIRONMENT")
         self.execution, execution = self._panel("EXECUTION")
@@ -226,6 +227,7 @@ class StructuredRunHeader(QWidget):
         # line above it. Result actions stay together on the left.
         result_heading = results.takeAt(0).widget()
         self.result_heading = result_heading
+        result_heading.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         result_actions = QVBoxLayout()
         result_actions.setSpacing(t.SPACE_1)
         result_actions.addWidget(result_heading, 0, Qt.AlignTop)
@@ -242,12 +244,16 @@ class StructuredRunHeader(QWidget):
         self._move(progress, window.compass_ring)
         progress.setAlignment(window.compass_ring, Qt.AlignRight | Qt.AlignTop)
         results.addLayout(progress)
+        self._result_progress = progress
+        self._result_buttons = result_buttons
+        self._result_actions = result_actions
         counters = QHBoxLayout()
         counters.setSpacing(t.SPACE_2)
         self._result_pills = tuple(window.pills.values())
         for pill in window.pills.values():
             self._move(counters, pill)
         results.addLayout(counters)
+        self._counters = counters
         results.addStretch()
 
         # Keep any legacy decoration owned, but never visible in the page.
@@ -321,6 +327,26 @@ class StructuredRunHeader(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        dense = event.size().width() < 1260
+        if dense != self._dense:
+            self._dense = dense
+            self._window.compass_ring.set_compact(dense)
+            self.results.layout().setDirection(QBoxLayout.LeftToRight if dense else QBoxLayout.TopToBottom)
+            for pill in self._result_pills:
+                pill.set_compact(dense)
+            for button, text, glyph in (
+                    (self._window.view_failures_button, 'View failures', 'mdi.alert-circle-outline'),
+                    (self._window.view_differences_button, 'View differences', 'mdi.call-split'),
+                    (self._window.collection_errors_button, self._window.collection_errors_button.text(), 'mdi.file-alert-outline')):
+                if dense and button.text():
+                    button.setProperty('fullLabel', button.text())
+                button.setText('' if dense else button.property('fullLabel') or text)
+                button.setIcon(icons.icon(glyph, t.TEXT_MUTED))
+                button.setMaximumWidth(32 if dense else 16777215)
+            self.results.setMinimumWidth(0)
+        if dense:
+            self._arrange('stacked' if event.size().width() < 740 else True)
+            return
         counter_width = sum(max(72, pill.fontMetrics().horizontalAdvance(pill._status.label.upper()) + 45)
                             for pill in self._result_pills)
         self.results.setMinimumWidth(counter_width + 2 * t.SPACE_3 + 3 * t.SPACE_2)

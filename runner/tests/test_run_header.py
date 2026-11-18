@@ -5,7 +5,7 @@ from runner.domain.models import Status
 from runner.ui.main_window import MainWindow
 
 
-@pytest.mark.parametrize("width", [1100, 1600])
+@pytest.mark.parametrize("width", [960, 1100, 1280, 1600])
 def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, tmp_path):
     from PySide6.QtCore import QSettings
     settings = QSettings(str(tmp_path / "header.ini"), QSettings.IniFormat)
@@ -49,9 +49,11 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     ring_position = window.compass_ring.mapTo(results, window.compass_ring.rect().topLeft())
     margins = results.layout().contentsMargins()
     assert ring_position.y() == results.contentsRect().top() + margins.top()
-    assert ring_position.x() + window.compass_ring.width() == (
-        results.contentsRect().right() + 1 - margins.right()
-    )
+    if not window.run_header._dense:
+        assert ring_position.x() + window.compass_ring.width() == (
+            results.contentsRect().right() + 1 - margins.right())
+    else:
+        assert results.height() < 90
     for button in (window.view_failures_button, window.view_differences_button):
         assert button.mapTo(results, button.rect().topRight()).x() < ring_position.x()
     for i, panel in enumerate(panels):
@@ -155,3 +157,43 @@ def test_atr_stays_inline_and_copies_full_value_at_any_width(qtbot):
     assert widget.stack.currentIndex() == 0
     assert field.text() == atr
     assert field.font().pixelSize() == 10
+
+
+def test_half_screen_keeps_navigation_preference_and_all_result_tabs(qtbot):
+    from runner.ui.main_window import K_SIDEBAR_COLLAPSED
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.settings.setValue(K_SIDEBAR_COLLAPSED, False)
+    window.resize(960, 900)
+    window.show()
+    qtbot.waitUntil(lambda: window.navigation.width() == 56)
+    assert window.width() == 960
+    assert not window.settings.value(K_SIDEBAR_COLLAPSED, type=bool)
+    bar = window.results.tabs.tabBar()
+    for index in range(4):
+        assert bar.rect().contains(bar.tabRect(index))
+        window.results.show_tab(index)
+        assert window.results.tabs.currentIndex() == index
+    window.resize(1600, 900)
+    qtbot.waitUntil(lambda: window.navigation.width() == 220)
+    window._set_sidebar_collapsed(True)
+    window.resize(960, 900)
+    window.resize(1600, 900)
+    assert window.navigation.width() == 56
+
+
+def test_profile_options_remain_reachable_on_a_short_window(qtbot):
+    from PySide6.QtWidgets import QScrollArea
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.resize(960, 600)
+    window.show()
+    window._show_page('profiles')
+    options = window.profiles_page.save_logs
+    scroll = options.parentWidget()
+    while scroll is not None and not isinstance(scroll, QScrollArea):
+        scroll = scroll.parentWidget()
+    assert scroll is not None
+    scroll.ensureWidgetVisible(options)
+    qtbot.waitUntil(lambda: scroll.viewport().rect().contains(
+        options.mapTo(scroll.viewport(), options.rect().center())))

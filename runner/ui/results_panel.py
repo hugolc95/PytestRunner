@@ -575,6 +575,7 @@ class ResultsPanel(QWidget):
 
         self.tabs = QTabWidget(self)
         self.tabs.tabBar().setObjectName("PrimaryTabs")
+        self.tabs.tabBar().setExpanding(True)
         self.tabs.addTab(self.detail,
                          icons.icon("mdi.text-box-search-outline", t.TEXT_MUTED),
                          "Detail")
@@ -598,6 +599,19 @@ class ResultsPanel(QWidget):
         colonne = QVBoxLayout(self)
         colonne.setContentsMargins(0, 0, 0, 0)
         colonne.addWidget(self.tabs)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        compact = event.size().width() < 480
+        icon_only = event.size().width() < 290
+        if (compact, icon_only) == getattr(self, '_tab_density', None):
+            return
+        self._tab_density = compact, icon_only
+        bar = self.tabs.tabBar()
+        bar.setUsesScrollButtons(False)
+        bar.setStyleSheet('QTabBar#PrimaryTabs::tab {padding:6px 5px;font-size:12px;}' if compact else '')
+        for index, text in enumerate(('Detail', 'Source', 'Output', 'Logs')):
+            self.tabs.setTabText(index, '' if icon_only else text)
 
     # ------------------------------------------------------------- navigation
 

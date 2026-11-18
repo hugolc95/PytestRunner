@@ -201,6 +201,24 @@ class EmptyState(QWidget):
         self.detail_label.setText(detail)
 
 
+class ElidedButton(QPushButton):
+    """Garde un nom long consultable sans le couper brutalement au bord."""
+    def setText(self, text):
+        self._full_text = text
+        self.setAccessibleName(text)
+        self.setToolTip(text + '\nName this run. Leave empty for an automatic run number.')
+        self._fit_text()
+
+    def _fit_text(self):
+        available = max(12, self.width() - self.iconSize().width() - 12)
+        super().setText(self.fontMetrics().elidedText(
+            getattr(self, '_full_text', ''), Qt.ElideRight, available))
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._fit_text()
+
+
 class StatusPill(QPushButton):
     """Compteur d'un statut : icone + nombre, pose en legende a cote de
     l'anneau (`CompassRing`) -- un vrai QPushButton, comme Run/Stop/les
@@ -257,6 +275,11 @@ class StatusPill(QPushButton):
     def is_active(self) -> bool:
         return self._active
 
+    def set_compact(self, compact):
+        if compact != getattr(self, '_compact', False):
+            self._compact = compact
+            self._repaint()
+
     def value(self) -> int:
         return self._value
 
@@ -278,7 +301,8 @@ class StatusPill(QPushButton):
         glyphe = icons.STATUS_GLYPHS_GROUP.get(self._status, "mdi.circle-small")
         self.setIcon(icons.icon(glyphe, couleur if allume else t.BORDER_STRONG))
         self.setIconSize(QSize(20, 20))
-        self.setText(f"{self._value}\n{self._status.label}")
+        self.setText(f"{self._value} {self._status.label}" if getattr(self, '_compact', False)
+                     else f"{self._value}\n{self._status.label}")
 
         couleur_texte = couleur if allume else t.TEXT_FAINT
         fond = t.rgba(couleur, 0.22 if self._active else 0.10 if allume else 0.04)
@@ -299,7 +323,7 @@ class StatusPill(QPushButton):
             f"QPushButton:pressed {{ background-color: {fond_survol}; {base} }}")
         # Apres la feuille locale : le QSS global des QPushButton ne doit pas
         # ramener ces compteurs a la hauteur compacte des boutons ordinaires.
-        self.setMinimumSize(72, 48)
+        self.setMinimumSize(72, 32 if getattr(self, '_compact', False) else 48)
 
         if not allume:
             self.setToolTip(f"No {libelle} test")
@@ -341,6 +365,14 @@ class CompassRing(QWidget):
             "  ".join(f"{self._counts[s]} {s.label.lower()}" for s in self.ORDER)
             + (f" · Collection incomplete: {self._collection_warning}"
                if getattr(self, '_collection_warning', '') else ''))
+        self.update()
+
+    def set_compact(self, compact):
+        if not hasattr(self, '_normal_diameter'):
+            self._normal_diameter, self._normal_thickness = self._diameter, self._thickness
+        self._diameter = 36 if compact else self._normal_diameter
+        self._thickness = 6 if compact else self._normal_thickness
+        self.setFixedSize(self._diameter, self._diameter)
         self.update()
 
     def set_collection_warning(self, text: str) -> None:

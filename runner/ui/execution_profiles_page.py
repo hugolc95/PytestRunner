@@ -11,6 +11,7 @@ from PySide6.QtCore import QSortFilterProxyModel, Qt, QTimer, Signal, QItemSelec
 from PySide6.QtGui import QAction, QKeySequence, QUndoStack
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QBoxLayout,
     QCheckBox,
     QDialog,
     QFileDialog,
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSpinBox,
+    QScrollArea,
     QSizePolicy,
     QSplitter,
     QTextEdit,
@@ -316,7 +318,8 @@ class ExecutionProfilesPage(QWidget):
         root.setContentsMargins(t.SPACE_4, t.SPACE_4, t.SPACE_4, t.SPACE_4)
         root.setSpacing(t.SPACE_3)
 
-        heading = QHBoxLayout()
+        heading = QBoxLayout(QBoxLayout.LeftToRight)
+        self._page_heading = heading
         copy_box = QVBoxLayout()
         title = QLabel("Execution Profiles")
         title.setObjectName("PageTitle")
@@ -328,12 +331,13 @@ class ExecutionProfilesPage(QWidget):
         heading.addStretch(1)
         self.contents_button = QPushButton('Contents…')
         self.contents_button.clicked.connect(lambda: self.manage_campaign_sources())
-        heading.addWidget(self.contents_button)
+        heading_actions = QHBoxLayout()
+        heading_actions.addWidget(self.contents_button)
         self.undo_update_button = QPushButton('Undo update')
         self.undo_update_button.setObjectName('Ghost')
         self.undo_update_button.clicked.connect(lambda: self.campaign_sync.undo())
         self.undo_update_button.hide()
-        heading.addWidget(self.undo_update_button)
+        heading_actions.addWidget(self.undo_update_button)
         self.import_button = QPushButton("Import")
         self.import_button.setIcon(icons.icon("mdi.import"))
         self.export_button = QPushButton("Export")
@@ -341,9 +345,10 @@ class ExecutionProfilesPage(QWidget):
         self.new_button = QPushButton("New profile")
         self.new_button.setObjectName("Primary")
         self.new_button.setIcon(icons.icon("mdi.plus"))
-        heading.addWidget(self.import_button)
-        heading.addWidget(self.export_button)
-        heading.addWidget(self.new_button)
+        heading_actions.addWidget(self.import_button)
+        heading_actions.addWidget(self.export_button)
+        heading_actions.addWidget(self.new_button)
+        heading.addLayout(heading_actions)
         root.addLayout(heading)
 
         self.notice = QFrame()
@@ -407,6 +412,7 @@ class ExecutionProfilesPage(QWidget):
 
     def _build_library(self) -> QWidget:
         frame, layout = self._surface("Saved profiles")
+        frame.setMinimumWidth(170)
         self.update_feedback = QLabel()
         self.update_feedback.setTextFormat(Qt.PlainText)
         self.update_feedback.setWordWrap(True)
@@ -560,9 +566,11 @@ class ExecutionProfilesPage(QWidget):
     def _adapt_sequence_tools(self):
         # Un panneau retreci garde des actions entieres, jamais des mots coupes.
         compact = self._sequence_frame.width() < 560
-        self.parameters_button.setText('YAML…' if compact else 'YAML parameters…')
-        self.group_button.setText('Group…' if compact else 'Create group…')
-        self.add_tests_button.setText('Add…' if compact else 'Add tests / groups')
+        narrow = self._sequence_frame.width() < 440
+        self.parameters_button.setText('' if narrow else 'YAML…' if compact else 'YAML parameters…')
+        self.group_button.setText('' if narrow else 'Group…' if compact else 'Create group…')
+        self.add_tests_button.setText('' if narrow else 'Add…' if compact else 'Add tests / groups')
+        self.add_tests_button.setToolTip('Add tests or groups at the selected position')
         self.duplicate_button.setText('' if compact else 'Duplicate')
         self.remove_button.setText('' if compact else 'Remove')
 
@@ -616,7 +624,17 @@ class ExecutionProfilesPage(QWidget):
         self.rerun_failures.valueChanged.connect(self._mark_dirty)
         self.stop_after_failure.toggled.connect(self._mark_dirty)
         self.save_logs.toggled.connect(self._mark_dirty)
-        return frame
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setWidget(frame)
+        scroll.setMinimumWidth(320)
+        return scroll
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._page_heading.setDirection(QBoxLayout.TopToBottom if event.size().width() < 850
+                                       else QBoxLayout.LeftToRight)
 
     def set_workspace_context(self, nodeids: list[str], config_path: str, *, workspace='', complete=True) -> None:
         self._available_nodeids = list(nodeids)

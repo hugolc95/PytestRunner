@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHeaderView,
     QHBoxLayout,
+    QBoxLayout,
     QLabel,
     QLineEdit,
     QPlainTextEdit,
@@ -638,15 +639,18 @@ class HistoryWindow(QDialog):
         self.cancel_compare.setVisible(False)
         self.cancel_compare.clicked.connect(self._leave_compare_mode)
 
-        header = QHBoxLayout()
+        header = QBoxLayout(QBoxLayout.LeftToRight)
+        self._page_heading = header
         header.setSpacing(t.SPACE_2)
         header.addLayout(titles)
         header.addStretch(1)
-        header.addWidget(self.search)
-        header.addWidget(self.workspace_filter)
-        header.addWidget(self.filter_button)
-        header.addWidget(self.cancel_compare)
-        header.addWidget(self.compare_button)
+        filters = QHBoxLayout()
+        filters.addWidget(self.search, 1)
+        filters.addWidget(self.workspace_filter)
+        filters.addWidget(self.filter_button)
+        filters.addWidget(self.cancel_compare)
+        filters.addWidget(self.compare_button)
+        header.addLayout(filters)
 
         self.list_all = QPushButton("All")
         self.list_all.setCheckable(True)
@@ -743,6 +747,11 @@ class HistoryWindow(QDialog):
         layout.addWidget(self.logs_notice)
         layout.addLayout(body, 1)
         layout.addWidget(self.status)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._page_heading.setDirection(QBoxLayout.TopToBottom if event.size().width() < 850
+                                       else QBoxLayout.LeftToRight)
 
     def _build_detail(self) -> QWidget:
         panel = QWidget()

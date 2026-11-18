@@ -95,6 +95,7 @@ from runner.ui.widgets import (
     SCOPE_TESTS,
     CompassRing,
     EmptyState,
+    ElidedButton,
     ErrorDialog,
     LiveDot,
     ReaderBar,
@@ -151,7 +152,7 @@ class MainWindow(QMainWindow):
         self._run_host = run_host
         self.run_tabs = getattr(run_host, "run_tabs", None)
         self.setWindowTitle(WINDOW_TITLE)
-        self.setMinimumSize(1100, 640)
+        self.setMinimumSize(800, 560)
 
         self.settings = QSettings(ORG, APP)
         self.workspace: Workspace | None = None
@@ -263,6 +264,9 @@ class MainWindow(QMainWindow):
         racine.addWidget(self._build_navigation())
 
         self.pages = QStackedWidget(central)
+        # Les pages masquees ne doivent pas imposer leur largeur ideale a
+        # toute la fenetre, notamment en demi-ecran.
+        self.pages.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
         self.workspace_page = QWidget(self.pages)
         colonne = QVBoxLayout(self.workspace_page)
         colonne.setContentsMargins(t.SPACE_3, t.SPACE_3, t.SPACE_3, t.SPACE_2)
@@ -423,7 +427,7 @@ class MainWindow(QMainWindow):
     def toggle_sidebar(self) -> None:
         self._set_sidebar_collapsed(not self._sidebar_collapsed, animate=True)
 
-    def _set_sidebar_collapsed(self, collapsed: bool, animate: bool = False) -> None:
+    def _set_sidebar_collapsed(self, collapsed: bool, animate: bool = False, *, persist=True) -> None:
         collapsed = bool(collapsed)
         self._sidebar_collapsed = collapsed
         labels = {
@@ -468,7 +472,18 @@ class MainWindow(QMainWindow):
                 animation.setEasingCurve(QEasingCurve.InOutCubic)
                 self._sidebar_animation.addAnimation(animation)
             self._sidebar_animation.start()
-        self.settings.setValue(K_SIDEBAR_COLLAPSED, collapsed)
+        if persist:
+            self.settings.setValue(K_SIDEBAR_COLLAPSED, collapsed)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if not hasattr(self, 'sidebar_toggle_button'):
+            return
+        compact = event.size().width() < 1200
+        if compact != getattr(self, '_sidebar_compact_for_space', None):
+            self._sidebar_compact_for_space = compact
+            self._set_sidebar_collapsed(compact or self.settings.value(
+                K_SIDEBAR_COLLAPSED, False, type=bool), persist=False)
 
     def _page_landing(self, title: str, description: str) -> tuple[QWidget, QVBoxLayout]:
         page = QWidget()
@@ -947,7 +962,8 @@ class MainWindow(QMainWindow):
         self._pending_run_name = ""
         self.run_name_stack = QStackedWidget()
         self.run_name_stack.setFixedSize(260, 24)
-        self.run_name_button = QPushButton("Run name (optional)")
+        self.run_name_button = ElidedButton()
+        self.run_name_button.setText('Run name (optional)')
         self.run_name_button.setObjectName("Ghost")
         self.run_name_button.setIcon(icons.icon("mdi.pencil-outline", t.TEXT_MUTED))
         self.run_name_button.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -2520,7 +2536,8 @@ class MainWindow(QMainWindow):
         from runner.domain.collection_state import summary
         errors = self._run_collection_errors or self._collection_errors
         text = summary(errors)
-        self.collection_errors_button.setText(text)
+        self.collection_errors_button.setProperty('fullLabel', text)
+        self.collection_errors_button.setText('' if self.run_header._dense else text)
         self.collection_errors_button.setToolTip('Show collection errors. These files were not executed.')
         self.collection_errors_button.setVisible(bool(errors))
         self.compass_ring.set_collection_warning(text)

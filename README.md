@@ -1,5 +1,22 @@
 # Pytest Runner GUI
 
+## Interface utilisable en petite fenêtre — v1.7.7
+
+La fenêtre peut être réduite à 800 × 560 et utilisée en demi-écran à 960 px.
+La navigation passe en icônes sur petite fenêtre sans écraser votre préférence
+pour les grandes fenêtres. Le résumé des résultats devient une ligne compacte,
+avec les mêmes compteurs et filtres, pour laisser davantage de place à l'arbre.
+
+**Detail / Source / Output / Logs** restent accessibles : les onglets réduisent
+leurs marges, puis utilisent leurs icônes si le panneau est très étroit.
+Les noms de run longs affichent des points de suspension et leur texte complet
+au survol. Les en-têtes de History et Execution Profiles se réorganisent sur
+petite largeur ; les options des profils restent accessibles par défilement
+sur les écrans moins hauts.
+
+Correction **M5** de l'audit 1.7.1. Vérifications ciblées et captures réelles
+aux formats 1280 × 720, 960 × 900, 930 × 990 et 800 × 600.
+
 ## Compteurs de répétitions cohérents — v1.7.6
 
 Les actions **Run N times** et **Run until it fails** affichent un bilan dédié :
