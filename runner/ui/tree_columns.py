@@ -65,6 +65,9 @@ class NameColumnFitter(QObject):
         header = self._tree.header()
         if header.count() == 0:
             return
+        before_fit = getattr(self, "before_fit", None)
+        if before_fit is not None:
+            before_fit()
         others = sum(header.sectionSize(i) for i in range(1, header.count())
                      if not header.isSectionHidden(i))
         width = max(self.MINIMUM, self._tree.viewport().width() - others)
@@ -93,6 +96,11 @@ class TreeColumnLayout(QObject):
     SETTINGS_KEY = "tree/column_widths"
     # Une duree de plus d'une heure reste lisible en elargissant la colonne.
     DURATION_SAMPLE = "10 min 59.9s"
+    # En fenetre etroite (800 px, trois lecteurs), les colonnes de resultat
+    # gardaient leur largeur et ne laissaient que 100 px aux noms : « sec… »,
+    # « t… », illisibles. Sous ce seuil, Duration s'efface d'elle-meme et
+    # revient quand la place revient, sans toucher au choix de l'utilisateur.
+    COMFORTABLE_NAMES = 180
 
     def __init__(self, tree, settings, fitter: NameColumnFitter, default_width, parent=None):
         super().__init__(parent or tree)
@@ -102,7 +110,9 @@ class TreeColumnLayout(QObject):
         self._fitter = fitter
         self._programmatic = 0
         self._duration_visible = True
+        self._cramped = False
         self._widths = self._load()
+        fitter.before_fit = self._update_cramped
         header = tree.header()
         header.sectionResized.connect(self._on_section_resized)
         fitter.user_width_adjusted.connect(self.remember)
@@ -239,6 +249,33 @@ class TreeColumnLayout(QObject):
         self._apply_visibility()
         self._fitter._timer.start()
 
+    @property
+    def duration_auto_hidden(self) -> bool:
+        return self._duration_visible and self._cramped
+
+    def _duration_width(self, section: int) -> int:
+        return self.remembered(section) or self.duration_default()
+
+    def _update_cramped(self) -> None:
+        """Masque Duration quand elle priverait les noms de leur place.
+
+        Le calcul ne depend que de la largeur de l'arbre et des autres
+        colonnes, pas de l'etat courant : masquer Duration ne peut pas faire
+        changer la decision et la faire clignoter.
+        """
+        model = self._tree.model()
+        header = self._tree.header()
+        duration = getattr(model, "duration_column", -1) if model is not None else -1
+        if not 0 < duration < header.count():
+            return
+        others = sum(header.sectionSize(i) for i in range(1, header.count())
+                     if i != duration and not header.isSectionHidden(i))
+        room = self._tree.viewport().width() - others - self._duration_width(duration)
+        cramped = room < self.COMFORTABLE_NAMES
+        if cramped != self._cramped:
+            self._cramped = cramped
+            self._apply_visibility()
+
     def _apply_visibility(self) -> None:
         model = self._tree.model()
         header = self._tree.header()
@@ -246,6 +283,6 @@ class TreeColumnLayout(QObject):
             return
         duration = getattr(model, "duration_column", -1)
         for section in range(1, header.count()):
-            hidden = section == duration and not self._duration_visible
+            hidden = section == duration and (not self._duration_visible or self._cramped)
             if header.isSectionHidden(section) != hidden:
                 header.setSectionHidden(section, hidden)

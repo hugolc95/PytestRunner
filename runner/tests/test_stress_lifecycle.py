@@ -313,3 +313,28 @@ def test_the_stop_button_cancels_a_running_stress_series(fenetre, monkeypatch, q
     _, resume = fenetre.results.detail._dernier_stress
     assert resume.cancelled
     assert "stopped" in fenetre.status_label.text().lower()
+
+
+def test_a_series_lands_in_history_with_its_origin_and_a_readable_name(fenetre, monkeypatch, qapp):
+    """Sans origine ni nom, la serie arrivait dans History comme un vieux run
+    « Origin unknown (older run) » nomme par son identifiant brut, juste
+    apres avoir ete lancee depuis l'onglet courant."""
+    _popen_scripte(monkeypatch, ["PASSED", "FAILED", "PASSED"])
+
+    fenetre._lancer_stress(NODEID, MODE_N_TIMES, cap=3)
+    _attendre(fenetre, qapp)
+
+    entree = fenetre.history.entries()[0]
+    assert entree.run_kind == "repeat"
+    assert entree.run_name == "Run N times · test_atr · 3×"
+
+
+def test_an_until_fail_series_is_named_after_its_gesture(fenetre, monkeypatch, qapp):
+    _popen_scripte(monkeypatch, ["PASSED", "FAILED"])
+
+    fenetre._lancer_stress(NODEID, MODE_UNTIL_FAIL, cap=10)
+    _attendre(fenetre, qapp)
+
+    entree = fenetre.history.entries()[0]
+    assert entree.run_kind == "repeat"
+    assert entree.run_name == "Run until it fails · test_atr · 2×"

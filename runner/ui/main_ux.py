@@ -74,7 +74,7 @@ def install() -> None:
         original_card_restyle(self)
         entry=self.group.entries[0] if self.group.entries else None
         is_profile=bool(entry and entry.run_kind=="profile")
-        is_selected=bool(entry and entry.run_kind=="classic")
+        is_selected=bool(entry and entry.run_kind in ("classic","repeat"))
         light=t.base_theme()=="light"
         if is_profile:
             foreground="#5b21b6" if light else "#bd9aff"

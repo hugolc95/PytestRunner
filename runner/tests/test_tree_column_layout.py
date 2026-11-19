@@ -17,7 +17,7 @@ from runner.domain.interpreter import InterpreterInfo
 from runner.domain.models import Reader
 from runner.domain.tree import build_tree
 from runner.ui.main_window import MainWindow
-from runner.ui.tree_columns import TreeColumnLayout
+from runner.ui.tree_columns import NameColumnFitter, TreeColumnLayout
 
 NODEIDS = ["suite/test_a.py::test_one", "suite/test_a.py::test_two"]
 DEUX = (Reader("Reader A", 0), Reader("Reader B", 1))
@@ -249,3 +249,39 @@ def test_dragging_a_column_edge_with_the_mouse_is_remembered(make_window, qtbot)
 
     assert header.sectionSize(1) > avant
     assert w.tree_columns.remembered(1) == header.sectionSize(1)
+
+
+def test_duration_steps_aside_when_test_names_lack_room(make_window, qtbot):
+    """A 800 px avec plusieurs lecteurs, les colonnes de resultat gardaient
+    leur largeur et ne laissaient que 100 px aux noms (« sec… », « t… »).
+    Duration s'efface d'elle-meme quand les noms manquent de place, revient
+    quand la place revient, sans changer le choix de l'utilisateur."""
+    w = make_window()
+    w.show()
+    qtbot.waitExposed(w)
+    tree = w.tree
+    qtbot.waitUntil(lambda: not hidden(w, duration(w)))
+
+    tree.setFixedWidth(360)
+    qtbot.waitUntil(lambda: hidden(w, duration(w)))
+    assert w.tree_columns.duration_visible
+    assert w.tree_columns.duration_auto_hidden
+    assert tree.header().sectionSize(0) > NameColumnFitter.MINIMUM
+    qtbot.waitUntil(lambda: _bord_droit(tree) == tree.viewport().width())
+
+    tree.setFixedWidth(900)
+    qtbot.waitUntil(lambda: not hidden(w, duration(w)))
+    assert not w.tree_columns.duration_auto_hidden
+
+
+def test_duration_hidden_by_the_user_stays_hidden_when_room_returns(make_window, qtbot):
+    w = make_window()
+    w.show()
+    qtbot.waitExposed(w)
+    w.set_duration_column_visible(False)
+    w.tree.setFixedWidth(360)
+    qtbot.wait(50)
+    w.tree.setFixedWidth(900)
+    qtbot.wait(50)
+    assert hidden(w, duration(w))
+    assert not w.tree_columns.duration_auto_hidden

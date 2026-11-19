@@ -3828,8 +3828,17 @@ class MainWindow(QMainWindow):
         entree -- exactement comme un run normal (`_archiver`)."""
         if self.workspace is None:
             return
+        # Sans origine ni nom, la serie arrivait dans History comme un vieux
+        # run "Origin unknown (older run)" nomme par son identifiant brut, juste
+        # apres avoir ete lancee depuis l'onglet courant.
+        court = self._stress_nodeid.split("::", 1)[-1].replace("::", " › ")
+        geste = ("Run until it fails" if self._stress_mode == MODE_UNTIL_FAIL
+                 else "Run N times")
+        nom = f"{geste} · {court} · {self._stress_ran}×"
         for cumul in self._stress_aggregate.values():
             entree = history.RunEntry(
+                run_kind="repeat",
+                run_name=nom,
                 replay_profile=getattr(self, "_stress_replay_profile", None),
                 collection_errors=deepcopy(getattr(self, '_stress_collection_errors', {})),
                 id=self._stress_id,

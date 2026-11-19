@@ -108,6 +108,8 @@ class RunGroup:
             return f"Profile: {entry.profile_name}" if entry.profile_name else "Profile"
         if entry and entry.run_kind == "classic":
             return "Selected run"
+        if entry and entry.run_kind == "repeat":
+            return "Repeated test"
         return "Origin unknown (older run)"
 
     @property
@@ -263,7 +265,9 @@ class RunCard(QFrame):
         self.dot.hide()
         entry = group.entries[0] if group.entries else None
         is_profile = bool(entry and entry.run_kind == "profile")
-        is_selected = bool(entry and entry.run_kind == "classic")
+        # Une serie de repetitions part elle aussi d'un choix explicite dans
+        # Run Tests : meme couleur qu'un run selectionne, libelle distinct.
+        is_selected = bool(entry and entry.run_kind in ("classic", "repeat"))
 
         def origin_color():
             light = t.current_theme() == "light"
@@ -280,8 +284,8 @@ class RunCard(QFrame):
             if is_selected:
                 return "#e8f0ff" if light else "#203249"
             return t.BG_RAISED
-        kind = "PROFILE" if is_profile else (
-            "SELECTED RUN" if entry and entry.run_kind == "classic" else "ORIGIN UNKNOWN")
+        kind = {"profile": "PROFILE", "classic": "SELECTED RUN", "repeat": "REPEAT"}.get(
+            entry.run_kind if entry else "", "ORIGIN UNKNOWN")
         self.origin_label = self._label(kind, t.TEXT_XS, 700, origin_color)
         self.origin_label.setToolTip(group.origin_label)
         top.addWidget(self.origin_label)
@@ -309,6 +313,10 @@ class RunCard(QFrame):
         self.run_title = self._label(title, 17, 600)
         self.run_title.setToolTip(title)
         self.run_title.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        # Les noms longs (« Run N times · test_… · 20× ») etaient coupes net au
+        # bord de la carte ; ils finissent maintenant par « … ».
+        self._full_title = title
+        self.run_title.installEventFilter(self)
         title_row.addWidget(self.run_title, 1)
         self.protected_badge = self._label(
             "PROTECTED", t.TEXT_XS, 700, lambda: t.ACCENT)
@@ -371,6 +379,14 @@ class RunCard(QFrame):
         reader_container.hide()
         layout.addLayout(body)
         self.set_selected(False)
+
+    def eventFilter(self, watched, event):
+        if watched is self.run_title and event.type() in (QEvent.Resize, QEvent.FontChange):
+            elided = self.run_title.fontMetrics().elidedText(
+                self._full_title, Qt.ElideRight, max(12, self.run_title.width()))
+            if elided != self.run_title.text():
+                self.run_title.setText(elided)
+        return super().eventFilter(watched, event)
 
     def _paint(self, widget: QWidget, style_of) -> None:
         """Enregistre `widget` pour rejouer sa feuille a chaque `restyle()`."""

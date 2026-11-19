@@ -1,9 +1,9 @@
 """Run-page layout using the existing controls and their existing signals."""
 from PySide6.QtWidgets import (
-    QApplication, QBoxLayout, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLayout,
+    QApplication, QBoxLayout, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLayout,
     QPushButton, QPlainTextEdit, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
-from PySide6.QtCore import QSize, Qt, QTimer
+from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 
 from runner.ui import tokens as t
 from runner.ui import icons
@@ -117,6 +117,13 @@ class StructuredRunHeader(QWidget):
         self._grid.setSpacing(t.SPACE_3)
         self._compact = None
         self._dense = None
+        # Evalue une fois la mise en page posee : pendant un redimensionnement,
+        # l'en-tete passe par des hauteurs transitoires qui faisaient grossir
+        # la fenetre a chaque etape.
+        self._whole_timer = QTimer(self)
+        self._whole_timer.setSingleShot(True)
+        self._whole_timer.setInterval(40)
+        self._whole_timer.timeout.connect(self._keep_whole)
 
         self.environment, environment = self._panel("ENVIRONMENT")
         self.execution, execution = self._panel("EXECUTION")
@@ -135,6 +142,7 @@ class StructuredRunHeader(QWidget):
         reader_column.setAlignment(Qt.AlignTop)
         environment_fields.addLayout(workspace_column, 0, 0, Qt.AlignTop)
         self.environment_fields = environment_fields
+        self.workspace_column = workspace_column
         self._window = window
         environment_fields.setColumnStretch(0, 1)
         environment.addLayout(environment_fields)
@@ -309,6 +317,26 @@ class StructuredRunHeader(QWidget):
         self._compact = compact
         for panel in (self.environment, self.execution, self.results):
             self._grid.removeWidget(panel)
+        # Empilees, les trois cartes prenaient 340 px de haut : a 800 x 560
+        # elles etaient ecrasees (bouton Run sans texte, Collect sur le champ).
+        # Sur toute la largeur, le chemin et ses actions tiennent sur une ligne.
+        self.workspace_column.setDirection(
+            QBoxLayout.LeftToRight if compact == "stacked" else QBoxLayout.TopToBottom)
+        self.workspace_column.setStretch(0, 1 if compact == "stacked" else 0)
+        # Sur une meme ligne, la largeur souhaitee du champ suivait la longueur
+        # du chemin et reduisait « Run name » a 90 px (« Valid… »). Le chemin
+        # cede la place en premier ; il reste lisible au survol et a l'ouverture.
+        # La pile du nom annonce une largeur souhaitee nulle : il lui faut un
+        # minimum a elle, le chemin prenant tout le reste de la ligne.
+        combo = self._window.workspace_combo
+        if compact == "stacked":
+            combo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(12)
+            self._window.run_name_stack.setMinimumWidth(180)
+        else:
+            combo.setSizeAdjustPolicy(QComboBox.AdjustToContentsOnFirstShow)
+            self._window.run_name_stack.setMinimumWidth(90)
+        self._whole_timer.start()
         if compact == "stacked":
             for row, panel in enumerate((self.environment, self.execution, self.results)):
                 self._grid.addWidget(panel, row, 0)
@@ -325,8 +353,49 @@ class StructuredRunHeader(QWidget):
             self._grid.setColumnStretch(column, 0 if compact and column == 2 else
                                         5 if column == 1 else 4)
 
+    def _keep_whole(self):
+        """La fenetre ne descend pas sous la hauteur que l'en-tete exige.
+
+        `MainWindow` autorise 800 x 560, ce qui suffit cote a cote mais pas
+        empile : Qt ecrasait alors les cartes sous leur minimum et les
+        controles se chevauchaient (Run sans texte, Collect sur le chemin). La
+        fenetre garde la hauteur qui manque, puis retrouve son minimum
+        d'origine des que l'en-tete tient de nouveau.
+        """
+        top = self.window()
+        if top is self or not self.isVisible():
+            return
+        base = top.property("runHeaderBaseMinimumHeight")
+        if base is None:
+            base = top.minimumHeight()
+            top.setProperty("runHeaderBaseMinimumHeight", base)
+        # Changer de disposition ne redonne pas tout de suite sa hauteur a
+        # l'en-tete : sans cette mise en page explicite, il paraissait ecrase
+        # alors que la place existait, et la fenetre grandissait pour rien.
+        self.updateGeometry()
+        parent = self.parentWidget()
+        if parent is not None and parent.layout() is not None:
+            parent.layout().activate()
+        needed = self.minimumSizeHint().height()
+        if self.height() < needed:
+            # Le reste de la page est deja a son minimum quand l'en-tete est
+            # ecrase. Calcul absolu, jamais cumule : deux appels en attente
+            # ajoutaient chacun le manque et la fenetre grandissait sans fin.
+            top.setMinimumHeight(max(base, top.height() - self.height() + needed))
+        elif self._compact != "stacked" and top.minimumHeight() > base:
+            top.setMinimumHeight(base)
+
+    def event(self, event):
+        # Les lecteurs n'arrivent qu'apres la collecte : la carte Execution
+        # grandit alors sans que l'en-tete change de taille, donc sans
+        # resizeEvent. Sa demande de mise en page suffit a reverifier.
+        if event.type() == QEvent.LayoutRequest:
+            self._whole_timer.start()
+        return super().event(event)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self._whole_timer.start()
         dense = event.size().width() < 1260
         if dense != self._dense:
             self._dense = dense
@@ -344,6 +413,10 @@ class StructuredRunHeader(QWidget):
                 button.setIcon(icons.icon(glyph, t.TEXT_MUTED))
                 button.setMaximumWidth(32 if dense else 16777215)
             self.results.setMinimumWidth(0)
+            # En ligne compacte, le titre (taille Ignored) cedait toute sa place
+            # aux compteurs et ne montrait plus que « RE ».
+            self.result_heading.setMinimumWidth(
+                self.result_heading.fontMetrics().horizontalAdvance("RESULTS") + 4 if dense else 0)
         if dense:
             self._arrange('stacked' if event.size().width() < 740 else True)
             return

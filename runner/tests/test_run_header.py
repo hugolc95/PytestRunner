@@ -197,3 +197,73 @@ def test_profile_options_remain_reachable_on_a_short_window(qtbot):
     scroll.ensureWidgetVisible(options)
     qtbot.waitUntil(lambda: scroll.viewport().rect().contains(
         options.mapTo(scroll.viewport(), options.rect().center())))
+
+
+def _window_with_readers(qtbot, monkeypatch, tmp_path, size):
+    from PySide6.QtCore import QSettings
+    from runner.domain.models import Reader
+    settings = QSettings(str(tmp_path / "header.ini"), QSettings.IniFormat)
+    monkeypatch.setattr("runner.ui.main_window.QSettings", lambda *_: settings)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.resize(*size)
+    window.show()
+    window.reader_controls.show()
+    window.readers_bar.set_readers([Reader(index=i, name=f"Reader {i}") for i in range(3)])
+    window.run_header.update_environment()
+    window.view_failures_button.show()
+    qtbot.waitExposed(window)
+    return window
+
+
+def test_stacked_header_is_never_squeezed_below_its_controls(qtbot, monkeypatch, tmp_path):
+    """A 800 x 560, les cartes empilees etaient ecrasees : le bouton Run n'etait
+    plus qu'une barre verte sans texte et Collect chevauchait le chemin. La
+    fenetre garde maintenant la hauteur que l'en-tete exige."""
+    window = _window_with_readers(qtbot, monkeypatch, tmp_path, (800, 560))
+    header = window.run_header
+    qtbot.waitUntil(lambda: header._compact == "stacked")
+    qtbot.waitUntil(lambda: header.height() >= header.minimumSizeHint().height())
+    for panel in (header.environment, header.execution, header.results):
+        assert panel.height() >= panel.minimumSizeHint().height()
+    assert window.run_button.height() >= window.run_button.minimumSizeHint().height()
+    assert window.minimumHeight() > 560
+
+    # Sur toute la largeur, le chemin et ses actions partagent une ligne.
+    combo_top = window.workspace_combo.mapTo(header, window.workspace_combo.rect().topLeft()).y()
+    browse_top = window.browse_button.mapTo(header, window.browse_button.rect().topLeft()).y()
+    assert abs(combo_top - browse_top) <= window.workspace_combo.height()
+    heading = header.result_heading
+    assert heading.width() >= heading.fontMetrics().horizontalAdvance("RESULTS")
+
+
+def test_window_gets_its_minimum_back_once_the_header_fits(qtbot, monkeypatch, tmp_path):
+    window = _window_with_readers(qtbot, monkeypatch, tmp_path, (800, 560))
+    qtbot.waitUntil(lambda: window.minimumHeight() > 560)
+    window.resize(1100, window.height())
+    qtbot.waitUntil(lambda: window.run_header._compact != "stacked")
+    qtbot.waitUntil(lambda: window.minimumHeight() == 560)
+
+
+def test_readers_arriving_after_collection_do_not_squeeze_the_header(qtbot, monkeypatch, tmp_path):
+    """Les lecteurs n'arrivent qu'apres la collecte : la carte Execution grandit
+    sans que l'en-tete change de taille. C'est le parcours reel de
+    l'application, que la verification au redimensionnement ne voyait pas."""
+    from PySide6.QtCore import QSettings
+    from runner.domain.models import Reader
+    settings = QSettings(str(tmp_path / "header.ini"), QSettings.IniFormat)
+    monkeypatch.setattr("runner.ui.main_window.QSettings", lambda *_: settings)
+    window = MainWindow()
+    qtbot.addWidget(window)
+    window.resize(800, 560)
+    window.show()
+    qtbot.waitExposed(window)
+    qtbot.wait(100)
+    header = window.run_header
+
+    window.reader_controls.show()
+    window.readers_bar.set_readers([Reader(index=i, name=f"Reader {i}") for i in range(3)])
+    window.run_header.update_environment()
+
+    qtbot.waitUntil(lambda: header.height() >= header.minimumSizeHint().height())
+    assert header.execution.height() >= header.execution.minimumSizeHint().height()

@@ -607,6 +607,24 @@ def test_history_origin_labels():
     assert RunGroup("test", (replace(entry, run_kind="classic"),)).origin_label == "Selected run"
     profile = replace(entry, run_kind="profile", profile_name="Smoke")
     assert RunGroup("test", (profile,)).origin_label == "Profile: Smoke"
+    # Une serie « Run N times » n'est pas un vieux run d'origine inconnue.
+    repeat = replace(entry, run_kind="repeat", run_name="Run N times · test_atr · 20×")
+    assert RunGroup("test", (repeat,)).origin_label == "Repeated test"
+    assert RunGroup("test", (repeat,)).display_name == "Run N times · test_atr · 20×"
+
+
+def test_repeat_card_shows_its_origin_and_elides_a_long_name(qtbot):
+    from runner.ui.history_dashboard import RunCard, RunGroup
+    name = "Run N times · test_current_config_is_known_with_a_long_name · 20×"
+    entry = RunEntry(id="r", timestamp=0, workspace="/w", run_kind="repeat", run_name=name)
+    card = RunCard(RunGroup("r", (entry,)))
+    qtbot.addWidget(card)
+    card.resize(260, card.height())
+    card.show()
+    qtbot.waitUntil(lambda: card.run_title.text() != name)
+    assert card.origin_label.text() == "REPEAT"
+    assert card.run_title.text().endswith("…")
+    assert card.run_title.toolTip() == name
 
 
 def test_run_card_delete_button_removes_that_specific_run(fenetre, monkeypatch):

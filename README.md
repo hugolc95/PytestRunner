@@ -1,5 +1,26 @@
 # Pytest Runner GUI
 
+## Petites fenêtres sans chevauchement et répétitions nommées — v1.7.11
+
+À 800 px de large, quand les cartes Environment, Execution et Results
+s'empilent, la fenêtre ne descend plus sous la hauteur qu'elles demandent :
+le bouton **Run tests**, **Stop** et le chemin du workspace restent entiers au
+lieu de se chevaucher. Elle retrouve sa hauteur minimale de 560 px dès que les
+cartes ont de nouveau la place d'être côte à côte. Le chemin, **Browse…**, **Collect** et **Run name** tiennent alors
+sur une seule ligne, et le titre **RESULTS** reste lisible.
+
+Quand l'arbre devient étroit, la colonne **Duration** s'efface d'elle-même
+pour laisser la place aux noms de tests, puis revient quand la place revient.
+Votre choix d'afficher ou non Duration n'est pas modifié.
+
+Dans **History**, une série **Run N times** ou **Run until it fails** apparaît
+avec l'origine **REPEAT** et un nom lisible, par exemple
+« Run N times · test_login · 20× », au lieu d'un ancien run d'origine
+inconnue nommé par son identifiant. Les noms trop longs se terminent par « … »
+et restent complets au survol.
+
+Corrections de M5 et du nouveau constat de l'audit de suivi 1.7.10.
+
 ## Couleurs des lecteurs et verdicts distinctes — v1.7.10
 
 En thèmes daltoniens, **Passed** devient turquoise ; les cases cochées et les
