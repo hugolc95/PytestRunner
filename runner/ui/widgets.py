@@ -7,7 +7,7 @@ recoivent du texte et des couleurs, ils n'appellent rien.
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QFontMetrics, QIcon, QPainter, QPen
+from PySide6.QtGui import QColor, QFont, QFontMetrics, QPainter, QPen
 from PySide6.QtWidgets import (
     QDialog,
     QFrame,
@@ -288,60 +288,6 @@ class StatusPill(QPushButton):
     def value(self) -> int:
         return self._value
 
-    def _header_fonts(self):
-        number = QFont(self.font())
-        number.setPixelSize(t.TEXT_LG + 3)
-        number.setWeight(QFont.DemiBold)
-        label = QFont(self.font())
-        label.setPixelSize(t.TEXT_XS)
-        label.setWeight(QFont.Normal)
-        return number, label
-
-    def sizeHint(self):
-        if not getattr(self, '_header_density', False):
-            return super().sizeHint()
-        number, label = self._header_fonts()
-        number_metrics, label_metrics = QFontMetrics(number), QFontMetrics(label)
-        width = max(number_metrics.horizontalAdvance(str(self._value)) + 14 + t.SPACE_1,
-                    label_metrics.horizontalAdvance(self._status.label)) + 2 * t.SPACE_1
-        height = number_metrics.height() + label_metrics.height() + 3 + 2 * t.SPACE_1
-        return QSize(max(56, width), max(44, height))
-
-    def minimumSizeHint(self):
-        return self.sizeHint() if getattr(self, '_header_density', False) else super().minimumSizeHint()
-
-    def paintEvent(self, event):
-        if not getattr(self, '_header_density', False):
-            return super().paintEvent(event)
-        # Garder le vrai bouton Qt pour le focus, le clavier et le filtre,
-        # mais separer le nombre de sa legende comme dans le mockup Epure.
-        painter = QStylePainter(self)
-        option = QStyleOptionButton()
-        self.initStyleOption(option)
-        option.text, option.icon = '', QIcon()
-        painter.drawControl(QStyle.CE_PushButton, option)
-        number, label = self._header_fonts()
-        number_metrics, label_metrics = QFontMetrics(number), QFontMetrics(label)
-        text = str(self._value)
-        width = number_metrics.horizontalAdvance(text)
-        group_width = 14 + t.SPACE_1 + width
-        x = (self.width() - group_width) / 2
-        top = (self.height() - number_metrics.height() - label_metrics.height() - 3) / 2
-        if self.isDown():
-            top += 1
-        color = t.status_color(self._status) if self._value else t.TEXT_MUTED
-        glyph = icons.STATUS_GLYPHS_GROUP.get(self._status, 'mdi.circle-small')
-        icons.icon(glyph, color).paint(painter, QRectF(
-            x, top + (number_metrics.height() - 14) / 2, 14, 14).toRect())
-        painter.setFont(number)
-        painter.setPen(QColor(t.TEXT if self._value else t.TEXT_MUTED))
-        painter.drawText(QRectF(x + 14 + t.SPACE_1, top, width, number_metrics.height()),
-                         int(Qt.AlignCenter), text)
-        painter.setFont(label)
-        painter.setPen(QColor(t.TEXT_MUTED))
-        painter.drawText(QRectF(0, top + number_metrics.height() + 3, self.width(), label_metrics.height()),
-                         int(Qt.AlignCenter), self._status.label)
-
     # ------------------------------------------------------------------
 
     def _sur_clic(self) -> None:
@@ -365,14 +311,9 @@ class StatusPill(QPushButton):
                      else f"{self._value}\n{self._status.label}")
 
         couleur_texte = couleur if allume else t.TEXT_FAINT
-        if header_density:
-            fond = t.rgba(couleur, 0.12) if self._active else 'transparent'
-            fond_survol = t.BG_HOVER
-            bordure = couleur if self._active else 'transparent'
-        else:
-            fond = t.rgba(couleur, 0.22 if self._active else 0.10 if allume else 0.04)
-            fond_survol = t.rgba(couleur, 0.16 if allume else 0.07)
-            bordure = couleur if self._active else t.rgba(couleur, 0.32 if allume else 0.14)
+        fond = t.rgba(couleur, 0.22 if self._active else 0.10 if allume else 0.04)
+        fond_survol = t.rgba(couleur, 0.16 if allume else 0.07)
+        bordure = couleur if self._active else t.rgba(couleur, 0.32 if allume else 0.14)
         poids = "700" if self._active else "600" if allume else "400"
 
         padding = 3 if header_density else t.SPACE_2
@@ -387,14 +328,12 @@ class StatusPill(QPushButton):
         self.setStyleSheet(
             f"QPushButton {{ background-color: {fond}; {base} }}"
             f"QPushButton:hover {{ background-color: {fond_survol}; {base} }}"
-            f"QPushButton:pressed {{ background-color: {fond_survol}; {base} }}"
-            + (f"QPushButton:focus {{ border-color: {t.ACCENT}; }}" if header_density else ''))
+            f"QPushButton:pressed {{ background-color: {fond_survol}; {base} }}")
         # Apres la feuille locale : le QSS global des QPushButton ne doit pas
         # ramener ces compteurs a la hauteur compacte des boutons ordinaires.
         compact = getattr(self, '_compact', False)
-        minimum_height = 44 if header_density else (32 if compact else 48)
+        minimum_height = (28 if compact else 40) if header_density else (32 if compact else 48)
         self.setMinimumSize(56 if header_density else 72, minimum_height)
-        self.setAccessibleName(f'{self._value} {libelle} results')
 
         if not allume:
             self.setToolTip(f"No {libelle} test")
