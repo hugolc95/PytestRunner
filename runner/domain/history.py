@@ -106,7 +106,8 @@ class RunEntry:
     @property
     def ok(self) -> bool:
         return (not self.collection_errors and self.exit_code == 0
-                and self.count(Status.FAILED) == 0 and self.count(Status.ERROR) == 0)
+                and self.count(Status.FAILED) == 0 and self.count(Status.ERROR) == 0
+                and self.count(Status.NOT_RUN) == 0)
 
     @property
     def label(self) -> str:
@@ -122,7 +123,9 @@ class RunEntry:
         return (f"{self.count(Status.PASSED)} passed, "
                 f"{self.count(Status.FAILED)} failed, "
                 f"{self.count(Status.SKIPPED)} skipped, "
-                f"{self.count(Status.ERROR)} error" + (' · ' + detail if detail else ''))
+                f"{self.count(Status.ERROR)} error"
+                + (f", {self.count(Status.NOT_RUN)} not run" if self.count(Status.NOT_RUN) else '')
+                + (' · ' + detail if detail else ''))
 
     def output(self) -> str:
         """La sortie console du run, relue depuis son fichier."""
@@ -244,7 +247,8 @@ def compare(a: RunEntry, b: RunEntry) -> Comparison:
     return Comparison(
         older=ancien, newer=recent,
         newly_failed=tuple(sorted(apres - avant)),
-        newly_fixed=tuple(sorted(avant - apres)),
+        newly_fixed=tuple(sorted(nodeid for nodeid in avant - apres
+                                 if recent.test_statuses.get(nodeid) != Status.NOT_RUN.name)),
         still_failing=tuple(sorted(avant & apres)),
     )
 
@@ -342,6 +346,8 @@ class History:
         trouves: list[bool] = []
         for entree in self._entrees:
             if entree.reader != reader or nodeid not in entree.nodeids:
+                continue
+            if entree.test_statuses.get(nodeid) == Status.NOT_RUN.name:
                 continue
             trouves.append(nodeid not in entree.failed_nodeids)
             if len(trouves) >= limite:
@@ -536,6 +542,8 @@ class History:
         for entree in self._entrees[:fenetre]:
             echecs = set(entree.failed_nodeids)
             for nodeid in entree.nodeids:
+                if entree.test_statuses.get(nodeid) == Status.NOT_RUN.name:
+                    continue
                 clef = (entree.reader, nodeid)
                 vus[clef] = vus.get(clef, 0) + 1
                 if nodeid in echecs:

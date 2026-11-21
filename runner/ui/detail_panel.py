@@ -866,7 +866,7 @@ class DetailPanel(QWidget):
                   durations: dict[int, float | None] | None = None,
                   markers: tuple[str, ...] = (),
                   recent_runs: dict[int, list[bool]] | None = None,
-                  last_seen: float | None = None) -> None:
+                  last_seen: float | None = None, not_run: dict[int, str] | None = None) -> None:
         """Affiche un test. `statuses` et `failures` sont indexes par lecteur.
 
         `recent_runs` est la mini-tendance de ce nodeid, par lecteur, du plus
@@ -877,8 +877,9 @@ class DetailPanel(QWidget):
             return
 
         self._nodeid = nodeid
+        self._not_run_reasons = not_run or {}
         self._dernier = (nodeid, readers, statuses, failures, durations,
-                        markers, recent_runs, last_seen)
+                        markers, recent_runs, last_seen, not_run)
         self.stack.setCurrentWidget(self.stack.widget(1))
 
         chemin, _, reste = nodeid.partition("::")
@@ -959,6 +960,11 @@ class DetailPanel(QWidget):
 
         for lecteur in cibles:
             statut = statuses.get(lecteur.index, Status.PENDING)
+            reason = getattr(self, '_not_run_reasons', {}).get(lecteur.index)
+            if reason or statut is Status.NOT_RUN:
+                label = (lecteur.name + ' · ' if lecteur.name else '') + 'Not run'
+                blocs.append(self._html_note(label) + self._html_note(reason or 'This requested test was not executed.'))
+                continue
             echec = failures.get(lecteur.index)
             if statut is Status.SKIPPED and echec is not None and echec.kind == "skip":
                 label = f"{lecteur.short_name}: " if lecteur.name else ""
@@ -975,7 +981,9 @@ class DetailPanel(QWidget):
             entete = f"--- {lecteur.name or 'run'} ---" if len(cibles) > 1 else ""
             brut.append("\n".join(x for x in (entete, echec.body if echec else "") if x))
 
-        if not any(statuses.get(reader.index, Status.PENDING).is_bad for reader in cibles):
+        if (not getattr(self, '_not_run_reasons', {})
+                and not any(statuses.get(reader.index) is Status.NOT_RUN for reader in cibles)
+                and not any(statuses.get(reader.index, Status.PENDING).is_bad for reader in cibles)):
             blocs.insert(0, self._html_sans_echec(cibles, statuses, last_seen, recent_runs or {}))
         self.copy_button.setText("Copy details" if any(
             statuses.get(reader.index) is Status.SKIPPED for reader in cibles

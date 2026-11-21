@@ -29,6 +29,7 @@ STATUS_GLYPHS: dict[Status, str] = {
     Status.FAILED: "mdi.close-circle",
     Status.SKIPPED: "mdi.minus-circle",
     Status.ERROR: "mdi.alert-circle",
+    Status.NOT_RUN: "mdi.clock-alert-outline",
     Status.RUNNING: "mdi.loading",
     Status.PENDING: "mdi.circle-small",
 }
@@ -41,6 +42,7 @@ STATUS_GLYPHS_GROUP: dict[Status, str] = {
     Status.FAILED: "mdi.close-circle-outline",
     Status.SKIPPED: "mdi.minus-circle-outline",
     Status.ERROR: "mdi.alert-circle-outline",
+    Status.NOT_RUN: "mdi.clock-alert-outline",
     Status.RUNNING: "mdi.loading",
     Status.PENDING: "mdi.circle-small",
 }

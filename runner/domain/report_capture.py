@@ -13,6 +13,9 @@ def persist_analysis(entry, directory, *, log_index=None):
     contents = {}
     for occurrence in data.get('occurrences', []):
         for attempt in occurrence.get('attempts', []):
+            if str(attempt.get('status', '')).replace('_', '').upper() == 'NOTRUN':
+                attempt.update(duration=None, log='', log_path='', log_notice='This requested test was not executed.')
+                continue
             if not data.get('save_logs', True):
                 attempt['log_notice'] = 'Complete logs were disabled in this profile at launch.'
             path = attempt.get('log_path')

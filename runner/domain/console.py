@@ -44,12 +44,15 @@ _TRACE = re.compile(r"^\S+\.py:\d+:")
 _RESUME = re.compile(r"^(FAILED|ERROR)\s+\S+")
 
 _COLLECTE = re.compile(r"\bcollected\s+\d+\s+item")
+_CRASH = re.compile(r'Windows fatal exception:|Fatal Python error:|Python process terminated:|Test process terminated', re.I)
 
 
 def _est_probleme(nue: str) -> bool:
     """Vrai si la ligne, prise seule, participe a l'explication d'un echec."""
     if not nue:
         return False
+    if _CRASH.search(nue):
+        return True
     if nue == "E" or nue.startswith("E "):
         return True
     if nue.startswith(">") or _TRACE.match(nue) or _RESUME.match(nue):
@@ -94,6 +97,9 @@ class LensFilter:
             return True
 
         nue = strip_ansi(ligne).strip()
+        if self.lens is Lens.PROBLEMS and _CRASH.search(nue):
+            self._dans_section = True
+            return True
         titre = section_of(nue)
 
         if self.lens is Lens.OUTLINE:

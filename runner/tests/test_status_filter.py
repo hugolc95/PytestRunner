@@ -90,11 +90,11 @@ def test_the_pills_live_in_the_workspace_bar_not_the_status_bar(fenetre):
         assert not fenetre.statusBar().isAncestorOf(pastille)
 
 
-def test_result_counters_are_large_enough_to_read_at_a_glance(fenetre):
+def test_result_counters_keep_labels_and_icons_in_the_compact_header(fenetre):
     for status, pill in fenetre.pills.items():
-        assert pill.minimumWidth() >= 72
-        assert pill.minimumHeight() >= 40
-        assert pill.iconSize().width() >= 20
+        assert pill.minimumWidth() >= 56
+        assert pill.minimumHeight() >= 28
+        assert pill.iconSize().width() >= 14
         assert status.label in pill.text()
 
 

@@ -884,7 +884,7 @@ QLabel#StatCellValue {{
     background: transparent;
 }}
 QLabel#ReaderVerdict_passed, QLabel#ReaderVerdict_failed,
-QLabel#ReaderVerdict_skipped, QLabel#ReaderVerdict_error,
+QLabel#ReaderVerdict_skipped, QLabel#ReaderVerdict_error, QLabel#ReaderVerdict_notrun,
 QLabel#ReaderVerdict_running, QLabel#ReaderVerdict_pending {{
     font-size: {t.TEXT_XS}px;
     font-weight: 700;
@@ -894,6 +894,7 @@ QLabel#ReaderVerdict_passed {{ color: {t.status_color(Status.PASSED)}; }}
 QLabel#ReaderVerdict_failed {{ color: {t.status_color(Status.FAILED)}; }}
 QLabel#ReaderVerdict_skipped {{ color: {t.status_color(Status.SKIPPED)}; }}
 QLabel#ReaderVerdict_error {{ color: {t.status_color(Status.ERROR)}; }}
+QLabel#ReaderVerdict_notrun {{ color: {t.status_color(Status.NOT_RUN)}; }}
 QLabel#ReaderVerdict_running {{ color: {t.status_color(Status.RUNNING)}; }}
 QLabel#ReaderVerdict_pending {{ color: {t.TEXT_FAINT}; }}
 QLabel#StatusLive {{

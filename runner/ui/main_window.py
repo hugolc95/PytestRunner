@@ -158,6 +158,8 @@ class MainWindow(QMainWindow):
         self.workspace: Workspace | None = None
         self._collection_errors = {}
         self._run_collection_errors = {}
+        self._execution_not_run_count = 0
+        self._execution_errors = False
         self._collecting = False
         self._recollect_after_interpreter_change = False
         self.service = RunService(self)
@@ -223,6 +225,7 @@ class MainWindow(QMainWindow):
         from runner.ui.profile_run_tree import ProfileRunTree
         self.profile_run_tree = ProfileRunTree(self)
         self.service.test_detail.connect(self.results.set_test_detail)
+        self.service.reader_finished.connect(self._on_reader_execution_report)
         self.service.profile_test_detail.connect(self._on_profile_test_detail)
         self.service.profile_duration.connect(self._on_profile_test_duration)
         self.service.profile_detail.connect(self._show_profile_detail)
@@ -911,7 +914,7 @@ class MainWindow(QMainWindow):
 
         self.pills = {
             statut: StatusPill(statut)
-            for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
+            for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR, Status.NOT_RUN)
         }
         for pastille in self.pills.values():
             pastille.filter_clicked.connect(self.filter_by_status)
@@ -1030,7 +1033,7 @@ class MainWindow(QMainWindow):
         self.rerun_button = QPushButton("Re-run failed")
         self.rerun_button.setObjectName("Ghost")
         self.rerun_button.setIcon(icons.icon("mdi.replay", t.TEXT_MUTED))
-        self.rerun_button.setToolTip("Run only the tests that failed  (F6)")
+        self.rerun_button.setToolTip("Re-run failed, errored and not run tests  (F6)")
         self.rerun_button.setCursor(Qt.PointingHandCursor)
         self.rerun_button.clicked.connect(self.rerun_failed)
 
@@ -1515,7 +1518,7 @@ class MainWindow(QMainWindow):
         if states is not None:
             key = (position, attempt, reader)
             previous = states.get(key)
-            terminal = (Status.PASSED, Status.FAILED, Status.ERROR, Status.SKIPPED)
+            terminal = tuple(s for s in Status if s.is_final)
             if key not in states and attempt > 0:
                 self._profile_execution_total += 1
             if previous in terminal:
@@ -1536,18 +1539,25 @@ class MainWindow(QMainWindow):
     def _on_profile_batch_report(self, position, count, attempt, report) -> None:
         self.profile_model.clear_preparing(report.reader.index)
         positions = self.profile_run_tree.positions(position, count)
+        reasons = {}
         for current in positions:
             key = self.profile_model.key(current, attempt)
             self._profile_reports[(key, report.reader.index)] = report
             if key in self.profile_model.locations:
                 nodeid = self.profile_model.locations[key][2]
+                if nodeid in report.not_run:
+                    reasons[key] = report.not_run[nodeid]
                 if nodeid in report.durations:
                     self.profile_model.set_duration(key, report.reader.index, report.durations[nodeid])
             if self._profile_logs is not None and key in self.profile_model.locations:
                 nodeid = self.profile_model.locations[key][2]
                 status = self.profile_model.statuses_for_nodeid(key).get(report.reader.index, Status.PENDING)
-                executed = status is not Status.PENDING
+                executed = status.is_executed
                 self._profile_logs.capture(key, nodeid, report.reader, executed)
+        previous = {key[0]: value for key, value in self.profile_model._not_run.items()
+                    if key[1] == report.reader.index}
+        previous.update(reasons)
+        self.profile_model.set_not_run(report.reader.index, previous)
         if self._profile_selected_key:
             selected_position, selected_attempt, _ = self.profile_model.locations[self._profile_selected_key]
             if selected_attempt == attempt and selected_position in positions:
@@ -2181,6 +2191,9 @@ class MainWindow(QMainWindow):
 
     def _merge_reader_durations(self, rapport) -> None:
         self.model.merge_durations(rapport.reader.index, rapport.durations)
+
+    def _on_reader_execution_report(self, report):
+        self.model.set_not_run(report.reader.index, report.not_run)
 
     # =====================================================================
     # Workspace
@@ -2827,7 +2840,7 @@ class MainWindow(QMainWindow):
             else:
                 self.status_label.setText('No failed test to re-run')
             return
-        echecs = self.model.failed_nodeids()
+        echecs = self.model.failed_nodeids(include_not_run=True)
         if not echecs:
             self.status_label.setText("No failed test to re-run")
             return
@@ -3176,12 +3189,12 @@ class MainWindow(QMainWindow):
         if getattr(self, '_profile_count_statuses', None) is not None:
             self.progress.setMaximum(max(1, self._profile_execution_total))
             if hasattr(self.compass_ring, 'set_remaining'):
-                self.compass_ring.set_remaining(self._profile_execution_total - faits)
+                self.compass_ring.set_remaining(self._profile_execution_total - faits - self._run_status_counts().get(Status.NOT_RUN, 0))
         self.progress.setValue(faits)
         # Pas de `max(0, ...)` ici : la pastille borne deja, et c'est chez elle
         # que la regle a sa place -- « je n'affiche pas un reste negatif » est
         # son invariant, pas celui de la fenetre.
-        self.remaining_pill.set_value(self.progress.maximum() - faits)
+        self.remaining_pill.set_value(self.progress.maximum() - faits - self._run_status_counts().get(Status.NOT_RUN, 0))
 
     @Slot(int, int)
     def _on_progress(self, faits: int, total: int) -> None:
@@ -3287,11 +3300,11 @@ class MainWindow(QMainWindow):
         if self._stress_previous_counts is not None:
             return self._stress_previous_completed
         if getattr(self, '_profile_count_statuses', None) is not None:
-            return sum(self._profile_verdict_counts.values())
+            return sum(n for s, n in self._profile_verdict_counts.items() if s.is_executed)
         if self._stress_counts is not None:
             return sum(self._stress_counts.values())
         value = getattr(self, "_profile_progress_done", None)
-        return sum(self._run_status_counts().values()) if value is None else value
+        return sum(n for s, n in self._run_status_counts().items() if s.is_executed) if value is None else value
 
     def _run_status_counts(self) -> dict:
         """Shared snapshot for the result counters and completion notification."""
@@ -3378,7 +3391,8 @@ class MainWindow(QMainWindow):
             f"{rendus.get(Status.PASSED, 0)} passed · "
             f"{rendus.get(Status.FAILED, 0)} failed · "
             f"{rendus.get(Status.SKIPPED, 0)} skipped · "
-            f"{rendus.get(Status.ERROR, 0)} error"
+            f"{rendus.get(Status.ERROR, 0)} error · "
+            f"{rendus.get(Status.NOT_RUN, 0)} not run"
         )
         icone = (QSystemTrayIcon.Critical
                 if rendus.get(Status.FAILED, 0) or rendus.get(Status.ERROR, 0)
@@ -4357,9 +4371,10 @@ class MainWindow(QMainWindow):
         self.act_stop.setEnabled(occupe)
         rejouable = (charge and not occupe and cible and ready
                      and bool(self.profile_run_tree.failed_keys() if self.profile_tree_button.isChecked()
-                              else self.model.failed_nodeids()))
+                              else self.model.failed_nodeids(include_not_run=True)))
         self.act_rerun.setEnabled(rejouable)
         self.rerun_button.setEnabled(rejouable)
+        self.rerun_button.setText("Re-run incomplete" if self._run_status_counts().get(Status.NOT_RUN) else "Re-run failed")
         self.act_diverge.setEnabled(len(self.model.readers) > 1)
         # Sans YAML detecte, le meme bouton permet d'en CHOISIR un dans un
         # sous-dossier. Le griser empechait precisement de reparer ce cas.

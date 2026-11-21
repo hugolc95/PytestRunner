@@ -345,6 +345,10 @@ class RunCard(QFrame):
             counts.addWidget(self._label(f"{group.count(Status.SKIPPED)} skipped",
                                          t.TEXT_XS, 600,
                                          lambda: t.status_color(Status.SKIPPED)))
+        if group.count(Status.NOT_RUN):
+            counts.addWidget(self._label(f"{group.count(Status.NOT_RUN)} not run",
+                                         t.TEXT_XS, 600,
+                                         lambda: t.status_color(Status.NOT_RUN)))
         counts.addStretch(1)
         counts.addWidget(self._label(format_duration(group.duration), t.TEXT_XS, 500,
                                     lambda: t.TEXT_MUTED))
@@ -841,7 +845,7 @@ class HistoryWindow(QDialog):
         self.result_icons = {}
         summary_top = QHBoxLayout()
         summary_top.setSpacing(t.SPACE_2)
-        for status in (Status.PASSED, Status.FAILED, Status.ERROR, Status.SKIPPED):
+        for status in (Status.PASSED, Status.FAILED, Status.ERROR, Status.SKIPPED, Status.NOT_RUN):
             card = QPushButton()
             card.setCheckable(True)
             card.setMinimumWidth(0)
@@ -852,7 +856,7 @@ class HistoryWindow(QDialog):
             box = QVBoxLayout(card)
             box.setContentsMargins(t.SPACE_3, t.SPACE_2, t.SPACE_3, t.SPACE_2)
             value = QLabel("0")
-            label = QLabel(status.value.capitalize())
+            label = QLabel(status.label.title())
             glyph = QLabel()
             glyph.setFixedSize(16, 16)
             caption = QHBoxLayout()
@@ -1501,7 +1505,7 @@ class HistoryWindow(QDialog):
             self.detail_meta.setText(self.detail_meta.text().replace(f'{len(group.nodeids)} tests', f'{planned} planned tests', 1))
             self.success_value.setText(coverage + '\nSuccess rate above applies only to executed tests.' if not executed else
                 f'{counts[Status.PASSED]} passed among executed tests · ' + coverage)
-            self.execution_title.setText('Campaign results · includes tests not run')
+            self.execution_title.setText('Results · includes tests not run')
         if group.collection_errors:
             from runner.domain.collection_state import summary as collection_summary
             self.success_value.setText('Collection incomplete · ' + collection_summary(group.collection_errors)
@@ -1582,7 +1586,9 @@ class HistoryWindow(QDialog):
             if i not in self._history_failure_indexes:
                 self._history_failure_indexes[i] = index_failures(entry.output())
             failures[i] = failure_for(self._history_failure_indexes[i], nodeid)
-        self.execution_detail.show_test(nodeid, tuple(readers), statuses, failures)
+        reasons = {i: self.execution_model.reason_for_index(index, i)
+                   for i, status in statuses.items() if status is Status.NOT_RUN}
+        self.execution_detail.show_test(nodeid, tuple(readers), statuses, failures, not_run=reasons)
         self._sync_group_corner()
 
     def _choose_history_failure(self, nodeid):

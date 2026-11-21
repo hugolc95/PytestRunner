@@ -53,7 +53,12 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
         assert ring_position.x() + window.compass_ring.width() == (
             results.contentsRect().right() + 1 - margins.right())
     else:
-        assert results.height() < 90
+        assert results.height() <= 130
+    positions = [pill.mapTo(results, pill.rect().topLeft()).y() for pill in window.pills.values()]
+    assert len(set(positions)) == 1  # Tous les statuts restent sur la meme rangee.
+    for pill in window.pills.values():
+        position = pill.mapTo(results, pill.rect().bottomRight())
+        assert results.rect().contains(position)
     for button in (window.view_failures_button, window.view_differences_button):
         assert button.mapTo(results, button.rect().topRight()).x() < ring_position.x()
     for i, panel in enumerate(panels):

@@ -14,6 +14,7 @@ from runner.domain.ansi import strip_ansi
 ENV_OUT = "PYTESTRUNNER_DIAGNOSTICS_OUT"
 PREFIX = "PYTESTRUNNER_DIAGNOSTIC\t"
 MODULE = "runner_diagnostic_probe"
+PHASE_PREFIX = 'PYTESTRUNNER_PHASE\t'
 
 # This standalone plugin runs in the selected test interpreter, including x86.
 _SOURCE = r'''
@@ -21,6 +22,30 @@ import json
 import os
 import sys
 import pytest
+
+def _phase(nodeid, phase):
+    if "PYTEST_XDIST_WORKER" not in os.environ:
+        sys.__stdout__.write("\nPYTESTRUNNER_PHASE\t" + json.dumps(
+            dict(nodeid=nodeid, phase=phase), ensure_ascii=True) + "\n")
+        sys.__stdout__.flush()
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_setup(item):
+    _phase(item.nodeid, "setup")
+    yield
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_call(item):
+    _phase(item.nodeid, "call")
+    yield
+
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item):
+    _phase(item.nodeid, "teardown")
+    yield
+
+def pytest_runtest_logfinish(nodeid, location):
+    _phase(nodeid, "finished")
 
 def _write(kind, nodeid, phase, detail):
     # xdist forwards reports to the controller; only it writes the shared file.
@@ -97,12 +122,26 @@ def parse_live_detail(text: str) -> dict | None:
             detail = json.loads(line[len(PREFIX):])
             if (isinstance(detail, dict) and detail.get('kind') == 'test'
                     and all(isinstance(detail.get(key), str) for key in ('nodeid', 'phase', 'message', 'body'))
-                    and detail['nodeid'] and detail['phase'] in ('setup', 'call', 'teardown')):
+                    and detail['nodeid'] and detail['phase'] in ('setup', 'call', 'teardown', 'native')):
                 return detail
         elif line.startswith('PYTESTRUNNER_SKIP\t'):
             detail = json.loads(line.split('\t', 1)[1])
             if isinstance(detail, dict) and isinstance(detail.get('nodeid'), str) and isinstance(detail.get('reason'), str):
                 return dict(kind='skip', nodeid=detail['nodeid'], phase='', message=detail['reason'], body=detail['reason'])
+    except (ValueError, TypeError):
+        pass
+    return None
+
+
+def parse_phase(text):
+    line = strip_ansi(text).strip()
+    if not line.startswith(PHASE_PREFIX):
+        return None
+    try:
+        item = json.loads(line[len(PHASE_PREFIX):])
+        if (isinstance(item, dict) and isinstance(item.get('nodeid'), str) and item['nodeid']
+                and item.get('phase') in ('setup', 'call', 'teardown', 'finished')):
+            return item
     except (ValueError, TypeError):
         pass
     return None
@@ -182,6 +221,10 @@ class CollectionError(RuntimeError):
 
 def fallback_error(output: str, code: int) -> str:
     """Fallback for failures before the plugin loads, usage errors and native crashes."""
+    from runner.domain.process_crash import native_crash
+    crash = native_crash(output, code)
+    if crash:
+        return crash['body']
     lines = strip_ansi(output or "").splitlines()
     exception_lines = [line.strip()[1:].strip() for line in lines
                        if re.match(r"^\s*E\s+", line)]

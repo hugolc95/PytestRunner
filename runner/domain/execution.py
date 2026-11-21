@@ -431,6 +431,21 @@ class ReaderRun:
         groups = _group_nodeids_by_suite(self.request.workspace, self.request.nodeids)
         final_junit = self._junit_path()
         partial_junits: list[str] = []
+        incomplete_reasons = {}
+
+        def record_result(nodeid, status):
+            previous = verdicts.get(nodeid)
+            if previous is status:
+                return
+            if previous is not None:
+                remaining = report.counts.get(previous, 0) - 1
+                if remaining > 0:
+                    report.counts[previous] = remaining
+                else:
+                    report.counts.pop(previous, None)
+            verdicts[nodeid] = status
+            report.counts[status] = report.counts.get(status, 0) + 1
+            on_outcome(Outcome(nodeid, status, self.reader.index))
 
         with reader_plugin(self.request.config_path) as (
                 plugin_args, plugin_dir):
@@ -493,12 +508,25 @@ class ReaderRun:
                     skip_blank_after_protocol = False
                     streamed_details = set()
                     fallback_verdicts = {}
+                    active = {}
                     for line in iter(self._process.stdout.readline, ""):
                         if self._cancelled:
                             break
+                        phase = diagnostics.parse_phase(line)
+                        if phase is not None:
+                            nodeid = suite_resolver.resolve(phase['nodeid'])
+                            if phase['phase'] == 'finished':
+                                active.pop(nodeid, None)
+                            elif nodeid in suite_nodeids:
+                                active[nodeid] = phase['phase']
+                            skip_blank_after_protocol = True
+                            continue
                         activity = parsing.parse_activity_line(line)
                         if activity is not None:
                             nodeid, preparing = activity
+                            nodeid = suite_resolver.resolve(nodeid)
+                            if not preparing and nodeid in suite_nodeids:
+                                active.setdefault(nodeid, 'native')
                             prefix = parsing.PREPARE_PREFIX if preparing else parsing.START_PREFIX
                             on_line(prefix + suite_resolver.resolve(nodeid) + "\n")
                             skip_blank_after_protocol = True
@@ -547,18 +575,8 @@ class ReaderRun:
                         if result is not None:
                             nodeid, status = result
                             nodeid = suite_resolver.resolve(nodeid)
-                            previous = verdicts.get(nodeid)
-                            if previous is status:
-                                continue
-                            if previous is not None:
-                                remaining = report.counts.get(previous, 0) - 1
-                                if remaining > 0:
-                                    report.counts[previous] = remaining
-                                else:
-                                    report.counts.pop(previous, None)
-                            verdicts[nodeid] = status
-                            report.counts[status] = report.counts.get(status, 0) + 1
-                            on_outcome(Outcome(nodeid, status, self.reader.index))
+                            record_result(nodeid, status)
+                            active.pop(nodeid, None)
 
                     if self._cancelled and self._process.poll() is None:
                         try:
@@ -567,23 +585,47 @@ class ReaderRun:
                             pass
                     self._process.wait()
 
+                    code = self._process.returncode or 0
+                    from runner.domain.process_crash import native_crash, worker_crash
+                    process_output = ''.join(output[output_start:])
+                    crash = native_crash(process_output, code) if not self._cancelled else None
+                    details = diagnostics.read_diagnostics(diagnostic_file)
+                    if crash:
+                        for detail in details:
+                            if detail['kind'] == 'test' and worker_crash(detail['body']):
+                                nodeid = suite_resolver.resolve(detail['nodeid'])
+                                if nodeid in suite_nodeids:
+                                    active.setdefault(nodeid, 'native')
+                    if (crash and not crash['native_code'] and not active
+                            and all(n in verdicts or n in fallback_verdicts for n in suite_nodeids)):
+                        crash = None
+                    if crash:
+                        for nodeid, phase in active.items():
+                            detail = dict(kind='test', nodeid=nodeid, phase=phase,
+                                message=crash['message'], body=crash['body'], native_crash=True)
+                            output.append(diagnostics.PREFIX + json.dumps(detail) + '\n')
+                            if on_detail is not None:
+                                on_detail(detail)
+                            record_result(nodeid, Status.ERROR)
+                        report.issues.append(crash['body'])
+                        for nodeid in suite_nodeids:
+                            incomplete_reasons[nodeid] = 'Not executed after ' + crash['message']
+
                     for nodeid, status in fallback_verdicts.items():
-                        if not self._cancelled and nodeid not in verdicts:
-                            verdicts[nodeid] = status
-                            report.counts[status] = report.counts.get(status, 0) + 1
-                            on_outcome(Outcome(nodeid, status, self.reader.index))
+                        if not self._cancelled and nodeid not in verdicts and not (crash and nodeid in active):
+                            record_result(nodeid, status)
 
                     if partial_junit and Path(partial_junit).is_file():
                         partial_junits.append(partial_junit)
 
-                    code = self._process.returncode or 0
-                    details = diagnostics.read_diagnostics(diagnostic_file)
                     for detail in details:
                         if detail["kind"] == "test":
                             detail["nodeid"] = suite_resolver.resolve(detail["nodeid"])
+                            if crash and detail['nodeid'] in active:
+                                continue
                             if json.dumps(detail, sort_keys=True) not in streamed_details:
                                 output.append(diagnostics.PREFIX + json.dumps(detail) + "\n")
-                    if not self._cancelled:
+                    if not self._cancelled and not crash:
                         global_errors = [detail for detail in details if detail["kind"] != "test"]
                         global_errors = [d for d in global_errors if d["kind"] == "collection"] or global_errors
                         if global_errors:
@@ -602,6 +644,17 @@ class ReaderRun:
         if self._cancelled:
             report.exit_code = -1
         report.cancelled = self._cancelled
+        reason = ('Run stopped by the user before this test finished.' if self._cancelled else
+                  'Pytest ended without reporting a result for this selected test.')
+        report.not_run = {nodeid: incomplete_reasons.get(nodeid, reason)
+                          for nodeid in self.request.nodeids if nodeid not in verdicts}
+        for nodeid in report.not_run:
+            record_result(nodeid, Status.NOT_RUN)
+        if report.not_run and not self._cancelled:
+            message = f'{len(report.not_run)} selected test(s) not executed. See the test details for the reason.'
+            report.issues.append(message)
+            on_line(message + '\n')
+            output.append(message + '\n')
         report.output = "".join(output)
         # Le releve --durations masque les tests de moins de 5 ms : les durees
         # mesurees en direct les completent.

@@ -494,7 +494,7 @@ class ComparisonPage(QWidget):
             selected_reader = self.reader.currentData()
             scoped_nodes = [node for node in nodes if any(self.values(i, node) for i in range(len(self.groups)))]
             complete = bool(scoped_nodes) and all(
-                self.values(i, node) and all(s.is_final for s in self.values(i, node))
+                self.values(i, node) and all(s.is_executed for s in self.values(i, node))
                 for node in scoped_nodes for i in range(len(self.groups)))
             if not scoped_nodes:
                 title = 'No recorded results'
@@ -575,7 +575,7 @@ class ComparisonPage(QWidget):
             self.signature(run, node) != self.signature(base, node)
             for run in range(len(self.groups)))}
         issues = [node for node in nodes if node in changed_nodes or any(
-            (status := verdict(self.values(run, node))) is not None and status.is_bad
+            (status := verdict(self.values(run, node))) is not None and (status.is_bad or status is Status.NOT_RUN)
             for run in range(len(self.groups)))]
         self._group_links = issues
         self.detail_stack.setCurrentWidget(self.group_matrix)
@@ -589,7 +589,7 @@ class ComparisonPage(QWidget):
             counts = Counter(verdict(self.values(run, node)) for node in nodes)
             labels = [f'{counts[status]} {self._status_label(status).lower()}'
                       for status in (Status.PASSED, Status.FAILED, Status.ERROR,
-                                     Status.SKIPPED, Status.PENDING, None) if counts[status]]
+                                     Status.SKIPPED, Status.NOT_RUN, Status.PENDING, None) if counts[status]]
             counters = ' · '.join(labels)
             reference = ' · Reference' if run == base else ''
             headers.append(f'{group.display_name}{reference}')

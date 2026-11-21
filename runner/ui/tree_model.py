@@ -103,6 +103,7 @@ class TestTreeModel(QAbstractItemModel):
         # fil de l'eau : le recalculer a chaque resultat reparcourrait tout
         # l'arbre, ce qui redonnerait le gel quadratique deja corrige.
         self._tally: dict[Status, int] = {}
+        self._not_run = {}
         self._retained = {}
         self._run_meta = {}
         self._aggregate_counts = {}
@@ -124,6 +125,7 @@ class TestTreeModel(QAbstractItemModel):
     def set_tree(self, roots: list[TestNode]) -> None:
         self.beginResetModel()
         self._tally.clear()
+        self._not_run.clear()
         self._retained = {}
         self._aggregate_counts.clear()
         self._fresh_counts.clear()
@@ -582,6 +584,12 @@ class TestTreeModel(QAbstractItemModel):
             index, index, [Qt.DisplayRole, Qt.ForegroundRole, Qt.ToolTipRole])
 
     def _data_colonne_statut(self, ligne: _Row, reader_index: int, role):
+        reason = self._not_run.get((ligne.node.nodeid, reader_index))
+        if reason:
+            if role == Qt.DecorationRole:
+                return icons.status_icon(Status.NOT_RUN)
+            if role == Qt.ToolTipRole:
+                return 'Not run\n' + reason
         if role == Qt.BackgroundRole:
             return self._fond_divergent(ligne)
         statut = self.status_for(ligne, reader_index)
@@ -809,6 +817,7 @@ class TestTreeModel(QAbstractItemModel):
         (identifiants de parametres tires au hasard) : l'appelant doit pouvoir
         le signaler plutot que de le perdre.
         """
+        previous_reason = self._not_run.pop((nodeid, reader_index), None)
         ligne = self._by_nodeid.get(nodeid)
         if ligne is None:
             return False
@@ -821,6 +830,9 @@ class TestTreeModel(QAbstractItemModel):
         ancien = ligne.statuses.get(reader_index)
         old_display = self.status_for(ligne, reader_index)
         if ancien is status:
+            if previous_reason:
+                index = self.createIndex(ligne.row, 1 + reader_index if self._readers else 1, ligne)
+                self.dataChanged.emit(index, index, [Qt.DecorationRole, Qt.ToolTipRole])
             # Rien n'a change : le decompte serait de toute facon juste (on
             # retirerait puis remettrait le meme statut), mais tout le chemin
             # jusqu'a la racine serait repeint pour rien.
@@ -877,7 +889,7 @@ class TestTreeModel(QAbstractItemModel):
 
     def done(self) -> int:
         """Cases deja rendues, tous statuts et tous lecteurs confondus."""
-        return sum(self._tally.values())
+        return sum(n for s, n in self._tally.items() if s.is_executed)
 
     def clear_statuses(self) -> None:
         """Efface les resultats sans reinitialiser le modele.
@@ -886,6 +898,7 @@ class TestTreeModel(QAbstractItemModel):
         l'utilisateur perdait la branche qu'il venait d'ouvrir pour choisir ses
         tests. Seules les cellules de statut changent, on ne signale qu'elles.
         """
+        self._not_run.clear()
         self._tally.clear()
         self._retained.clear()
         self._aggregate_counts.clear()
@@ -915,6 +928,12 @@ class TestTreeModel(QAbstractItemModel):
         self.clear_statuses()
         self._run_meta = dict(meta or {})
         self.set_retained_results(previous)
+
+    def set_not_run(self, reader, reasons):
+        self._not_run = {key: value for key, value in self._not_run.items() if key[1] != reader}
+        self._not_run.update({(nodeid, reader): reason for nodeid, reason in reasons.items()})
+        # Une notification pour le lot, sans milliers de recalculs par test.
+        self._emit_layout_changed()
 
     def set_retained_results(self, records):
         self._retained = {nodeid: {reader: dict(entry) for reader, entry in entries.items()
@@ -1015,12 +1034,12 @@ class TestTreeModel(QAbstractItemModel):
                 retenus.append(feuille.node.nodeid)
         return retenus
 
-    def failed_nodeids(self) -> list[str]:
+    def failed_nodeids(self, include_not_run=False) -> list[str]:
         """Nodeids en echec sur au moins un lecteur."""
         retenus = []
         for racine in self._roots:
             for feuille in racine.leaves():
-                if any(s.is_bad for s in feuille.statuses.values()):
+                if any(s.is_bad or (include_not_run and s is Status.NOT_RUN) for s in feuille.statuses.values()):
                     retenus.append(feuille.node.nodeid)
         return retenus
 
@@ -1058,8 +1077,8 @@ class TestTreeModel(QAbstractItemModel):
     def is_divergent(self, ligne: _Row) -> bool:
         """Les lecteurs ont rendu des verdicts differents pour ce test.
 
-        Seuls les verdicts rendus comptent : un lecteur encore en attente, ou
-        arrete avant d'y arriver, n'est pas en desaccord -- il n'a rien dit.
+        Les lecteurs encore en attente sont ignores. Une execution demandee
+        mais manquante est finale (NOT_RUN) et differe d'un resultat obtenu.
         """
         if not ligne.is_leaf or len(self._readers) < 2:
             return False

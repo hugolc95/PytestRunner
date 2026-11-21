@@ -89,6 +89,7 @@ class _ReaderWorker(QThread):
         super().__init__(parent)
         self._run = execution.ReaderRun(request, reader, env)
         self._reader = reader
+        self._requested_nodeids = request.nodeids
         self._report: ReaderReport | None = None
         self.finished.connect(self._emit_done_after_finished)
 
@@ -96,10 +97,14 @@ class _ReaderWorker(QThread):
         self._run.cancel()
 
     def run(self) -> None:  # pragma: no cover - execute dans un thread Qt
+        results = {}
+        def outcome_received(outcome):
+            results[outcome.nodeid] = outcome.status
+            self.outcome.emit(outcome)
         try:
             self._report = self._run.run(
                 on_line=lambda texte: self.line.emit(self._reader.index, texte),
-                on_outcome=self.outcome.emit,
+                on_outcome=outcome_received,
                 on_duration=lambda nodeid, seconds: self.duration.emit(
                     self._reader.index, nodeid, seconds),
                 on_detail=lambda detail: self.detail.emit(self._reader.index, detail),
@@ -109,8 +114,14 @@ class _ReaderWorker(QThread):
             import traceback
             output = traceback.format_exc()
             self.line.emit(self._reader.index, output)
+            reason = f'Test execution stopped: {type(exc).__name__}: {exc}'
+            missing = {nodeid: reason for nodeid in self._requested_nodeids if nodeid not in results}
+            for nodeid in missing:
+                outcome_received(Outcome(nodeid, Status.NOT_RUN, self._reader.index))
+            from collections import Counter
             self._report = ReaderReport(
                 reader=self._reader, exit_code=-1, output=output,
+                counts=dict(Counter(results.values())), not_run=missing,
                 cancelled=self._run.cancelled,
                 issues=[f"{type(exc).__name__}: {exc}"])
 
@@ -397,7 +408,8 @@ class RunService(QObject):
         # Le transport JSON reste dans le rapport archive. La console
         # recoit une trace lisible, jamais la ligne machine.
         self._on_live_line(reader_index,
-            f"\n{detail['nodeid']} · {detail['phase'].upper() or 'SKIPPED'}\n{detail['body']}\n")
+            f"\n{detail['nodeid']} · {detail['phase'].upper() or 'SKIPPED'}\n"
+            + (detail['message'] if detail.get('native_crash') else detail['body']) + '\n')
 
     def _on_live_line(self, reader_index: int, text: str) -> None:
         activity = parsing.parse_activity_line(text)
@@ -472,9 +484,13 @@ class RunService(QObject):
 
         for report in self._reports:
             aggregate = self._profile_reports[report.reader.index]
+            for nodeid in self._current_batch:
+                aggregate.not_run.pop(nodeid, None)
+            aggregate.not_run.update(report.not_run)
             for status, count in report.counts.items():
                 aggregate.counts[status] = aggregate.counts.get(status, 0) + count
-            aggregate.exit_code = max(aggregate.exit_code, report.exit_code)
+            if report.exit_code and aggregate.exit_code == 0:
+                aggregate.exit_code = report.exit_code
             aggregate.durations.update(report.durations)
 
         self._profile_completed += len(self._seen_outcomes)
@@ -482,10 +498,29 @@ class RunService(QObject):
         del self._profile_queue[:len(self._current_batch)]
         self._profile_attempt = 0
         if failed and self._profile_stop_after_failure:
-            self._profile_queue.clear()
+            self._finish_profile()
+            return
         self._start_profile_step()
 
     def _finish_profile(self) -> None:
+        # Les occurrences demandees qui restent dans la file ont un resultat
+        # explicite. Ne jamais reutiliser le verdict d'une repetition precedente.
+        remaining = list(self._profile_queue)
+        offset = self._profile_expanded_length - len(remaining)
+        reason = ('Run stopped by the user before this test started.' if self._profile_cancelled else
+                  'Campaign stopped after a failure before this test started.')
+        for report in self._profile_reports.values():
+            if not remaining:
+                break
+            report.cancelled = report.cancelled or self._profile_cancelled
+            report.counts[Status.NOT_RUN] = report.counts.get(Status.NOT_RUN, 0) + len(remaining)
+            report.not_run.update(dict.fromkeys(remaining, reason))
+            for position, nodeid in enumerate(remaining, offset):
+                self.profile_execution.emit(position, 0, report.reader.index, nodeid, Status.NOT_RUN)
+                self.outcome.emit(Outcome(nodeid, Status.NOT_RUN, report.reader.index))
+            batch = ReaderReport(report.reader, counts={Status.NOT_RUN: len(remaining)},
+                                 not_run=dict.fromkeys(remaining, reason), cancelled=self._profile_cancelled)
+            self.profile_batch_report.emit(offset, len(remaining), 0, batch)
         reports = sorted(self._profile_reports.values(), key=lambda r: r.reader.index)
         self._profile_active = False
         self._profile_queue = []
@@ -523,13 +558,14 @@ class RunService(QObject):
         if self._profile_active:
             key = (outcome.reader_index, outcome.nodeid)
             self._emit_profile_execution(outcome.reader_index, outcome.nodeid, outcome.status)
-            self._seen_outcomes.add(key)
+            if outcome.status.is_executed:
+                self._seen_outcomes.add(key)
             self.outcome.emit(outcome)
             self.progress.emit(
                 self._profile_completed + len(self._seen_outcomes), self._profile_total)
             return
         cle = (outcome.reader_index, outcome.nodeid)
-        if cle not in self._seen_outcomes:
+        if cle not in self._seen_outcomes and outcome.status.is_executed:
             self._seen_outcomes.add(cle)
             self._done += 1
         self.outcome.emit(outcome)
@@ -551,6 +587,17 @@ class RunService(QObject):
         # empecheraient `finished` d'etre emis -- l'interface resterait en
         # « run en cours » jusqu'a la fermeture.
         if len(self._reports) == self._lances:
+            if self._stopping:
+                present = {report.reader.index for report in self._reports}
+                for reader in self._request.readers:
+                    if reader.index in present:
+                        continue
+                    reasons = dict.fromkeys(self._request.nodeids, 'Run stopped by the user before this reader started.')
+                    report = ReaderReport(reader, cancelled=True, counts={Status.NOT_RUN: len(reasons)}, not_run=reasons)
+                    for nodeid in reasons:
+                        self._on_outcome(Outcome(nodeid, Status.NOT_RUN, reader.index))
+                    self._reports.append(report)
+                    self.reader_finished.emit(report)
             # Les rapports arrivent dans l'ordre ou les lecteurs finissent ;
             # les remettre dans l'ordre des colonnes evite un bilan qui change
             # de disposition d'un run a l'autre.

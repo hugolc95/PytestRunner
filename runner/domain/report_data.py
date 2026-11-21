@@ -19,7 +19,7 @@ NOT_RECORDED = 'Not recorded in this archive.'
 
 
 def _status(value):
-    value = str(value or '').lower()
+    value = str(value or '').lower().replace('_', '')
     return value if value in ('passed', 'failed', 'error', 'skipped', 'notrun') else 'unknown'
 
 
@@ -35,7 +35,7 @@ def _legacy_attempts(entry, position, sequence, frequencies, by_node, ordered):
         return candidates
     status = entry.test_statuses.get(nodeid)
     if not status and entry.total >= len(sequence):
-        possible = [name for name in ('PASSED', 'FAILED', 'ERROR', 'SKIPPED')
+        possible = [name for name in ('PASSED', 'FAILED', 'ERROR', 'SKIPPED', 'NOT_RUN')
                     if entry.counts.get(name, 0) and (name in ('FAILED', 'ERROR')) == (nodeid in entry.failed_nodeids)]
         status = possible[0] if len(possible) == 1 else None
     return [dict(attempt=0, status=status)] if status else []
@@ -225,6 +225,10 @@ def report_payload(entries, outputs=None):
                 attempt['message'] = next((record.get('message', '') for record in owned if record.get('message')), '')
                 if failure:
                     attempt.update(trace=failure.body, phase=failure.phase, message=failure.headline)
+                if attempt['status'] == 'notrun':
+                    attempt['duration'] = None
+                    attempt.setdefault('log', '')
+                    continue
                 if not valid_duration(attempt.get('duration')):
                     measured = durations[reader].get((position, attempt.get('attempt', 0)))
                     if measured is None and len(attempts) == 1:

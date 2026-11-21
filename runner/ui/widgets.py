@@ -280,6 +280,11 @@ class StatusPill(QPushButton):
             self._compact = compact
             self._repaint()
 
+    def set_header_density(self, enabled):
+        """Les cinq compteurs gardent leur libelle dans une seule rangee."""
+        self._header_density = enabled
+        self._repaint()
+
     def value(self) -> int:
         return self._value
 
@@ -300,7 +305,8 @@ class StatusPill(QPushButton):
         # de l'icone au lieu d'un trait net.
         glyphe = icons.STATUS_GLYPHS_GROUP.get(self._status, "mdi.circle-small")
         self.setIcon(icons.icon(glyphe, couleur if allume else t.BORDER_STRONG))
-        self.setIconSize(QSize(20, 20))
+        header_density = getattr(self, '_header_density', False)
+        self.setIconSize(QSize(14, 14) if header_density else QSize(20, 20))
         self.setText(f"{self._value} {self._status.label}" if getattr(self, '_compact', False)
                      else f"{self._value}\n{self._status.label}")
 
@@ -310,10 +316,12 @@ class StatusPill(QPushButton):
         bordure = couleur if self._active else t.rgba(couleur, 0.32 if allume else 0.14)
         poids = "700" if self._active else "600" if allume else "400"
 
+        padding = 3 if header_density else t.SPACE_2
+        font_size = t.TEXT_XS if header_density else t.TEXT_SM + 2
         base = (
             f"color: {couleur_texte}; border: 1px solid {bordure}; "
-            f"border-radius: {t.RADIUS_MD}px; padding: {t.SPACE_1}px {t.SPACE_2}px;"
-            f"font-size: {t.TEXT_SM + 2}px; font-weight: {poids};")
+            f"border-radius: {t.RADIUS_MD}px; padding: {t.SPACE_1}px {padding}px;"
+            f"font-size: {font_size}px; font-weight: {poids};")
         # Le survol/l'appui doivent etre ecrits ICI : sans eux, le style natif
         # de Windows dessine SON propre relief au survol -- un rectangle
         # sombre par-dessus notre fond clair, illisible en theme clair.
@@ -323,7 +331,9 @@ class StatusPill(QPushButton):
             f"QPushButton:pressed {{ background-color: {fond_survol}; {base} }}")
         # Apres la feuille locale : le QSS global des QPushButton ne doit pas
         # ramener ces compteurs a la hauteur compacte des boutons ordinaires.
-        self.setMinimumSize(72, 32 if getattr(self, '_compact', False) else 48)
+        compact = getattr(self, '_compact', False)
+        minimum_height = (28 if compact else 40) if header_density else (32 if compact else 48)
+        self.setMinimumSize(56 if header_density else 72, minimum_height)
 
         if not allume:
             self.setToolTip(f"No {libelle} test")
@@ -345,7 +355,7 @@ class CompassRing(QWidget):
     plus.
     """
 
-    ORDER = (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR)
+    ORDER = (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR, Status.NOT_RUN)
 
     def __init__(self, parent=None, diameter: int = 45, thickness: int = 8):
         super().__init__(parent)
@@ -1105,7 +1115,7 @@ class StatusRibbon(QWidget):
     coup d'oeil sans lire les nombres.
     """
 
-    ORDRE = (Status.PASSED, Status.FAILED, Status.ERROR, Status.SKIPPED,
+    ORDRE = (Status.PASSED, Status.FAILED, Status.ERROR, Status.SKIPPED, Status.NOT_RUN,
              Status.RUNNING, Status.PENDING)
 
     def __init__(self, parent=None):
@@ -1117,7 +1127,7 @@ class StatusRibbon(QWidget):
     def set_counts(self, counts: dict) -> None:
         self._counts = {s: n for s, n in counts.items() if n > 0}
         self.setToolTip(" · ".join(
-            f"{self._counts[s]} {s.name.lower()}"
+            f"{self._counts[s]} {s.label.lower()}"
             for s in self.ORDRE if s in self._counts))
         self.update()
 
