@@ -1,5 +1,24 @@
 # Pytest Runner GUI
 
+## Lecteurs en vraies couleurs et compteurs lisibles — v1.7.14
+
+Chaque lecteur a de nouveau une couleur franche, choisie pour ne jamais
+ressembler à un verdict du thème affiché. En thème sombre : bleu ciel, rose,
+vert citron, turquoise et orange ; en sombre daltonien : bleu, violet, vert,
+or et corail. Un lecteur qui a réussi ne s'affiche plus dans la couleur d'un
+échec. En thèmes clairs, les badges des lecteurs sont pleins, avec le nom en
+blanc, dans l'arbre, les contrôles **Execution** et les onglets de sortie :
+ils se lisent comme une étiquette et non comme un verdict.
+
+Les cinq compteurs **Passed**, **Failed**, **Skipped**, **Error** et
+**Not run** restent toujours visibles. En grande fenêtre, ils passent sur deux
+rangées, chacun sur une seule ligne et en texte plus grand ; en fenêtre plus
+petite, ils restent sur une rangée.
+
+Pendant **Run N times** ou **Run until it fails**, le bandeau **Repeat**
+signale aussi une collecte incomplète, par exemple « Collection incomplete ·
+2 files not collected ».
+
 ## Onglets et progression stables — v1.7.13
 
 Les onglets de run conservent une largeur fixe de 180 px, indépendamment

@@ -25,9 +25,13 @@ class StressProgress(QFrame):
         layout.addWidget(self.bar)
         self.hide()
 
-    def begin(self, nodeid, cap, readers, mode):
+    def begin(self, nodeid, cap, readers, mode, not_collected=0):
         self._name = nodeid.rsplit('::', 1)[-1]
         self._cap, self._readers, self._mode = cap, readers, mode
+        # Le bandeau remplace la ligne d'etat pendant les repetitions : sans
+        # cette mention, une collecte incomplete disparaissait de l'ecran
+        # alors que History, lui, la retient.
+        self._not_collected = not_collected
         self._ran, self._counts, self._current, self._state = 0, {}, '', 'Running'
         self.bar.setRange(0, cap * readers)
         self.bar.show()
@@ -51,6 +55,9 @@ class StressProgress(QFrame):
         for status in (Status.PASSED, Status.FAILED, Status.ERROR, Status.SKIPPED):
             if self._counts.get(status):
                 parts.append(f'{self._counts[status]} {status.label.lower()}')
+        missing = getattr(self, '_not_collected', 0)
+        if missing:
+            parts.append(f"Collection incomplete · {missing} file{'s' if missing != 1 else ''} not collected")
         return ' · '.join(parts)
 
     def finish(self, result):

@@ -255,15 +255,20 @@ class StructuredRunHeader(QWidget):
         self._result_progress = progress
         self._result_buttons = result_buttons
         self._result_actions = result_actions
-        # Une seule rangee, y compris NOT RUN, sans agrandir la carte Results.
-        counters = QHBoxLayout()
-        counters.setSpacing(t.SPACE_1)
+        # Les cinq compteurs restent visibles, NOT RUN compris. En grande
+        # fenetre, la carte Results est une colonne etroite : sur une seule
+        # rangee ils tombaient en 11 px sur deux lignes. Ils y passent sur deux
+        # rangees lisibles ; la ligne compacte garde une rangee unique.
+        counters = QGridLayout()
+        counters.setHorizontalSpacing(t.SPACE_1)
+        counters.setVerticalSpacing(t.SPACE_1)
         self._result_pills = tuple(window.pills.values())
-        for pill in window.pills.values():
-            self._move(counters, pill)
-            pill.set_header_density(True)
+        for pill in self._result_pills:
+            pill.set_compact(True)
         results.addLayout(counters)
         self._counters = counters
+        self._counter_columns = None
+        self._place_counters(len(self._result_pills))
         results.addStretch()
 
         # Keep any legacy decoration owned, but never visible in the page.
@@ -355,6 +360,19 @@ class StructuredRunHeader(QWidget):
             self._grid.setColumnStretch(column, 0 if compact and column == 2 else
                                         5 if column == 1 else 4)
 
+    def _place_counters(self, columns):
+        if columns == self._counter_columns:
+            return
+        self._counter_columns = columns
+        for pill in self._result_pills:
+            self._counters.removeWidget(pill)
+        for index, pill in enumerate(self._result_pills):
+            explicitly_hidden = pill.isHidden()
+            self._counters.addWidget(pill, index // columns, index % columns)
+            pill.setVisible(not explicitly_hidden)
+        for column in range(len(self._result_pills)):
+            self._counters.setColumnStretch(column, 1 if column < columns else 0)
+
     def _keep_whole(self):
         """La fenetre ne descend pas sous la hauteur que l'en-tete exige.
 
@@ -404,7 +422,8 @@ class StructuredRunHeader(QWidget):
             self._window.compass_ring.set_compact(dense)
             self.results.layout().setDirection(QBoxLayout.LeftToRight if dense else QBoxLayout.TopToBottom)
             for pill in self._result_pills:
-                pill.set_compact(dense)
+                pill.set_header_density(True if dense else "medium")
+            self._place_counters(len(self._result_pills) if dense else 3)
             for button, text, glyph in (
                     (self._window.view_failures_button, 'View failures', 'mdi.alert-circle-outline'),
                     (self._window.view_differences_button, 'View differences', 'mdi.call-split'),

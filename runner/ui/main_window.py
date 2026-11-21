@@ -3750,7 +3750,8 @@ class MainWindow(QMainWindow):
         self._stress_aggregate: dict[int, dict] = {}
         self._stress_readers = lecteurs
         self._stress_counts = {}
-        self.stress_progress.begin(nodeid, cap, len(lecteurs), mode)
+        self.stress_progress.begin(nodeid, cap, len(lecteurs), mode,
+                                   not_collected=len(self._stress_collection_errors))
         self.run_header.set_repeat_context(True, bool(self._stress_previous_counts))
 
         self._stress_worker = StressRunWorker(

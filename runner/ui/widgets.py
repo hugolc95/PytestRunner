@@ -83,10 +83,15 @@ class ReaderHeaderView(QHeaderView):
 
         painter.setRenderHint(QPainter.Antialiasing)
         fond = QColor(couleur)
-        fond.setAlpha(20)
+        plein = t.filled_reader_badges()
+        if not plein:
+            fond.setAlpha(20)
         painter.setBrush(fond)
         painter.setPen(QPen(couleur, 1.5))
         painter.drawRoundedRect(QRectF(x + 0.75, y + 0.75, largeur - 1.5, hauteur - 1.5), 4, 4)
+        if plein:
+            # Badge plein : icone et nom en blanc sur la couleur du lecteur.
+            couleur = QColor(t.ON_READER)
 
         ix, iy = x + self.BADGE_MARGE, y + (hauteur - 8) / 2
         painter.setPen(QPen(couleur, 1.2))
@@ -283,7 +288,12 @@ class StatusPill(QPushButton):
             self._repaint()
 
     def set_header_density(self, enabled):
-        """Les cinq compteurs gardent leur libelle dans une seule rangee."""
+        """Les cinq compteurs gardent leur libelle dans l'en-tete.
+
+        True : rangee unique de la ligne compacte (11 px). "medium" : deux
+        rangees de la carte Results en grande fenetre, ou il y a la place
+        d'un texte plus lisible (12 px) sur une seule ligne.
+        """
         self._header_density = enabled
         self._repaint()
 
@@ -318,8 +328,9 @@ class StatusPill(QPushButton):
         bordure = couleur if self._active else t.rgba(couleur, 0.32 if allume else 0.14)
         poids = "700" if self._active else "600" if allume else "400"
 
-        padding = 3 if header_density else t.SPACE_2
-        font_size = t.TEXT_XS if header_density else t.TEXT_SM + 2
+        medium = header_density == "medium"
+        padding = t.SPACE_1 + 2 if medium else 3 if header_density else t.SPACE_2
+        font_size = t.TEXT_SM if medium else t.TEXT_XS if header_density else t.TEXT_SM + 2
         base = (
             f"color: {couleur_texte}; border: 1px solid {bordure}; "
             f"border-radius: {t.RADIUS_MD}px; padding: {t.SPACE_1}px {padding}px;"
@@ -334,8 +345,11 @@ class StatusPill(QPushButton):
         # Apres la feuille locale : le QSS global des QPushButton ne doit pas
         # ramener ces compteurs a la hauteur compacte des boutons ordinaires.
         compact = getattr(self, '_compact', False)
-        minimum_height = (28 if compact else 40) if header_density else (32 if compact else 48)
+        minimum_height = (30 if compact else 40) if medium else (28 if compact else 40) if header_density else (32 if compact else 48)
         self.setMinimumSize(56 if header_density else 72, minimum_height)
+        # Deux rangees de compteurs ne doivent pas rendre la carte Results plus
+        # haute que ses voisines Environment et Execution.
+        self.setMaximumHeight(34 if medium else 16777215)
 
         if not allume:
             self.setToolTip(f"No {libelle} test")

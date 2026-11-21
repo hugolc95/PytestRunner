@@ -55,7 +55,9 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     else:
         assert results.height() <= 130
     positions = [pill.mapTo(results, pill.rect().topLeft()).y() for pill in window.pills.values()]
-    assert len(set(positions)) == 1  # Tous les statuts restent sur la meme rangee.
+    # Une rangee dans la ligne compacte ; deux rangees lisibles dans la carte
+    # etroite des grandes fenetres (voir test_all_five_counters_...).
+    assert len(set(positions)) == (1 if window.run_header._dense else 2)
     for pill in window.pills.values():
         position = pill.mapTo(results, pill.rect().bottomRight())
         assert results.rect().contains(position)
@@ -272,3 +274,21 @@ def test_readers_arriving_after_collection_do_not_squeeze_the_header(qtbot, monk
 
     qtbot.waitUntil(lambda: header.height() >= header.minimumSizeHint().height())
     assert header.execution.height() >= header.execution.minimumSizeHint().height()
+
+
+@pytest.mark.parametrize("width,rows", [(1920, 2), (1600, 2), (1280, 1), (930, 1)])
+def test_all_five_counters_stay_visible_and_readable(qtbot, monkeypatch, tmp_path, width, rows):
+    """NOT RUN compris, les cinq compteurs restent visibles. En grande fenetre,
+    une rangee unique les tassait en 11 px sur deux lignes (« 78 » sur
+    « PASSED ») : ils passent sur deux rangees, chacun sur une ligne."""
+    window = _window_with_readers(qtbot, monkeypatch, tmp_path, (width, 900))
+    pills = list(window.pills.values())
+    assert len(pills) == 5
+    qtbot.waitUntil(lambda: all(pill.isVisible() for pill in pills))
+    tops = {pill.mapTo(window, pill.rect().topLeft()).y() for pill in pills}
+    assert len(tops) == rows
+    for pill in pills:
+        assert "\n" not in pill.text()
+    results = window.run_header.results
+    for pill in pills:
+        assert results.rect().contains(pill.mapTo(results, pill.rect().bottomRight()))

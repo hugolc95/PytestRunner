@@ -8,11 +8,16 @@ TEXT_XS=11; TEXT_SM=12; TEXT_MD=13; TEXT_LG=15
 CONTROL_SM=28; CONTROL_MD=32; CONTROL_LG=36; ICON_BUTTON=32
 TREE_ICON_SIZE=18
 TREE_INDENTATION=12
-# Identite stable par lecteur : bleu, turquoise, ambre, mauve, vert.
-# Les noms/badges portent cette identite ; les icones portent le verdict.
-# Les variantes claires sont plus sombres pour garder les libelles lisibles.
-_READERS_DARK = ('#79aeff', '#39c5bb', '#e0a33e', '#c98bdb', '#7ec87e')
-_READERS_LIGHT = ('#185abd', '#006b66', '#895216', '#704199', '#23612f')
+# Identite par lecteur : de vraies couleurs, mais jamais celles des verdicts
+# du theme courant. La 1.7.12 reprenait le turquoise de PASSED, l'ambre de
+# SKIPPED et le mauve de ERROR : en daltonien, la ligne d'un lecteur qui avait
+# reussi s'affichait dans la couleur d'un echec. Chaque palette est choisie
+# pour ses verdicts (ecart perceptuel CIEDE2000 d'au moins 11,5 en clair, 14 en
+# sombre) et garde un contraste de 4,5 sur la surface, meme selectionnee.
+_READERS_DARK = ('#38bdf8', '#f472b6', '#a3e635', '#2dd4bf', '#fb923c')
+_READERS_LIGHT = ('#0369a1', '#be185d', '#00756a', '#4338ca', '#a3400f')
+_READERS_CB_DARK = ('#02a9f7', '#c08ffd', '#62b811', '#d7a10c', '#fb8081')
+_READERS_CB_LIGHT = ('#1158d2', '#a82bb4', '#307609', '#8a6100', '#7f0322')
 DARK={"BG_APP":"#171a21","BG_SURFACE":"#20242d","BG_RAISED":"#292e38","BG_HOVER":"#343b47","BG_INPUT":"#14171d","BORDER":"#303744","BORDER_STRONG":"#46505f","TEXT":"#e4e7ec","TEXT_MUTED":"#9aa3b2","TEXT_FAINT":"#687383","ACCENT":"#4c8dff","ACCENT_HOVER":"#5f9bff","ACCENT_PRESSED":"#3f7ae6","ACCENT_SOFT":"#253451","ON_ACCENT":"#06101f","RUN":"#2f9150","RUN_HOVER":"#37a75d","RUN_PRESSED":"#277b43","ON_RUN":"#06120a","STATUS_COLORS":{Status.PASSED:"#4fae63",Status.FAILED:"#ef5f57",Status.SKIPPED:"#b98a3f",Status.ERROR:"#a97fd0",Status.RUNNING:"#4c8dff",Status.PENDING:"#596372",Status.NOT_RUN:"#9aa3b2"},"READER_COLORS":_READERS_DARK,"ANSI_COLORS":{"black":"#687383","red":"#ef5f57","green":"#4fae63","yellow":"#d8a13c","blue":"#4c8dff","magenta":"#c98bdb","cyan":"#39c5bb","white":"#e4e7ec"},"ANSI_BRIGHT":{"black":"#8791a1","red":"#ff8078","green":"#71c983","yellow":"#f0bd5c","magenta":"#dda6ea","blue":"#7aabff","cyan":"#5adbd1","white":"#ffffff"},"SYNTAX":{"keyword":"#c792ea","builtin":"#82aaff","string":"#c3e88d","docstring":"#8798aa","comment":"#687383","number":"#f78c6c","decorator":"#ffcb6b","function":"#82aaff","classname":"#ffcb6b","self":"#f07178"},"GUTTER_BG":"#171a21","GUTTER_TEXT":"#596372","GUTTER_CURRENT":"#9aa3b2","CURRENT_LINE":"#252b36"}
 LIGHT={"BG_APP":"#eef1f6","BG_SURFACE":"#ffffff","BG_RAISED":"#ffffff","BG_HOVER":"#e3e9f1","BG_INPUT":"#ffffff","BORDER":"#d8dee7","BORDER_STRONG":"#b3bdca","TEXT":"#1b2230","TEXT_MUTED":"#5b6675","TEXT_FAINT":"#8a94a3","ACCENT":"#1f6feb","ACCENT_HOVER":"#2f7ff5","ACCENT_PRESSED":"#1859c4","ACCENT_SOFT":"#dbe8fd","ON_ACCENT":"#ffffff","RUN":"#2e7d32","RUN_HOVER":"#358c3a","RUN_PRESSED":"#256628","ON_RUN":"#ffffff","STATUS_COLORS":{Status.PASSED:"#2e7d32",Status.FAILED:"#c62828",Status.SKIPPED:"#a1651a",Status.ERROR:"#7b3fa0",Status.RUNNING:"#1f6feb",Status.PENDING:"#a8b1bd",Status.NOT_RUN:"#5b6675"},"READER_COLORS":_READERS_LIGHT,"ANSI_COLORS":{"black":"#3a4250","red":"#c62828","green":"#2e7d32","yellow":"#8a6100","blue":"#1f6feb","magenta":"#7b3fa0","cyan":"#0f7a80","white":"#5b6675"},"ANSI_BRIGHT":{"black":"#5b6675","red":"#e04343","green":"#3d9942","yellow":"#a87a10","magenta":"#9a55c4","blue":"#3a86f5","cyan":"#1596a0","white":"#1b2230"},"SYNTAX":{"keyword":"#0033b3","builtin":"#0f7a80","string":"#067d17","docstring":"#6a7b8a","comment":"#8a94a3","number":"#1750eb","decorator":"#9e6b00","function":"#795e26","classname":"#267f99","self":"#8250df"},"GUTTER_BG":"#eef1f6","GUTTER_TEXT":"#a3adba","GUTTER_CURRENT":"#5b6675","CURRENT_LINE":"#eaf1fb"}
 # En mode daltonien, les controles restent bleus et PASSED est turquoise.
@@ -24,7 +29,7 @@ _CB_DARK = {
     "STATUS_COLORS": {Status.PASSED: "#4ec3a6", Status.FAILED: "#f28c50",
                       Status.SKIPPED: "#f0e442", Status.ERROR: "#de9abd", Status.NOT_RUN: "#bec7d4",
                       Status.RUNNING: "#1386c8", Status.PENDING: "#7d8794"},
-    "READER_COLORS": _READERS_DARK,
+    "READER_COLORS": _READERS_CB_DARK,
 }
 # Conserver une famille differente pour FAILED (orange) et SKIPPED (violet)
 # en clair : brun et ocre se confondaient dans les premieres palettes.
@@ -35,7 +40,7 @@ _CB_LIGHT = {
     "STATUS_COLORS": {Status.PASSED: "#006453", Status.FAILED: "#a83200",
                       Status.SKIPPED: "#5b2aa8", Status.ERROR: "#8a1c62", Status.NOT_RUN: "#4b5563",
                       Status.RUNNING: "#0052cc", Status.PENDING: "#505a66"},
-    "READER_COLORS": _READERS_LIGHT,
+    "READER_COLORS": _READERS_CB_LIGHT,
 }
 def _accessible(base, overlay):
     p=dict(base); p.update(overlay)
@@ -56,6 +61,11 @@ def base_theme()->str:return "light" if _ACTIF=="light_colorblind" else ("dark" 
 set_theme("dark")
 def syntax_color(role:str)->str:return SYNTAX.get(role,TEXT)
 def reader_color(index:int)->str:return READER_COLORS[index%len(READER_COLORS)]
+# En theme clair, les couleurs de lecteur sont forcement foncees et proches de
+# celles des verdicts : les badges y sont pleins, texte blanc, pour se lire
+# comme une etiquette et non comme un verdict colore.
+def filled_reader_badges()->bool:return base_theme()=="light"
+ON_READER="#ffffff"
 def ansi_color(nom:str|None,vive:bool=False)->str|None:
     if not nom:return None
     if nom.startswith("#"):return nom
