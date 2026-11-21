@@ -1,5 +1,27 @@
 # Pytest Runner GUI
 
+## Badges colorés et diagnostics de crash — v1.7.12
+
+Les lecteurs retrouvent des couleurs distinctes : bleu, turquoise, ambre,
+mauve et vert. Leur couleur reste cohérente entre les contrôles Execution,
+les badges de l’arbre, les détails, les onglets de sortie et les logs, y
+compris dans la fenêtre de comparaison. Les badges ont un fond léger et un
+contour coloré ; un lecteur décoché conserve une teinte reconnaissable.
+Les thèmes clairs utilisent des nuances plus sombres pour garder les noms
+lisibles. Les couleurs des verdicts restent inchangées.
+
+Le style encadré des compteurs Results est conservé, avec des icônes plus
+grandes : 20 px dans le bandeau compact et 24 px ailleurs.
+
+Les crashs natifs de pytest sont rattachés au test en cours, avec leur code
+Windows et les traces disponibles. Les tests demandés mais non exécutés sont
+marqués **Not run**, sans être confondus avec un succès, un échec ou un Skip.
+Leur raison reste consultable dans les détails, History et les rapports.
+
+Validation ciblée : palettes, contrastes, badges, comparaison des logs,
+thèmes et diagnostics de crash. L’exécutable Windows est reconstruit pour
+cette version.
+
 ## Petites fenêtres sans chevauchement et répétitions nommées — v1.7.11
 
 À 800 px de large, quand les cartes Environment, Execution et Results

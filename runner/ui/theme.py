@@ -976,6 +976,14 @@ def pill_style(couleur: str, actif: bool = True) -> str:
     )
 
 
+def reader_badge_style(couleur: str, actif: bool = True) -> str:
+    """A reader keeps its colour even when excluded from the next run."""
+    return (pill_style(couleur, actif)
+            + f"color: {couleur if actif else t.blend(couleur, t.TEXT_MUTED, 0.6)};"
+            + f"border: 1px solid {t.rgba(couleur, 0.55 if actif else 0.28)};"
+            + f"border-radius: {t.RADIUS_SM}px;")
+
+
 def counter_style(couleur: str, actif: bool, taille: int = t.TEXT_SM) -> str:
     """Compteur de statut : sans boite.
 

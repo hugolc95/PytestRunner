@@ -82,7 +82,9 @@ class ReaderHeaderView(QHeaderView):
         y = rect.y() + (rect.height() - hauteur) / 2
 
         painter.setRenderHint(QPainter.Antialiasing)
-        painter.setBrush(Qt.NoBrush)
+        fond = QColor(couleur)
+        fond.setAlpha(20)
+        painter.setBrush(fond)
         painter.setPen(QPen(couleur, 1.5))
         painter.drawRoundedRect(QRectF(x + 0.75, y + 0.75, largeur - 1.5, hauteur - 1.5), 4, 4)
 
@@ -306,7 +308,7 @@ class StatusPill(QPushButton):
         glyphe = icons.STATUS_GLYPHS_GROUP.get(self._status, "mdi.circle-small")
         self.setIcon(icons.icon(glyphe, couleur if allume else t.BORDER_STRONG))
         header_density = getattr(self, '_header_density', False)
-        self.setIconSize(QSize(14, 14) if header_density else QSize(20, 20))
+        self.setIconSize(QSize(20, 20) if header_density else QSize(24, 24))
         self.setText(f"{self._value} {self._status.label}" if getattr(self, '_compact', False)
                      else f"{self._value}\n{self._status.label}")
 
@@ -538,7 +540,7 @@ class ReaderBadge(QLabel):
         self.restyle()
 
     def restyle(self) -> None:
-        self.setStyleSheet(theme.pill_style(t.reader_color(self._index)))
+        self.setStyleSheet(theme.reader_badge_style(t.reader_color(self._index)))
 
 
 class ReaderResult(QWidget):
@@ -984,7 +986,7 @@ class ReaderToggle(QPushButton):
         compact = (f"min-height: {t.CONTROL_MD - 2 * t.SPACE_1}px;"
                    f"max-height: {t.CONTROL_MD - 2 * t.SPACE_1}px;"
                    if getattr(self, "_integrated", False) else "")
-        self.setStyleSheet(theme.pill_style(t.reader_color(self._index),
+        self.setStyleSheet(theme.reader_badge_style(t.reader_color(self._index),
                                             actif=self.isChecked()) + compact)
 
 

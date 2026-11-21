@@ -317,8 +317,7 @@ class ReaderViews(QWidget):
             # Un libelle dedie permet de garder la couleur du lecteur, meme au
             # survol et dans l'onglet selectionne.
             position = self.tabs.addTab("")
-            # Un point discret porte la couleur comme dans une legende : plus
-            # lisible et plus moderne qu'un grand rectangle teinte.
+            # The same reader colour links this badge to Execution and the tree.
             libelle = QLabel(f"●  {lecteur.short_name}")
             libelle.setAlignment(Qt.AlignCenter)
             libelle.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -615,10 +614,10 @@ class ReaderViews(QWidget):
                 zip(self._readers, self._tab_labels)):
             couleur = t.reader_color(lecteur.index)
             libelle.setStyleSheet(
-                f"color: {couleur}; background: transparent;"
-                f"font-size: {t.TEXT_XS}px;"
+                theme.reader_badge_style(couleur, actif=position == courant) +
                 f"font-weight: {700 if position == courant else 600};"
-                f"padding: 0 {t.SPACE_1}px;")
+                f"padding: 2px {t.SPACE_1}px;")
+            libelle.adjustSize()
 
         for position, entete in enumerate(self.headers):
             if position >= len(self._readers):
