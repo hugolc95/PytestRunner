@@ -381,6 +381,7 @@ class MainWindow(QMainWindow):
             ("comparison", "Comparison", "mdi.table-search"),
             ("python", "Python Environment", "mdi.language-python"),
             ("console", "Console", "mdi.console"),
+            ("help", "Help", "mdi.help-circle-outline"),
             ("settings", "Settings", "mdi.cog-outline"),
         )
         for cle, texte, glyph in entrees:
@@ -392,7 +393,9 @@ class MainWindow(QMainWindow):
             bouton.setCursor(Qt.PointingHandCursor)
             bouton.clicked.connect(lambda checked=False, page=cle: self._show_page(page))
             self.nav_buttons[cle] = bouton
-            if cle == "settings":
+            # Help et Settings restent ensemble en bas : ce sont les pages
+            # "a propos de l'outil", separees des pages de travail.
+            if cle == "help":
                 colonne.addStretch(1)
             colonne.addWidget(bouton)
         utilities = QBoxLayout(QBoxLayout.LeftToRight)
@@ -443,6 +446,7 @@ class MainWindow(QMainWindow):
             "python": "Python Environment",
             "settings": "Settings",
             "console": "Console",
+            "help": "Help",
         }
         self.navigation_title.setVisible(not collapsed)
         self.navigation_logo.setVisible(collapsed)
@@ -607,6 +611,7 @@ class MainWindow(QMainWindow):
             "yaml": self.yaml_page,
             "settings": getattr(self, "settings_page", self.workspace_page),
             "console": getattr(self, "console_page", self.workspace_page),
+            "help": getattr(self, "help_page", self.workspace_page),
         }
         cible = pages.get(page, self.workspace_page)
         context = self._selected_run_context()
@@ -641,6 +646,25 @@ class MainWindow(QMainWindow):
         if hasattr(self, "preferences"):
             self.preferences.track_buttons()
             self.preferences.record("actions", f"Navigation: {page}")
+
+    def open_help(self, topic: str = "") -> None:
+        """F1 : ouvre l'aide sur la rubrique de la page affichee.
+
+        Un onglet de run detache delegue a la fenetre principale, seule a
+        porter la page Help.
+        """
+        hote = self._run_host or self
+        help_page = getattr(hote, "help_page", None)
+        if help_page is None:
+            return
+        if not topic:
+            page = getattr(hote, "_page_history", ["workspace"])[-1]
+            # F1 depuis l'aide elle-meme garde la rubrique en cours de lecture.
+            if page != "help":
+                topic = help_page.content.topic_for_page(page)
+        if topic:
+            help_page.content.show_topic(topic)
+        hote._show_page("help")
 
     def _show_previous_attached_page(self) -> None:
         for page in reversed(getattr(self, "_page_history", ["workspace"])):
@@ -1778,6 +1802,10 @@ class MainWindow(QMainWindow):
         self._action(vue, "Compare readers side by side", "Ctrl+Shift+D",
                      self._toggle_compare, "mdi.view-split-vertical")
 
+        aide = self.menuBar().addMenu("&Help")
+        self.act_help = self._action(aide, "Pytest Runner help", "F1",
+                                     self.open_help, "mdi.help-circle-outline")
+
         # La navigation principale remplace la barre de menus. Les QAction
         # restent rattachees a la fenetre afin de conserver tous les
         # raccourcis clavier et les comportements existants.
@@ -2109,6 +2137,7 @@ class MainWindow(QMainWindow):
                 ("python", "mdi.language-python"),
                 ("settings", "mdi.cog-outline"),
                 ("console", "mdi.console"),
+                ("help", "mdi.help-circle-outline"),
                 ("yaml", "mdi.file-cog-outline")):
             self.nav_buttons[cle].setIcon(icons.icon(glyph, t.TEXT_MUTED))
         # Ni une icone teintee ni un StatusPill : juste un label dont la

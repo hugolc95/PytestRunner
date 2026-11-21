@@ -265,7 +265,8 @@ def test_stopped_profile_archives_unfinished_attempt_as_not_run(tmp_path):
     analysis = capture_report(window, report)
     assert analysis['coverage']['stopped'] and not analysis['coverage']['complete']
     row = analysis['occurrences'][0]
-    assert row['not_run'] and row['attempts'][0]['status'] == 'NOTRUN'
+    # Le statut est normalise a la lecture (NOT_RUN / NOTRUN / notrun).
+    assert row['not_run'] and row['attempts'][0]['status'].replace('_', '') == 'NOTRUN'
     assert row['reason'] == 'Stopped before this test finished'
 
 
@@ -312,7 +313,7 @@ def test_history_distinguishes_current_not_run_from_old_unknowns(qtbot, tmp_path
         counts={'PASSED': 1}, analysis_data=analysis, campaign_coverage=c))
     dialog = HistoryWindow(history)
     qtbot.addWidget(dialog)
-    assert dialog.ribbon._counts == {Status.PASSED: 1, Status.PENDING: 1}
+    assert dialog.ribbon._counts == {Status.PASSED: 1, Status.NOT_RUN: 1}
     assert '2 planned tests' in dialog.detail_meta.text()
     model = dialog.execution_model
     branch_result = model.index(0, 1).data()

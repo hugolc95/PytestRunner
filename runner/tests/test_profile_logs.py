@@ -70,6 +70,10 @@ def window(qtbot, tmp_path, monkeypatch):
     w = MainWindow()
     qtbot.addWidget(w)
     w.workspace = Workspace(str(tmp_path), settings={"LOG_PATH": str(tmp_path / "logs"), "Reader": READER.name})
+    # Depuis 1.7.4, un run n'est lance que sur le workspace dont l'arbre a
+    # ete collecte et qui est affiche dans le champ.
+    w._tree_workspace = w.workspace.path
+    w.workspace_combo.setEditText(w.workspace.path)
     yield w
     w.close()
     QSettings(ORG, APP).clear()

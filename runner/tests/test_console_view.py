@@ -298,7 +298,13 @@ def test_reader_names_keep_the_same_colour_in_output_logs_and_compare(panel):
     for vues in (panel.output, panel.logs):
         for position, lecteur in enumerate(READERS):
             couleur = t.reader_color(lecteur.index)
-            assert couleur in vues._tab_labels[position].styleSheet()
+            # L'onglet inactif est attenue mais garde la teinte du lecteur
+            # dans son contour ; l'onglet actif la porte telle quelle.
+            teinte = t.rgba(couleur, 0).rsplit(",", 1)[0]
+            style = vues._tab_labels[position].styleSheet()
+            assert couleur in style or teinte in style
+            if position == vues.tabs.currentIndex():
+                assert couleur in style
             assert couleur in vues.headers[position].styleSheet()
 
 

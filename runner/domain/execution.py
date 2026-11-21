@@ -130,6 +130,22 @@ def _group_nodeids_by_suite(
     return [(root, tuple(ids)) for root, ids in groups]
 
 
+def _couvert(nodeid: str, verdicts) -> bool:
+    """Ce nodeid demande a-t-il recu au moins un verdict ?
+
+    Un nodeid demande n'est pas toujours une feuille : une fonction devenue
+    parametree depuis la collecte, un fichier ou un dossier (relance depuis
+    History, profil suivant une source) font tourner leurs enfants, qui
+    rendent leur verdict sous leur propre nodeid. Les comparer a l'identique
+    marquait "Not run" -- et le run en echec -- une fonction dont tous les
+    cas avaient reussi.
+    """
+    if nodeid in verdicts:
+        return True
+    prefixes = tuple(nodeid.rstrip("/") + suffixe for suffixe in ("[", "::", "/"))
+    return any(cle.startswith(prefixes) for cle in verdicts)
+
+
 def _merge_junit_files(sources: list[str], destination: str) -> None:
     """Merge per-TestSuite JUnit files into the single logical run report."""
     suites = []
@@ -647,7 +663,8 @@ class ReaderRun:
         reason = ('Run stopped by the user before this test finished.' if self._cancelled else
                   'Pytest ended without reporting a result for this selected test.')
         report.not_run = {nodeid: incomplete_reasons.get(nodeid, reason)
-                          for nodeid in self.request.nodeids if nodeid not in verdicts}
+                          for nodeid in self.request.nodeids
+                          if not _couvert(nodeid, verdicts)}
         for nodeid in report.not_run:
             record_result(nodeid, Status.NOT_RUN)
         if report.not_run and not self._cancelled:

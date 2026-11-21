@@ -113,7 +113,9 @@ def test_runtime_collection_failure_is_global(tmp_path):
     (tmp_path / "test_card.py").write_text("import absent_runtime_xyz\n")
     report, outcomes, _ = run_suite(tmp_path, [nodeid])
     assert report.issues and "absent_runtime_xyz" in report.issues[0]
-    assert not outcomes and not report.ok
+    # Aucun verdict de test : seul le statut explicite "Not run" est rendu.
+    assert all(outcome.status is Status.NOT_RUN for outcome in outcomes)
+    assert not report.ok
     assert failure_for(index_failures(report.output), nodeid) is None
 
 

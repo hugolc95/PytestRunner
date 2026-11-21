@@ -39,7 +39,7 @@ def test_dynamic_button_clicks_are_recorded_once_and_stop_on_shutdown(window):
     assert len(messages) == 1
 
 
-@pytest.mark.parametrize("name", ["settings", "console"])
+@pytest.mark.parametrize("name", ["settings", "console", "help"])
 def test_page_detaches_and_reattaches_same_content(window, name):
     window._show_page(name)
     page = getattr(window, name + "_page")
@@ -63,7 +63,7 @@ def test_page_detaches_and_reattaches_same_content(window, name):
     assert page.body.isVisible()
 
 
-@pytest.mark.parametrize("name", ["settings", "console"])
+@pytest.mark.parametrize("name", ["settings", "console", "help"])
 def test_detached_page_restores_mode_and_geometry_after_restart(window, name, qtbot):
     page = getattr(window, name + "_page")
     window._show_page(name)
@@ -260,8 +260,10 @@ def test_exception_hook_restored_on_shutdown(window):
 
 def test_sidebar_settings_stay_at_bottom_and_utilities_fit_when_collapsed(window):
     layout = window.navigation.layout()
-    settings_index = layout.indexOf(window.nav_buttons["settings"])
-    assert layout.itemAt(settings_index - 1).spacerItem() is not None
+    # Help et Settings forment le groupe du bas, apres l'espace elastique.
+    help_index = layout.indexOf(window.nav_buttons["help"])
+    assert layout.itemAt(help_index - 1).spacerItem() is not None
+    assert layout.indexOf(window.nav_buttons["settings"]) == help_index + 1
     utilities = window.navigation_utilities
     assert utilities.indexOf(window.page_theme_button) < utilities.indexOf(window.sidebar_toggle_button)
     assert utilities.direction() == QBoxLayout.LeftToRight

@@ -263,7 +263,12 @@ def test_a_stopped_sequential_run_still_reports_that_it_is_over(qapp, faux_runs,
     assert _attendre(qapp, lambda: bilans), (
         "aucun bilan de fin apres l'arret : l'interface resterait bloquee")
     service.wait()
-    assert len(bilans[0]) == 1, "seul le lecteur demarre doit rendre un rapport"
+    # Depuis 1.7.12, le lecteur jamais demarre rend aussi un bilan : ses tests
+    # sont "Not run", avec la raison, au lieu de disparaitre du run.
+    assert len(bilans[0]) == 2
+    jamais = [r for r in bilans[0] if r.not_run and set(r.not_run.values()) == {
+        'Run stopped by the user before this reader started.'}]
+    assert len(jamais) == 1 and jamais[0].cancelled
 
 
 def test_the_reports_come_back_in_column_order(qapp, faux_runs, service):

@@ -19,6 +19,9 @@ class RunCampaignSync(QObject):
         self.undo_action.setShortcut(QKeySequence.Undo)
         self.undo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
         self.undo_action.triggered.connect(self.undo)
+        # Active seulement quand `refresh` trouve une mise a jour a annuler :
+        # une action active par defaut capte Ctrl+Z sans rien avoir a faire.
+        self.undo_action.setEnabled(False)
         window.profile_tree.addAction(self.undo_action)
         self.undo_button = window._quiet('mdi.undo', 'Undo last campaign update (Ctrl+Z)', self.undo)
         self.undo_button.hide()

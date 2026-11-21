@@ -523,8 +523,15 @@ class PreferencesController(QObject):
         self.console_page = DetachablePage(window, "Console", "Actual commands, interface actions, process output and tracebacks", self.console)
         window.pages.addWidget(self.settings_page)
         window.pages.addWidget(self.console_page)
+        from runner.ui.help_page import HelpCenter
+        self.help_center = HelpCenter(window)
+        self.help_page = DetachablePage(
+            window, "Help", "User guide, workflows, keyboard shortcuts and troubleshooting • F1 opens the topic of the current page",
+            self.help_center)
+        window.pages.addWidget(self.help_page)
         window.settings_page = self.settings_page
         window.console_page = self.console_page
+        window.help_page = self.help_page
         self.apply()
         self.attach_context(window)
         self._traced_buttons = weakref.WeakSet()
@@ -571,10 +578,13 @@ class PreferencesController(QObject):
                 context.profile_tree.setCurrentIndex(item)
                 context.profile_tree.scrollTo(item)
 
+    def detachable_pages(self):
+        return (self.settings_page, self.console_page, self.help_page)
+
     def restore_detached_pages(self):
         if not self.active:
             return
-        for page in (self.settings_page, self.console_page):
+        for page in self.detachable_pages():
             if (not page.detached_window and
                     self.window.settings.value(page.settings_key + "/detached", False, type=bool)):
                 page.toggle_detach()
@@ -680,7 +690,8 @@ class PreferencesController(QObject):
             control.blockSignals(False)
             self.record("actions", f"Theme changed: {t.current_theme()}")
         self.settings_panel.restyle()
-        for page in (self.settings_page, self.console_page):
+        self.help_center.restyle()
+        for page in self.detachable_pages():
             page.restyle()
 
     def apply(self):
@@ -704,7 +715,7 @@ class PreferencesController(QObject):
         if changed & {"timestamps", "limit"}:
             self.console._dirty = True
         if "font_size" in changed:
-            for page in (self.settings_page, self.console_page):
+            for page in self.detachable_pages():
                 if page.detached_window:
                     page.detached_window.setStyleSheet(window.styleSheet())
         self._applied_values = dict(values)
@@ -780,7 +791,7 @@ class PreferencesController(QObject):
     def shutdown(self):
         if not self.active:
             return
-        for page in (self.settings_page, self.console_page):
+        for page in self.detachable_pages():
             page.save_detached_state()
             page.reattach(persist=False)
         self.window.settings.sync()

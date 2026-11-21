@@ -1,5 +1,43 @@
 # Pytest Runner GUI
 
+## Aide intégrée et passe de stabilité — v1.8.0
+
+**Help**, juste au-dessus de **Settings** dans le menu de gauche, ouvre un
+guide d'utilisation complet, en anglais comme le reste de l'interface :
+premiers pas, Run Tests, sélection, lecteurs et ATR, onglets et file
+d'attente, résultats, Detail / Source / Output / Logs, profils d'exécution,
+YAML, Python Environment, History, comparaison, rapports HTML, Settings,
+Console, thèmes, tous les raccourcis clavier, dépannage, FAQ et glossaire.
+
+- **F1** ouvre directement la rubrique de la page affichée.
+- **Search the help…** filtre les 30 rubriques et surligne les mots trouvés.
+- Les liens bleus ouvrent une autre rubrique ou la page concernée de
+  l'application ; les flèches reviennent en arrière.
+- **Support and data locations** affiche la version, le Python des tests et
+  les dossiers de l'historique et des réglages de ce poste.
+  **Copy support information** les copie pour un signalement.
+- **Export guide…** enregistre tout le guide dans un seul fichier HTML, à
+  lire hors de l'application, imprimer ou partager.
+- **Detach window** garde l'aide à côté de la fenêtre principale.
+
+Corrections de stabilité :
+
+- Dans **Execution Profiles → Test sequence**, **Ctrl+Z** pouvait ne rien
+  faire : deux commandes d'annulation se disputaient le raccourci.
+- Un test devenu paramétré depuis la collecte, ou un fichier / dossier
+  relancé depuis History, n'est plus marqué **Not run** alors que tous ses
+  cas ont été exécutés, ce qui faisait échouer le run.
+- Dans **History**, un groupe dont une partie seulement des tests a tourné
+  affiche de nouveau **Not all tests run**, et un test non exécuté sa raison.
+- Les lecteurs de la carte **Execution** retrouvent la hauteur des autres
+  contrôles (32 px).
+- En demi-écran, l'onglet **Logs** ne déborde plus de la barre
+  **Detail / Source / Output / Logs** quand on change d'onglet.
+
+La suite de tests de l'application repasse entièrement au vert : les tests
+restés sur d'anciens comportements ont été alignés sur ceux en vigueur
+(statut **Not run**, garde du workspace collecté, descriptions élidées).
+
 ## Lecteurs en vraies couleurs et compteurs lisibles — v1.7.14
 
 Chaque lecteur a de nouveau une couleur franche, choisie pour ne jamais

@@ -997,8 +997,11 @@ class ReaderToggle(QPushButton):
     def restyle(self) -> None:
         # Eteinte plutot qu'absente : un lecteur decoche garde sa place et sa
         # couleur en creux, donc on voit d'un coup d'oeil ce qu'on a exclu.
-        compact = (f"min-height: {t.CONTROL_MD - 2 * t.SPACE_1}px;"
-                   f"max-height: {t.CONTROL_MD - 2 * t.SPACE_1}px;"
+        # Hauteur du CONTENU : le QSS l'impose par-dessus setFixedHeight. Le
+        # badge a un contour de 1 px depuis 1.7.12 ; sans le deduire, les
+        # lecteurs faisaient 34 px a cote de controles de 32 px.
+        contenu = t.CONTROL_MD - 2 * t.SPACE_1 - 2
+        compact = (f"min-height: {contenu}px; max-height: {contenu}px;"
                    if getattr(self, "_integrated", False) else "")
         self.setStyleSheet(theme.reader_badge_style(t.reader_color(self._index),
                                             actif=self.isChecked()) + compact)

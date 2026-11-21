@@ -125,7 +125,10 @@ def test_group_title_does_not_overlap_checkbox_or_folder(window, description, fo
             # qtawesome dessine aussi son glyphe avec drawText ; seules les
             # zones du titre et de la description doivent eviter les controles.
             text = args[-1]
-            if rect.isValid() and isinstance(text, str) and (text.startswith(GROUP['name']) or text == description):
+            # A 20 px la colonne peut etre trop etroite : la description est
+            # alors elidee ("…"), ce qui reste un dessin correct.
+            elided = bool(description) and text.endswith('…') and description.startswith(text[:-1])
+            if rect.isValid() and isinstance(text, str) and (text.startswith(GROUP['name']) or text == description or elided):
                 calls.append(QRect(rect))
                 colors.append(self.pen().color())
             return super().drawText(rect, *args)
