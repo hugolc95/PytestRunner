@@ -1,5 +1,6 @@
-from pathlib import Path
 """Meme confirmation que l'export Excel, avec une URL de fichier locale."""
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
