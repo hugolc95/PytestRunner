@@ -123,17 +123,9 @@ def install() -> None:
             self.colorblind_theme_button.setToolTip("Colorblind-friendly colors enabled" if active else "Use colorblind-friendly colors")
     MainWindow._restyle=restyle_selected
 
-    original_refresh_counts=MainWindow._rafraichir_compteurs
-    def refresh_counts_as_progress(self):
-        original_refresh_counts(self); total=int(getattr(self,"_main_run_total",0) or 0)
-        if getattr(self,'_profile_count_statuses',None) is not None: total=self._profile_execution_total
-        if total>0:
-            done=min(total,max(0,int(self._completed_executions()))); self.compass_pct.setText(f"{done} / {total}"); self.compass_pct.setToolTip(f"{done} of {total} expected test/reader executions completed")
-        else: self.compass_pct.setText("—"); self.compass_pct.setToolTip("No run yet")
-    MainWindow._rafraichir_compteurs=refresh_counts_as_progress
     original_run_started=MainWindow._on_run_started
     def run_started_with_progress_total(self,request):
-        self._main_run_total=request.total_tests; original_run_started(self,request); self.remaining_pill.setVisible(False); self._rafraichir_compteurs()
+        original_run_started(self,request); self.remaining_pill.setVisible(False)
     MainWindow._on_run_started=run_started_with_progress_total
     original_load_workspace=MainWindow.load_workspace
     def load_workspace_reset_progress(self): self._main_run_total=0; original_load_workspace(self)

@@ -184,6 +184,7 @@ def test_n_times_runs_to_completion_and_reports_the_tally(fenetre, monkeypatch, 
 
 def test_repetitions_have_their_own_summary_and_keep_previous_results(fenetre, monkeypatch, qapp):
     """Les repetitions ne remplacent pas le bilan du run precedent."""
+    fenetre._main_run_total = 1
     fenetre.model.apply_outcome(NODEID, Status.PASSED, 0)
     fenetre._rafraichir_compteurs()
     _popen_scripte(monkeypatch, ["PASSED", "FAILED", "PASSED", "FAILED", "PASSED"])
@@ -195,7 +196,7 @@ def test_repetitions_have_their_own_summary_and_keep_previous_results(fenetre, m
 
     assert fenetre.pills[Status.PASSED].value() == 1
     assert fenetre.pills[Status.FAILED].value() == 0
-    assert fenetre.compass_pct.text() == "100%"
+    assert fenetre.compass_pct.text() == "1 / 1"
     assert '3 passed' in fenetre.stress_progress.summary()
     assert '2 failed' in fenetre.stress_progress.summary()
     assert '5/5 executions' in fenetre.stress_progress.summary()

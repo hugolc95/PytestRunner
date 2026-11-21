@@ -197,7 +197,8 @@ def test_context_menu_renames_target_run_and_updates_detached_title(window, monk
     monkeypatch.setattr("runner.ui.run_tabs.QMenu", TestMenu)
     controller.context_menu(controller.tabs.tabRect(controller.entries.index(entry)).center())
     assert entry.name == "Card qualification"
-    assert draft.run_name_button.text() == entry.name
+    # The visible caption can be elided; the complete name stays accessible.
+    assert draft.run_name_button.accessibleName() == entry.name
     assert controller.tabs.tabData(1)["name"] == entry.name
     assert entry.floating.windowTitle().startswith(entry.name)
     assert controller.entries[0].name != entry.name

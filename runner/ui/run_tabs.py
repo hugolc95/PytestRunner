@@ -277,6 +277,7 @@ class RunTabsController(QObject):
             return
         entry.state = "draft"
         entry.progress = (0, 0)
+        context._main_run_total = 0
         self.release_snapshot(entry)
         context._running_execution_profile = None
         context._profile_count_statuses = None

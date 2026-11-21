@@ -70,12 +70,12 @@ def test_profile_notification_uses_same_counts_as_visible_results(qtbot, monkeyp
                                               Status.SKIPPED: 3, Status.ERROR: 1})
     window._notifier_fin_de_run('All tests passed')
     assert messages[-1][0] == 'Profile run finished'
-    assert messages[-1][1] == '8 passed · 2 failed · 3 skipped · 1 error'
+    assert messages[-1][1] == '8 passed · 2 failed · 3 skipped · 1 error · 0 not run'
     assert messages[-1][2] == QSystemTrayIcon.Critical
     window._profile_count_statuses = None
     window._notifier_fin_de_run('All tests passed')
     assert messages[-1][0] == 'All tests passed'
-    assert messages[-1][1] == '1 passed · 0 failed · 0 skipped · 0 error'
+    assert messages[-1][1] == '1 passed · 0 failed · 0 skipped · 0 error · 0 not run'
     assert messages[-1][2] == QSystemTrayIcon.Information
 
 

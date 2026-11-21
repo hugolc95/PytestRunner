@@ -186,6 +186,7 @@ class MainWindow(QMainWindow):
         self._elapsed.setInterval(1000)
         self._elapsed.timeout.connect(self._tick)
         self._seconds = 0
+        self._main_run_total = 0
         self._sidebar_collapsed = False
         self._active_execution_profile: ExecutionProfile | None = None
         self._running_execution_profile: ExecutionProfile | None = None
@@ -3036,6 +3037,7 @@ class MainWindow(QMainWindow):
 
     @Slot(object)
     def _on_run_started(self, request: RunRequest) -> None:
+        self._main_run_total = request.total_tests
         self._run_collection_errors = deepcopy(getattr(request, 'collection_errors', {}))
         self._refresh_collection_warning()
         preserve_results = (getattr(self, '_preserve_results_run_id', '') == request.run_id
@@ -3178,9 +3180,7 @@ class MainWindow(QMainWindow):
         for statut, pastille in self.pills.items():
             pastille.set_value(rendus.get(statut, 0))
         self.compass_ring.set_counts(rendus)
-        total = sum(rendus.values())
-        passed = rendus.get(Status.PASSED, 0)
-        self.compass_pct.setText(f"{round(100 * passed / total)}%" if total else "—")
+        self._refresh_execution_progress()
 
         if self._stress_previous_counts is not None:
             return
@@ -3195,6 +3195,20 @@ class MainWindow(QMainWindow):
         # que la regle a sa place -- « je n'affiche pas un reste negatif » est
         # son invariant, pas celui de la fenetre.
         self.remaining_pill.set_value(self.progress.maximum() - faits - self._run_status_counts().get(Status.NOT_RUN, 0))
+
+    def _refresh_execution_progress(self) -> None:
+        """One writer for Results: completed executions / expected executions."""
+        total = self._main_run_total
+        if getattr(self, '_profile_count_statuses', None) is not None:
+            total = self._profile_execution_total
+        if total > 0:
+            done = min(total, max(0, self._completed_executions()))
+            self.compass_pct.setText(f'{done} / {total}')
+            self.compass_pct.setToolTip(
+                f'{done} of {total} expected test/reader executions completed')
+        else:
+            self.compass_pct.setText('—')
+            self.compass_pct.setToolTip('No run yet')
 
     @Slot(int, int)
     def _on_progress(self, faits: int, total: int) -> None:

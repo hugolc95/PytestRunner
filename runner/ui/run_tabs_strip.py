@@ -29,9 +29,15 @@ class RunTabClose(QAbstractButton):
 
 
 class RunTabBar(QTabBar):
+    TAB_WIDTH = 180
+    TAB_HEIGHT = 42
+
     def tabSizeHint(self, index):
-        size = super().tabSizeHint(index)
-        return QSize(min(225, max(160, size.width())), 42)
+        return QSize(self.TAB_WIDTH, self.TAB_HEIGHT)
+
+    def minimumTabSizeHint(self, index):
+        # Overflow uses the tab bar's scroll buttons instead of shrinking cards.
+        return self.tabSizeHint(index)
 
     def paintEvent(self, event):
         painter = QPainter(self)

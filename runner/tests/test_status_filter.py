@@ -213,10 +213,10 @@ def test_the_compass_ring_reflects_the_same_counts_as_the_pills(joue):
         assert f"{pastille.value()} {statut.label.lower()}" in joue.compass_ring.toolTip()
 
 
-def test_the_compass_percentage_matches_the_passed_share(joue):
-    total = sum(p.value() for p in joue.pills.values())
-    attendu = round(100 * joue.pills[Status.PASSED].value() / total)
-    assert joue.compass_pct.text() == f"{attendu}%"
+def test_result_progress_counts_all_completed_verdicts(joue):
+    joue._main_run_total = len(NODEIDS)
+    joue._rafraichir_compteurs()
+    assert joue.compass_pct.text() == f'{len(NODEIDS)} / {len(NODEIDS)}'
 
 
 def test_a_pill_with_results_emits_its_status(joue):

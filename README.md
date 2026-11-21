@@ -1,5 +1,15 @@
 # Pytest Runner GUI
 
+## Onglets et progression stables — v1.7.13
+
+Les onglets de run conservent une largeur fixe de 180 px, indépendamment
+du nom, de l’état et des compteurs. Si la place manque, les flèches de
+défilement permettent de parcourir les onglets.
+
+Le compteur Results reste au format **X / X** pendant le run : une mise
+à jour intermédiaire en pourcentage a été supprimée. Le total tient compte
+du run ou du profil actif ; les tests Not run ne comptent pas comme exécutés.
+
 ## Badges colorés et diagnostics de crash — v1.7.12
 
 Les lecteurs retrouvent des couleurs distinctes : bleu, turquoise, ambre,
