@@ -884,7 +884,7 @@ QLabel#StatCellValue {{
     background: transparent;
 }}
 QLabel#ReaderVerdict_passed, QLabel#ReaderVerdict_failed,
-QLabel#ReaderVerdict_skipped, QLabel#ReaderVerdict_error,
+QLabel#ReaderVerdict_skipped, QLabel#ReaderVerdict_error, QLabel#ReaderVerdict_notrun,
 QLabel#ReaderVerdict_running, QLabel#ReaderVerdict_pending {{
     font-size: {t.TEXT_XS}px;
     font-weight: 700;
@@ -894,6 +894,7 @@ QLabel#ReaderVerdict_passed {{ color: {t.status_color(Status.PASSED)}; }}
 QLabel#ReaderVerdict_failed {{ color: {t.status_color(Status.FAILED)}; }}
 QLabel#ReaderVerdict_skipped {{ color: {t.status_color(Status.SKIPPED)}; }}
 QLabel#ReaderVerdict_error {{ color: {t.status_color(Status.ERROR)}; }}
+QLabel#ReaderVerdict_notrun {{ color: {t.status_color(Status.NOT_RUN)}; }}
 QLabel#ReaderVerdict_running {{ color: {t.status_color(Status.RUNNING)}; }}
 QLabel#ReaderVerdict_pending {{ color: {t.TEXT_FAINT}; }}
 QLabel#StatusLive {{
@@ -973,6 +974,14 @@ def pill_style(couleur: str, actif: bool = True) -> str:
         f"padding: {t.SPACE_1}px {t.SPACE_3}px;"
         f"font-size: {t.TEXT_XS}px; font-weight: 600;"
     )
+
+
+def reader_badge_style(couleur: str, actif: bool = True) -> str:
+    """A reader keeps its colour even when excluded from the next run."""
+    return (pill_style(couleur, actif)
+            + f"color: {couleur if actif else t.blend(couleur, t.TEXT_MUTED, 0.6)};"
+            + f"border: 1px solid {t.rgba(couleur, 0.55 if actif else 0.28)};"
+            + f"border-radius: {t.RADIUS_SM}px;")
 
 
 def counter_style(couleur: str, actif: bool, taille: int = t.TEXT_SM) -> str:

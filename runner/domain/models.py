@@ -15,6 +15,7 @@ class Status(str, Enum):
     FAILED = "failed"
     SKIPPED = "skipped"
     ERROR = "error"
+    NOT_RUN = "notrun"
 
     @property
     def is_final(self) -> bool:
@@ -26,8 +27,13 @@ class Status(str, Enum):
         return self in (Status.FAILED, Status.ERROR)
 
     @property
+    def is_executed(self) -> bool:
+        """Un etat final peut aussi signaler une execution manquante."""
+        return self.is_final and self is not Status.NOT_RUN
+
+    @property
     def label(self) -> str:
-        return self.value.upper()
+        return 'NOT RUN' if self is Status.NOT_RUN else self.value.upper()
 
 
 # Ordre de gravite : l'etat d'un dossier est le pire de ce qu'il contient. Un
@@ -36,14 +42,15 @@ _SEVERITE = {
     Status.PENDING: 0,
     Status.PASSED: 1,
     Status.SKIPPED: 2,
-    Status.RUNNING: 3,
-    Status.FAILED: 4,
-    Status.ERROR: 5,
+    Status.NOT_RUN: 3,
+    Status.RUNNING: 4,
+    Status.FAILED: 5,
+    Status.ERROR: 6,
 }
 
 
 def failure_summary(counts) -> str:
-    """`8 failed · 1 error`, ou "" si rien n'a echoue.
+    """Bilan des echecs et des executions manquantes, ou "" sans anomalie.
 
     Les deux restent separes : additionnes, ils affichaient « 9 failed » a
     cote de pastilles qui disaient 8 FAILED et 1 ERROR.
@@ -55,6 +62,8 @@ def failure_summary(counts) -> str:
         parts.append(f"{failed} failed")
     if errors:
         parts.append(f"{errors} error{'s' if errors != 1 else ''}")
+    if counts.get(Status.NOT_RUN):
+        parts.append(f"{counts[Status.NOT_RUN]} not run")
     return " · ".join(parts)
 
 
@@ -182,6 +191,8 @@ class ReaderReport:
     # Global errors have no test owner and are shown once at run completion.
     issues: list[str] = field(default_factory=list)
     commands: list[list[str]] = field(default_factory=list)
+    # Raison de l'etat NOT_RUN, distinct d'un echec rapporte par pytest.
+    not_run: dict[str, str] = field(default_factory=dict)
 
     @property
     def failed(self) -> int:
@@ -189,4 +200,5 @@ class ReaderReport:
 
     @property
     def ok(self) -> bool:
-        return not self.cancelled and self.failed == 0 and self.exit_code == 0 and not self.issues
+        return (not self.cancelled and self.failed == 0 and not self.counts.get(Status.NOT_RUN)
+                and self.exit_code == 0 and not self.issues)

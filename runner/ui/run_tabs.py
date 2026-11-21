@@ -901,6 +901,14 @@ class RunTabsController(QObject):
         if entry.state == "stopped":
             return "Stopped", t.divergent_color(), "mdi.stop-circle-outline"
         if entry.state == "finished":
+            if counts.get(Status.NOT_RUN):
+                return f'Incomplete · {failures}', t.status_color(Status.NOT_RUN), 'mdi.clock-alert-outline'
+            missing = getattr(entry.context, '_execution_not_run_count', 0)
+            if missing:
+                return (f'Incomplete · {failures + " · " if failures else ""}{missing} not executed',
+                        t.status_color(Status.ERROR), 'mdi.alert-circle-outline')
+            if getattr(entry.context, '_execution_errors', False) and not failures:
+                return 'Execution error', t.status_color(Status.ERROR), 'mdi.alert-circle-outline'
             from runner.domain.collection_state import summary as collection_summary
             collection = collection_summary(getattr(entry.context, '_run_collection_errors', {}))
             if collection:

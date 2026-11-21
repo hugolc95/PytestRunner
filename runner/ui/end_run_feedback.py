@@ -28,6 +28,8 @@ def install() -> None:
         # the end was both wrong for partial selections and expensive on very
         # large suites.
         self._archive_run_nodeids = tuple(request.nodeids)
+        self._execution_not_run_count = 0
+        self._execution_errors = False
         self._archive_request = request
         presentation = getattr(self, 'reader_atr', None)
         context = getattr(presentation, '_context', None)
@@ -75,8 +77,6 @@ def install() -> None:
         entries: list[tuple[RunEntry, str]] = []
         now = time.time()
         for report in rapports:
-            if report.cancelled and not getattr(self, '_archive_campaign', None):
-                continue
             from runner.ui.report_capture import capture_report
             analysis = capture_report(self, report)
             entry = history.RunEntry(
@@ -126,6 +126,9 @@ def install() -> None:
             f"{r.reader.name or 'Test interpreter'}\n{issue}"
             for r in rapports if not r.cancelled for issue in r.issues
         ]
+        self._execution_errors = bool(global_errors)
+        self._execution_not_run_count = (sum(len(r.not_run) for r in rapports)
+            if self._running_execution_profile is None else 0)
         if cancelled:
             summary = "Run stopped"
         elif global_errors:
@@ -146,6 +149,8 @@ def install() -> None:
         incomplete = coverage_summary([campaign_result(self, r.reader.index) for r in rapports])
         if incomplete:
             summary = ('Executed tests passed · ' if summary == 'All tests passed' else summary + ' · ') + incomplete
+        if self._execution_not_run_count:
+            summary += f' · Run incomplete · {self._execution_not_run_count} not executed'
 
         self._set_status_idle(f"{summary} · {format_duration(self._seconds, precision=0)}")
         self.elapsed_label.clear()

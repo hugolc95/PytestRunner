@@ -385,7 +385,8 @@ def test_profile_stop_after_failure_skips_following_steps(qapp, tmp_path):
     service.wait(5000)
 
     assert not (tmp_path / "unexpected.txt").exists()
-    assert reports[0].counts == {Status.FAILED: 1}
+    assert reports[0].counts == {Status.FAILED: 1, Status.NOT_RUN: 1}
+    assert 'test_stop.py::test_must_not_run' in reports[0].not_run
 
 
 def test_progress_and_outcomes_survive_spaces_in_parameter_ids(qapp, tmp_path):

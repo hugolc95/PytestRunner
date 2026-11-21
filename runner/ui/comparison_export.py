@@ -41,7 +41,7 @@ def export_comparison_xlsx(path, groups, records, status_for_values):
             values = [status for tests_by_reader in record.values()
                       for status in tests_by_reader.get(nodeid, ())]
             status = status_for_values(values)
-            result = 'Not run' if status is None else ('Unknown' if status.name == 'PENDING' else status.label)
+            result = 'Not run' if status is None or status.name == 'NOT_RUN' else ('Unknown' if status.name == 'PENDING' else status.label)
             row.extend((result, 'Not recorded'))
         results = row[1::2]
         # Missing coverage takes precedence over verdict differences.

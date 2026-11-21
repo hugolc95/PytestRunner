@@ -51,6 +51,7 @@ def install() -> None:
         Status.FAILED,
         Status.SKIPPED,
         Status.ERROR,
+        Status.NOT_RUN,
         Status.PENDING,
     )
     original_compass_set_counts = CompassRing.set_counts
@@ -86,7 +87,7 @@ def install() -> None:
         if getattr(self, '_profile_count_statuses', None) is not None:
             done = self._completed_executions()
             total = self._profile_execution_total
-        self.compass_ring.set_remaining(total - done)
+        self.compass_ring.set_remaining(total - done - self._run_status_counts().get(Status.NOT_RUN, 0))
 
     MainWindow._on_run_started = run_started_with_compass_remaining
     MainWindow._on_progress = progress_with_compass_remaining

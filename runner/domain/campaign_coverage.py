@@ -9,7 +9,7 @@ def coverage(scope, statuses, reader):
     for (position, attempt, index), status in (statuses or {}).items():
         if index == reader and position in selected and (position not in latest or attempt >= latest[position][0]):
             latest[position] = attempt, status
-    executed = sum(getattr(status, 'is_final', False) for _, status in latest.values())
+    executed = sum(getattr(status, 'is_executed', False) for _, status in latest.values())
     total = scope['planned']
     unavailable = len(scope['unavailable'])
     return dict(planned=total, selected=len(selected), executed=executed,
@@ -24,7 +24,8 @@ def summary(values):
     executed = sum(v.get('executed', 0) for v in values)
     planned = sum(v.get('planned', 0) for v in values)
     unit = 'tests' if len(values) == 1 else 'test/reader checks'
-    text = f'Campaign incomplete · {executed}/{planned} {unit} executed'
+    kind = 'Run' if all(v.get('kind') == 'run' for v in values) else 'Campaign'
+    text = f'{kind} incomplete · {executed}/{planned} {unit} executed'
     for key, label, aggregate in (('unavailable', 'unavailable', max), ('not_selected', 'not selected', max), ('not_completed', 'not finished', sum)):
         count = aggregate(v.get(key, 0) for v in values)
         if count:

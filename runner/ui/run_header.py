@@ -255,11 +255,13 @@ class StructuredRunHeader(QWidget):
         self._result_progress = progress
         self._result_buttons = result_buttons
         self._result_actions = result_actions
+        # Une seule rangee, y compris NOT RUN, sans agrandir la carte Results.
         counters = QHBoxLayout()
-        counters.setSpacing(t.SPACE_2)
+        counters.setSpacing(t.SPACE_1)
         self._result_pills = tuple(window.pills.values())
         for pill in window.pills.values():
             self._move(counters, pill)
+            pill.set_header_density(True)
         results.addLayout(counters)
         self._counters = counters
         results.addStretch()
@@ -306,9 +308,9 @@ class StructuredRunHeader(QWidget):
         return panel, layout
 
     @staticmethod
-    def _move(layout, widget):
+    def _move(layout, widget, *position):
         explicitly_hidden = widget.isHidden()
-        layout.addWidget(widget)
+        layout.addWidget(widget, *position)
         widget.setVisible(not explicitly_hidden)
 
     def _arrange(self, compact):
@@ -418,11 +420,14 @@ class StructuredRunHeader(QWidget):
             self.result_heading.setMinimumWidth(
                 self.result_heading.fontMetrics().horizontalAdvance("RESULTS") + 4 if dense else 0)
         if dense:
+            margins = self.results.layout().contentsMargins()
+            required = (self._result_progress.minimumSize().width() + self._counters.minimumSize().width()
+                        + self.results.layout().spacing() + margins.left() + margins.right())
+            self.results.layout().setDirection(QBoxLayout.TopToBottom if event.size().width() < required else QBoxLayout.LeftToRight)
             self._arrange('stacked' if event.size().width() < 740 else True)
             return
-        counter_width = sum(max(72, pill.fontMetrics().horizontalAdvance(pill._status.label.upper()) + 45)
-                            for pill in self._result_pills)
-        self.results.setMinimumWidth(counter_width + 2 * t.SPACE_3 + 3 * t.SPACE_2)
+        counter_width = self._counters.minimumSize().width()
+        self.results.setMinimumWidth(counter_width + 2 * t.SPACE_3)
         required = sum(max(panel.minimumWidth(), panel.minimumSizeHint().width()) for panel in
                        (self.environment, self.execution, self.results))
         pair_width = sum(max(panel.minimumWidth(), panel.minimumSizeHint().width())

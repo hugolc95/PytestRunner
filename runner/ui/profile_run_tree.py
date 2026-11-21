@@ -287,7 +287,8 @@ class ProfileRunTree(QObject):
                 previous = latest.get((position, reader))
                 if previous is None or attempt >= previous[0]:
                     latest[position, reader] = (attempt, status)
-        positions = sorted({position for (position, _), (_, status) in latest.items() if status.is_bad})
+        positions = sorted({position for (position, _), (_, status) in latest.items()
+                            if status.is_bad or status is Status.NOT_RUN})
         return [model.key(position) for position in positions]
 
     def fill_failure_matches(self, matches):

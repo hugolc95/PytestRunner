@@ -52,16 +52,20 @@ def _hue(color):
 
 
 @pytest.mark.parametrize('name', ['dark', 'light', 'dark_colorblind', 'light_colorblind'])
-def test_reader_identity_avoids_verdict_colors_and_keeps_readable_labels(name):
+def test_reader_identity_has_distinct_hues_and_readable_labels(name):
     t.set_theme(name)
     verdicts = {t.status_color(status) for status in Status if status.is_final}
     for color in t.READER_COLORS:
         assert color not in verdicts
-        assert 190 <= _hue(color) <= 235
         assert _contrast(color, t.BG_SURFACE) >= 4.5
         selected = t.blend(color, t.BG_SURFACE, .14)
         assert _contrast(color, selected) >= 4.5
     assert t.reader_color(len(t.READER_COLORS)) == t.reader_color(0)
+    hues = [_hue(color) for color in t.READER_COLORS]
+    for index, hue in enumerate(hues):
+        for other in hues[index + 1:]:
+            distance = abs(hue - other)
+            assert min(distance, 360 - distance) >= 25
 
 
 @pytest.mark.parametrize('name', ['dark_colorblind', 'light_colorblind', 'colorblind'])

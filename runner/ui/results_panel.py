@@ -317,8 +317,7 @@ class ReaderViews(QWidget):
             # Un libelle dedie permet de garder la couleur du lecteur, meme au
             # survol et dans l'onglet selectionne.
             position = self.tabs.addTab("")
-            # Un point discret porte la couleur comme dans une legende : plus
-            # lisible et plus moderne qu'un grand rectangle teinte.
+            # The same reader colour links this badge to Execution and the tree.
             libelle = QLabel(f"●  {lecteur.short_name}")
             libelle.setAlignment(Qt.AlignCenter)
             libelle.setAttribute(Qt.WA_TransparentForMouseEvents)
@@ -615,10 +614,10 @@ class ReaderViews(QWidget):
                 zip(self._readers, self._tab_labels)):
             couleur = t.reader_color(lecteur.index)
             libelle.setStyleSheet(
-                f"color: {couleur}; background: transparent;"
-                f"font-size: {t.TEXT_XS}px;"
+                theme.reader_badge_style(couleur, actif=position == courant) +
                 f"font-weight: {700 if position == courant else 600};"
-                f"padding: 0 {t.SPACE_1}px;")
+                f"padding: 2px {t.SPACE_1}px;")
+            libelle.adjustSize()
 
         for position, entete in enumerate(self.headers):
             if position >= len(self._readers):
@@ -690,6 +689,7 @@ class ResultsPanel(QWidget):
         self._previous_failures = {}
         self._live_failures = {}
         self._live_detail_records = {}
+        self._not_run = {}
         self._executed_by_reader = {}
         self._preserve_details = False
         self._nodeid = ""
@@ -854,6 +854,7 @@ class ResultsPanel(QWidget):
         """Nouvelle collecte : les lecteurs changent, la selection ne vaut plus."""
         self._readers = tuple(readers)
         self._nodeid = ""
+        self._not_run.clear()
         self._comparison_context = ''
         self._statuses = {}
         self._sorties.clear()
@@ -879,6 +880,7 @@ class ResultsPanel(QWidget):
         l'utilisateur : l'avancement se lit dans l'arbre et dans la barre
         d'etat, la console n'a pas a s'imposer.
         """
+        self._not_run.clear()
         if preserve_results:
             readers = self._readers or (Reader('', 0),)
             self._previous_failures = {
@@ -906,6 +908,8 @@ class ResultsPanel(QWidget):
         couterait pour rien si personne ne clique.
         """
         index = rapport.reader.index
+        self._not_run = {key: value for key, value in self._not_run.items() if key[1] != index}
+        self._not_run.update({(nodeid, index): reason for nodeid, reason in rapport.not_run.items()})
         self._sorties[index] = rapport.output
         self._index_echecs.pop(index, None)
         if self._preserve_details:
@@ -1015,6 +1019,7 @@ class ResultsPanel(QWidget):
         rythme-la balayerait le disque des centaines de fois.
         """
         if reader_index is not None:
+            self._not_run.pop((nodeid, reader_index), None)
             self._executed_by_reader.setdefault(reader_index, set()).add(nodeid)
             if statuses.get(reader_index) is Status.PASSED:
                 # Un re-run reussi ne doit pas conserver l'ancienne trace.
@@ -1037,8 +1042,13 @@ class ResultsPanel(QWidget):
             lecteur.index: self._durations.get(lecteur.index, {}).get(self._nodeid)
             for lecteur in cibles
         }
-        self.detail.show_test(self._nodeid, self._readers, self._statuses, echecs, durees,
-                              self._markers, self._recent_runs, self._last_seen)
+        reasons = {reader.index: self._not_run[(self._nodeid, reader.index)] for reader in cibles
+                   if (self._nodeid, reader.index) in self._not_run}
+        durees.update({index: None for index in reasons})
+        statuses = dict(self._statuses)
+        statuses.update({index: Status.NOT_RUN for index in reasons})
+        self.detail.show_test(self._nodeid, self._readers, statuses, echecs, durees,
+                              self._markers, self._recent_runs, self._last_seen, not_run=reasons)
 
     def _echecs_de(self, reader_index: int) -> dict:
         index = self._index_echecs.get(reader_index)

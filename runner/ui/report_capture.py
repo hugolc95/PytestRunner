@@ -39,26 +39,39 @@ def capture_report(window, report):
                     duration=duration if valid_duration(duration) else None,
                     details=copy.deepcopy(list(live.get('records', {}).values())),
                     log_path=str(path) if path else ''))
-                if not status.is_final:
-                    attempts[-1]['status'] = 'NOTRUN'
+                if not status.is_executed:
+                    attempts[-1]['status'] = 'NOT_RUN'
                     attempts[-1]['duration'] = None
-            unfinished = not attempts or attempts[-1]['status'] == 'NOTRUN'
+                    attempts[-1]['details'] = []
+                    attempts[-1]['log_path'] = ''
+            unfinished = not attempts or attempts[-1]['status'] == 'NOT_RUN'
             reason = ('Unavailable at launch' if position in unavailable else
                       'Not selected for this run' if position not in selected else 'Not reached before the run ended')
             if attempts and unfinished:
                 reason = 'Stopped before this test finished'
+            batch = window._profile_reports.get((key, reader)) if keys else None
+            if unfinished and position in selected and batch is not None:
+                reason = batch.not_run.get(nodeid, reason)
             records.append(dict(position=position, nodeid=nodeid, attempts=attempts,
+                                requested=position in selected,
                                 not_run=unfinished, reason=reason if unfinished else ''))
     else:
         statuses = getattr(window, '_archive_statuses_by_reader', {}).get(reader, {})
         for position, nodeid in enumerate(played):
             status = statuses.get(nodeid)
-            attempts = [dict(attempt=0, status=status, duration=report.durations.get(nodeid))] if status else []
-            records.append(dict(position=position, nodeid=nodeid, attempts=attempts, not_run=not attempts))
+            missing = nodeid in report.not_run or status == Status.NOT_RUN.name
+            attempts = [dict(attempt=0, status=Status.NOT_RUN.name if missing else status,
+                             duration=None if missing else report.durations.get(nodeid))] if status or missing else []
+            records.append(dict(position=position, nodeid=nodeid, attempts=attempts, requested=True, not_run=missing or not attempts,
+                                reason=report.not_run.get(nodeid, '') if missing or not attempts else ''))
     atrs = getattr(window, '_archive_reader_atrs', {})
     request = getattr(window, '_archive_request', None)
     from runner.ui.campaign_archive import result as campaign_result
     coverage = campaign_result(window, reader)
+    if profile is None:
+        executed = sum(bool(record['attempts']) and not record['not_run'] for record in records)
+        coverage = dict(kind='run', planned=len(played), selected=len(played), executed=executed,
+                        not_completed=max(0, len(played) - executed), complete=executed == len(played))
     if coverage and getattr(report, 'cancelled', False):
         coverage.update(stopped=True, complete=False)
     return dict(schema=1, occurrences=records,

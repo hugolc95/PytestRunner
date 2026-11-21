@@ -21,9 +21,17 @@ class HistoryExecutionModel(TestTreeModel):
     def records(entry):
         from runner.domain.report_capture import read_analysis
         analysis = read_analysis(entry) if entry.campaign_coverage else {}
-        if analysis.get('campaign_profile'):
-            return [(row['nodeid'], row['attempts'][-1]['status'] if row.get('attempts') else 'NOTRUN')
-                    for row in analysis.get('occurrences', [])]
+        if analysis.get('occurrences'):
+            records = []
+            for row in analysis['occurrences']:
+                status = ''
+                if row.get('requested', True):
+                    if row.get('not_run'):
+                        status = Status.NOT_RUN.name
+                    elif row.get('attempts'):
+                        status = row['attempts'][-1]['status']
+                records.append((row['nodeid'], status))
+            return records
         if entry.executions:
             records = list(entry.executions)
         else:
@@ -44,6 +52,13 @@ class HistoryExecutionModel(TestTreeModel):
                         status = candidates[0].name
                 records.append((nodeid, status))
         return records
+
+    def reason_for_index(self, index, reader=None):
+        if not index.isValid():
+            return ''
+        key = index.internalPointer().node.nodeid
+        return (getattr(self, '_reasons', {}).get(key, '') or
+                getattr(self, '_reader_reasons', {}).get((reader, self._original_ids.get(key)), ''))
 
     def set_entry(self, entry):
         self._contexts = {}
@@ -188,6 +203,9 @@ class HistoryExecutionModel(TestTreeModel):
             return self._original_ids.get(row.node.nodeid, row.node.name)
         if index.column() == 1:
             status = self.status_for(row, 0)
+            if role == Qt.ToolTipRole and status is Status.NOT_RUN:
+                reader = getattr(self, '_contexts', {}).get(row.node.nodeid)
+                return 'Not run\n' + self.reason_for_index(index, reader)
             if role == Qt.DisplayRole:
                 if status is Status.PENDING:
                     reason = getattr(self, '_reasons', {}).get(row.node.nodeid)
