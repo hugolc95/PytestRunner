@@ -20,8 +20,7 @@ explique aux auteurs de tests les variables d'environnement reçues et où
   et surligne les mots recherchés, même avec une faute de frappe.
 - Le guide s'ouvre dans le thème de l'application. Le bouton de
   téléchargement enregistre tout le guide dans un seul fichier HTML à partager.
-- Le bouton d'impression produit tout le guide en PDF ; le fichier se
-  partage aussi tel quel par mail.
+- Le bouton d'impression produit tout le guide en PDF.
 - **About Pytest Runner** (icône ⓘ en bas du menu de gauche) affiche la
   version, l'auteur (**Hugo LE COZ**) et le copyright. Le guide reprend ces
   crédits dans son pied de page et dans sa rubrique **About Pytest Runner**.
@@ -41,7 +40,6 @@ Corrections de stabilité :
   un délai dépassé n'est jamais mémorisé.
 - Fermer une fenêtre ne produit plus d'erreurs parasites dans la console :
   les filtres d'événements ignorent les objets déjà détruits.
-
 - Dans **Execution Profiles → Test sequence**, **Ctrl+Z** pouvait ne rien
   faire : deux commandes d'annulation se disputaient le raccourci.
 - Un test devenu paramétré depuis la collecte, ou un fichier / dossier
@@ -54,9 +52,10 @@ Corrections de stabilité :
 - En demi-écran, l'onglet **Logs** ne déborde plus de la barre
   **Detail / Source / Output / Logs** quand on change d'onglet.
 
-La suite de tests de l'application repasse entièrement au vert : les tests
-restés sur d'anciens comportements ont été alignés sur ceux en vigueur
-(statut **Not run**, garde du workspace collecté, descriptions élidées).
+La suite de tests de l'application et la CI Windows repassent entièrement au
+vert : les tests restés sur d'anciens comportements ont été alignés sur ceux
+en vigueur (statut **Not run**, garde du workspace collecté, descriptions
+élidées), et chaque test repart d'un état propre.
 
 ## Lecteurs en vraies couleurs et compteurs lisibles — v1.7.14
 
