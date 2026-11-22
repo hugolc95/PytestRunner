@@ -1,3 +1,4 @@
+from runner.tests.qt_helpers import widgets_du_layout
 from runner.domain.history import History, RunEntry
 from runner.domain.models import Status
 from runner.ui.widgets import RecentRunsSparkline
@@ -15,8 +16,9 @@ def test_statuses_roundtrip_and_sparkline(qtbot, tmp_path):
     sparkline = RecentRunsSparkline()
     qtbot.addWidget(sparkline)
     sparkline.set_runs(saved.recent_statuses('test_a'))
+    barres = widgets_du_layout(sparkline._ligne)
     for i, status in enumerate(statuses):
-        bar = sparkline._ligne.itemAt(i).widget()
+        bar = barres[i]
         assert t.status_color(status) in bar.styleSheet()
         assert bar.toolTip() == status.label
 

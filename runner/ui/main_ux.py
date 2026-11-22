@@ -35,12 +35,14 @@ def install() -> None:
             base = t.base_theme()
             self.request_theme(base if t.is_colorblind() else f"{base}_colorblind")
         self.colorblind_theme_button.clicked.connect(toggle_colorblind_theme)
-        root_layout=navigation.layout(); utility_layout=None
-        if root_layout is not None:
-            for index in range(root_layout.count()):
-                nested=root_layout.itemAt(index).layout()
-                if nested is not None and nested.indexOf(self.page_theme_button)>=0:
-                    utility_layout=nested; break
+        # Le layout des raccourcis est deja memorise par la fenetre. Le
+        # retrouver par `itemAt()` creait une enveloppe Python par element
+        # de la navigation : PySide les garde apres leur destruction par Qt,
+        # et un objet alloue plus tard a la meme adresse etait pris pour un
+        # QWidgetItem (plantage "QWidgetItem a la place d'un modele").
+        utility_layout=getattr(self, "navigation_utilities", None)
+        if utility_layout is not None and utility_layout.indexOf(self.page_theme_button) < 0:
+            utility_layout=None
         if utility_layout is not None:
             utility_layout.insertWidget(
                 utility_layout.indexOf(self.sidebar_toggle_button),

@@ -48,6 +48,10 @@ sous-processus, avec l'interpréteur configuré pour les tests.
     `combo.clear()`, et un objet alloué ensuite à la même adresse (un
     `QEvent`, un modèle) est pris pour elle → segfault. Passer par
     `setItemData` / `model().flags(...)` (voir `_refresh_profile_picker`) ;
+  - jamais `layout.itemAt(i)` dans l'application pour retrouver un widget
+    ou un sous-layout : même piège avec `QWidgetItem` quand le widget est
+    retiré ou reparenté. Garder une référence (`navigation_utilities`) ;
+    dans les tests, `qt_helpers.widgets_du_layout` ;
   - un `eventFilter` ou un `event()` Python reçoit encore des événements
     pendant la destruction de la fenêtre : le décorer avec
     `qt_safety.tolerate_destruction` ;

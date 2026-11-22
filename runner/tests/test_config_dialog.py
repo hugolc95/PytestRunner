@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from runner.tests.qt_helpers import widgets_du_layout
 import pytest
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -394,7 +395,7 @@ def test_the_theme_button_is_not_in_the_row_of_run_actions(fenetre):
     from PySide6.QtCore import Qt
 
     barre = fenetre.run_button.parentWidget().layout()
-    dans_la_barre = {barre.itemAt(i).widget() for i in range(barre.count())}
+    dans_la_barre = set(widgets_du_layout(barre))
 
     assert fenetre.theme_button not in dans_la_barre
     assert fenetre.menuBar().cornerWidget(Qt.TopRightCorner) is fenetre.theme_button
