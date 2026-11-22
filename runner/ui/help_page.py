@@ -16,8 +16,8 @@ import re
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QStandardPaths, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QTextCharFormat, QTextCursor
+from PySide6.QtCore import QStandardPaths, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QDesktopServices, QImage, QTextCharFormat, QTextCursor, QTextDocument
 from PySide6.QtWidgets import (
     QApplication, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton,
     QSplitter, QTextBrowser, QTextEdit, QTreeWidget, QTreeWidgetItem,
@@ -26,10 +26,51 @@ from PySide6.QtWidgets import (
 
 from runner.ui import icons, tokens as t
 from runner.ui.help_content import (
-    APP_PAGES, CATEGORIES, CONTEXT_TOPICS, TOPICS, TOPICS_BY_ID, HelpTopic,
+    APP_PAGES, CATEGORIES, CONTEXT_TOPICS, SCREENSHOTS, TOPICS, TOPICS_BY_ID, HelpTopic,
 )
 
 TOPIC_ROLE = Qt.UserRole + 1
+_CAPTURE = re.compile(r"\{shot:([\w-]+)\}")
+_SCHEMA_IMAGE = "help-image"
+_MARGE_IMAGE = 48
+
+
+def shot_bytes(name: str) -> bytes | None:
+    """Image d'une capture, ou None si elle n'a pas ete generee.
+
+    Lue par importlib.resources : elle suit le paquet, y compris dans
+    l'executable PyInstaller (collect_data_files de runner.help_assets).
+    """
+    try:
+        from importlib.resources import files
+        return files("runner.help_assets").joinpath(f"{name}.png").read_bytes()
+    except (OSError, ModuleNotFoundError):
+        return None
+
+
+def shot_manifest() -> dict:
+    import json
+    try:
+        from importlib.resources import files
+        return json.loads(files("runner.help_assets").joinpath("manifest.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, ModuleNotFoundError):
+        return {}
+
+
+def _figure(name: str, src: str, largeur: int) -> str:
+    """La capture, sa legende et la liste numerotee de ses reperes."""
+    capture = SCREENSHOTS[name]
+    taille = shot_manifest().get(name, {})
+    # Sans hauteur explicite, QTextDocument garde la hauteur native de
+    # l'image reduite : un grand blanc apparaissait sous la capture.
+    hauteur = ""
+    if taille.get("width") and taille.get("height"):
+        hauteur = f" height='{round(taille['height'] * largeur / taille['width'])}'"
+    reperes = "".join(f"<li>{html.escape(texte)}</li>" for _, texte in capture.markers)
+    return (f"<p class='figure'><img src='{src}' width='{largeur}'{hauteur} "
+            f"alt='{html.escape(capture.caption)}'></p>"
+            f"<p class='caption'>{html.escape(capture.caption)}</p>"
+            f"<ol class='legend'>{reperes}</ol>")
 _BALISE = re.compile(r"<[^>]+>")
 _ESPACES = re.compile(r"\s+")
 
@@ -136,6 +177,9 @@ table {{ border-collapse: collapse; margin-top: 6px; margin-bottom: 6px; }}
 th {{ background-color: {doux}; font-weight: 700; text-align: left; border: 1px solid {bord}; }}
 td {{ border: 1px solid {bord}; vertical-align: top; }}
 .nav {{ color: {attenue}; margin-top: 20px; }}
+.figure {{ margin-top: 10px; margin-bottom: 2px; }}
+.caption {{ color: {attenue}; font-size: small; margin-top: 0px; }}
+.legend li {{ line-height: 130%; }}
 """
 
 
@@ -152,6 +196,33 @@ def _remplir(fragment: str, valeurs: dict[str, str]) -> str:
     for cle, valeur in valeurs.items():
         fragment = fragment.replace("{" + cle + "}", html.escape(valeur))
     return fragment
+
+
+class HelpBrowser(QTextBrowser):
+    """Fournit les captures a QTextDocument et signale ses changements de
+    largeur, pour que l'image suive la largeur du panneau."""
+
+    resized = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._images: dict[str, QImage] = {}
+
+    def loadResource(self, kind, url):
+        if kind == QTextDocument.ImageResource and url.scheme() == _SCHEMA_IMAGE:
+            name = url.path()
+            if name not in self._images:
+                donnees = shot_bytes(name)
+                image = QImage()
+                if donnees:
+                    image.loadFromData(donnees, "PNG")
+                self._images[name] = image
+            return self._images[name]
+        return super().loadResource(kind, url)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.resized.emit()
 
 
 class HelpCenter(QWidget):
@@ -245,7 +316,13 @@ class HelpCenter(QWidget):
         self.export_button.clicked.connect(self.export_guide)
         outils.addWidget(self.export_button)
         lecture.addLayout(outils)
-        self.browser = QTextBrowser()
+        self.browser = HelpBrowser()
+        self._largeur_images = 0
+        self._resize_timer = QTimer(self)
+        self._resize_timer.setSingleShot(True)
+        self._resize_timer.setInterval(120)
+        self._resize_timer.timeout.connect(self._fit_images)
+        self.browser.resized.connect(self._resize_timer.start)
         self.browser.setObjectName("HelpBrowser")
         # La feuille globale donne une police a chasse fixe aux zones de
         # texte (consoles, logs) : un guide se lit en police d'interface.
@@ -411,17 +488,56 @@ class HelpCenter(QWidget):
     # ------------------------------------------------------------------
     # Rendu
     # ------------------------------------------------------------------
-    def _topic_html(self, topic: HelpTopic, *, valeurs=None) -> str:
+    def _image_width(self, name: str) -> int:
+        native = int(shot_manifest().get(name, {}).get("width") or 900)
+        disponible = self.browser.viewport().width() - _MARGE_IMAGE
+        return max(200, min(native, disponible)) if disponible > 200 else min(native, 900)
+
+    def _fit_images(self):
+        """Re-affiche la rubrique si la largeur des captures doit changer."""
+        topic = TOPICS_BY_ID.get(self.current_topic_id)
+        if topic is None or not _CAPTURE.search(topic.body):
+            return
+        largeurs = tuple(self._image_width(n) for n in _CAPTURE.findall(topic.body))
+        if largeurs != self._largeur_images:
+            barre = self.browser.verticalScrollBar()
+            proportion = barre.value() / max(1, barre.maximum())
+            self._render(self.current_topic_id, keep_scroll=True)
+            barre.setValue(int(proportion * barre.maximum()))
+
+    def _shots_html(self, corps: str, *, exporte: bool) -> str:
+        import base64
+
+        def remplace(correspondance):
+            name = correspondance.group(1)
+            if name not in SCREENSHOTS:
+                return ""
+            if exporte:
+                donnees = shot_bytes(name)
+                if not donnees:
+                    return ""
+                largeur = int(shot_manifest().get(name, {}).get("width") or 900)
+                src = "data:image/png;base64," + base64.b64encode(donnees).decode("ascii")
+                return _figure(name, src, largeur)
+            if shot_bytes(name) is None:
+                return ""
+            return _figure(name, f"{_SCHEMA_IMAGE}:{name}", self._image_width(name))
+
+        return _CAPTURE.sub(remplace, corps)
+
+    def _topic_html(self, topic: HelpTopic, *, valeurs=None, exporte=False) -> str:
         corps = _tableaux(topic.body)
         if valeurs is not None:
             corps = _remplir(corps, valeurs)
+        corps = self._shots_html(corps, exporte=exporte)
         return (f"<p class='crumb'>{html.escape(topic.category)}</p>"
                 f"<h1>{html.escape(topic.title)}</h1>"
                 f"<p class='summary'>{html.escape(topic.summary)}</p>{corps}")
 
-    def _render(self, topic_id: str):
+    def _render(self, topic_id: str, *, keep_scroll: bool = False):
         topic = TOPICS_BY_ID[topic_id]
-        valeurs = support_values(self.window) if "{" in topic.body else {}
+        valeurs = support_values(self.window) if "{version}" in topic.body else {}
+        self._largeur_images = tuple(self._image_width(n) for n in _CAPTURE.findall(topic.body))
         position = [item.id for item in TOPICS].index(topic_id)
         liens = []
         if position > 0:
@@ -434,7 +550,8 @@ class HelpCenter(QWidget):
         self.browser.document().setDefaultStyleSheet(_feuille_de_style())
         self.browser.setHtml(
             f"<html><body>{self._topic_html(topic, valeurs=valeurs)}{navigation}</body></html>")
-        self.browser.verticalScrollBar().setValue(0)
+        if not keep_scroll:
+            self.browser.verticalScrollBar().setValue(0)
         self._highlight()
 
     def guide_html(self) -> str:
@@ -448,7 +565,7 @@ class HelpCenter(QWidget):
                 f"<li><a href='#{topic.id}'>{html.escape(topic.title)}</a></li>"
                 for topic in membres) + "</ul>")
             for topic in membres:
-                sections.append(f"<a name='{topic.id}'></a>{self._topic_html(topic)}<hr>")
+                sections.append(f"<a name='{topic.id}'></a>{self._topic_html(topic, exporte=True)}<hr>")
         corps = "".join(sections)
         corps = re.sub(r"href=(['\"])topic:([\w-]+)\1", r"href='#\2'", corps)
         # Hors de l'application, un lien vers une page n'a pas de cible : il
@@ -464,6 +581,7 @@ class HelpCenter(QWidget):
             f"<style>body{{font-family:{t.FONT_UI};max-width:900px;margin:24px auto;"
             f"padding:0 16px;}}{_feuille_de_style(imprimable=True)}"
             "td,th{padding:6px;} .kbd{padding:0 4px;border-radius:3px;}"
+            "img{max-width:100%;height:auto;border:1px solid #d8dee7;border-radius:6px;}"
             "</style></head><body>"
             f"<h1>Pytest Runner {html.escape(__version__)} — User guide</h1>"
             "<h2>Contents</h2>" + "".join(sommaire) + "<hr>" + corps +

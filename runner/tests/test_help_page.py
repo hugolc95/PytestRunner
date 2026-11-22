@@ -160,3 +160,54 @@ def test_f1_from_help_keeps_the_topic_being_read(window):
     window.open_help("faq")
     window.open_help()
     assert window.help_page.content.current_topic_id == "faq"
+
+
+def test_every_screenshot_is_generated_referenced_and_matches_its_legend():
+    from runner.ui.help_content import SCREENSHOTS
+    from runner.ui.help_page import shot_bytes, shot_manifest
+
+    manifest = shot_manifest()
+    references = " ".join(topic.body for topic in TOPICS)
+    for name, capture in SCREENSHOTS.items():
+        assert "{shot:" + name + "}" in references, name
+        donnees = shot_bytes(name)
+        assert donnees and donnees.startswith(b"\x89PNG"), name
+        # Regenerer apres avoir change les reperes : sinon les numeros de
+        # l'image ne correspondent plus a la legende.
+        assert manifest[name]["markers"] == len(capture.markers), name
+
+
+def test_topics_show_their_screenshot_with_a_numbered_legend(window):
+    from PySide6.QtGui import QTextDocument
+
+    centre = window.help_page.content
+    centre.show_topic("quick-start")
+    document = centre.browser.document()
+    html_rendu = document.toHtml()
+    assert "help-image:run-header" in html_rendu
+    image = centre.browser.loadResource(QTextDocument.ImageResource, QUrl("help-image:run-header"))
+    assert not image.isNull()
+    assert "Run tests (F5)" in centre.browser.toPlainText()
+
+
+def test_screenshots_follow_the_width_of_the_panel(window, qtbot):
+    centre = window.help_page.content
+    window._show_page("help")
+    centre.show_topic("run-tests")
+    window.resize(1500, 900)
+    qtbot.waitUntil(lambda: centre._largeur_images == (centre._image_width("run-overview"),))
+    large = centre._largeur_images[0]
+    assert large > 500
+    window.resize(900, 700)
+    qtbot.waitUntil(lambda: centre._largeur_images[0] < large)
+    assert centre._largeur_images[0] <= centre.browser.viewport().width()
+
+
+def test_exported_guide_embeds_the_screenshots(window, tmp_path):
+    centre = window.help_page.content
+    cible = tmp_path / "guide.html"
+    assert centre.export_guide(str(cible))
+    contenu = cible.read_text(encoding="utf-8")
+    assert contenu.count("data:image/png;base64,") == len(__import__(
+        "runner.ui.help_content", fromlist=["SCREENSHOTS"]).SCREENSHOTS)
+    assert "{shot:" not in contenu and "help-image:" not in contenu

@@ -59,9 +59,11 @@ def test_header_profiles_preview_compatibility_and_run_target(qtbot, monkeypatch
     assert not window.tree_view_switch.isHidden()
     assert window.tree_view_switch.parentWidget() is window.tree.header().viewport()
     window._refresh_profile_picker()
-    unavailable = [window.profile_picker.model().item(i) for i in range(window.profile_picker.count())
+    # Par les drapeaux du modele, jamais par `model().item(i)` : une
+    # enveloppe QStandardItem survit a `clear()` (voir _refresh_profile_picker).
+    unavailable = [i for i in range(window.profile_picker.count())
                    if 'Needs attention' in window.profile_picker.itemText(i)]
-    assert len(unavailable) == 1 and unavailable[0].isEnabled()
+    assert len(unavailable) == 1 and window._profile_picker_enabled(unavailable[0])
     window._open_profile_view()
     assert window._active_execution_profile.name == 'Smoke'
     assert window.profile_model.locations['0:0'][2] == 'test_a.py::test_a'

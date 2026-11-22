@@ -30,6 +30,7 @@ from runner.domain.models import Status
 from runner.ui import icons
 from runner.ui import theme
 from runner.ui import tokens as t
+from runner.ui.qt_safety import tolerate_destruction
 
 
 class ReaderHeaderView(QHeaderView):
@@ -740,6 +741,7 @@ class SearchBar(QWidget):
         ligne.addWidget(self.tests_button)
         ligne.addWidget(self.failures_button)
 
+    @tolerate_destruction(False)
     def eventFilter(self, watched, event):
         from PySide6.QtCore import QEvent
 

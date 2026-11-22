@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import sys
 
 import pytest
@@ -77,10 +78,32 @@ def sans_widget_orphelin():
     if application is None:
         return
 
+    from PySide6.QtCore import QProcess, QThread
     for widget in application.topLevelWidgets():
         if widget in avant:
             continue
         widget.close()
+        # Une fenetre peut refuser de se fermer tant qu'une sauvegarde
+        # d'historique ou une collecte tourne. La detruire quand meme
+        # detruirait un QThread actif : abandon natif du processus.
+        for thread in widget.findChildren(QThread):
+            if thread.isRunning():
+                thread.wait(30000)
+        # Idem pour un sous-processus (decouverte des lecteurs, ATR) : le
+        # tuer et attendre sa fin plutot que de le laisser a la destruction.
+        for process in widget.findChildren(QProcess):
+            if process.state() != QProcess.NotRunning:
+                process.kill()
+                process.waitForFinished(5000)
         widget.deleteLater()
 
+    # `processEvents()` n'execute pas les `deleteLater()` : la fenetre d'un
+    # test etait detruite au milieu du test SUIVANT, pendant que ses filtres
+    # d'evenements tournaient -- segfault natif intermittent, "worker crashed"
+    # en CI. Detruire ici, puis ramasser les enveloppes Python orphelines,
+    # garde chaque test seul avec ses propres widgets.
+    from PySide6.QtCore import QEvent
+    application.processEvents()
+    application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
+    gc.collect()
     application.processEvents()

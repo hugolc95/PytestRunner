@@ -1,4 +1,5 @@
 """Run-page layout using the existing controls and their existing signals."""
+from shiboken6 import isValid
 from PySide6.QtWidgets import (
     QApplication, QBoxLayout, QComboBox, QDialog, QFrame, QGridLayout, QHBoxLayout, QLabel, QLayout,
     QPushButton, QPlainTextEdit, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
@@ -7,6 +8,7 @@ from PySide6.QtCore import QEvent, QSize, Qt, QTimer
 
 from runner.ui import tokens as t
 from runner.ui import icons
+from runner.ui.qt_safety import tolerate_destruction
 
 
 class ResponsiveAtr(QWidget):
@@ -405,11 +407,14 @@ class StructuredRunHeader(QWidget):
         elif self._compact != "stacked" and top.minimumHeight() > base:
             top.setMinimumHeight(base)
 
+    @tolerate_destruction(False)
     def event(self, event):
         # Les lecteurs n'arrivent qu'apres la collecte : la carte Execution
         # grandit alors sans que l'en-tete change de taille, donc sans
         # resizeEvent. Sa demande de mise en page suffit a reverifier.
-        if event.type() == QEvent.LayoutRequest:
+        # Pendant la destruction de la fenetre, chaque enfant detruit envoie
+        # encore LayoutRequest : le minuteur peut deja ne plus exister.
+        if event.type() == QEvent.LayoutRequest and isValid(self._whole_timer):
             self._whole_timer.start()
         return super().event(event)
 

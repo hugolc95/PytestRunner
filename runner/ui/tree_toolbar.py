@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QHBoxLayout, QMenu, QSizePolicy, QWidget
 from shiboken6 import isValid
 
 from runner.ui import icons, tokens as t
+from runner.ui.qt_safety import tolerate_destruction
 
 
 class TreeToolbarController(QObject):
@@ -66,6 +67,7 @@ class TreeToolbarController(QObject):
                 continue
             group.setVisible(any(not button.isHidden() for button in buttons))
 
+    @tolerate_destruction(False)
     def eventFilter(self, watched, event):
         if not isValid(self.window) or not isValid(watched):
             return False

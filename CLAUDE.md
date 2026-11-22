@@ -43,11 +43,28 @@ sous-processus, avec l'interpréteur configuré pour les tests.
 - Un test qui attend un sous-processus ou un minuteur attend une condition
   (boucle avec limite, `qtbot.waitUntil`), jamais un délai fixe : la suite
   tourne en parallèle et sous charge.
-- Instabilités natives connues (PySide, objets Qt détruits encore référencés) :
-  segfault intermittent de `test_profile_header_picker` (bascules rapides
-  Tests / Profiles) et `QWidgetItem` à la place d'un modèle dans
-  `ExecutionProfilesPage._build_ui`. Comparer avec `git stash` avant de
-  conclure à une régression.
+- Plantages natifs PySide (corrigés en 1.8.0, ne pas les réintroduire) :
+  - jamais `combo.model().item(i)` : l'enveloppe `QStandardItem` survit à
+    `combo.clear()`, et un objet alloué ensuite à la même adresse (un
+    `QEvent`, un modèle) est pris pour elle → segfault. Passer par
+    `setItemData` / `model().flags(...)` (voir `_refresh_profile_picker`) ;
+  - un `eventFilter` ou un `event()` Python reçoit encore des événements
+    pendant la destruction de la fenêtre : le décorer avec
+    `qt_safety.tolerate_destruction` ;
+  - `conftest.py` détruit les fenêtres d'un test à la fin de CE test
+    (`DeferredDelete` + `gc.collect()`), après avoir attendu leurs threads.
+  Un segfault restant se diagnostique avec `python -X faulthandler` et, sous
+  Linux, `gdb -batch -ex run -ex bt --args python -m pytest …`.
+
+## Aide intégrée
+
+- Texte et captures : `runner/ui/help_content.py` (rubriques en anglais,
+  `SCREENSHOTS` = widgets numérotés + légendes). Affichage :
+  `runner/ui/help_page.py` (page Help, F1).
+- Après un changement visible d'un écran documenté, régénérer les captures :
+  `C:\Python312\python.exe scripts\generate_help_screenshots.py` (écrit
+  `runner/help_assets/*.png` et `manifest.json`). `test_help_page.py`
+  vérifie que chaque capture existe et que ses repères suivent sa légende.
 
 ## Livrer
 

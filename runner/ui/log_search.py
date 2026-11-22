@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
 
 from runner.ui import icons
 from runner.ui import tokens as t
+from runner.ui.qt_safety import tolerate_destruction
 
 
 class LogSearchBar(QWidget):
@@ -78,6 +79,7 @@ class LogSearchBar(QWidget):
         self.field.setFocus()
         self.field.selectAll()
 
+    @tolerate_destruction(False)
     def eventFilter(self, watched, event):
         if event.type() not in (QEvent.ShortcutOverride, QEvent.KeyPress):
             return super().eventFilter(watched, event)

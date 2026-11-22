@@ -78,6 +78,7 @@ from runner.ui import tokens as t
 from runner.ui.execution_profiles_page import ExecutionProfilesPage
 from runner.ui.interpreter_dialog import InterpreterDialog
 from runner.ui.marker_bar import MarkerFilter, MarkerExpressionLabel
+from runner.ui.qt_safety import tolerate_destruction
 from runner.ui.profile_progress import ProfileProgressLabel
 from runner.ui.live_profile_model import LiveProfileModel
 from runner.ui.tree_mode_header import TreeModeHeader, ProfilePicker
@@ -126,6 +127,12 @@ K_SIDEBAR_COLLAPSED = "window/sidebar_collapsed"
 K_CONFIG = "workspace/config"
 
 
+# Role interne de QStandardItemModel qui porte les drapeaux d'un element
+# (Qt::UserRole - 1). Y ecrire 0 desactive l'entree d'une liste deroulante
+# sans passer par une enveloppe QStandardItem (voir _refresh_profile_picker).
+_STANDARD_ITEM_FLAGS_ROLE = Qt.UserRole - 1
+
+
 class _LaunchButtonsSync(QObject):
     """Remesure Run / Pause des que leur police ou leur style change."""
 
@@ -138,6 +145,7 @@ class _LaunchButtonsSync(QObject):
         self._timer.setInterval(0)
         self._timer.timeout.connect(window._equalize_launch_buttons)
 
+    @tolerate_destruction(False)
     def eventFilter(self, watched, event):
         if not self.busy and event.type() in (QEvent.FontChange, QEvent.StyleChange):
             self._timer.start()
@@ -1498,16 +1506,28 @@ class MainWindow(QMainWindow):
             suffix = ' — Needs attention' if missing else ' — Update available' if plan.additions else ''
             self.profile_picker.addItem(profile.name + suffix, profile)
             row = self.profile_picker.count() - 1
-            item = self.profile_picker.model().item(row)
-            item.setEnabled(available)
-            item.setToolTip(plan.problem or (plan.summary if plan.changed else
-                            f'{len(profile.sequence)} steps × {profile.execution.repetitions} repetitions'))
+            # Jamais `model().item(row)` : PySide garde l'enveloppe Python
+            # de ce QStandardItem attachee au modele, et `clear()` ci-dessus
+            # le detruit cote C++ sans prevenir PySide. Un QEvent alloue
+            # ensuite a la meme adresse etait pris pour cet element : segfault
+            # natif intermittent en basculant Tests / Profiles. Les roles de
+            # donnees ne creent aucune enveloppe.
+            if not available:
+                self.profile_picker.setItemData(row, 0, _STANDARD_ITEM_FLAGS_ROLE)
+            self.profile_picker.setItemData(
+                row, plan.problem or (plan.summary if plan.changed else
+                     f'{len(profile.sequence)} steps × {profile.execution.repetitions} repetitions'),
+                Qt.ToolTipRole)
             if active and active.profile_id == profile.profile_id:
                 chosen = row
         self.profile_picker.setCurrentIndex(chosen)
         self.profile_picker.blockSignals(False)
         if hasattr(self, 'campaign_sync'):
             self.campaign_sync.refresh()
+
+    def _profile_picker_enabled(self, row: int) -> bool:
+        model = self.profile_picker.model()
+        return bool(model.flags(model.index(row, 0)) & Qt.ItemIsEnabled)
 
     def _choose_header_profile(self, index):
         profile = self.profile_picker.itemData(index)
@@ -1525,7 +1545,7 @@ class MainWindow(QMainWindow):
             indices = list(range(self.profile_picker.count()))
             indices.sort(key=lambda i: any(n not in self.model._by_nodeid for n in self.profile_picker.itemData(i).sequence))
             for index in indices:
-                if self.profile_picker.model().item(index).isEnabled():
+                if self._profile_picker_enabled(index):
                     self._choose_header_profile(index)
                     return
             self.profile_selection_label.setText('No compatible profile. Create or edit one in Execution Profiles.')

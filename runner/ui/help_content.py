@@ -44,6 +44,107 @@ def note(text: str) -> str:
     return f"<p class='note'><b>Important.</b> {text}</p>"
 
 
+@dataclass(frozen=True)
+class Screenshot:
+    """Capture annotee de l'application, generee par
+    `scripts/generate_help_screenshots.py`.
+
+    La definition vit ici, a cote du texte : le generateur numerote les
+    widgets de `markers` dans cet ordre, et l'aide affiche la meme liste
+    comme legende. Les deux ne peuvent donc pas se desaccorder.
+
+    - `page` : page de l'application a afficher ;
+    - `crop` : chemin du widget cadre, depuis la fenetre ('' = toute) ;
+    - `markers` : (chemin du widget, legende), numerotes a partir de 1.
+    """
+
+    name: str
+    page: str
+    crop: str
+    caption: str
+    markers: tuple[tuple[str, str], ...]
+    # Taille de fenetre propre a la capture (largeur, hauteur), sinon celle
+    # du generateur : une page presque vide se capture plus petite.
+    size: tuple[int, int] = ()
+
+
+SCREENSHOTS = {shot.name: shot for shot in (
+    Screenshot(
+        "run-overview", "workspace", "",
+        "The Run Tests page after a run on two readers.",
+        (("navigation", "Sidebar: every page of the application, Help and Settings at the bottom."),
+         ("run_tabs.tabs", "Run tabs. + New run prepares another run while this one executes."),
+         ("run_header.environment", "ENVIRONMENT: workspace folder, Browse, Collect and run name."),
+         ("run_header.execution", "EXECUTION: Run, Pause, Stop, Re-run failed and the readers."),
+         ("run_header.results", "RESULTS: progress ring and the five verdict counters."),
+         ("left_stack", "Test tree: tick the tests to run; one column per reader."),
+         ("results_stack", "Result panel: Detail, Source, Output and Logs of the selected test."),
+         ("_status_host", "Status bar: run status, elapsed time and background saves."))),
+    Screenshot(
+        "run-header", "workspace", "run_header",
+        "The three panels at the top of Run Tests.",
+        (("workspace_combo", "Workspace folder: type, paste or choose a recent one."),
+         ("browse_button", "Browse for another workspace folder."),
+         ("load_button", "Collect the tests again (Ctrl+R)."),
+         ("run_name_button", "Optional run name, shown in the tab, History and reports."),
+         ("launch_stack", "Run tests (F5). During a run this button becomes Pause."),
+         ("stop_button", "Stop the run (Esc)."),
+         ("rerun_button", "Re-run failed, errored and not-run tests (F6)."),
+         ("reader_selector", "Primary reader. Opening the list searches for readers again."),
+         ("readers_bar", "Additional readers: each runs the same selection in its own process."),
+         ("compass_ring", "Progress of the run."),
+         ("run_header._counters", "Passed, Failed, Skipped, Error and Not run. Click one to show only those tests."))),
+    Screenshot(
+        "test-tree", "workspace", "split[0]",
+        "The test tree and its toolbar.",
+        (("tree_view_switch", "All tests or Profiles: the classic tree or the loaded execution profile."),
+         ("search.field", "Find a test (Ctrl+F). Esc clears the search."),
+         ("markers", "Filter by pytest marker (Ctrl+M)."),
+         ("select_all_button", "Select all (Ctrl+A)."),
+         ("select_none_button", "Clear the selection (Ctrl+Shift+A)."),
+         ("tree.viewport", "Tick folders, files, tests or single parametrized cases. Right-click for more actions."))),
+    Screenshot(
+        "result-detail", "workspace", "results",
+        "Detail of a failed test.",
+        (("results.tabs.tabBar", "Detail, Source, Output and Logs (Ctrl+1 to Ctrl+4)."),
+         ("results.detail", "Verdict of each reader, duration and traceback. File links open Source."))),
+    Screenshot(
+        "profiles-editor", "profiles", "profiles_page",
+        "Editing an execution profile.",
+        (("profiles_page.profile_list", "Saved profiles. New profile, Import and Export are above the list."),
+         ("profiles_page.add_tests_button", "Add tests / groups at the selected position."),
+         ("profiles_page.group_button", "Create a coloured group from the selected tests."),
+         ("profiles_page.parameters_button", "YAML parameters of the selected test or group."),
+         ("profiles_page.sequence_list", "Test sequence: run order, groups, repetitions and custom YAML."),
+         ("profiles_page.save_button", "Save changes. Save as… keeps a copy."),
+         ("profiles_page.run_button", "Open in Run Tests to run the profile."))),
+    Screenshot(
+        "history", "history", "history_dashboard",
+        "History after a run.",
+        (("history_dashboard.search", "Search runs, tests or readers."),
+         ("history_dashboard.list_issues", "Show only runs with failures or errors."),
+         ("history_dashboard.compare_button", "Compare two or more runs of the same workspace."),
+         ("history_dashboard.run_list", "Recorded runs, newest first."),
+         ("history_dashboard.rerun_button", "Run the same selection again."),
+         ("history_dashboard.logs_button", "Open the log folder of the run."),
+         ("history_dashboard.export_button", "Export HTML, JUnit XML, profile or configuration YAML."))),
+    Screenshot(
+        "python-env", "python", "python_page",
+        "Choosing the Python interpreter of the tests.",
+        (("python_editor.path_field", "Path of the python.exe that has pytest installed."),
+         ("python_editor.test_button", "Test checks Python, its architecture and pytest."),
+         ("python_editor.status_label", "Result of the check."),
+         ("python_editor.save_button", "Save is available once the check succeeds.")),
+        size=(1100, 560)),
+)}
+
+
+def shot(name: str) -> str:
+    """Marqueur d'une capture dans le texte d'une rubrique."""
+    assert name in SCREENSHOTS, name
+    return "{shot:" + name + "}"
+
+
 CATEGORIES = (
     "Getting started",
     "Running tests",
@@ -107,24 +208,27 @@ steps</a>. If something does not work, go straight to
         "From an empty window to your first results.",
         "first run start begin tutorial steps beginner",
         f"""
+{shot("run-header")}
 <ol>
 <li><b>Check the test interpreter.</b> Open <a href="page:python">Python
 Environment</a>, select the <code>python.exe</code> that has pytest installed
 and click <b>Test</b>. When the check succeeds, click <b>Save</b>.
 See <a href="topic:python-env">Python Environment</a>.</li>
 <li><b>Load a workspace.</b> On <a href="page:workspace">Run Tests</a>, type or
-paste the folder of your tests in the <b>ENVIRONMENT</b> panel, or click the
-folder icon to browse. The tests are collected automatically; {kbd("Ctrl", "R")}
-collects again. See <a href="topic:workspace">Workspaces and collection</a>.</li>
+paste the folder of your tests in the workspace field <b>(1)</b>, or click
+<b>Browse</b> <b>(2)</b>. The tests are collected automatically; <b>Collect</b>
+<b>(3)</b> or {kbd("Ctrl", "R")} collects again. See <a href="topic:workspace">Workspaces and collection</a>.</li>
 <li><b>Select the tests.</b> Tick tests, files or folders in the tree. Use
 <b>Find a test…</b> ({kbd("Ctrl", "F")}) or the marker filter
 ({kbd("Ctrl", "M")}) for large suites. See
 <a href="topic:selecting">Selecting tests</a>.</li>
 <li><b>Choose the readers</b> (only for suites that use readers). In
-<b>EXECUTION</b>, pick the primary reader and, if needed, additional readers.
+<b>EXECUTION</b>, pick the primary reader <b>(8)</b> and, if needed, tick
+additional readers <b>(9)</b>.
 See <a href="topic:readers">Readers and ATR</a>.</li>
-<li><b>Run.</b> Click <b>Run tests</b> or press {kbd("F5")}. Results appear live
-in the tree; select a test to read its detail, output and logs. See
+<li><b>Run.</b> Click <b>Run tests</b> <b>(5)</b> or press {kbd("F5")}. The
+progress ring <b>(10)</b> and the counters <b>(11)</b> update live, results
+appear in the tree; select a test to read its detail, output and logs. See
 <a href="topic:results">Reading the results</a>.</li>
 </ol>
 {tip("Every run is saved automatically in History, with its configuration, logs and verdicts. You can close the application without losing anything that has finished.")}
@@ -171,7 +275,9 @@ also accepts reader names typed manually.</p>
         "run tests page layout environment execution results panel tree overview",
         f"""
 <p>The <a href="page:workspace">Run Tests</a> page is where most of the work
-happens. From top to bottom:</p>
+happens.</p>
+{shot("run-overview")}
+<p>From top to bottom:</p>
 
 <h2>Run tabs</h2>
 <p>Each run lives in its own tab. <b>+ New run</b> prepares another selection
@@ -252,6 +358,7 @@ run tab works on its own copy. See
         "Checkboxes, search, markers, parametrized cases and quick selections.",
         "select selection checkbox tick search find filter marker ctrl+m ctrl+a parametrized parameter case divergent disagree",
         f"""
+{shot("test-tree")}
 <h2>Tick tests</h2>
 <p>Tick a folder, a file, a class, a test function or a single parametrized
 case. Ticking a parent ticks everything below it; a dash means a partial
@@ -499,6 +606,7 @@ History.</p>
         "The result panel, tracebacks, source editing, log search and comparison.",
         "detail source output logs tab traceback trace link editor vscode pycharm log search find compare comparison f7 ctrl+1 ctrl+2 ctrl+3 ctrl+4 wrap",
         f"""
+{shot("result-detail")}
 <p>Select a test, a file or a folder in the tree to fill the result panel.
 The tab you were reading stays open when you select another test (see
 <i>Tab when selecting another test</i> in Settings).</p>
@@ -576,6 +684,7 @@ reusable. Unlike the tree of Run Tests, a profile can contain the same test
 several times, in any order, with its own YAML parameters at each occurrence,
 organized in coloured groups.</p>
 
+{shot("profiles-editor")}
 <h2>Create a profile</h2>
 <ol>
 <li>Open <a href="page:profiles">Execution Profiles</a> and click <b>New
@@ -746,6 +855,7 @@ python_executable: C:\\Python312\\python.exe</pre>
 installations</b>. The test interpreter must have pytest and your project
 dependencies.</p>
 
+{shot("python-env")}
 <h2>Choose the interpreter</h2>
 <ol>
 <li>Open <a href="page:python">Python Environment</a>.</li>
@@ -782,6 +892,7 @@ newest first, with its readers, verdicts and origin (Run Tests, profile,
 REPEAT…). Runs are saved automatically in the background when they end; a
 discreet indicator in the status bar shows saves in progress.</p>
 
+{shot("history")}
 <h2>Find a run</h2>
 <p>Search by run, test or reader name; filter by workspace and readers;
 <b>With issues</b> shows only runs with failures or errors. <b>Clear

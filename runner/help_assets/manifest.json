@@ -1,0 +1,37 @@
+{
+  "history": {
+    "height": 900,
+    "markers": 7,
+    "width": 1230
+  },
+  "profiles-editor": {
+    "height": 900,
+    "markers": 7,
+    "width": 1230
+  },
+  "python-env": {
+    "height": 560,
+    "markers": 4,
+    "width": 1054
+  },
+  "result-detail": {
+    "height": 575,
+    "markers": 2,
+    "width": 581
+  },
+  "run-header": {
+    "height": 250,
+    "markers": 11,
+    "width": 1216
+  },
+  "run-overview": {
+    "height": 900,
+    "markers": 8,
+    "width": 1440
+  },
+  "test-tree": {
+    "height": 575,
+    "markers": 6,
+    "width": 647
+  }
+}

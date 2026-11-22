@@ -19,8 +19,20 @@ Console, thèmes, tous les raccourcis clavier, dépannage, FAQ et glossaire.
 - **Export guide…** enregistre tout le guide dans un seul fichier HTML, à
   lire hors de l'application, imprimer ou partager.
 - **Detach window** garde l'aide à côté de la fenêtre principale.
+- Sept captures annotées montrent les écrans clés : Run Tests, ses trois
+  panneaux du haut, l'arbre des tests, le détail d'un échec, l'éditeur de
+  profils, History et Python Environment. Des pastilles orange numérotées
+  renvoient à la légende placée sous chaque image. Les captures s'adaptent à
+  la largeur du panneau et sont intégrées au guide exporté.
 
 Corrections de stabilité :
+
+- Basculer entre **All tests** et **Profiles** pouvait fermer brutalement
+  l'application : la liste des profils laissait derrière elle des objets
+  Qt détruits que PySide croyait encore valides. C'était la cause des
+  plantages aléatoires de la CI.
+- Fermer une fenêtre ne produit plus d'erreurs parasites dans la console :
+  les filtres d'événements ignorent les objets déjà détruits.
 
 - Dans **Execution Profiles → Test sequence**, **Ctrl+Z** pouvait ne rien
   faire : deux commandes d'annulation se disputaient le raccourci.
