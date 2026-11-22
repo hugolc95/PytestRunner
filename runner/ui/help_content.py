@@ -164,6 +164,37 @@ also accepts reader names typed manually.</p>
 """,
     ),
 
+    HelpTopic(
+        "whats-new", "Getting started", "What's new in 1.8",
+        "The changes of this version, in short.",
+        "new release notes changelog version 1.8 what changed update",
+        f"""
+<h2>Version 1.8.0</h2>
+<ul>
+<li><b>User guide.</b> <b>Help</b>, above Settings, opens this guide in your
+browser; {kbd("F1")} opens the topic of the page you are on. Search it with
+{kbd("Ctrl", "K")}, print it or save it as PDF.</li>
+<li><b>Stability.</b> Switching between <b>All tests</b> and <b>Profiles</b>
+could close the application abruptly; this is fixed. Closing a window no
+longer prints error traces in the console.</li>
+<li><b>Slow Python.</b> A test interpreter that is slow to start (first launch,
+antivirus, network drive) is checked a second time with a longer delay
+instead of being reported as not usable for the whole session.</li>
+<li><b>Execution profiles.</b> {kbd("Ctrl", "Z")} works again in the test
+sequence.</li>
+<li><b>Not run.</b> A function that became parametrized since the collection,
+or a file or folder re-run from History, is no longer marked
+<b>Not run</b> when all its cases ran.</li>
+<li><b>History.</b> A group where only some tests ran shows <i>Not all tests
+run</i>; a test that did not run shows its reason.</li>
+<li><b>Display.</b> The readers of the EXECUTION panel are aligned with the
+other controls, and the <b>Logs</b> tab no longer overflows in half-screen
+windows.</li>
+</ul>
+{tip("Profiles saved with a recent version may need that version or a later one. Install the same version of Pytest Runner on every workstation that shares profiles.")}
+""",
+    ),
+
     # =====================================================================
     # Running tests
     # =====================================================================
@@ -395,13 +426,19 @@ YAML are captured at that moment. Waiting runs start one after the other.
 <b>Pause queue</b> lets the current run finish and holds the next ones.
 Drag the tabs to change the order of waiting runs.</p>
 
-<h2>Tab colours</h2>
+<h2>Tab states</h2>
+<p>Each tab shows its state in words and in colour:</p>
 <table>
-<tr><th>Colour</th><th>Meaning</th></tr>
-<tr><td>Blue</td><td>Running</td></tr>
-<tr><td>Amber</td><td>Waiting in the queue</td></tr>
-<tr><td>Green</td><td>Finished successfully</td></tr>
-<tr><td>Red</td><td>Finished with failures, or stopped</td></tr>
+<tr><th>State shown</th><th>Colour</th><th>Meaning</th></tr>
+<tr><td>Running 12/40</td><td>Blue</td><td>The run is executing.</td></tr>
+<tr><td>Saving results…</td><td>Blue</td><td>The run is over; its history is being saved in the background.</td></tr>
+<tr><td>Waiting 1, 2…</td><td>Amber</td><td>Queued; the number is its position in the queue.</td></tr>
+<tr><td>Stopped</td><td>Amber</td><td>Stopped with <b>Stop</b> or {kbd("Esc")} before the end.</td></tr>
+<tr><td>Passed</td><td>Green</td><td>Every executed test passed.</td></tr>
+<tr><td>Failed</td><td>Red</td><td>At least one test failed or raised an error.</td></tr>
+<tr><td>Incomplete</td><td>Amber, grey or purple</td><td>Some tests were not run or some files could not be collected. Hover the tab for the reason.</td></tr>
+<tr><td>Execution error</td><td>Purple</td><td>pytest could not run the selection. Open the run to read the error.</td></tr>
+<tr><td>Completed · N skipped</td><td>Amber</td><td>Nothing failed, but every executed test was skipped.</td></tr>
 </table>
 <p>When another tab is displayed, <b>Live</b> returns to the executing run.</p>
 
@@ -474,7 +511,7 @@ or the active profile.</p>
 <h2>Overall verdict</h2>
 <p>A run is <b>Incomplete</b> (orange) when some files could not be collected,
 or when part of a campaign was not executed, even if every executed test
-passed. The <b>files not collected</b> button lists the errors.</p>
+passed. The button <b>2 files not collected</b> (with the actual number) lists the errors.</p>
 
 <h2>With several readers</h2>
 <p>Each reader has its own column in the tree. <b>View differences</b> and
@@ -693,7 +730,7 @@ update of the profile instead of asking for a decision per test.</p>
 <li><b>Contents…</b> distinguishes a <i>fixed selection</i> of precise cases
 from a folder or function that <i>follows new tests</i>.</li>
 <li><b>Undo update</b> works even after a restart.</li>
-<li>A partially executed campaign shows <b>Campaign incomplete</b> in the
+<li>A partially executed campaign shows <b>Campaign incomplete · 3/5 tests executed</b> (with the actual numbers) in the
 interface, History and the HTML report.</li>
 </ul>
 {tip("To freeze a single parametrized case that was saved as a followed function: select the case, open Contents…, choose Keep selected cases, then save.")}
@@ -706,7 +743,7 @@ interface, History and the HTML report.</li>
     HelpTopic(
         "yaml-config", "Configuration", "YAML configuration",
         "The configuration of each run and the keys Pytest Runner understands.",
-        "yaml config configuration file config.yaml reader readers reader_mode log_directory log_path incremental_log python_executable import_mode pythonpath edit import copy",
+        "yaml config configuration file config.yaml reader readers reader_mode log_directory log_path incremental_log python_executable importlib pythonpath edit import copy",
         f"""
 <p><a href="page:yaml">YAML Configuration</a> shows the configuration of each
 run tab, with a form and a text editor. <b>Every tab works on its own
@@ -716,18 +753,21 @@ another file into the run. Queued and running tabs are locked.</p>
 
 <h2>Keys understood by Pytest Runner</h2>
 <p>Key names ignore case, dashes and spaces; they can be at the root or in a
-section.</p>
+section (a key at the root wins). The alternative names in brackets work
+too.</p>
 <table>
 <tr><th>Key</th><th>Role</th></tr>
-<tr><td><code>Reader</code></td><td>The primary reader the tests read.</td></tr>
-<tr><td><code>Readers</code></td><td>Extra readers to test with (list).</td></tr>
-<tr><td><code>reader_mode</code></td><td><code>sequential</code> runs readers one after the other. Empty: together.</td></tr>
-<tr><td><code>log_directory</code> / <code>log_path</code></td><td>Folder where the tests write one <code>.log</code> per test. Relative to the workspace or absolute.</td></tr>
-<tr><td><code>incremental_log</code></td><td><code>true</code>: repeated executions are numbered in the same folder instead of one folder per run.</td></tr>
-<tr><td><code>python_executable</code></td><td>Python used to collect and run this workspace. Has priority over the global setting.</td></tr>
-<tr><td><code>import_mode</code></td><td>pytest import mode. <code>importlib</code> accepts test files with the same name in different folders.</td></tr>
-<tr><td><code>pythonpath</code></td><td>Folders added to the tests' <code>PYTHONPATH</code>.</td></tr>
+<tr><td><code>Reader</code> (<code>lecteur</code>)</td><td>The primary reader the tests read.</td></tr>
+<tr><td><code>Readers</code> (<code>lecteurs</code>, <code>reader_list</code>)</td><td>Extra readers to test with (list).</td></tr>
+<tr><td><code>reader_mode</code></td><td><code>sequential</code> runs readers one after the other. Empty or <code>parallel</code>: together.</td></tr>
+<tr><td><code>log_directory</code> (<code>log_path</code>, <code>log_dir</code>, <code>logs_path</code>)</td><td>Folder where the tests write one <code>.log</code> per test. Relative to the workspace or absolute. Default: <code>logs</code> in the workspace.</td></tr>
+<tr><td><code>incremental_log</code></td><td>Read by your <code>conftest.py</code>, not by Pytest Runner: <code>true</code> numbers repeated executions in the same folder instead of one folder per run. See <a href="topic:test-authors">Writing tests for Pytest Runner</a>.</td></tr>
+<tr><td><code>python_executable</code> (<code>python</code>, <code>interpreter</code>)</td><td>Python used to collect and run this workspace. Has priority over the global setting.</td></tr>
 </table>
+<p>Two things are automatic and need no key: pytest always runs with
+<code>--import-mode=importlib</code>, so test files with the same name in
+different folders work, and the workspace and its test roots are added to
+the tests' <code>PYTHONPATH</code>.</p>
 
 <h2>Example</h2>
 <pre>Reader: OMNIKEY 3x21 Reader 0
@@ -768,6 +808,75 @@ restarts the collection with the new environment.</p>
 <li>the global setting of this page;</li>
 <li>otherwise, the default Python of the workstation.</li>
 </ol>
+""",
+    ),
+
+    HelpTopic(
+        "test-authors", "Configuration", "Writing tests for Pytest Runner",
+        "What your tests and conftest.py receive, and how their logs are found.",
+        "write tests author conftest logs log file naming manifest last_run_index build number environment variable PYTESTRUNNER_READER PYTEST_RUNNER_BUILD_NUMBER incremental run folder",
+        f"""
+<p>Pytest Runner runs your tests with plain pytest: a suite that works from
+the command line works here. This topic is for the people who write the tests
+and the <code>conftest.py</code>; users who only run tests can skip it.</p>
+
+<h2>How pytest is started</h2>
+<ul>
+<li>One pytest process per reader, started in the workspace folder with the
+configured test interpreter.</li>
+<li>Always with <code>--import-mode=importlib</code>; the workspace and its test
+roots are added to <code>PYTHONPATH</code>.</li>
+<li>Each process reads the YAML as usual. Its <code>Reader</code> key already
+contains the reader of that process, without any file being changed on
+disk.</li>
+</ul>
+
+<h2>Environment variables</h2>
+<table>
+<tr><th>Variable</th><th>Content</th></tr>
+<tr><td><code>PYTESTRUNNER_READER</code></td><td>Name of the reader of this pytest process.</td></tr>
+<tr><td><code>PYTEST_RUNNER_BUILD_NUMBER</code></td><td>Number of the run (1, 2, 3…), shared by every reader of the run. Use it to name the log folder of the run.</td></tr>
+</table>
+
+<h2>Where to write the logs</h2>
+<p>The <b>Logs</b> tab shows the <code>.log</code> (or <code>.txt</code>) file of the
+selected test. Write the logs under the folder of the <code>log_directory</code>
+key (default: <code>logs</code> in the workspace), one file per test. Two layouts
+are recognized:</p>
+<table>
+<tr><th>Layout</th><th>Example</th></tr>
+<tr><td>One folder per run (recommended)</td><td><code>logs/2026-11-21/Run_0042/OMNIKEY Reader 0/tests/test_pin.py/test_verify[admin].log</code></td></tr>
+<tr><td>Numbered files (<code>incremental_log: true</code>)</td><td><code>logs/2026-11-21/OMNIKEY Reader 0/tests/test_pin.py/test_verify_B0042_001.log</code></td></tr>
+</table>
+<ul>
+<li>The run is recognized by <code>Run_</code> followed by the build number on
+four digits, or by <code>_B</code> + the four-digit number in the file name.
+Logs of other runs are never shown for this run.</li>
+<li>With several readers, put the reader name somewhere in the path.</li>
+<li>For a parametrized case, keep the case between brackets in the file name,
+as in <code>test_verify[admin].log</code>: <code>[1]</code> and <code>[10]</code>
+are then never confused.</li>
+</ul>
+
+<h2>The most reliable way: the manifest</h2>
+<p>Write a JSON file named <code>last_run_index.json</code> at the root of the
+log folder, mapping each nodeid to its log file. Pytest Runner reads it first
+and only searches the folders when a test is missing from it:</p>
+<pre>{{
+  "tests/test_pin.py::test_verify[admin]": "C:/logs/2026-11-21/Run_0042/OMNIKEY Reader 0/tests/test_pin.py/test_verify[admin].log"
+}}</pre>
+
+{tip("The demonstration workspace <code>testSuite1</code> of the repository contains a <code>conftest.py</code> and a <code>log.py</code> that implement all of this. Copy them into your workspace as a starting point.")}
+
+<h2>Verdicts and markers</h2>
+<ul>
+<li>A failure in a fixture setup or teardown is shown as <b>Error</b>, not
+<b>Failed</b>. The reason of a <code>pytest.skip()</code> appears in Detail.</li>
+<li>Markers registered in <code>pytest.ini</code> or <code>pyproject.toml</code>
+appear in the marker filter with their description.</li>
+<li>Tests are collected without being run: avoid connecting to a card or a
+reader at import time, or collection becomes slow and fragile.</li>
+</ul>
 """,
     ),
 
@@ -1051,16 +1160,17 @@ discovery</i> if discovery times out.</td></tr>
 <td>Insert a card and click the refresh icon of the ATR field. The ATR is not
 read during a run.</td></tr>
 <tr><td>Logs tab is empty</td>
-<td>The tests write no <code>.log</code> file, or <code>log_directory</code>
-points elsewhere. Check the key in <a href="topic:yaml-config">YAML
-configuration</a>.</td></tr>
+<td>The tests write no <code>.log</code> file, <code>log_directory</code> points
+elsewhere, or the log files cannot be matched to the run. Check the key in
+<a href="topic:yaml-config">YAML configuration</a> and the layout described in
+<a href="topic:test-authors">Writing tests for Pytest Runner</a>.</td></tr>
 <tr><td>Tests marked <b>Not run</b></td>
 <td>The run was stopped, a process crashed, or the tests were deactivated.
 Read the reason in Detail. See <a href="topic:native-crash">Crashes and tests
 not run</a>.</td></tr>
 <tr><td>Run marked <b>Incomplete</b></td>
 <td>Some files were not collected, or part of the campaign did not run. Click
-<b>files not collected</b> to see why.</td></tr>
+the <b>files not collected</b> button to see why.</td></tr>
 <tr><td><b>Run tests</b> says <b>Add to queue</b></td>
 <td>Another tab is running. The run will start when it ends. See
 <a href="topic:run-tabs">Run tabs and queue</a>.</td></tr>
@@ -1141,9 +1251,12 @@ HTML reports.</p>
 <tr><td>Run history and archived logs</td><td><code>{history_dir}</code></td></tr>
 <tr><td>Execution profiles and application data</td><td><code>{data_dir}</code></td></tr>
 <tr><td>Personal settings</td><td><code>{settings_file}</code></td></tr>
+<tr><td>This user guide</td><td><code>{guide_file}</code></td></tr>
 </table>
 <p>Back up the history and data folders to keep your runs and profiles when
-changing workstation.</p>
+changing workstation. To share this guide, use the download button at the top
+of the page: it saves the whole guide as one HTML file that opens anywhere,
+without Pytest Runner.</p>
 
 <h2>Reporting a problem</h2>
 <ol class='steps'>

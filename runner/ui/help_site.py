@@ -21,15 +21,15 @@ from runner.ui.help_content import CATEGORIES, CONTEXT_TOPICS, TOPICS, TOPICS_BY
 
 GUIDE_FILE = "pytest-runner-guide.html"
 SUPPORT_KEYS = ("version", "python", "qt", "os", "interpreter",
-                "history_dir", "data_dir", "settings_file")
+                "history_dir", "data_dir", "settings_file", "guide_file")
 
 # Une phrase par categorie, pour les cartes de la page d'accueil.
 CATEGORY_BLURBS = {
-    "Getting started": "Install, first run and the tour of the application.",
+    "Getting started": "Install, first run, the tour of the application and what's new.",
     "Running tests": "Workspaces, selection, readers, runs, tabs and the queue.",
     "Results and diagnosis": "Verdicts, durations, tracebacks, logs and crashes.",
     "Execution profiles": "Reusable test sequences with groups and YAML parameters.",
-    "Configuration": "The YAML configuration and the test Python interpreter.",
+    "Configuration": "The YAML configuration, the test interpreter and writing tests.",
     "History and reports": "Recorded runs, comparisons and shareable HTML reports.",
     "Application": "Settings, console, themes and keyboard shortcuts.",
     "Troubleshooting": "Common problems, FAQ, glossary and support.",
@@ -94,6 +94,7 @@ def support_values(window=None) -> dict[str, str]:
         "history_dir": sur(history_dir),
         "data_dir": sur(data_dir),
         "settings_file": sur(lambda: window.settings.fileName() if window is not None else ""),
+        "guide_file": sur(guide_path),
     }
 
 
@@ -104,6 +105,7 @@ def support_text(values: dict[str, str]) -> str:
         ("Qt", "qt"), ("Operating system", "os"),
         ("Test interpreter", "interpreter"), ("History folder", "history_dir"),
         ("Application data", "data_dir"), ("Settings", "settings_file"),
+        ("User guide", "guide_file"),
     )
     return "\n".join(f"{libelle}: {values.get(cle, 'Unknown')}" for libelle, cle in lignes)
 
@@ -185,8 +187,13 @@ def _pager(position: int) -> str:
 # Site
 # ---------------------------------------------------------------------------
 
-def build_site(values: dict[str, str] | None = None, start: str = "welcome") -> str:
-    """Le guide complet, en un seul document HTML autonome."""
+def build_site(values: dict[str, str] | None = None, start: str = "welcome",
+               theme: str = "") -> str:
+    """Le guide complet, en un seul document HTML autonome.
+
+    `theme` ("light" ou "dark") : celui de l'application, applique tant que le
+    lecteur n'a pas choisi le sien dans le guide.
+    """
     from runner.version import COPYRIGHT, __version__
 
     values = values or {}
@@ -230,6 +237,8 @@ def build_site(values: dict[str, str] | None = None, start: str = "welcome") -> 
             .replace("@@ARTICLES@@", "".join(articles))
             .replace("@@INDEX@@", donnees)
             .replace("@@START@@", json.dumps(start))
+            .replace("@@APP_THEME@@", json.dumps(theme if theme in ("light", "dark") else ""))
+            .replace("@@ICON_DOWNLOAD@@", _ICONES["download"])
             .replace("@@ICON_SEARCH@@", _ICONES["search"])
             .replace("@@ICON_MENU@@", _ICONES["menu"])
             .replace("@@ICON_THEME@@", _ICONES["theme"])
@@ -253,7 +262,12 @@ def write_guide(window=None, topic: str = "welcome", path: Path | None = None) -
     """
     path = path or guide_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    contenu = build_site(support_values(window), start=topic)
+    try:
+        from runner.ui import tokens as t
+        theme = "dark" if t.is_dark() else "light"
+    except Exception:
+        theme = ""
+    contenu = build_site(support_values(window), start=topic, theme=theme)
     temporaire = path.with_suffix(".tmp")
     temporaire.write_text(contenu, encoding="utf-8")
     temporaire.replace(path)
@@ -278,6 +292,7 @@ _ICONES = {
     "search": _svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>', 16),
     "menu": _svg('<path d="M4 6h16M4 12h16M4 18h16"/>'),
     "theme": _svg('<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>'),
+    "download": _svg('<path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/>'),
     "print": _svg('<path d="M6 9V2h12v7"/><rect x="6" y="14" width="12" height="8" rx="1"/>'
                   '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>'),
     "copy": _svg('<rect x="9" y="9" width="13" height="13" rx="2"/>'
@@ -300,6 +315,7 @@ _GABARIT = """<!doctype html>
 (function () {
   var theme = null;
   try { theme = localStorage.getItem("pr-guide-theme"); } catch (e) {}
+  if (!theme) theme = @@APP_THEME@@;
   if (!theme) theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
   document.documentElement.setAttribute("data-theme", theme);
   document.documentElement.className = "js";
@@ -315,6 +331,7 @@ _GABARIT = """<!doctype html>
   <button type="button" class="search-trigger" aria-label="Search the guide">@@ICON_SEARCH@@<span>Search the guide…</span><span class="keys"><kbd>Ctrl</kbd><kbd>K</kbd></span></button>
   <div class="top-actions">
     <button type="button" class="icon-button theme-button" aria-label="Switch between light and dark theme" title="Light / dark theme">@@ICON_THEME@@</button>
+    <button type="button" class="icon-button download-button" aria-label="Download this guide as one HTML file, to share it" title="Download this guide (one HTML file, to share)">@@ICON_DOWNLOAD@@</button>
     <button type="button" class="icon-button print-button" aria-label="Print or save the whole guide as PDF" title="Print or save as PDF">@@ICON_PRINT@@</button>
   </div>
 </header>
@@ -379,7 +396,7 @@ button { font: inherit; color: inherit; }
 
 /* Barre superieure */
 .topbar { position: sticky; top: 0; z-index: 30; height: var(--topbar); display: flex; align-items: center; gap: 16px;
-  padding: 0 20px; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: saturate(180%) blur(10px);
+  padding: 0 20px; background: var(--bg); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: saturate(180%) blur(10px);
   border-bottom: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 650; white-space: nowrap; }
 .brand:hover { text-decoration: none; }
@@ -472,7 +489,7 @@ th { text-align: left; font-size: 12px; font-weight: 700; letter-spacing: .05em;
   background: var(--bg-subtle); }
 th, td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: top; }
 tr:last-child td { border-bottom: 0; }
-tbody tr:hover td, tr:hover td { background: color-mix(in srgb, var(--bg-hover) 50%, transparent); }
+tbody tr:hover td, tr:hover td { background: var(--bg-subtle); background: color-mix(in srgb, var(--bg-hover) 50%, transparent); }
 
 /* Cartes de l'accueil */
 .cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 14px; margin: 8px 0 36px; }
@@ -515,7 +532,8 @@ tbody tr:hover td, tr:hover td { background: color-mix(in srgb, var(--bg-hover) 
 .result-category { font-size: 12px; font-weight: 600; color: var(--text-faint); }
 .result-title { display: block; font-weight: 650; }
 .result-snippet { display: block; font-size: 13.5px; color: var(--text-muted); line-height: 1.5; margin-top: 2px; }
-mark { background: color-mix(in srgb, #ffd33d 55%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+mark { background: #ffe58f; background: color-mix(in srgb, #ffd33d 55%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.search-note { padding: 6px 12px 8px; font-size: 13px; color: var(--text-muted); }
 .search-empty { padding: 28px 16px; text-align: center; color: var(--text-muted); }
 .search-footer { display: flex; gap: 18px; padding: 10px 16px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--text-faint); }
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 20px); opacity: 0; pointer-events: none;
@@ -535,7 +553,7 @@ mark { background: color-mix(in srgb, #ffd33d 55%, transparent); color: inherit;
     transform: translateX(-100%); transition: transform .2s ease; box-shadow: var(--shadow); }
   body.nav-open .sidebar { transform: none; }
   .content { padding: 28px 18px 48px; }
-  .brand-sep, .brand-sub, .search-trigger > span, .search-trigger .keys, .print-button { display: none; }
+  .brand-sep, .brand-sub, .search-trigger > span, .search-trigger .keys, .print-button, .download-button { display: none; }
   .search-trigger { width: 38px; padding: 0; justify-content: center; }
   h1 { font-size: 1.75rem; }
   .pager { grid-template-columns: 1fr; }
@@ -563,6 +581,11 @@ _JS = r"""
 (function () {
   "use strict";
   var root = document.documentElement;
+  // Copie du document AVANT que le script ne le modifie (rubrique active,
+  // sommaire, boutons de copie) : c'est elle qui est telechargee.
+  var ORIGINAL = "<!doctype html>\n" + root.outerHTML
+    .replace(/^<html([^>]*?) data-theme="[^"]*"/, "<html$1")
+    .replace(/^<html([^>]*?) class="js"/, "<html$1");
   var topics = Array.prototype.slice.call(document.querySelectorAll(".topic"));
   var navLinks = Array.prototype.slice.call(document.querySelectorAll(".nav-link"));
   var index = JSON.parse(document.getElementById("search-index").textContent);
@@ -581,6 +604,15 @@ _JS = r"""
     store("pr-guide-theme", next);
   });
   document.querySelector(".print-button").addEventListener("click", function () { window.print(); });
+  document.querySelector(".download-button").addEventListener("click", function () {
+    var blob = new Blob([ORIGINAL], { type: "text/html;charset=utf-8" });
+    var link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "Pytest Runner User Guide.html";
+    document.body.appendChild(link);
+    link.click();
+    setTimeout(function () { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+  });
 
   /* Navigation entre rubriques ----------------------------------------- */
   function topicOf(hash) {
@@ -712,19 +744,71 @@ _JS = r"""
     var start = Math.max(0, at - 60);
     return (start ? "…" : "") + text.slice(start, at + 100) + (at + 100 < text.length ? "…" : "");
   }
+  /* Fautes de frappe : un mot absent du guide est remplace par le mot le
+     plus proche du vocabulaire (distance d'edition 1, ou 2 au-dela de six
+     lettres). "redaer" trouve "reader". */
+  var vocabulary = null;
+  function distance(a, b, limit) {
+    // Deux lettres inversees ("redaer") ne comptent que pour une faute.
+    if (Math.abs(a.length - b.length) > limit) return limit + 1;
+    var before = null, previous = [], current, i, j;
+    for (j = 0; j <= b.length; j++) previous[j] = j;
+    for (i = 1; i <= a.length; i++) {
+      current = [i];
+      var best = i;
+      for (j = 1; j <= b.length; j++) {
+        current[j] = Math.min(previous[j] + 1, current[j - 1] + 1,
+          previous[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
+        if (before && i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1])
+          current[j] = Math.min(current[j], before[j - 2] + 1);
+        if (current[j] < best) best = current[j];
+      }
+      if (best > limit) return limit + 1;
+      before = previous;
+      previous = current;
+    }
+    return previous[b.length];
+  }
+  function correct(word) {
+    if (!vocabulary) {
+      var seen = {};
+      index.forEach(function (entry) {
+        (entry.title + " " + entry.keywords + " " + entry.text).toLowerCase()
+          .split(/[^a-z0-9_+.-]+/).forEach(function (w) { if (w.length > 2) seen[w] = true; });
+      });
+      vocabulary = Object.keys(seen);
+    }
+    var limit = word.length > 6 ? 2 : 1, best = null, bestDistance = limit + 1;
+    vocabulary.forEach(function (candidate) {
+      var d = distance(word, candidate, limit);
+      if (d < bestDistance) { best = candidate; bestDistance = d; }
+    });
+    return best;
+  }
+  function matching(words) {
+    return index.map(function (entry) {
+      var title = entry.title.toLowerCase();
+      var hay = (entry.title + " " + entry.summary + " " + entry.keywords + " " + entry.text).toLowerCase();
+      if (!words.every(function (w) { return hay.indexOf(w) >= 0; })) return null;
+      var score = words.every(function (w) { return title.indexOf(w) >= 0; }) ? 0 :
+                  words.every(function (w) { return entry.keywords.toLowerCase().indexOf(w) >= 0; }) ? 1 : 2;
+      return { entry: entry, score: score };
+    }).filter(Boolean).sort(function (a, b) { return a.score - b.score; })
+      .map(function (item) { return item.entry; });
+  }
   function search(query) {
     var words = query.toLowerCase().split(/\s+/).filter(Boolean);
     var found = index;
+    var corrected = "";
     if (words.length) {
-      found = index.map(function (entry) {
-        var title = entry.title.toLowerCase();
-        var hay = (entry.title + " " + entry.summary + " " + entry.keywords + " " + entry.text).toLowerCase();
-        if (!words.every(function (w) { return hay.indexOf(w) >= 0; })) return null;
-        var score = words.every(function (w) { return title.indexOf(w) >= 0; }) ? 0 :
-                    words.every(function (w) { return entry.keywords.toLowerCase().indexOf(w) >= 0; }) ? 1 : 2;
-        return { entry: entry, score: score };
-      }).filter(Boolean).sort(function (a, b) { return a.score - b.score; })
-        .map(function (item) { return item.entry; });
+      found = matching(words);
+      if (!found.length) {
+        var fixed = words.map(function (w) { return correct(w) || w; });
+        if (fixed.join(" ") !== words.join(" ")) {
+          found = matching(fixed);
+          if (found.length) { words = fixed; corrected = fixed.join(" "); }
+        }
+      }
     }
     selected = 0;
     if (!found.length) {
@@ -732,7 +816,8 @@ _JS = r"""
         '”. Try another word, or open <a href="#troubleshooting">Troubleshooting</a>.</li>';
       return;
     }
-    results.innerHTML = found.slice(0, 12).map(function (entry, i) {
+    var note = corrected ? '<li class="search-note">Showing results for <b>' + escapeHtml(corrected) + '</b></li>' : "";
+    results.innerHTML = note + found.slice(0, 12).map(function (entry, i) {
       var text = words.length ? snippet(entry.text, words[0]) : entry.summary;
       return '<li role="option"' + (i === 0 ? ' class="selected"' : "") + '><a href="#' + entry.id + '">' +
         '<span class="result-category">' + escapeHtml(entry.category) + '</span>' +

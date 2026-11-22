@@ -5,17 +5,21 @@
 **Help**, juste au-dessus de **Settings** dans le menu de gauche, ouvre le
 guide d'utilisation complet dans le navigateur. **F1** l'ouvre directement
 sur la rubrique de la page affichée. Le guide est en anglais, comme
-l'interface, et couvre en 30 rubriques : premiers pas, Run Tests, sélection,
+l'interface, et couvre en 32 rubriques : premiers pas, nouveautés, Run Tests, sélection,
 lecteurs et ATR, onglets et file d'attente, résultats, Detail / Source /
 Output / Logs, profils d'exécution, YAML, Python Environment, History,
 comparaison, rapports HTML, Settings, Console, thèmes, raccourcis clavier,
-dépannage, FAQ et glossaire.
+dépannage, FAQ et glossaire. Une rubrique **Writing tests for Pytest Runner**
+explique aux auteurs de tests les variables d'environnement reçues et où
+écrire les logs pour qu'ils apparaissent dans l'onglet **Logs**.
 
 - C'est un site moderne d'un seul fichier, qui fonctionne hors ligne : menu
   latéral, sommaire de page, étapes numérotées, encadrés, thème clair ou
   sombre.
 - **Search the guide** (ou **Ctrl+K**) trouve instantanément les rubriques
-  et surligne les mots recherchés.
+  et surligne les mots recherchés, même avec une faute de frappe.
+- Le guide s'ouvre dans le thème de l'application. Le bouton de
+  téléchargement enregistre tout le guide dans un seul fichier HTML à partager.
 - Le bouton d'impression produit tout le guide en PDF ; le fichier se
   partage aussi tel quel par mail.
 - **Support and data locations** affiche la version, le Python des tests et

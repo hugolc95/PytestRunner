@@ -67,7 +67,9 @@ sous-processus, avec l'interpréteur configuré pour les tests.
   fichier, réécrit puis ouvert dans le navigateur par Help et F1 sur la
   rubrique de la page affichée (`CONTEXT_TOPICS`). Aucune ressource réseau.
 - Une page ou un libellé de l'interface qui change : mettre la rubrique à
-  jour. `test_help_page.py` vérifie les liens et la génération du site.
+  jour. `test_help_page.py` vérifie les liens, la génération du site et que
+  chaque libellé cité en gras existe encore dans `runner/ui` (une simple mise
+  en valeur s'ajoute à `EMPHASE`).
 
 ## Livrer
 

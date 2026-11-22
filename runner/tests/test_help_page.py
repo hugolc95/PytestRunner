@@ -139,3 +139,63 @@ def test_help_survives_sidebar_collapse(window):
     assert window.nav_buttons["help"].toolTip()
     window._set_sidebar_collapsed(False)
     assert window.nav_buttons["help"].text() == "Help"
+
+
+# Mises en valeur du texte qui ne sont pas des libelles de l'interface. Un
+# nouveau mot en gras qui n'est pas un libelle s'ajoute ici ; un libelle
+# absent du code veut dire que l'interface a change et que le guide est faux.
+EMPHASE = {
+    "A conftest.py fails, or no file is valid", "A file cannot be imported",
+    "Check the test interpreter", "Choose the readers", "Select the tests",
+    "Every tab works on its own copy", "Slow Python", "Stability", "Display",
+    "User guide", "Not run", "History", "X / Y", "amber dot", "warning triangle",
+    "collects, selects, runs and analyzes pytest test suites", "colour-blind-friendly",
+    "ordered sequence of tests", "profile → parent groups → subgroup → test",
+    "protects", "single file", "two independent Python installations", "whole folder",
+    # Libelles construits avec des nombres (domain/collection_state, campaign_coverage)
+    "2 files not collected", "files not collected",
+    "Campaign incomplete · 3/5 tests executed",
+}
+
+
+def test_every_bold_ui_label_still_exists_in_the_interface():
+    import glob
+    import html as html_mod
+    from pathlib import Path
+
+    racine = Path(__file__).resolve().parents[1]
+    sources = [p for p in glob.glob(str(racine / "ui" / "*.py")) if not p.endswith("help_content.py")]
+    code = " ".join(Path(p).read_text(encoding="utf-8") for p in sources)
+    code = re.sub(r"\s+", " ", code).casefold().replace("...", "…")
+    absents = {}
+    for topic in TOPICS:
+        for brut in re.findall(r"<b>(.*?)</b>", topic.body, re.S):
+            texte = re.sub(r"\s+", " ", html_mod.unescape(re.sub(r"<[^>]+>", "", brut)))
+            texte = texte.strip().rstrip(".").strip()
+            if len(texte) < 3 or texte in EMPHASE or texte.casefold() in code:
+                continue
+            absents.setdefault(texte, topic.id)
+    assert not absents, f"Libelles du guide introuvables dans l'interface : {absents}"
+
+
+def test_guide_follows_the_application_theme_and_can_be_downloaded(window, opened):
+    from runner.ui import tokens as t
+
+    window.apply_theme("light")
+    chemin = help_site.write_guide(window, "welcome")
+    texte = chemin.read_text(encoding="utf-8")
+    assert 'if (!theme) theme = "light";' in texte
+    assert 'class="icon-button download-button"' in texte
+    window.apply_theme("dark")
+    assert 'if (!theme) theme = "dark";' in help_site.write_guide(window).read_text(encoding="utf-8")
+    assert t.is_dark()
+
+
+def test_support_lists_the_guide_file_and_old_browsers_keep_an_opaque_top_bar(window):
+    valeurs = help_site.support_values(window)
+    assert valeurs["guide_file"] == str(help_site.guide_path())
+    assert "User guide: " in help_site.support_text(valeurs)
+    site = help_site.build_site(valeurs, start="support")
+    assert valeurs["guide_file"] in site
+    # Sans color-mix() (Chrome/Edge < 111), la barre du haut garde un fond.
+    assert "background: var(--bg); background: color-mix(" in site
