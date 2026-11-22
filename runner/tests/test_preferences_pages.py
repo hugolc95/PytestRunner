@@ -187,18 +187,19 @@ def test_collection_and_python_checks_use_settings(window, tmp_path, monkeypatch
     window._collector.diagnostic_failed.disconnect()
     window._collector.failed.connect(errors.append)
     window._collector.run()
-    assert calls == [27]
+    # Le delai regle, puis une seconde chance deux fois plus longue.
+    assert calls == [27, 54]
     assert 'Python interpreter not usable' in errors[0]
     original_probe = interpreter.probe
     monkeypatch.setattr(interpreter, 'probe', lambda *a, **k: interpreter.InterpreterInfo(
         path=sys.executable, version='3.12', bits=64, pytest_version='9'))
     window._collector.run()
-    assert calls == [27, 321]
+    assert calls == [27, 54, 321]
     assert "Collection timed out after 321s" in errors[1]
     monkeypatch.setattr(interpreter, 'probe', original_probe)
     window.python_editor.test_now()
     window.python_editor._probe.run()
-    assert calls == [27, 321, 27]
+    assert calls == [27, 54, 321, 27, 54]
 
 
 def test_reader_operations_expire_at_configured_deadlines(window, tmp_path, monkeypatch, qtbot):

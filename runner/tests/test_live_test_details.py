@@ -55,7 +55,9 @@ def test_details_are_visible_before_run_finishes(window, qtbot, tmp_path, profil
     (tmp_path / 'test_live.py').write_text(textwrap.dedent(SOURCE))
     window.workspace_combo.setCurrentText(str(tmp_path))
     window.load_workspace()
-    qtbot.waitUntil(lambda: window._collector is not None and not window._collector.isRunning(), timeout=15000)
+    # 60 s : la verification de Python a droit a une seconde tentative quand
+    # le poste est charge (CI Windows en parallele).
+    qtbot.waitUntil(lambda: window._collector is not None and not window._collector.isRunning(), timeout=60000)
     nodes = sorted(window.model._by_nodeid)
     assert len(nodes) == 5
     if profile:

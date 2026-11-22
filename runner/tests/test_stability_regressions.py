@@ -78,3 +78,31 @@ def test_handlers_ignore_only_objects_destroyed_during_teardown():
     assert detruit() is False
     with pytest.raises(RuntimeError, match="something else"):
         autre()
+
+
+def test_a_slow_interpreter_gets_a_second_chance_and_a_timeout_is_never_cached(monkeypatch, tmp_path):
+    """Un Python lent a demarrer restait "not usable" toute la session."""
+    from runner.domain import interpreter
+    from runner.domain.interpreter import InterpreterInfo
+
+    chemin = str(tmp_path / "python.exe")
+    appels = []
+
+    def lent_puis_ok(path, timeout):
+        appels.append(timeout)
+        if len(appels) == 1:
+            return InterpreterInfo(path=path, error=f"No response from the interpreter: {path}")
+        return InterpreterInfo(path=path, version="3.12", bits=64, pytest_version="8")
+
+    interpreter.forget_probe()
+    monkeypatch.setattr(interpreter, "_run_probe", lent_puis_ok)
+    info = interpreter.probe(chemin, timeout=5)
+    assert info.usable and appels == [5, 10]
+
+    interpreter.forget_probe()
+    appels.clear()
+    monkeypatch.setattr(interpreter, "_run_probe", lambda path, timeout: InterpreterInfo(
+        path=path, error=f"No response from the interpreter: {path}"))
+    assert not interpreter.probe(chemin, timeout=5).usable
+    assert interpreter.cached_probe(chemin) is None
+    interpreter.forget_probe()

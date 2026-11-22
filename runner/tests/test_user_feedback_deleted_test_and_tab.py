@@ -77,7 +77,7 @@ def collect(window, qtbot, folder):
     window.workspace_combo.setCurrentText(str(folder))
     window.load_workspace()
     qtbot.waitUntil(lambda: window._collector is not None
-                    and not window._collector.isRunning(), timeout=30000)
+                    and not window._collector.isRunning(), timeout=60000)
     # Le resultat arrive par un signal en file : attendre l'arbre lui-meme,
     # pas un delai fixe qui ne suffit plus quand la suite tourne en parallele.
     qtbot.waitUntil(lambda: bool(window.model.nodeids()), timeout=30000)

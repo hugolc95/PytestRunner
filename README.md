@@ -28,6 +28,10 @@ Corrections de stabilité :
   l'application : la liste des profils laissait derrière elle des objets
   Qt détruits que PySide croyait encore valides. C'était la cause des
   plantages aléatoires de la CI.
+- Un Python lent à démarrer (premier lancement, antivirus, disque réseau)
+  n'est plus déclaré **Python interpreter not usable** pour toute la
+  session : la vérification est retentée une fois avec un délai doublé, et
+  un délai dépassé n'est jamais mémorisé.
 - Fermer une fenêtre ne produit plus d'erreurs parasites dans la console :
   les filtres d'événements ignorent les objets déjà détruits.
 
