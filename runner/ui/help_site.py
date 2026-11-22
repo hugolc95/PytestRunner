@@ -195,7 +195,7 @@ def build_site(values: dict[str, str] | None = None, start: str = "welcome",
     `theme` ("light" ou "dark") : celui de l'application, applique tant que le
     lecteur n'a pas choisi le sien dans le guide.
     """
-    from runner.version import COPYRIGHT, __version__
+    from runner.version import AUTHOR, AUTHOR_COPYRIGHT, __version__
 
     values = values or {}
     if start not in TOPICS_BY_ID:
@@ -232,7 +232,8 @@ def build_site(values: dict[str, str] | None = None, start: str = "welcome",
     return (_GABARIT
             .replace("@@TITLE@@", html.escape(titre))
             .replace("@@VERSION@@", html.escape(__version__))
-            .replace("@@COPYRIGHT@@", html.escape(COPYRIGHT))
+            .replace("@@AUTHOR@@", html.escape(AUTHOR))
+            .replace("@@COPYRIGHT@@", html.escape(AUTHOR_COPYRIGHT))
             .replace("@@CSS@@", _CSS)
             .replace("@@NAV@@", "".join(navigation))
             .replace("@@ARTICLES@@", "".join(articles))
@@ -362,7 +363,7 @@ _GABARIT = """<!doctype html>
 <div class="layout">
   <nav class="sidebar" aria-label="Topics">@@NAV@@</nav>
   <main id="main" class="content" tabindex="-1">@@ARTICLES@@
-    <footer class="footer">Pytest Runner v@@VERSION@@ · @@COPYRIGHT@@ · This guide works offline and can be shared as a single file.</footer>
+    <footer class="footer"><span>Pytest Runner v@@VERSION@@ · Created by <b>@@AUTHOR@@</b></span><span>@@COPYRIGHT@@</span><span>This guide works offline and can be shared as a single file.</span></footer>
   </main>
   <aside class="toc" aria-label="On this page"><div class="toc-title">On this page</div><ul class="toc-list"></ul></aside>
 </div>
@@ -540,7 +541,8 @@ tbody tr:hover td, tr:hover td { background: var(--bg-subtle); background: color
 .pager-link.next { text-align: right; grid-column: 2; }
 .pager-label { font-size: 12.5px; color: var(--text-muted); }
 .pager-title { font-weight: 650; color: var(--accent-text); }
-.footer { max-width: 780px; margin: 48px auto 0; font-size: 13px; color: var(--text-faint); }
+.footer { max-width: 780px; margin: 48px auto 0; display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 13px; color: var(--text-faint); }
+.footer b { color: var(--text-muted); font-weight: 600; }
 
 /* Recherche */
 .scrim { position: fixed; inset: 0; z-index: 40; background: rgba(10,14,20,.45); backdrop-filter: blur(2px); }

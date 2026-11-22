@@ -7,3 +7,6 @@ increments when the scope justifies it.
 
 __version__ = "1.8.0"
 COPYRIGHT = "© 2026 Pytest Runner"
+# Auteur et proprietaire de l'outil : fenetre About et guide d'utilisation.
+AUTHOR = "Hugo LE COZ"
+AUTHOR_COPYRIGHT = f"© 2026 {AUTHOR}. All rights reserved."

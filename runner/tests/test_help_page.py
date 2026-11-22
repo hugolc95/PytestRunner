@@ -165,6 +165,7 @@ def test_every_bold_ui_label_still_exists_in_the_interface():
 
     racine = Path(__file__).resolve().parents[1]
     sources = [p for p in glob.glob(str(racine / "ui" / "*.py")) if not p.endswith("help_content.py")]
+    sources.append(str(racine / "version.py"))
     code = " ".join(Path(p).read_text(encoding="utf-8") for p in sources)
     code = re.sub(r"\s+", " ", code).casefold().replace("...", "…")
     absents = {}
@@ -213,3 +214,36 @@ def test_guide_shows_the_application_logo():
     for forme in formes:
         assert forme in marque, forme
     assert '<link rel="icon" href="data:image/svg+xml,' in site
+
+
+
+def test_about_window_shows_author_version_and_opens_the_guide(window, opened, qtbot):
+    from runner.ui.about_dialog import AboutDialog
+    from runner.version import AUTHOR, AUTHOR_COPYRIGHT
+
+    utilitaires = window.navigation_utilities
+    assert utilitaires.indexOf(window.about_button) >= 0
+    assert window.about_button.toolTip() == "About Pytest Runner"
+    window.about_button.click()
+    dialogue = window._about_dialog
+    assert isinstance(dialogue, AboutDialog) and dialogue.isVisible()
+    assert not dialogue.isModal()
+    assert AUTHOR in dialogue.author_label.text()
+    assert dialogue.copyright_label.text() == AUTHOR_COPYRIGHT
+    assert __version__ in dialogue.version_label.text()
+    # Un second clic ramene la meme fenetre au lieu d'en ouvrir une autre.
+    window.about_button.click()
+    assert window._about_dialog is dialogue
+    dialogue.guide_button.click()
+    assert start_topic(help_site.guide_path()) == "about"
+    dialogue.close()
+
+
+def test_guide_credits_the_author_on_every_page():
+    from runner.version import AUTHOR, AUTHOR_COPYRIGHT
+
+    site = help_site.build_site({"version": __version__})
+    pied = re.search(r'<footer class="footer">.*?</footer>', site, re.S).group(0)
+    assert AUTHOR in pied and AUTHOR_COPYRIGHT in pied
+    apropos = re.search(r'<article class="topic" id="about".*?</article>', site, re.S).group(0)
+    assert AUTHOR in apropos and __version__ in apropos

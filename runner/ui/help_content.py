@@ -21,6 +21,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from runner.version import AUTHOR, AUTHOR_COPYRIGHT
+
 
 @dataclass(frozen=True)
 class HelpTopic:
@@ -94,6 +96,7 @@ down: it is reported as a result instead;</li>
 <tr><td><a href="page:console">Console</a></td><td>See the real commands, process output and errors of the session.</td></tr>
 <tr><td><b>Help</b></td><td>This guide, in your web browser. Press {kbd("F1")} anywhere to open the topic of the current page.</td></tr>
 <tr><td><a href="page:settings">Settings</a></td><td>Personal preferences: theme, text size, timeouts, editor…</td></tr>
+<tr><td><b>About Pytest Runner</b> (ⓘ icon)</td><td>Version, author and copyright. See <a href="topic:about">About Pytest Runner</a>.</td></tr>
 </table>
 
 <h2>Where to start</h2>
@@ -1120,6 +1123,26 @@ start.</p>
 <tr><td>{kbd("Ctrl", "Z")} / {kbd("Ctrl", "Y")}</td><td>Undo / redo</td></tr>
 </table>
 <p>In text fields, the usual editing shortcuts keep their normal behaviour.</p>
+""",
+    ),
+
+    HelpTopic(
+        "about", "Application", "About Pytest Runner",
+        "Version, author and copyright.",
+        "about author creator owner copyright version credits license who made",
+        f"""
+<p>Pytest Runner was created and is maintained by <b>{AUTHOR}</b>.</p>
+<table>
+<tr><th>Item</th><th>Value</th></tr>
+<tr><td>Application</td><td>Pytest Runner</td></tr>
+<tr><td>Version</td><td>{{version}}</td></tr>
+<tr><td>Author</td><td>{AUTHOR}</td></tr>
+<tr><td>Copyright</td><td>{AUTHOR_COPYRIGHT}</td></tr>
+</table>
+<p>The same information is in the application: click the
+<b>About Pytest Runner</b> icon at the bottom of the sidebar, next to the
+theme buttons. The window also shows the Python and Qt versions of the
+application.</p>
 """,
     ),
 

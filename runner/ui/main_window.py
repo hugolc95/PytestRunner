@@ -28,6 +28,7 @@ from PySide6.QtCore import (
     Slot,
 )
 from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence
+from shiboken6 import isValid
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -437,6 +438,16 @@ class MainWindow(QMainWindow):
         self.page_theme_button.setToolTip("Switch theme")
         self.page_theme_button.setCursor(Qt.PointingHandCursor)
         self.page_theme_button.clicked.connect(self.toggle_theme)
+        # Version, auteur et copyright : la fenetre About d'un logiciel diffuse.
+        self.about_button = QPushButton()
+        self.about_button.setObjectName("NavigationUtilityIcon")
+        self.about_button.setFixedSize(t.ICON_BUTTON, t.ICON_BUTTON)
+        self.about_button.setIcon(icons.icon("mdi.information-outline", t.TEXT_MUTED))
+        self.about_button.setToolTip("About Pytest Runner")
+        self.about_button.setAccessibleName("About Pytest Runner")
+        self.about_button.setCursor(Qt.PointingHandCursor)
+        self.about_button.clicked.connect(self.open_about)
+        utilities.addWidget(self.about_button)
         utilities.addWidget(self.page_theme_button)
         utilities.addWidget(self.sidebar_toggle_button)
         utilities.addStretch(1)
@@ -661,6 +672,18 @@ class MainWindow(QMainWindow):
         if hasattr(self, "preferences"):
             self.preferences.track_buttons()
             self.preferences.record("actions", f"Navigation: {page}")
+
+    def open_about(self) -> None:
+        """Fenetre About, une seule a la fois, non modale."""
+        hote = self._run_host or self
+        dialogue = getattr(hote, "_about_dialog", None)
+        if dialogue is not None and isValid(dialogue) and dialogue.isVisible():
+            dialogue.raise_()
+            dialogue.activateWindow()
+            return
+        from runner.ui.about_dialog import AboutDialog
+        hote._about_dialog = AboutDialog(hote)
+        hote._about_dialog.show()
 
     def open_help(self, topic: str = "") -> bool:
         """F1 et Help : ouvre le guide dans le navigateur, sur la rubrique de
@@ -2166,6 +2189,7 @@ class MainWindow(QMainWindow):
             "Switch to the light theme" if soleil else "Switch to the dark theme")
         self.page_theme_button.setIcon(
             icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
+        self.about_button.setIcon(icons.icon("mdi.information-outline", t.TEXT_MUTED))
         for cle, glyph in (
                 ("workspace", "mdi.play-circle-outline"),
                 ("profiles", "mdi.playlist-edit"),

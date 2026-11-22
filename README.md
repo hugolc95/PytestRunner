@@ -22,6 +22,9 @@ explique aux auteurs de tests les variables d'environnement reçues et où
   téléchargement enregistre tout le guide dans un seul fichier HTML à partager.
 - Le bouton d'impression produit tout le guide en PDF ; le fichier se
   partage aussi tel quel par mail.
+- **About Pytest Runner** (icône ⓘ en bas du menu de gauche) affiche la
+  version, l'auteur (**Hugo LE COZ**) et le copyright. Le guide reprend ces
+  crédits dans son pied de page et dans sa rubrique **About Pytest Runner**.
 - **Support and data locations** affiche la version, le Python des tests et
   les dossiers de l'historique et des réglages de ce poste ; **Copy support
   information** les copie pour un signalement.
