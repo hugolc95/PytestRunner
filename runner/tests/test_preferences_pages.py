@@ -187,18 +187,19 @@ def test_collection_and_python_checks_use_settings(window, tmp_path, monkeypatch
     window._collector.diagnostic_failed.disconnect()
     window._collector.failed.connect(errors.append)
     window._collector.run()
-    assert calls == [27]
+    # Le delai regle, puis une seconde chance deux fois plus longue.
+    assert calls == [27, 54]
     assert 'Python interpreter not usable' in errors[0]
     original_probe = interpreter.probe
     monkeypatch.setattr(interpreter, 'probe', lambda *a, **k: interpreter.InterpreterInfo(
         path=sys.executable, version='3.12', bits=64, pytest_version='9'))
     window._collector.run()
-    assert calls == [27, 321]
+    assert calls == [27, 54, 321]
     assert "Collection timed out after 321s" in errors[1]
     monkeypatch.setattr(interpreter, 'probe', original_probe)
     window.python_editor.test_now()
     window.python_editor._probe.run()
-    assert calls == [27, 321, 27]
+    assert calls == [27, 54, 321, 27, 54]
 
 
 def test_reader_operations_expire_at_configured_deadlines(window, tmp_path, monkeypatch, qtbot):
@@ -260,8 +261,10 @@ def test_exception_hook_restored_on_shutdown(window):
 
 def test_sidebar_settings_stay_at_bottom_and_utilities_fit_when_collapsed(window):
     layout = window.navigation.layout()
-    settings_index = layout.indexOf(window.nav_buttons["settings"])
-    assert layout.itemAt(settings_index - 1).spacerItem() is not None
+    # Help et Settings forment le groupe du bas, apres l'espace elastique.
+    help_index = layout.indexOf(window.nav_buttons["help"])
+    assert layout.itemAt(help_index - 1).spacerItem() is not None
+    assert layout.indexOf(window.nav_buttons["settings"]) == help_index + 1
     utilities = window.navigation_utilities
     assert utilities.indexOf(window.page_theme_button) < utilities.indexOf(window.sidebar_toggle_button)
     assert utilities.direction() == QBoxLayout.LeftToRight

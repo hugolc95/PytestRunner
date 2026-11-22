@@ -1,4 +1,6 @@
 """Meme confirmation que l'export Excel, avec une URL de fichier locale."""
+from pathlib import Path
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QMessageBox
 
@@ -19,7 +21,8 @@ def test_open_report_button_opens_the_saved_html(fenetre, tmp_path, monkeypatch,
     qtbot.mouseClick(button, Qt.LeftButton)
     qtbot.waitUntil(lambda: bool(opened))
     assert opened[0].isLocalFile()
-    assert opened[0].toLocalFile() == str(path.resolve())
+    # QUrl rend toujours des '/', y compris sous Windows : comparer des chemins.
+    assert Path(opened[0].toLocalFile()) == path.resolve()
     qtbot.waitUntil(lambda: fenetre._report_export_confirmation is None)
 
 

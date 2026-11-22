@@ -242,7 +242,9 @@ def test_profile_page_collapses_parameter_cases_into_one_row_and_back(qapp, tmp_
         assert groupe.childCount() == 3
         assert groupe.text(0).startswith("01–03")
         assert groupe.child(1).text(0).startswith("02")
-        assert groupe.child(1).toolTip(0) == nodeids[1]
+        # Depuis 1.7.0, l'infobulle ajoute le mode de suivi de la campagne
+        # sous le nodeid.
+        assert groupe.child(1).toolTip(0).split("\n\n")[0] == nodeids[1]
         assert "tests/test_api.py" not in groupe.child(1).text(0)
         assert "3 tests in 1 group" in page.summary.text()
 

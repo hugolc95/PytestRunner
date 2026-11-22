@@ -1,5 +1,62 @@
 # Pytest Runner GUI
 
+## Guide d'utilisation et passe de stabilité — v1.8.0
+
+**Help**, juste au-dessus de **Settings** dans le menu de gauche, ouvre le
+guide d'utilisation complet dans le navigateur. **F1** l'ouvre directement
+sur la rubrique de la page affichée. Le guide est en anglais, comme
+l'interface, et couvre en 32 rubriques : premiers pas, nouveautés, Run Tests, sélection,
+lecteurs et ATR, onglets et file d'attente, résultats, Detail / Source /
+Output / Logs, profils d'exécution, YAML, Python Environment, History,
+comparaison, rapports HTML, Settings, Console, thèmes, raccourcis clavier,
+dépannage, FAQ et glossaire. Une rubrique **Writing tests for Pytest Runner**
+explique aux auteurs de tests les variables d'environnement reçues et où
+écrire les logs pour qu'ils apparaissent dans l'onglet **Logs**.
+
+- C'est un site moderne d'un seul fichier, qui fonctionne hors ligne : menu
+  latéral, sommaire de page, étapes numérotées, encadrés, thème clair ou
+  sombre.
+- **Search the guide** (ou **Ctrl+K**) trouve instantanément les rubriques
+  et surligne les mots recherchés, même avec une faute de frappe.
+- Le guide s'ouvre dans le thème de l'application. Le bouton de
+  téléchargement enregistre tout le guide dans un seul fichier HTML à partager.
+- Le bouton d'impression produit tout le guide en PDF.
+- **About Pytest Runner** (icône ⓘ en bas du menu de gauche) affiche la
+  version, l'auteur (**Hugo LE COZ**) et le copyright. Le guide reprend ces
+  crédits dans son pied de page et dans sa rubrique **About Pytest Runner**.
+- **Support and data locations** affiche la version, le Python des tests et
+  les dossiers de l'historique et des réglages de ce poste ; **Copy support
+  information** les copie pour un signalement.
+
+Corrections de stabilité :
+
+- Basculer entre **All tests** et **Profiles** pouvait fermer brutalement
+  l'application : la liste des profils laissait derrière elle des objets
+  Qt détruits que PySide croyait encore valides. C'était la cause des
+  plantages aléatoires de la CI.
+- Un Python lent à démarrer (premier lancement, antivirus, disque réseau)
+  n'est plus déclaré **Python interpreter not usable** pour toute la
+  session : la vérification est retentée une fois avec un délai doublé, et
+  un délai dépassé n'est jamais mémorisé.
+- Fermer une fenêtre ne produit plus d'erreurs parasites dans la console :
+  les filtres d'événements ignorent les objets déjà détruits.
+- Dans **Execution Profiles → Test sequence**, **Ctrl+Z** pouvait ne rien
+  faire : deux commandes d'annulation se disputaient le raccourci.
+- Un test devenu paramétré depuis la collecte, ou un fichier / dossier
+  relancé depuis History, n'est plus marqué **Not run** alors que tous ses
+  cas ont été exécutés, ce qui faisait échouer le run.
+- Dans **History**, un groupe dont une partie seulement des tests a tourné
+  affiche de nouveau **Not all tests run**, et un test non exécuté sa raison.
+- Les lecteurs de la carte **Execution** retrouvent la hauteur des autres
+  contrôles (32 px).
+- En demi-écran, l'onglet **Logs** ne déborde plus de la barre
+  **Detail / Source / Output / Logs** quand on change d'onglet.
+
+La suite de tests de l'application et la CI Windows repassent entièrement au
+vert : les tests restés sur d'anciens comportements ont été alignés sur ceux
+en vigueur (statut **Not run**, garde du workspace collecté, descriptions
+élidées), et chaque test repart d'un état propre.
+
 ## Lecteurs en vraies couleurs et compteurs lisibles — v1.7.14
 
 Chaque lecteur a de nouveau une couleur franche, choisie pour ne jamais

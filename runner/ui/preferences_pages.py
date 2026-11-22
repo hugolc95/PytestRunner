@@ -571,10 +571,13 @@ class PreferencesController(QObject):
                 context.profile_tree.setCurrentIndex(item)
                 context.profile_tree.scrollTo(item)
 
+    def detachable_pages(self):
+        return (self.settings_page, self.console_page)
+
     def restore_detached_pages(self):
         if not self.active:
             return
-        for page in (self.settings_page, self.console_page):
+        for page in self.detachable_pages():
             if (not page.detached_window and
                     self.window.settings.value(page.settings_key + "/detached", False, type=bool)):
                 page.toggle_detach()
@@ -680,7 +683,7 @@ class PreferencesController(QObject):
             control.blockSignals(False)
             self.record("actions", f"Theme changed: {t.current_theme()}")
         self.settings_panel.restyle()
-        for page in (self.settings_page, self.console_page):
+        for page in self.detachable_pages():
             page.restyle()
 
     def apply(self):
@@ -704,7 +707,7 @@ class PreferencesController(QObject):
         if changed & {"timestamps", "limit"}:
             self.console._dirty = True
         if "font_size" in changed:
-            for page in (self.settings_page, self.console_page):
+            for page in self.detachable_pages():
                 if page.detached_window:
                     page.detached_window.setStyleSheet(window.styleSheet())
         self._applied_values = dict(values)
@@ -780,7 +783,7 @@ class PreferencesController(QObject):
     def shutdown(self):
         if not self.active:
             return
-        for page in (self.settings_page, self.console_page):
+        for page in self.detachable_pages():
             page.save_detached_state()
             page.reattach(persist=False)
         self.window.settings.sync()

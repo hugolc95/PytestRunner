@@ -155,8 +155,24 @@ def probe(path: str, timeout: float = 15.0, use_cache: bool = True) -> Interpret
         return _CACHE[cle]
 
     info = _run_probe(path, timeout)
-    _CACHE[cle] = info
+    if _timed_out(info):
+        # Premier lancement d'un Python "froid" (antivirus, disque reseau,
+        # poste charge) : une seconde chance, plus longue, avant de le
+        # declarer inutilisable.
+        info = _run_probe(path, timeout * 2)
+    # Un delai depasse n'est jamais memorise : mis en cache, il declarait
+    # l'interpreteur inutilisable pour toute la session alors qu'il
+    # repondait normalement l'instant d'apres.
+    if not _timed_out(info):
+        _CACHE[cle] = info
     return info
+
+
+_NO_RESPONSE = "No response from the interpreter"
+
+
+def _timed_out(info: InterpreterInfo) -> bool:
+    return bool(info.error) and info.error.startswith(_NO_RESPONSE)
 
 
 def _run_probe(path: str, timeout: float) -> InterpreterInfo:
@@ -172,8 +188,7 @@ def _run_probe(path: str, timeout: float) -> InterpreterInfo:
     except PermissionError:
         return InterpreterInfo(path=path, error=f"Interpreter not executable: {path}")
     except subprocess.TimeoutExpired:
-        return InterpreterInfo(path=path,
-                               error=f"No response from the interpreter: {path}")
+        return InterpreterInfo(path=path, error=f"{_NO_RESPONSE}: {path}")
     except (OSError, ValueError, UnicodeError) as exc:
         return InterpreterInfo(path=path, error=f"Could not start {path}: {exc}")
 

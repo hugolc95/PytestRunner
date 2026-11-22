@@ -13,7 +13,7 @@ from PySide6.QtCore import QSettings
 
 from runner.domain import diagnostics, execution, history, interpreter
 from runner.domain.interpreter import InterpreterInfo
-from runner.domain.models import Reader, ReaderReport, RunRequest
+from runner.domain.models import Reader, ReaderReport, RunRequest, Status
 from runner.ui import end_run_feedback
 from runner.ui.main_window import MainWindow
 from runner.ui.results_panel import ONGLET_LOGS, ONGLET_SOURCE
@@ -35,8 +35,12 @@ def test_running_a_deleted_test_reports_why_nothing_ran(tmp_path, nodeids):
     report = execution.ReaderRun(request, Reader("", 0), {}).run(
         lambda line: None, lambda outcome: None)
 
-    assert report.counts == {}
-    [issue] = report.issues
+    # Pytest refuse toute la commande : chaque test demande est "Not run",
+    # jamais un succes, et la cause reste le premier message affiche.
+    assert report.counts == {Status.NOT_RUN: len(nodeids)}
+    assert set(report.not_run) == set(nodeids)
+    assert not report.ok
+    issue = report.issues[0]
     assert "not found" in issue
     assert "Click Collect" in issue
 
@@ -73,8 +77,17 @@ def collect(window, qtbot, folder):
     window.workspace_combo.setCurrentText(str(folder))
     window.load_workspace()
     qtbot.waitUntil(lambda: window._collector is not None
-                    and not window._collector.isRunning(), timeout=30000)
-    qtbot.wait(50)
+                    and not window._collector.isRunning(), timeout=60000)
+    # Le resultat arrive par un signal en file : attendre l'arbre lui-meme,
+    # pas un delai fixe qui ne suffit plus quand la suite tourne en parallele.
+    try:
+        qtbot.waitUntil(lambda: bool(window.model.nodeids()), timeout=30000)
+    except Exception:
+        # En CI, la seule trace de la cause : le statut et la console.
+        erreurs = [message for _, kind, message in window.preferences.console.events
+                   if kind == "errors"][-3:]
+        raise AssertionError(f"Collection produced no tree. Status: "
+                             f"{window.status_label.text()!r}. Errors: {erreurs}") from None
 
 
 def test_running_a_test_deleted_since_collection_shows_an_error(

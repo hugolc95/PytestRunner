@@ -340,6 +340,10 @@ def fenetre(qapp, tmp_path):
         .Workspace.load(str(tmp_path))
     w.model.set_tree(build_tree(["test_demo.py::test_atr",
                                  "test_demo.py::test_secure_channel"]))
+    # Depuis 1.7.4, un run n'est lance que sur le workspace dont l'arbre a
+    # ete collecte et qui est affiche dans le champ.
+    w._tree_workspace = w.workspace.path
+    w.workspace_combo.setEditText(w.workspace.path)
     return w
 
 

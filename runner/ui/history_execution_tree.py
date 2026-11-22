@@ -207,14 +207,19 @@ class HistoryExecutionModel(TestTreeModel):
                 reader = getattr(self, '_contexts', {}).get(row.node.nodeid)
                 return 'Not run\n' + self.reason_for_index(index, reader)
             if role == Qt.DisplayRole:
-                if status is Status.PENDING:
+                # Depuis le statut explicite NOT_RUN, un groupe ou seuls
+                # certains tests ont tourne s'affichait "NOT RUN" alors que
+                # ses autres tests avaient reussi : il garde son libelle.
+                if status is Status.NOT_RUN and row.children and getattr(self, '_campaign_recorded', False):
+                    return 'Not all tests run'
+                if status in (Status.PENDING, Status.NOT_RUN):
                     reason = getattr(self, '_reasons', {}).get(row.node.nodeid)
                     reader = getattr(self, '_contexts', {}).get(row.node.nodeid)
                     nodeid = self._original_ids.get(row.node.nodeid)
                     reason = reason or getattr(self, '_reader_reasons', {}).get((reader, nodeid))
                     if reason:
                         return 'Not run · ' + reason
-                    if getattr(self, '_campaign_recorded', False):
+                    if status is Status.PENDING and getattr(self, '_campaign_recorded', False):
                         return 'Not all tests run' if row.children else 'Not run'
                 return self._unknown_label if status is Status.PENDING else status.label
             if role == Qt.ForegroundRole:

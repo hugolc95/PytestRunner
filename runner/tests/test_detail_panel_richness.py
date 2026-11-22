@@ -5,6 +5,7 @@ mini-tendance, plutot qu'une seule phrase grise perdue dans un grand vide.
 
 from __future__ import annotations
 
+from runner.tests.qt_helpers import widgets_du_layout
 import time
 
 import pytest
@@ -50,9 +51,7 @@ def test_markers_show_as_chips(qapp):
                       markers=("smoke", "auth"))
 
     assert not panneau.markers_row.isHidden()
-    textes = [panneau._markers_layout.itemAt(i).widget().text()
-             for i in range(panneau._markers_layout.count())
-             if panneau._markers_layout.itemAt(i).widget() is not None]
+    textes = [w.text() for w in widgets_du_layout(panneau._markers_layout)]
     assert textes == ["smoke", "auth"]
 
 

@@ -24,9 +24,11 @@ from PySide6.QtCore import (
     QStandardPaths,
     Qt,
     QTimer,
+    QUrl,
     Slot,
 )
-from PySide6.QtGui import QIcon, QKeySequence
+from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence
+from shiboken6 import isValid
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -78,6 +80,7 @@ from runner.ui import tokens as t
 from runner.ui.execution_profiles_page import ExecutionProfilesPage
 from runner.ui.interpreter_dialog import InterpreterDialog
 from runner.ui.marker_bar import MarkerFilter, MarkerExpressionLabel
+from runner.ui.qt_safety import tolerate_destruction
 from runner.ui.profile_progress import ProfileProgressLabel
 from runner.ui.live_profile_model import LiveProfileModel
 from runner.ui.tree_mode_header import TreeModeHeader, ProfilePicker
@@ -126,6 +129,12 @@ K_SIDEBAR_COLLAPSED = "window/sidebar_collapsed"
 K_CONFIG = "workspace/config"
 
 
+# Role interne de QStandardItemModel qui porte les drapeaux d'un element
+# (Qt::UserRole - 1). Y ecrire 0 desactive l'entree d'une liste deroulante
+# sans passer par une enveloppe QStandardItem (voir _refresh_profile_picker).
+_STANDARD_ITEM_FLAGS_ROLE = Qt.UserRole - 1
+
+
 class _LaunchButtonsSync(QObject):
     """Remesure Run / Pause des que leur police ou leur style change."""
 
@@ -138,6 +147,7 @@ class _LaunchButtonsSync(QObject):
         self._timer.setInterval(0)
         self._timer.timeout.connect(window._equalize_launch_buttons)
 
+    @tolerate_destruction(False)
     def eventFilter(self, watched, event):
         if not self.busy and event.type() in (QEvent.FontChange, QEvent.StyleChange):
             self._timer.start()
@@ -381,6 +391,7 @@ class MainWindow(QMainWindow):
             ("comparison", "Comparison", "mdi.table-search"),
             ("python", "Python Environment", "mdi.language-python"),
             ("console", "Console", "mdi.console"),
+            ("help", "Help", "mdi.help-circle-outline"),
             ("settings", "Settings", "mdi.cog-outline"),
         )
         for cle, texte, glyph in entrees:
@@ -390,9 +401,18 @@ class MainWindow(QMainWindow):
             bouton.setIcon(icons.icon(glyph, t.TEXT_MUTED))
             bouton.setToolTip(texte)
             bouton.setCursor(Qt.PointingHandCursor)
-            bouton.clicked.connect(lambda checked=False, page=cle: self._show_page(page))
+            if cle == "help":
+                # Le guide s'ouvre dans le navigateur : ce bouton n'est pas
+                # une page de la fenetre et ne reste pas "selectionne".
+                bouton.setCheckable(False)
+                bouton.setToolTip("Open the user guide in your browser (F1)")
+                bouton.clicked.connect(lambda checked=False: self.open_help())
+            else:
+                bouton.clicked.connect(lambda checked=False, page=cle: self._show_page(page))
             self.nav_buttons[cle] = bouton
-            if cle == "settings":
+            # Help et Settings restent ensemble en bas : ce sont les pages
+            # "a propos de l'outil", separees des pages de travail.
+            if cle == "help":
                 colonne.addStretch(1)
             colonne.addWidget(bouton)
         utilities = QBoxLayout(QBoxLayout.LeftToRight)
@@ -418,6 +438,16 @@ class MainWindow(QMainWindow):
         self.page_theme_button.setToolTip("Switch theme")
         self.page_theme_button.setCursor(Qt.PointingHandCursor)
         self.page_theme_button.clicked.connect(self.toggle_theme)
+        # Version, auteur et copyright : la fenetre About d'un logiciel diffuse.
+        self.about_button = QPushButton()
+        self.about_button.setObjectName("NavigationUtilityIcon")
+        self.about_button.setFixedSize(t.ICON_BUTTON, t.ICON_BUTTON)
+        self.about_button.setIcon(icons.icon("mdi.information-outline", t.TEXT_MUTED))
+        self.about_button.setToolTip("About Pytest Runner")
+        self.about_button.setAccessibleName("About Pytest Runner")
+        self.about_button.setCursor(Qt.PointingHandCursor)
+        self.about_button.clicked.connect(self.open_about)
+        utilities.addWidget(self.about_button)
         utilities.addWidget(self.page_theme_button)
         utilities.addWidget(self.sidebar_toggle_button)
         utilities.addStretch(1)
@@ -443,6 +473,7 @@ class MainWindow(QMainWindow):
             "python": "Python Environment",
             "settings": "Settings",
             "console": "Console",
+            "help": "Help",
         }
         self.navigation_title.setVisible(not collapsed)
         self.navigation_logo.setVisible(collapsed)
@@ -641,6 +672,47 @@ class MainWindow(QMainWindow):
         if hasattr(self, "preferences"):
             self.preferences.track_buttons()
             self.preferences.record("actions", f"Navigation: {page}")
+
+    def open_about(self) -> None:
+        """Fenetre About, une seule a la fois, non modale."""
+        hote = self._run_host or self
+        dialogue = getattr(hote, "_about_dialog", None)
+        if dialogue is not None and isValid(dialogue) and dialogue.isVisible():
+            dialogue.raise_()
+            dialogue.activateWindow()
+            return
+        from runner.ui.about_dialog import AboutDialog
+        hote._about_dialog = AboutDialog(hote)
+        hote._about_dialog.show()
+
+    def open_help(self, topic: str = "") -> bool:
+        """F1 et Help : ouvre le guide dans le navigateur, sur la rubrique de
+        la page affichee.
+
+        Le guide est un site HTML hors ligne d'un seul fichier (`help_site`),
+        reecrit a chaque ouverture avec les valeurs du poste. Un onglet de
+        run detache delegue a la fenetre principale.
+        """
+        from runner.ui import help_site
+
+        hote = self._run_host or self
+        if not topic:
+            page = getattr(hote, "_page_history", ["workspace"])[-1]
+            topic = help_site.topic_for_page(page)
+        try:
+            chemin = help_site.write_guide(hote, topic)
+        except OSError as exc:
+            ErrorDialog.show_error(hote, "Could not open the user guide",
+                                   f"The guide could not be written: {exc.strerror or exc}")
+            return False
+        ouvert = QDesktopServices.openUrl(QUrl.fromLocalFile(str(chemin)))
+        if hasattr(hote, "preferences"):
+            hote.preferences.record("actions", f"User guide opened: {topic} · {chemin}")
+        if not ouvert:
+            ErrorDialog.show_error(hote, "Could not open the user guide",
+                                   "No web browser could open the guide. Open this file manually:",
+                                   str(chemin))
+        return bool(ouvert)
 
     def _show_previous_attached_page(self) -> None:
         for page in reversed(getattr(self, "_page_history", ["workspace"])):
@@ -1474,16 +1546,28 @@ class MainWindow(QMainWindow):
             suffix = ' — Needs attention' if missing else ' — Update available' if plan.additions else ''
             self.profile_picker.addItem(profile.name + suffix, profile)
             row = self.profile_picker.count() - 1
-            item = self.profile_picker.model().item(row)
-            item.setEnabled(available)
-            item.setToolTip(plan.problem or (plan.summary if plan.changed else
-                            f'{len(profile.sequence)} steps × {profile.execution.repetitions} repetitions'))
+            # Jamais `model().item(row)` : PySide garde l'enveloppe Python
+            # de ce QStandardItem attachee au modele, et `clear()` ci-dessus
+            # le detruit cote C++ sans prevenir PySide. Un QEvent alloue
+            # ensuite a la meme adresse etait pris pour cet element : segfault
+            # natif intermittent en basculant Tests / Profiles. Les roles de
+            # donnees ne creent aucune enveloppe.
+            if not available:
+                self.profile_picker.setItemData(row, 0, _STANDARD_ITEM_FLAGS_ROLE)
+            self.profile_picker.setItemData(
+                row, plan.problem or (plan.summary if plan.changed else
+                     f'{len(profile.sequence)} steps × {profile.execution.repetitions} repetitions'),
+                Qt.ToolTipRole)
             if active and active.profile_id == profile.profile_id:
                 chosen = row
         self.profile_picker.setCurrentIndex(chosen)
         self.profile_picker.blockSignals(False)
         if hasattr(self, 'campaign_sync'):
             self.campaign_sync.refresh()
+
+    def _profile_picker_enabled(self, row: int) -> bool:
+        model = self.profile_picker.model()
+        return bool(model.flags(model.index(row, 0)) & Qt.ItemIsEnabled)
 
     def _choose_header_profile(self, index):
         profile = self.profile_picker.itemData(index)
@@ -1501,7 +1585,7 @@ class MainWindow(QMainWindow):
             indices = list(range(self.profile_picker.count()))
             indices.sort(key=lambda i: any(n not in self.model._by_nodeid for n in self.profile_picker.itemData(i).sequence))
             for index in indices:
-                if self.profile_picker.model().item(index).isEnabled():
+                if self._profile_picker_enabled(index):
                     self._choose_header_profile(index)
                     return
             self.profile_selection_label.setText('No compatible profile. Create or edit one in Execution Profiles.')
@@ -1777,6 +1861,10 @@ class MainWindow(QMainWindow):
         vue.addSeparator()
         self._action(vue, "Compare readers side by side", "Ctrl+Shift+D",
                      self._toggle_compare, "mdi.view-split-vertical")
+
+        aide = self.menuBar().addMenu("&Help")
+        self.act_help = self._action(aide, "Pytest Runner help", "F1",
+                                     self.open_help, "mdi.help-circle-outline")
 
         # La navigation principale remplace la barre de menus. Les QAction
         # restent rattachees a la fenetre afin de conserver tous les
@@ -2101,6 +2189,7 @@ class MainWindow(QMainWindow):
             "Switch to the light theme" if soleil else "Switch to the dark theme")
         self.page_theme_button.setIcon(
             icons.icon("mdi.theme-light-dark", t.TEXT_MUTED))
+        self.about_button.setIcon(icons.icon("mdi.information-outline", t.TEXT_MUTED))
         for cle, glyph in (
                 ("workspace", "mdi.play-circle-outline"),
                 ("profiles", "mdi.playlist-edit"),
@@ -2109,6 +2198,7 @@ class MainWindow(QMainWindow):
                 ("python", "mdi.language-python"),
                 ("settings", "mdi.cog-outline"),
                 ("console", "mdi.console"),
+                ("help", "mdi.help-circle-outline"),
                 ("yaml", "mdi.file-cog-outline")):
             self.nav_buttons[cle].setIcon(icons.icon(glyph, t.TEXT_MUTED))
         # Ni une icone teintee ni un StatusPill : juste un label dont la

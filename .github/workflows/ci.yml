@@ -4,7 +4,7 @@ name: Tests and Windows build
 # L'executable n'est reconstruit que sur main : c'est la version livree.
 on:
   push:
-    branches: [main, "codex/**"]
+    branches: [main, "codex/**", "claude/**"]
   pull_request:
     branches: [main]
   workflow_dispatch:

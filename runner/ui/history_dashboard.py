@@ -60,6 +60,7 @@ from runner.ui.results_panel import ReaderViews
 from runner.ui.widgets import EmptyState, StatusRibbon
 from runner.ui.external_log import open_log_folder
 from runner.ui.runtime_polish import InlineNotice
+from runner.ui.qt_safety import tolerate_destruction
 
 
 def _when(timestamp: float, with_date: bool = True) -> str:
@@ -384,6 +385,7 @@ class RunCard(QFrame):
         layout.addLayout(body)
         self.set_selected(False)
 
+    @tolerate_destruction(False)
     def eventFilter(self, watched, event):
         if watched is self.run_title and event.type() in (QEvent.Resize, QEvent.FontChange):
             elided = self.run_title.fontMetrics().elidedText(
@@ -1229,6 +1231,7 @@ class HistoryWindow(QDialog):
             self.detail_stack.setCurrentWidget(self.detail_empty)
         self._update_compare_action()
 
+    @tolerate_destruction(False)
     def eventFilter(self, watched, event):
         if (watched is getattr(self, 'tabs', None)
                 and event.type() in (QEvent.Resize, QEvent.Show)):
@@ -1239,6 +1242,7 @@ class HistoryWindow(QDialog):
             self._cards_timer.start(0)
         return super().eventFilter(watched, event)
 
+    @tolerate_destruction(None)
     def _sync_group_corner(self, *_):
         """Use the empty tab-row space, with a fallback for narrow windows."""
         detail = self.execution_detail

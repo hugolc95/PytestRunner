@@ -21,9 +21,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, Signal, QTimer
+from PySide6.QtCore import QEvent, Qt, Signal, QTimer
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QMenu,
@@ -725,6 +726,9 @@ class ResultsPanel(QWidget):
         self.tabs = QTabWidget(self)
         self.tabs.tabBar().setObjectName("PrimaryTabs")
         self.tabs.tabBar().setExpanding(True)
+        # L'onglet courant est en gras, donc plus large : sans nouvelle mise
+        # en page, le dernier onglet debordait de la barre en demi-ecran.
+        self.tabs.currentChanged.connect(self._relayout_tabs)
         self.tabs.addTab(self.detail,
                          icons.icon("mdi.text-box-search-outline", t.TEXT_MUTED),
                          "Detail")
@@ -751,8 +755,13 @@ class ResultsPanel(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        compact = event.size().width() < 480
-        icon_only = event.size().width() < 290
+        largeur = event.size().width()
+        self._apply_tab_density(largeur < 480, largeur < 290)
+
+    def _relayout_tabs(self, *_):
+        QApplication.sendEvent(self.tabs, QEvent(QEvent.LayoutRequest))
+
+    def _apply_tab_density(self, compact: bool, icon_only: bool) -> None:
         if (compact, icon_only) == getattr(self, '_tab_density', None):
             return
         self._tab_density = compact, icon_only

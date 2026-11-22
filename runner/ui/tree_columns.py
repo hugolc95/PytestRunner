@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Signal, Qt
+from runner.ui.qt_safety import tolerate_destruction
 
 
 class NameColumnFitter(QObject):
@@ -34,6 +35,7 @@ class NameColumnFitter(QObject):
         self._timer.setInterval(0)
         self._timer.timeout.connect(self.fit)
 
+    @tolerate_destruction(False)
     def eventFilter(self, watched, event):
         if event.type() == QEvent.Resize:
             # Jamais pendant le redimensionnement lui-meme : la vue peut etre

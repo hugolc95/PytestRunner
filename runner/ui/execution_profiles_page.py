@@ -64,6 +64,7 @@ from runner.ui.profile_history import ProfileEdit, undoable
 from runner.ui.profile_clipboard import SequenceClipboard
 from runner.ui.profile_selection_model import ProfileSelectionModel
 from runner.ui import profile_sequence_view as sequence_view
+from runner.ui.qt_safety import tolerate_destruction
 
 _OVERRIDES_ROLE = Qt.UserRole + 20
 _LABEL_ROLE = Qt.UserRole + 23
@@ -558,11 +559,13 @@ class ExecutionProfilesPage(QWidget):
         self.sequence_list.order_changed.connect(self._on_sequence_reordered)
         return frame
 
+    @tolerate_destruction(False)
     def eventFilter(self, watched, event):
         if watched is getattr(self, '_sequence_frame', None) and event.type() == QEvent.Resize:
             QTimer.singleShot(0, self._adapt_sequence_tools)
         return super().eventFilter(watched, event)
 
+    @tolerate_destruction(None)
     def _adapt_sequence_tools(self):
         # Un panneau retreci garde des actions entieres, jamais des mots coupes.
         compact = self._sequence_frame.width() < 560

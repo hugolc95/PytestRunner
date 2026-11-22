@@ -5,6 +5,7 @@ donnees recues, ceux-ci verifient qu'elles lui arrivent bien.
 
 from __future__ import annotations
 
+from runner.tests.qt_helpers import widgets_du_layout
 import pytest
 from PySide6.QtCore import QSettings
 
@@ -50,9 +51,7 @@ def test_markers_reach_the_detail_panel(fenetre):
     _selectionner(fenetre)
 
     assert not fenetre.results.detail.markers_row.isHidden()
-    textes = [fenetre.results.detail._markers_layout.itemAt(i).widget().text()
-             for i in range(fenetre.results.detail._markers_layout.count())
-             if fenetre.results.detail._markers_layout.itemAt(i).widget() is not None]
+    textes = [w.text() for w in widgets_du_layout(fenetre.results.detail._markers_layout)]
     assert textes == ["smoke", "auth"]
 
 

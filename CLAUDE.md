@@ -43,11 +43,33 @@ sous-processus, avec l'interpréteur configuré pour les tests.
 - Un test qui attend un sous-processus ou un minuteur attend une condition
   (boucle avec limite, `qtbot.waitUntil`), jamais un délai fixe : la suite
   tourne en parallèle et sous charge.
-- Instabilités natives connues (PySide, objets Qt détruits encore référencés) :
-  segfault intermittent de `test_profile_header_picker` (bascules rapides
-  Tests / Profiles) et `QWidgetItem` à la place d'un modèle dans
-  `ExecutionProfilesPage._build_ui`. Comparer avec `git stash` avant de
-  conclure à une régression.
+- Plantages natifs PySide (corrigés en 1.8.0, ne pas les réintroduire) :
+  - jamais `combo.model().item(i)` : l'enveloppe `QStandardItem` survit à
+    `combo.clear()`, et un objet alloué ensuite à la même adresse (un
+    `QEvent`, un modèle) est pris pour elle → segfault. Passer par
+    `setItemData` / `model().flags(...)` (voir `_refresh_profile_picker`) ;
+  - jamais `layout.itemAt(i)` dans l'application pour retrouver un widget
+    ou un sous-layout : même piège avec `QWidgetItem` quand le widget est
+    retiré ou reparenté. Garder une référence (`navigation_utilities`) ;
+    dans les tests, `qt_helpers.widgets_du_layout` ;
+  - un `eventFilter` ou un `event()` Python reçoit encore des événements
+    pendant la destruction de la fenêtre : le décorer avec
+    `qt_safety.tolerate_destruction` ;
+  - `conftest.py` détruit les fenêtres d'un test à la fin de CE test
+    (`DeferredDelete` + `gc.collect()`), après avoir attendu leurs threads.
+  Un segfault restant se diagnostique avec `python -X faulthandler` et, sous
+  Linux, `gdb -batch -ex run -ex bt --args python -m pytest …`.
+
+## Guide d'utilisation
+
+- Texte : `runner/ui/help_content.py` (rubriques en anglais, fragments HTML).
+  Mise en page : `runner/ui/help_site.py`, site hors ligne d'un seul
+  fichier, réécrit puis ouvert dans le navigateur par Help et F1 sur la
+  rubrique de la page affichée (`CONTEXT_TOPICS`). Aucune ressource réseau.
+- Une page ou un libellé de l'interface qui change : mettre la rubrique à
+  jour. `test_help_page.py` vérifie les liens, la génération du site et que
+  chaque libellé cité en gras existe encore dans `runner/ui` (une simple mise
+  en valeur s'ajoute à `EMPHASE`).
 
 ## Livrer
 

@@ -434,6 +434,14 @@ class EditorCampaignSync(QObject):
         self.undo_action.setShortcut(QKeySequence.Undo)
         self.undo_action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
         self.undo_action.triggered.connect(self.undo)
+        # Ctrl+Z est aussi le raccourci de l'annulation d'edition de la page.
+        # Deux actions actives sur le meme raccourci sont "ambigues" pour Qt,
+        # qui n'en declenche alors AUCUNE : Ctrl+Z ne faisait plus rien dans
+        # Test sequence. Celle-ci n'est donc active que si `refresh` l'a
+        # autorisee, et s'eteint des que la page a sa propre modification a
+        # annuler.
+        self.undo_action.setEnabled(False)
+        page.undo_stack.indexChanged.connect(self._yield_undo_shortcut)
         page.sequence_list.addAction(self.undo_action)
         self.notice = CampaignNotice(page)
         self.notice.sources.hide()
@@ -441,6 +449,14 @@ class EditorCampaignSync(QObject):
         self.notice.review.connect(self.review)
         self.notice.undo.connect(self.undo)
         self.notice.tracking.connect(page.manage_campaign_sources)
+
+    def _yield_undo_shortcut(self, *_):
+        # La pile emet encore pendant la destruction de la page.
+        try:
+            if self.page.undo_stack.count():
+                self.undo_action.setEnabled(False)
+        except RuntimeError:
+            pass
 
     def has_undo(self, identifier):
         from runner.domain.campaign_revision import previous, fingerprint

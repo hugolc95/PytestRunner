@@ -139,14 +139,18 @@ def test_markers_share_tree_toolbar_and_shortcut_respects_queue_lock(window, qtb
     assert window.tree_toolbar.isAncestorOf(window.markers)
     assert window.selection_footer.isAncestorOf(window.filter_label)
     assert window.markers.text() == ''
+    # Hauteur stabilisee : sous charge, la mise en page n'est pas finie apres
+    # un delai fixe (CLAUDE.md : attendre une condition).
+    qtbot.waitUntil(lambda: not window.run_header._whole_timer.isActive())
     qtbot.wait(20)
     header_height = window.run_header.height()
     window.markers.popup.field.setText('not destructive')
     assert window.model.checked_nodeids() == [NODES[0], NODES[2]]
     assert not window.filter_label.isHidden()
     assert window.markers.property('active')
-    qtbot.wait(20)
-    assert window.run_header.height() == header_height
+    # Le filtre actif ne doit pas faire grandir l'en-tete, une fois la mise
+    # en page terminee.
+    qtbot.waitUntil(lambda: window.run_header.height() == header_height, timeout=3000)
     window.clear_marker_filter()
     assert window.model.checked_nodeids() == [NODES[0], NODES[2]]
     assert window.filter_label.isHidden()
