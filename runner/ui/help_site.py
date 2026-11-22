@@ -16,6 +16,7 @@ import platform
 import re
 import sys
 from pathlib import Path
+from urllib.parse import quote
 
 from runner.ui.help_content import CATEGORIES, CONTEXT_TOPICS, TOPICS, TOPICS_BY_ID
 
@@ -244,6 +245,7 @@ def build_site(values: dict[str, str] | None = None, start: str = "welcome",
             .replace("@@ICON_THEME@@", _ICONES["theme"])
             .replace("@@ICON_PRINT@@", _ICONES["print"])
             .replace("@@LOGO@@", _ICONES["logo"])
+            .replace("@@FAVICON@@", html.escape(_FAVICON, quote=True))
             .replace("@@JS@@", _JS))
 
 
@@ -288,6 +290,25 @@ def _svg(chemin: str, taille: int = 18) -> str:
             f'stroke-linejoin="round" aria-hidden="true">{chemin}</svg>')
 
 
+# Le logo de l'application (assets/pytest_runner.svg), recopie ici : le
+# guide doit rester autonome, et l'executable n'embarque que le .ico.
+# `test_help_page` verifie qu'il suit le fichier d'origine.
+_LOGO_FORMES = (
+    '<rect x="28" y="28" width="456" height="456" rx="104" fill="#082F49"/>'
+    '<rect x="34" y="34" width="444" height="444" rx="98" fill="none" stroke="#15506F" stroke-width="12"/>'
+    '<g fill="none" stroke-linecap="round" stroke-linejoin="round">'
+    '<path d="M132 171V341" stroke="#53657B" stroke-width="14"/>'
+    '<path d="M132 174H247M132 256H270M132 338H229" stroke="#E7EEF7" stroke-width="22"/>'
+    '</g>'
+    '<circle cx="132" cy="174" r="22" fill="#22C55E"/>'
+    '<path d="M122 174l7 7 14-16" fill="none" stroke="#F8FAFC" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>'
+    '<circle cx="132" cy="256" r="22" fill="#EF4444"/>'
+    '<path d="M123 247l18 18M141 247l-18 18" fill="none" stroke="#F8FAFC" stroke-width="8" stroke-linecap="round"/>'
+    '<circle cx="132" cy="338" r="22" fill="#F59E0B"/>'
+    '<path d="M121 338h22" fill="none" stroke="#F8FAFC" stroke-width="8" stroke-linecap="round"/>'
+    '<path d="M292 151C292 139 305 132 315 139L401 242C408 250 408 262 401 270L315 373C305 380 292 373 292 361V151Z" fill="#38BDF8"/>'
+)
+
 _ICONES = {
     "search": _svg('<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>', 16),
     "menu": _svg('<path d="M4 6h16M4 12h16M4 18h16"/>'),
@@ -297,11 +318,13 @@ _ICONES = {
                   '<path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/>'),
     "copy": _svg('<rect x="9" y="9" width="13" height="13" rx="2"/>'
                  '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>', 16),
-    "logo": ('<svg width="26" height="26" viewBox="0 0 32 32" aria-hidden="true">'
-             '<path d="M16 2 28 9v14L16 30 4 23V9z" fill="var(--accent)"/>'
-             '<path d="m11 16.5 3.5 3.5L21.5 12" fill="none" stroke="#fff" '
-             'stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg>'),
+    "logo": ('<svg class="logo" width="30" height="30" viewBox="0 0 512 512" aria-hidden="true">'
+             + _LOGO_FORMES + '</svg>'),
 }
+
+# Icone d'onglet du navigateur : le meme logo, en URL de donnees.
+_FAVICON = ("data:image/svg+xml," + quote(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">' + _LOGO_FORMES + '</svg>'))
 
 
 _GABARIT = """<!doctype html>
@@ -311,6 +334,7 @@ _GABARIT = """<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="color-scheme" content="light dark">
 <title>@@TITLE@@</title>
+<link rel="icon" href="@@FAVICON@@">
 <script>
 (function () {
   var theme = null;
@@ -399,6 +423,7 @@ button { font: inherit; color: inherit; }
   padding: 0 20px; background: var(--bg); background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: saturate(180%) blur(10px);
   border-bottom: 1px solid var(--border); }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 650; white-space: nowrap; }
+.brand .logo { flex: none; border-radius: 7px; }
 .brand:hover { text-decoration: none; }
 .brand-name { font-size: 16px; letter-spacing: -.01em; }
 .brand-sep { color: var(--text-faint); font-weight: 400; }

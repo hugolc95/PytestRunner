@@ -199,3 +199,17 @@ def test_support_lists_the_guide_file_and_old_browsers_keep_an_opaque_top_bar(wi
     assert valeurs["guide_file"] in site
     # Sans color-mix() (Chrome/Edge < 111), la barre du haut garde un fond.
     assert "background: var(--bg); background: color-mix(" in site
+
+
+def test_guide_shows_the_application_logo():
+    """Le logo du guide suit assets/pytest_runner.svg, forme par forme."""
+    from pathlib import Path
+
+    svg = (Path(__file__).resolve().parents[2] / "assets" / "pytest_runner.svg").read_text(encoding="utf-8")
+    formes = re.findall(r"<(?:rect|path|circle)\b[^>]*/>", svg)
+    assert formes
+    site = help_site.build_site({})
+    marque = re.search(r'<a class="brand".*?</a>', site, re.S).group(0)
+    for forme in formes:
+        assert forme in marque, forme
+    assert '<link rel="icon" href="data:image/svg+xml,' in site
