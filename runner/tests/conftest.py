@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import gc
 import sys
+import time
 
 import pytest
 
@@ -107,3 +108,50 @@ def sans_widget_orphelin():
     application.sendPostedEvents(None, QEvent.Type.DeferredDelete)
     gc.collect()
     application.processEvents()
+
+
+# Au-dela, une boite modale ouverte pendant un test est consideree oubliee.
+DELAI_DIALOGUE_MODAL = 20.0
+
+
+@pytest.fixture(autouse=True)
+def sans_dialogue_bloquant(qapp):
+    """Ferme une boite modale restee ouverte et fait echouer le test.
+
+    Une collecte ralentie par la charge (suite en parallele) echouait et
+    l'application ouvrait sa fenetre d'erreur modale : `exec()` attendait un
+    clic qui ne viendrait jamais, et le delai de pytest-timeout ne peut pas
+    interrompre une boucle Qt. Le worker restait bloque jusqu'a la limite
+    de la CI. Ici, le test echoue avec le titre et le texte de la boite.
+    """
+    from PySide6.QtCore import QTimer
+    from PySide6.QtWidgets import QApplication, QDialog
+
+    fermees: list[str] = []
+    ouvertes: dict[int, float] = {}
+
+    def surveiller():
+        modale = QApplication.activeModalWidget()
+        if modale is None:
+            ouvertes.clear()
+            return
+        debut = ouvertes.setdefault(id(modale), time.monotonic())
+        if time.monotonic() - debut < DELAI_DIALOGUE_MODAL:
+            return
+        texte = modale.text() if hasattr(modale, "text") else ""
+        fermees.append(f"{modale.windowTitle()} -- {texte}".strip(" -"))
+        ouvertes.pop(id(modale), None)
+        if isinstance(modale, QDialog):
+            modale.reject()
+        else:
+            modale.close()
+
+    minuteur = QTimer()
+    minuteur.setInterval(500)
+    minuteur.timeout.connect(surveiller)
+    minuteur.start()
+    yield
+    minuteur.stop()
+    if fermees:
+        pytest.fail("Boite de dialogue modale restee ouverte pendant le test : "
+                    + " | ".join(fermees), pytrace=False)
