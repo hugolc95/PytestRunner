@@ -24,7 +24,7 @@ import traceback
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
-PAGES = ("profiles", "yaml", "history", "comparison", "python", "console", "help", "settings")
+PAGES = ("profiles", "yaml", "history", "comparison", "python", "console", "settings")
 TABS = ("detail", "source", "output", "logs")
 
 

@@ -39,7 +39,7 @@ def test_dynamic_button_clicks_are_recorded_once_and_stop_on_shutdown(window):
     assert len(messages) == 1
 
 
-@pytest.mark.parametrize("name", ["settings", "console", "help"])
+@pytest.mark.parametrize("name", ["settings", "console"])
 def test_page_detaches_and_reattaches_same_content(window, name):
     window._show_page(name)
     page = getattr(window, name + "_page")
@@ -63,7 +63,7 @@ def test_page_detaches_and_reattaches_same_content(window, name):
     assert page.body.isVisible()
 
 
-@pytest.mark.parametrize("name", ["settings", "console", "help"])
+@pytest.mark.parametrize("name", ["settings", "console"])
 def test_detached_page_restores_mode_and_geometry_after_restart(window, name, qtbot):
     page = getattr(window, name + "_page")
     window._show_page(name)

@@ -523,15 +523,8 @@ class PreferencesController(QObject):
         self.console_page = DetachablePage(window, "Console", "Actual commands, interface actions, process output and tracebacks", self.console)
         window.pages.addWidget(self.settings_page)
         window.pages.addWidget(self.console_page)
-        from runner.ui.help_page import HelpCenter
-        self.help_center = HelpCenter(window)
-        self.help_page = DetachablePage(
-            window, "Help", "User guide, workflows, keyboard shortcuts and troubleshooting • F1 opens the topic of the current page",
-            self.help_center)
-        window.pages.addWidget(self.help_page)
         window.settings_page = self.settings_page
         window.console_page = self.console_page
-        window.help_page = self.help_page
         self.apply()
         self.attach_context(window)
         self._traced_buttons = weakref.WeakSet()
@@ -579,7 +572,7 @@ class PreferencesController(QObject):
                 context.profile_tree.scrollTo(item)
 
     def detachable_pages(self):
-        return (self.settings_page, self.console_page, self.help_page)
+        return (self.settings_page, self.console_page)
 
     def restore_detached_pages(self):
         if not self.active:
@@ -690,7 +683,6 @@ class PreferencesController(QObject):
             control.blockSignals(False)
             self.record("actions", f"Theme changed: {t.current_theme()}")
         self.settings_panel.restyle()
-        self.help_center.restyle()
         for page in self.detachable_pages():
             page.restyle()
 

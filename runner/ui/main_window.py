@@ -24,9 +24,10 @@ from PySide6.QtCore import (
     QStandardPaths,
     Qt,
     QTimer,
+    QUrl,
     Slot,
 )
-from PySide6.QtGui import QIcon, QKeySequence
+from PySide6.QtGui import QDesktopServices, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -399,7 +400,14 @@ class MainWindow(QMainWindow):
             bouton.setIcon(icons.icon(glyph, t.TEXT_MUTED))
             bouton.setToolTip(texte)
             bouton.setCursor(Qt.PointingHandCursor)
-            bouton.clicked.connect(lambda checked=False, page=cle: self._show_page(page))
+            if cle == "help":
+                # Le guide s'ouvre dans le navigateur : ce bouton n'est pas
+                # une page de la fenetre et ne reste pas "selectionne".
+                bouton.setCheckable(False)
+                bouton.setToolTip("Open the user guide in your browser (F1)")
+                bouton.clicked.connect(lambda checked=False: self.open_help())
+            else:
+                bouton.clicked.connect(lambda checked=False, page=cle: self._show_page(page))
             self.nav_buttons[cle] = bouton
             # Help et Settings restent ensemble en bas : ce sont les pages
             # "a propos de l'outil", separees des pages de travail.
@@ -619,7 +627,6 @@ class MainWindow(QMainWindow):
             "yaml": self.yaml_page,
             "settings": getattr(self, "settings_page", self.workspace_page),
             "console": getattr(self, "console_page", self.workspace_page),
-            "help": getattr(self, "help_page", self.workspace_page),
         }
         cible = pages.get(page, self.workspace_page)
         context = self._selected_run_context()
@@ -655,24 +662,34 @@ class MainWindow(QMainWindow):
             self.preferences.track_buttons()
             self.preferences.record("actions", f"Navigation: {page}")
 
-    def open_help(self, topic: str = "") -> None:
-        """F1 : ouvre l'aide sur la rubrique de la page affichee.
+    def open_help(self, topic: str = "") -> bool:
+        """F1 et Help : ouvre le guide dans le navigateur, sur la rubrique de
+        la page affichee.
 
-        Un onglet de run detache delegue a la fenetre principale, seule a
-        porter la page Help.
+        Le guide est un site HTML hors ligne d'un seul fichier (`help_site`),
+        reecrit a chaque ouverture avec les valeurs du poste. Un onglet de
+        run detache delegue a la fenetre principale.
         """
+        from runner.ui import help_site
+
         hote = self._run_host or self
-        help_page = getattr(hote, "help_page", None)
-        if help_page is None:
-            return
         if not topic:
             page = getattr(hote, "_page_history", ["workspace"])[-1]
-            # F1 depuis l'aide elle-meme garde la rubrique en cours de lecture.
-            if page != "help":
-                topic = help_page.content.topic_for_page(page)
-        if topic:
-            help_page.content.show_topic(topic)
-        hote._show_page("help")
+            topic = help_site.topic_for_page(page)
+        try:
+            chemin = help_site.write_guide(hote, topic)
+        except OSError as exc:
+            ErrorDialog.show_error(hote, "Could not open the user guide",
+                                   f"The guide could not be written: {exc.strerror or exc}")
+            return False
+        ouvert = QDesktopServices.openUrl(QUrl.fromLocalFile(str(chemin)))
+        if hasattr(hote, "preferences"):
+            hote.preferences.record("actions", f"User guide opened: {topic} · {chemin}")
+        if not ouvert:
+            ErrorDialog.show_error(hote, "Could not open the user guide",
+                                   "No web browser could open the guide. Open this file manually:",
+                                   str(chemin))
+        return bool(ouvert)
 
     def _show_previous_attached_page(self) -> None:
         for page in reversed(getattr(self, "_page_history", ["workspace"])):

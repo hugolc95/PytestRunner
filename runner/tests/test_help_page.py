@@ -1,13 +1,12 @@
-"""Centre d'aide : navigation, F1 contextuel, recherche, liens et export."""
+"""Guide d'utilisation : contenu, site hors ligne, bouton Help et F1."""
+import json
 import re
 
 import pytest
 from PySide6.QtCore import QUrl
-from PySide6.QtWidgets import QApplication
 
-from runner.ui import help_content
+from runner.ui import help_site
 from runner.ui.help_content import APP_PAGES, CATEGORIES, CONTEXT_TOPICS, TOPICS, TOPICS_BY_ID
-from runner.ui.help_page import HelpCenter, support_text
 from runner.ui.main_window import MainWindow
 from runner.version import __version__
 
@@ -24,10 +23,25 @@ def window(qtbot):
     w.close()
 
 
+@pytest.fixture
+def opened(monkeypatch):
+    """Les URL que l'application demande d'ouvrir, sans lancer de navigateur."""
+    urls = []
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl",
+                        lambda url: urls.append(url) or True)
+    return urls
+
+
+def start_topic(path) -> str:
+    texte = path.read_text(encoding="utf-8")
+    return json.loads(re.search(r"var START_TOPIC = (\"[\w-]+\");", texte).group(1))
+
+
 def test_every_topic_is_unique_categorized_and_links_resolve():
     ids = [topic.id for topic in TOPICS]
     assert len(ids) == len(set(ids))
     assert {topic.category for topic in TOPICS} == set(CATEGORIES)
+    assert set(help_site.CATEGORY_BLURBS) == set(CATEGORIES)
     for topic in TOPICS:
         assert topic.title and topic.summary and topic.body.strip()
         for schema, cible in LIEN.findall(topic.body):
@@ -42,172 +56,86 @@ def test_every_navigation_page_has_a_contextual_topic(window):
     assert set(window.nav_buttons) <= set(CONTEXT_TOPICS)
 
 
-def test_help_sits_just_above_settings_at_the_bottom(window):
+def test_site_is_self_contained_and_contains_every_topic():
+    site = help_site.build_site({"version": __version__}, start="history")
+    assert site.startswith("<!doctype html>")
+    # Hors ligne : aucune ressource chargee depuis le reseau.
+    assert not re.search(r"(src|href)=['\"]https?://", site)
+    assert "@import" not in site
+    for topic in TOPICS:
+        assert f'id="{topic.id}"' in site
+        assert f'href="#{topic.id}"' in site
+    # Plus aucun lien interne brut ni marqueur non remplace.
+    assert not LIEN.search(site)
+    assert not re.search(r"\{(version|history_dir|settings_file|interpreter)\}", site)
+    assert 'var START_TOPIC = "history";' in site
+    index = json.loads(re.search(
+        r'<script type="application/json" id="search-index">(.*?)</script>', site, re.S).group(1))
+    assert [entry["id"] for entry in index] == [topic.id for topic in TOPICS]
+    assert all(entry["text"] and not entry["text"].startswith("#") for entry in index)
+
+
+def test_unknown_start_topic_falls_back_to_welcome():
+    assert 'var START_TOPIC = "welcome";' in help_site.build_site({}, start="nope")
+
+
+def test_section_anchors_are_unique():
+    site = help_site.build_site({})
+    ancres = re.findall(r'<h2 id="([\w-]+)"', site)
+    assert ancres and len(ancres) == len(set(ancres))
+
+
+def test_support_topic_shows_the_real_values_and_a_copy_button(window):
+    valeurs = help_site.support_values(window)
+    assert valeurs["version"] == __version__
+    assert valeurs["settings_file"].endswith(".ini")
+    site = help_site.build_site(valeurs, start="support")
+    support = re.search(r'<article class="topic" id="support".*?</article>', site, re.S).group(0)
+    assert __version__ in support
+    assert "data-copy=" in support and "Pytest Runner: " + __version__ in support
+
+
+def test_help_sits_just_above_settings_and_opens_the_guide(window, opened):
     keys = list(window.nav_buttons)
     assert keys[-2:] == ["help", "settings"]
     layout = window.navigation.layout()
     help_index = layout.indexOf(window.nav_buttons["help"])
     assert layout.itemAt(help_index - 1).spacerItem() is not None
     assert layout.indexOf(window.nav_buttons["settings"]) == help_index + 1
+    assert not window.nav_buttons["help"].isCheckable()
+    page = window.pages.currentWidget()
     window.nav_buttons["help"].click()
-    assert window.pages.currentWidget() is window.help_page
-    assert window.nav_buttons["help"].isChecked()
+    assert window.pages.currentWidget() is page
+    assert len(opened) == 1 and opened[0].isLocalFile()
+    chemin = help_site.guide_path()
+    assert opened[0] == QUrl.fromLocalFile(str(chemin))
+    assert start_topic(chemin) == "run-tests"
 
 
-def test_every_topic_renders_without_unreplaced_markers(window):
-    centre = window.help_page.content
-    for topic in TOPICS:
-        assert centre.show_topic(topic.id)
-        texte = centre.browser.toPlainText()
-        assert topic.title in texte
-        assert not re.search(r"\{[a-z_]+\}", texte), topic.id
-
-
-def test_f1_opens_the_topic_of_the_current_page(window):
+def test_f1_opens_the_topic_of_the_current_page(window, opened):
     window._show_page("history")
     window.act_help.trigger()
-    assert window.pages.currentWidget() is window.help_page
-    assert window.help_page.content.current_topic_id == "history"
+    assert start_topic(help_site.guide_path()) == "history"
     window._show_page("profiles")
     window.open_help()
-    assert window.help_page.content.current_topic_id == "profiles"
+    assert start_topic(help_site.guide_path()) == "profiles"
     window.open_help("shortcuts")
-    assert window.help_page.content.current_topic_id == "shortcuts"
+    assert start_topic(help_site.guide_path()) == "shortcuts"
+    assert len(opened) == 3
 
 
-def test_search_filters_topics_and_highlights_matches(window):
-    centre = window.help_page.content
-    centre.search.setText("queue")
-    visibles = [topic_id for topic_id, item in centre._items.items() if not item.isHidden()]
-    assert "run-tabs" in visibles and "glossary" in visibles
-    assert "comparison" not in visibles
-    centre._open_first_match()
-    assert centre.current_topic_id in visibles
-    assert centre.browser.extraSelections()
-    centre.search.setText("zzzz-no-such-word")
-    assert all(item.isHidden() for item in centre._items.values())
-    assert "No topic matches" in centre.result_label.text()
-    centre.search.clear()
-    assert not any(item.isHidden() for item in centre._items.values())
-    assert not centre.browser.extraSelections()
-
-
-def test_links_navigate_topics_and_application_pages(window):
-    centre = window.help_page.content
-    centre.show_topic("welcome")
-    centre._on_link(QUrl("topic:quick-start"))
-    assert centre.current_topic_id == "quick-start"
-    centre.back()
-    assert centre.current_topic_id == "welcome"
-    centre.forward()
-    assert centre.current_topic_id == "quick-start"
-    centre._on_link(QUrl("page:history"))
-    assert window.pages.currentWidget() is window.history_page
-    assert not centre.show_topic("does-not-exist")
-
-
-def test_support_topic_and_clipboard_show_real_values(window):
-    centre = window.help_page.content
-    centre.show_topic("support")
-    texte = centre.browser.toPlainText()
-    assert __version__ in texte
-    centre.copy_support_information()
-    copie = QApplication.clipboard().text()
-    assert copie == support_text(window)
-    assert f"Pytest Runner: {__version__}" in copie
-    assert "Settings:" in copie
-
-
-def test_exported_guide_is_self_contained(window, tmp_path):
-    centre = window.help_page.content
-    cible = tmp_path / "guide.html"
-    assert centre.export_guide(str(cible))
-    contenu = cible.read_text(encoding="utf-8")
-    for topic in TOPICS:
-        assert f"name='{topic.id}'" in contenu
-    assert "topic:" not in contenu and "page:" not in contenu
-    assert not re.search(r"\{(version|history_dir|settings_file)\}", contenu)
-    assert centre.export_guide(str(tmp_path / "missing" / "guide.html")) is False
-    assert "Export failed" in centre.status_label.text()
-
-
-def test_help_follows_theme_changes(window):
-    centre = window.help_page.content
-    centre.show_topic("results")
-    window.apply_theme("light")
-    assert centre.current_topic_id == "results"
-    assert "Reading the results" in centre.browser.toPlainText()
-    window.apply_theme("dark")
-
-
-def test_help_center_works_without_a_window(qtbot):
-    centre = HelpCenter()
-    qtbot.addWidget(centre)
-    assert centre.show_topic("support")
-    centre._on_link(QUrl("page:history"))
-    assert "Unknown" not in help_content.TOPICS_BY_ID["support"].title
+def test_a_missing_browser_is_reported_with_the_file_path(window, monkeypatch):
+    erreurs = []
+    monkeypatch.setattr("runner.ui.main_window.QDesktopServices.openUrl", lambda url: False)
+    monkeypatch.setattr("runner.ui.main_window.ErrorDialog.show_error",
+                        lambda *args, **kwargs: erreurs.append(args))
+    assert window.open_help() is False
+    assert erreurs and str(help_site.guide_path()) in erreurs[0]
 
 
 def test_help_survives_sidebar_collapse(window):
     window._set_sidebar_collapsed(True)
     assert window.nav_buttons["help"].text() == ""
-    assert window.nav_buttons["help"].toolTip() == "Help"
+    assert window.nav_buttons["help"].toolTip()
     window._set_sidebar_collapsed(False)
     assert window.nav_buttons["help"].text() == "Help"
-
-
-def test_f1_from_help_keeps_the_topic_being_read(window):
-    window.open_help("faq")
-    window.open_help()
-    assert window.help_page.content.current_topic_id == "faq"
-
-
-def test_every_screenshot_is_generated_referenced_and_matches_its_legend():
-    from runner.ui.help_content import SCREENSHOTS
-    from runner.ui.help_page import shot_bytes, shot_manifest
-
-    manifest = shot_manifest()
-    references = " ".join(topic.body for topic in TOPICS)
-    for name, capture in SCREENSHOTS.items():
-        assert "{shot:" + name + "}" in references, name
-        donnees = shot_bytes(name)
-        assert donnees and donnees.startswith(b"\x89PNG"), name
-        # Regenerer apres avoir change les reperes : sinon les numeros de
-        # l'image ne correspondent plus a la legende.
-        assert manifest[name]["markers"] == len(capture.markers), name
-
-
-def test_topics_show_their_screenshot_with_a_numbered_legend(window):
-    from PySide6.QtGui import QTextDocument
-
-    centre = window.help_page.content
-    centre.show_topic("quick-start")
-    document = centre.browser.document()
-    html_rendu = document.toHtml()
-    assert "help-image:run-header" in html_rendu
-    image = centre.browser.loadResource(QTextDocument.ImageResource, QUrl("help-image:run-header"))
-    assert not image.isNull()
-    assert "Run tests (F5)" in centre.browser.toPlainText()
-
-
-def test_screenshots_follow_the_width_of_the_panel(window, qtbot):
-    centre = window.help_page.content
-    window._show_page("help")
-    centre.show_topic("run-tests")
-    window.resize(1500, 900)
-    qtbot.waitUntil(lambda: centre._largeur_images == (centre._image_width("run-overview"),))
-    large = centre._largeur_images[0]
-    assert large > 500
-    window.resize(900, 700)
-    qtbot.waitUntil(lambda: centre._largeur_images[0] < large)
-    assert centre._largeur_images[0] <= centre.browser.viewport().width()
-
-
-def test_exported_guide_embeds_the_screenshots(window, tmp_path):
-    centre = window.help_page.content
-    cible = tmp_path / "guide.html"
-    assert centre.export_guide(str(cible))
-    contenu = cible.read_text(encoding="utf-8")
-    assert contenu.count("data:image/png;base64,") == len(__import__(
-        "runner.ui.help_content", fromlist=["SCREENSHOTS"]).SCREENSHOTS)
-    assert "{shot:" not in contenu and "help-image:" not in contenu

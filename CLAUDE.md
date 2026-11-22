@@ -56,15 +56,14 @@ sous-processus, avec l'interpréteur configuré pour les tests.
   Un segfault restant se diagnostique avec `python -X faulthandler` et, sous
   Linux, `gdb -batch -ex run -ex bt --args python -m pytest …`.
 
-## Aide intégrée
+## Guide d'utilisation
 
-- Texte et captures : `runner/ui/help_content.py` (rubriques en anglais,
-  `SCREENSHOTS` = widgets numérotés + légendes). Affichage :
-  `runner/ui/help_page.py` (page Help, F1).
-- Après un changement visible d'un écran documenté, régénérer les captures :
-  `C:\Python312\python.exe scripts\generate_help_screenshots.py` (écrit
-  `runner/help_assets/*.png` et `manifest.json`). `test_help_page.py`
-  vérifie que chaque capture existe et que ses repères suivent sa légende.
+- Texte : `runner/ui/help_content.py` (rubriques en anglais, fragments HTML).
+  Mise en page : `runner/ui/help_site.py`, site hors ligne d'un seul
+  fichier, réécrit puis ouvert dans le navigateur par Help et F1 sur la
+  rubrique de la page affichée (`CONTEXT_TOPICS`). Aucune ressource réseau.
+- Une page ou un libellé de l'interface qui change : mettre la rubrique à
+  jour. `test_help_page.py` vérifie les liens et la génération du site.
 
 ## Livrer
 

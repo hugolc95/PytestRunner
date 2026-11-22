@@ -1,29 +1,26 @@
 # Pytest Runner GUI
 
-## Aide intégrée et passe de stabilité — v1.8.0
+## Guide d'utilisation et passe de stabilité — v1.8.0
 
-**Help**, juste au-dessus de **Settings** dans le menu de gauche, ouvre un
-guide d'utilisation complet, en anglais comme le reste de l'interface :
-premiers pas, Run Tests, sélection, lecteurs et ATR, onglets et file
-d'attente, résultats, Detail / Source / Output / Logs, profils d'exécution,
-YAML, Python Environment, History, comparaison, rapports HTML, Settings,
-Console, thèmes, tous les raccourcis clavier, dépannage, FAQ et glossaire.
+**Help**, juste au-dessus de **Settings** dans le menu de gauche, ouvre le
+guide d'utilisation complet dans le navigateur. **F1** l'ouvre directement
+sur la rubrique de la page affichée. Le guide est en anglais, comme
+l'interface, et couvre en 30 rubriques : premiers pas, Run Tests, sélection,
+lecteurs et ATR, onglets et file d'attente, résultats, Detail / Source /
+Output / Logs, profils d'exécution, YAML, Python Environment, History,
+comparaison, rapports HTML, Settings, Console, thèmes, raccourcis clavier,
+dépannage, FAQ et glossaire.
 
-- **F1** ouvre directement la rubrique de la page affichée.
-- **Search the help…** filtre les 30 rubriques et surligne les mots trouvés.
-- Les liens bleus ouvrent une autre rubrique ou la page concernée de
-  l'application ; les flèches reviennent en arrière.
+- C'est un site moderne d'un seul fichier, qui fonctionne hors ligne : menu
+  latéral, sommaire de page, étapes numérotées, encadrés, thème clair ou
+  sombre.
+- **Search the guide** (ou **Ctrl+K**) trouve instantanément les rubriques
+  et surligne les mots recherchés.
+- Le bouton d'impression produit tout le guide en PDF ; le fichier se
+  partage aussi tel quel par mail.
 - **Support and data locations** affiche la version, le Python des tests et
-  les dossiers de l'historique et des réglages de ce poste.
-  **Copy support information** les copie pour un signalement.
-- **Export guide…** enregistre tout le guide dans un seul fichier HTML, à
-  lire hors de l'application, imprimer ou partager.
-- **Detach window** garde l'aide à côté de la fenêtre principale.
-- Sept captures annotées montrent les écrans clés : Run Tests, ses trois
-  panneaux du haut, l'arbre des tests, le détail d'un échec, l'éditeur de
-  profils, History et Python Environment. Des pastilles orange numérotées
-  renvoient à la légende placée sous chaque image. Les captures s'adaptent à
-  la largeur du panneau et sont intégrées au guide exporté.
+  les dossiers de l'historique et des réglages de ce poste ; **Copy support
+  information** les copie pour un signalement.
 
 Corrections de stabilité :
 

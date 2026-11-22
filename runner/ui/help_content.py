@@ -1,19 +1,20 @@
-"""Contenu du centre d'aide integre (page Help).
+"""Contenu du guide d'utilisation (bouton Help, F1).
 
-Le texte vit ici, separe de la page qui l'affiche : on corrige une explication
-sans toucher au code de l'interface, et les tests verifient chaque lien.
+Le texte vit ici, separe de la mise en page (`help_site`) : on corrige une
+explication sans toucher au site, et les tests verifient chaque lien.
 
 Le contenu est en anglais comme le reste de l'interface : l'outil est deploye a
-l'international. Chaque rubrique est un fragment HTML simple, rendu par un
-QTextBrowser -- donc sans JavaScript ni CSS avance (pas de flex ni de grid).
+l'international. Chaque rubrique est un fragment HTML simple ; `help_site` en
+fait un site hors ligne d'un seul fichier, ouvert dans le navigateur.
 
 Liens internes :
 - ``topic:<id>`` ouvre une autre rubrique ;
-- ``page:<cle>`` ouvre une page de l'application (``workspace``, ``profiles``,
-  ``yaml``, ``history``, ``comparison``, ``python``, ``console``, ``settings``).
+- ``page:<cle>`` nomme une page de l'application (``workspace``, ``profiles``,
+  ``yaml``, ``history``, ``comparison``, ``python``, ``console``,
+  ``settings``) ; dans le navigateur, elle s'affiche comme un repere d'interface.
 
-Les marqueurs ``{version}``, ``{history_dir}``... sont remplaces a l'affichage
-par les valeurs reelles du poste (voir ``help_page.support_values``).
+Les marqueurs ``{version}``, ``{history_dir}``... sont remplaces a l'ouverture
+par les valeurs reelles du poste (voir ``help_site.support_values``).
 """
 
 from __future__ import annotations
@@ -32,117 +33,16 @@ class HelpTopic:
 
 
 def kbd(*keys: str) -> str:
-    """Raccourci clavier, rendu comme une touche."""
-    return " + ".join(f"<span class='kbd'>{key}</span>" for key in keys)
+    """Raccourci clavier, rendu comme une suite de touches."""
+    return "<span class='keys'>" + "".join(f"<kbd>{key}</kbd>" for key in keys) + "</span>"
 
 
 def tip(text: str) -> str:
-    return f"<p class='tip'><b>Tip.</b> {text}</p>"
+    return f"<div class='callout tip'><div class='callout-title'>Tip</div><p>{text}</p></div>"
 
 
 def note(text: str) -> str:
-    return f"<p class='note'><b>Important.</b> {text}</p>"
-
-
-@dataclass(frozen=True)
-class Screenshot:
-    """Capture annotee de l'application, generee par
-    `scripts/generate_help_screenshots.py`.
-
-    La definition vit ici, a cote du texte : le generateur numerote les
-    widgets de `markers` dans cet ordre, et l'aide affiche la meme liste
-    comme legende. Les deux ne peuvent donc pas se desaccorder.
-
-    - `page` : page de l'application a afficher ;
-    - `crop` : chemin du widget cadre, depuis la fenetre ('' = toute) ;
-    - `markers` : (chemin du widget, legende), numerotes a partir de 1.
-    """
-
-    name: str
-    page: str
-    crop: str
-    caption: str
-    markers: tuple[tuple[str, str], ...]
-    # Taille de fenetre propre a la capture (largeur, hauteur), sinon celle
-    # du generateur : une page presque vide se capture plus petite.
-    size: tuple[int, int] = ()
-
-
-SCREENSHOTS = {shot.name: shot for shot in (
-    Screenshot(
-        "run-overview", "workspace", "",
-        "The Run Tests page after a run on two readers.",
-        (("navigation", "Sidebar: every page of the application, Help and Settings at the bottom."),
-         ("run_tabs.tabs", "Run tabs. + New run prepares another run while this one executes."),
-         ("run_header.environment", "ENVIRONMENT: workspace folder, Browse, Collect and run name."),
-         ("run_header.execution", "EXECUTION: Run, Pause, Stop, Re-run failed and the readers."),
-         ("run_header.results", "RESULTS: progress ring and the five verdict counters."),
-         ("left_stack", "Test tree: tick the tests to run; one column per reader."),
-         ("results_stack", "Result panel: Detail, Source, Output and Logs of the selected test."),
-         ("_status_host", "Status bar: run status, elapsed time and background saves."))),
-    Screenshot(
-        "run-header", "workspace", "run_header",
-        "The three panels at the top of Run Tests.",
-        (("workspace_combo", "Workspace folder: type, paste or choose a recent one."),
-         ("browse_button", "Browse for another workspace folder."),
-         ("load_button", "Collect the tests again (Ctrl+R)."),
-         ("run_name_button", "Optional run name, shown in the tab, History and reports."),
-         ("launch_stack", "Run tests (F5). During a run this button becomes Pause."),
-         ("stop_button", "Stop the run (Esc)."),
-         ("rerun_button", "Re-run failed, errored and not-run tests (F6)."),
-         ("reader_selector", "Primary reader. Opening the list searches for readers again."),
-         ("readers_bar", "Additional readers: each runs the same selection in its own process."),
-         ("compass_ring", "Progress of the run."),
-         ("run_header._counters", "Passed, Failed, Skipped, Error and Not run. Click one to show only those tests."))),
-    Screenshot(
-        "test-tree", "workspace", "split[0]",
-        "The test tree and its toolbar.",
-        (("tree_view_switch", "All tests or Profiles: the classic tree or the loaded execution profile."),
-         ("search.field", "Find a test (Ctrl+F). Esc clears the search."),
-         ("markers", "Filter by pytest marker (Ctrl+M)."),
-         ("select_all_button", "Select all (Ctrl+A)."),
-         ("select_none_button", "Clear the selection (Ctrl+Shift+A)."),
-         ("tree.viewport", "Tick folders, files, tests or single parametrized cases. Right-click for more actions."))),
-    Screenshot(
-        "result-detail", "workspace", "results",
-        "Detail of a failed test.",
-        (("results.tabs.tabBar", "Detail, Source, Output and Logs (Ctrl+1 to Ctrl+4)."),
-         ("results.detail", "Verdict of each reader, duration and traceback. File links open Source."))),
-    Screenshot(
-        "profiles-editor", "profiles", "profiles_page",
-        "Editing an execution profile.",
-        (("profiles_page.profile_list", "Saved profiles. New profile, Import and Export are above the list."),
-         ("profiles_page.add_tests_button", "Add tests / groups at the selected position."),
-         ("profiles_page.group_button", "Create a coloured group from the selected tests."),
-         ("profiles_page.parameters_button", "YAML parameters of the selected test or group."),
-         ("profiles_page.sequence_list", "Test sequence: run order, groups, repetitions and custom YAML."),
-         ("profiles_page.save_button", "Save changes. Save as… keeps a copy."),
-         ("profiles_page.run_button", "Open in Run Tests to run the profile."))),
-    Screenshot(
-        "history", "history", "history_dashboard",
-        "History after a run.",
-        (("history_dashboard.search", "Search runs, tests or readers."),
-         ("history_dashboard.list_issues", "Show only runs with failures or errors."),
-         ("history_dashboard.compare_button", "Compare two or more runs of the same workspace."),
-         ("history_dashboard.run_list", "Recorded runs, newest first."),
-         ("history_dashboard.rerun_button", "Run the same selection again."),
-         ("history_dashboard.logs_button", "Open the log folder of the run."),
-         ("history_dashboard.export_button", "Export HTML, JUnit XML, profile or configuration YAML."))),
-    Screenshot(
-        "python-env", "python", "python_page",
-        "Choosing the Python interpreter of the tests.",
-        (("python_editor.path_field", "Path of the python.exe that has pytest installed."),
-         ("python_editor.test_button", "Test checks Python, its architecture and pytest."),
-         ("python_editor.status_label", "Result of the check."),
-         ("python_editor.save_button", "Save is available once the check succeeds.")),
-        size=(1100, 560)),
-)}
-
-
-def shot(name: str) -> str:
-    """Marqueur d'une capture dans le texte d'une rubrique."""
-    assert name in SCREENSHOTS, name
-    return "{shot:" + name + "}"
+    return f"<div class='callout note'><div class='callout-title'>Important</div><p>{text}</p></div>"
 
 
 CATEGORIES = (
@@ -192,7 +92,7 @@ down: it is reported as a result instead;</li>
 <tr><td><a href="page:comparison">Comparison</a></td><td>Compare verdicts across several historical runs.</td></tr>
 <tr><td><a href="page:python">Python Environment</a></td><td>Choose and verify the Python interpreter that runs the tests.</td></tr>
 <tr><td><a href="page:console">Console</a></td><td>See the real commands, process output and errors of the session.</td></tr>
-<tr><td><b>Help</b></td><td>This guide. Press {kbd("F1")} anywhere to open the topic of the current page.</td></tr>
+<tr><td><b>Help</b></td><td>This guide, in your web browser. Press {kbd("F1")} anywhere to open the topic of the current page.</td></tr>
 <tr><td><a href="page:settings">Settings</a></td><td>Personal preferences: theme, text size, timeouts, editor…</td></tr>
 </table>
 
@@ -200,7 +100,7 @@ down: it is reported as a result instead;</li>
 <p>New users should read <a href="topic:quick-start">Your first run in five
 steps</a>. If something does not work, go straight to
 <a href="topic:troubleshooting">Troubleshooting</a>.</p>
-{tip("Type a word in the search field above the topic list: every topic that mentions it is listed, and matches are highlighted in the text.")}
+{tip(f"Press {kbd('Ctrl', 'K')} or click <b>Search the guide</b> at the top: every topic that mentions your words is listed instantly. The guide works offline, can be printed or saved as PDF, and can be shared as a single file.")}
 """,
     ),
     HelpTopic(
@@ -208,27 +108,25 @@ steps</a>. If something does not work, go straight to
         "From an empty window to your first results.",
         "first run start begin tutorial steps beginner",
         f"""
-{shot("run-header")}
-<ol>
+<ol class='steps'>
 <li><b>Check the test interpreter.</b> Open <a href="page:python">Python
 Environment</a>, select the <code>python.exe</code> that has pytest installed
 and click <b>Test</b>. When the check succeeds, click <b>Save</b>.
 See <a href="topic:python-env">Python Environment</a>.</li>
 <li><b>Load a workspace.</b> On <a href="page:workspace">Run Tests</a>, type or
-paste the folder of your tests in the workspace field <b>(1)</b>, or click
-<b>Browse</b> <b>(2)</b>. The tests are collected automatically; <b>Collect</b>
-<b>(3)</b> or {kbd("Ctrl", "R")} collects again. See <a href="topic:workspace">Workspaces and collection</a>.</li>
+paste the folder of your tests in the workspace field, or click <b>Browse</b>.
+The tests are collected automatically; <b>Collect</b> or {kbd("Ctrl", "R")}
+collects again. See <a href="topic:workspace">Workspaces and collection</a>.</li>
 <li><b>Select the tests.</b> Tick tests, files or folders in the tree. Use
 <b>Find a test…</b> ({kbd("Ctrl", "F")}) or the marker filter
 ({kbd("Ctrl", "M")}) for large suites. See
 <a href="topic:selecting">Selecting tests</a>.</li>
 <li><b>Choose the readers</b> (only for suites that use readers). In
-<b>EXECUTION</b>, pick the primary reader <b>(8)</b> and, if needed, tick
-additional readers <b>(9)</b>.
+<b>EXECUTION</b>, pick the primary reader and, if needed, tick additional
+readers.
 See <a href="topic:readers">Readers and ATR</a>.</li>
-<li><b>Run.</b> Click <b>Run tests</b> <b>(5)</b> or press {kbd("F5")}. The
-progress ring <b>(10)</b> and the counters <b>(11)</b> update live, results
-appear in the tree; select a test to read its detail, output and logs. See
+<li><b>Run.</b> Click <b>Run tests</b> or press {kbd("F5")}. The progress ring
+and the counters update live, results appear in the tree; select a test to read its detail, output and logs. See
 <a href="topic:results">Reading the results</a>.</li>
 </ol>
 {tip("Every run is saved automatically in History, with its configuration, logs and verdicts. You can close the application without losing anything that has finished.")}
@@ -275,9 +173,7 @@ also accepts reader names typed manually.</p>
         "run tests page layout environment execution results panel tree overview",
         f"""
 <p>The <a href="page:workspace">Run Tests</a> page is where most of the work
-happens.</p>
-{shot("run-overview")}
-<p>From top to bottom:</p>
+happens. From top to bottom:</p>
 
 <h2>Run tabs</h2>
 <p>Each run lives in its own tab. <b>+ New run</b> prepares another selection
@@ -358,7 +254,6 @@ run tab works on its own copy. See
         "Checkboxes, search, markers, parametrized cases and quick selections.",
         "select selection checkbox tick search find filter marker ctrl+m ctrl+a parametrized parameter case divergent disagree",
         f"""
-{shot("test-tree")}
 <h2>Tick tests</h2>
 <p>Tick a folder, a file, a class, a test function or a single parametrized
 case. Ticking a parent ticks everything below it; a dash means a partial
@@ -606,7 +501,6 @@ History.</p>
         "The result panel, tracebacks, source editing, log search and comparison.",
         "detail source output logs tab traceback trace link editor vscode pycharm log search find compare comparison f7 ctrl+1 ctrl+2 ctrl+3 ctrl+4 wrap",
         f"""
-{shot("result-detail")}
 <p>Select a test, a file or a folder in the tree to fill the result panel.
 The tab you were reading stays open when you select another test (see
 <i>Tab when selecting another test</i> in Settings).</p>
@@ -684,9 +578,8 @@ reusable. Unlike the tree of Run Tests, a profile can contain the same test
 several times, in any order, with its own YAML parameters at each occurrence,
 organized in coloured groups.</p>
 
-{shot("profiles-editor")}
 <h2>Create a profile</h2>
-<ol>
+<ol class='steps'>
 <li>Open <a href="page:profiles">Execution Profiles</a> and click <b>New
 profile</b>.</li>
 <li>Click <b>Add tests / groups</b>, tick tests or whole folders, then
@@ -855,9 +748,8 @@ python_executable: C:\\Python312\\python.exe</pre>
 installations</b>. The test interpreter must have pytest and your project
 dependencies.</p>
 
-{shot("python-env")}
 <h2>Choose the interpreter</h2>
-<ol>
+<ol class='steps'>
 <li>Open <a href="page:python">Python Environment</a>.</li>
 <li>Browse to the <code>python.exe</code> of the test environment (for a
 virtual environment: <code>.venv\\Scripts\\python.exe</code>).</li>
@@ -871,7 +763,7 @@ in the background.</li>
 restarts the collection with the new environment.</p>
 
 <h2>Priority</h2>
-<ol>
+<ol class='steps'>
 <li><code>python_executable</code> in the workspace YAML;</li>
 <li>the global setting of this page;</li>
 <li>otherwise, the default Python of the workstation.</li>
@@ -892,7 +784,6 @@ newest first, with its readers, verdicts and origin (Run Tests, profile,
 REPEAT…). Runs are saved automatically in the background when they end; a
 discreet indicator in the status bar shows saves in progress.</p>
 
-{shot("history")}
 <h2>Find a run</h2>
 <p>Search by run, test or reader name; filter by workspace and readers;
 <b>With issues</b> shows only runs with failures or errors. <b>Clear
@@ -936,7 +827,7 @@ selected</b>. See <a href="topic:comparison">Comparison</a>.</p>
 one column per run, with the verdict of each run. It answers questions such as
 <i>which tests regressed since yesterday?</i> or <i>is this reader worse than
 the others?</i></p>
-<ol>
+<ol class='steps'>
 <li>In <a href="page:history">History</a>, click <b>Compare</b>.</li>
 <li>Select two or more runs of the <b>same workspace</b>.</li>
 <li>Click <b>Compare selected</b>.</li>
@@ -1064,12 +955,12 @@ its tooltip. Below 1,200 pixels of width the sidebar collapses automatically,
 and the window can be reduced down to 800 × 560.</p>
 
 <h2>Separate windows</h2>
-<p><b>Detach window</b> on Settings, Console and Help opens the page in its own
+<p><b>Detach window</b> on Settings and Console opens the page in its own
 window, for example on a second screen; clicking it in the sidebar brings it
 back to the front, and <b>Reattach to tab</b> puts it back. Run tabs and the
 log comparison can be detached too. Positions are restored at the next
 start.</p>
-{tip("Detach Help and keep it next to the main window while you learn the application.")}
+{tip("Keep this guide open in your browser next to the application while you learn it: F1 always brings you to the topic of the page you are on.")}
 """,
     ),
     HelpTopic(
@@ -1255,8 +1146,8 @@ HTML reports.</p>
 changing workstation.</p>
 
 <h2>Reporting a problem</h2>
-<ol>
-<li>Click <b>Copy support information</b> at the top of this page.</li>
+<ol class='steps'>
+<li>Click <b>Copy support information</b> above.</li>
 <li>Open the <a href="page:console">Console</a> and click <b>Export .log</b>.</li>
 <li>If the problem concerns a run, export its HTML report from
 <a href="page:history">History</a>.</li>
