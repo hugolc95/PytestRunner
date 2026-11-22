@@ -78,7 +78,9 @@ def collect(window, qtbot, folder):
     window.load_workspace()
     qtbot.waitUntil(lambda: window._collector is not None
                     and not window._collector.isRunning(), timeout=30000)
-    qtbot.wait(50)
+    # Le resultat arrive par un signal en file : attendre l'arbre lui-meme,
+    # pas un delai fixe qui ne suffit plus quand la suite tourne en parallele.
+    qtbot.waitUntil(lambda: bool(window.model.nodeids()), timeout=30000)
 
 
 def test_running_a_test_deleted_since_collection_shows_an_error(
