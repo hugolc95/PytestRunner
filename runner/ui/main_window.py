@@ -832,7 +832,7 @@ class MainWindow(QMainWindow):
         # Le champ edite le reglage global, meme si le YAML impose un autre
         # Python au projet courant. Ne jamais valider le premier avec le
         # resultat du second.
-        self.python_editor.test_now()
+        self.python_editor.show_known_or_check()
 
     def _save_python_from_page(self, path: str) -> None:
         nouveau = path.strip()
@@ -901,7 +901,8 @@ class MainWindow(QMainWindow):
             workspace_path=self.workspace.path,
             embedded=True, interpreter=self._effective_interpreter(),
             configuration_resolver=self._run_configuration_path)
-        self.yaml_editor.setWindowFlags(Qt.Widget)
+        if self.yaml_editor.windowType() != Qt.Widget:
+            self.yaml_editor.setWindowFlags(Qt.Widget)
         self.yaml_editor.saved.connect(self._on_yaml_page_saved)
         self.yaml_editor.file_changed.connect(self._on_yaml_page_saved)
         self.yaml_editor_layout.addWidget(self.yaml_editor, 1)
@@ -2896,6 +2897,7 @@ class MainWindow(QMainWindow):
         readers = self._readers_to_run()
         self._run_id = history.nouvel_identifiant()
         self._build_number = self.history.next_build_number()
+        self.results.set_log_build(self._build_number)
         request = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,
@@ -2966,6 +2968,7 @@ class MainWindow(QMainWindow):
         lecteurs = self._readers_to_run()
         self._run_id = history.nouvel_identifiant()
         self._build_number = self.history.next_build_number()
+        self.results.set_log_build(self._build_number)
         requete = RunRequest(
             workspace=self.workspace.path,
             interpreter=python,

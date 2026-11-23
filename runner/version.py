@@ -5,7 +5,7 @@ Patch releases are the default for small fixes/UX changes; use minor/major
 increments when the scope justifies it.
 """
 
-__version__ = "1.8.0"
+__version__ = "1.8.1"
 COPYRIGHT = "© 2026 Pytest Runner"
 # Auteur et proprietaire de l'outil : fenetre About et guide d'utilisation.
 AUTHOR = "Hugo LE COZ"

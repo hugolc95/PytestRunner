@@ -48,6 +48,13 @@ from runner.ui import tokens as t
 ONGLET_FORMULAIRE = 0
 ONGLET_YAML = 1
 
+# Lecteurs HubReader trouves pendant cette session, par interpreteur. Chaque
+# editeur YAML (un par run, reconstruit quand la configuration change)
+# relancait Python et le framework avant de pouvoir proposer un lecteur : la
+# liste restait vide plusieurs secondes. « Refresh available readers » la
+# reinterroge et met ce cache a jour.
+_DISCOVERED_READERS: dict[str, tuple[str, ...]] = {}
+
 # Reglages dont la valeur est un dossier, ou un fichier : ils recoivent un
 # bouton « Parcourir ». Taper un chemin a la main est la source d'erreur la
 # plus courante de ce fichier.
@@ -206,7 +213,9 @@ class ConfigDialog(QDialog):
     def __init__(self, config_path: str, readers_connus=(), parent=None,
                  candidats=(), workspace_path: str = "", embedded: bool = False, interpreter: str = '',
                  configuration_resolver=None):
-        super().__init__(parent)
+        # Integre a une page, l'editeur nait widget : le passer ensuite de
+        # dialogue a widget recreait sa fenetre native (0,12 s a l'ouverture).
+        super().__init__(parent, Qt.Widget) if embedded else super().__init__(parent)
         self.path = Path(config_path)
         self._configuration_resolver = configuration_resolver
         self._embedded = embedded
@@ -225,10 +234,11 @@ class ConfigDialog(QDialog):
         self.setWindowTitle(f"Configuration — {self.path.name}")
         # Une QDialog n'a par defaut ni agrandissement ni reduction : sur une
         # configuration fournie, on veut pouvoir la mettre en plein ecran.
-        self.setWindowFlags(self.windowFlags()
-                            | Qt.WindowMaximizeButtonHint
-                            | Qt.WindowMinimizeButtonHint)
-        self.setSizeGripEnabled(True)
+        if not embedded:
+            self.setWindowFlags(self.windowFlags()
+                                | Qt.WindowMaximizeButtonHint
+                                | Qt.WindowMinimizeButtonHint)
+            self.setSizeGripEnabled(True)
         self.resize(760, 620)
 
         self.chemin_label = QLabel(str(self.path))
@@ -356,7 +366,10 @@ class ConfigDialog(QDialog):
         self._reader_timeout.setSingleShot(True)
         self._reader_timeout.timeout.connect(self._reader_discovery_timeout)
         self._reader_timed_out = False
-        if self._reader_interpreter:
+        connus = _DISCOVERED_READERS.get(self._reader_interpreter)
+        if connus is not None:
+            self._apply_discovered_readers(connus)
+        elif self._reader_interpreter:
             QTimer.singleShot(0, self.discover_readers)
 
     def discover_readers(self):
@@ -406,6 +419,7 @@ class ConfigDialog(QDialog):
             self.reader_discovery_status.setText(message)
             self.reader_discovery_status.setToolTip(errors)
             return
+        _DISCOVERED_READERS[self._reader_interpreter] = tuple(names)
         self._apply_discovered_readers(names)
 
     def _apply_discovered_readers(self, names):
@@ -533,7 +547,10 @@ class ConfigDialog(QDialog):
 
         self._form.addStretch(1)
         self._connect_change_tracking()
-        self._filter_settings(self.settings_search.text())
+        # Sans recherche, les groupes neufs sont deja visibles : les reafficher
+        # un par un coutait 0,07 s pour 136 reglages.
+        if self.settings_search.text().strip():
+            self._filter_settings(self.settings_search.text())
 
     def _groupe(self, titre: str, prefixe: tuple, contenu: dict) -> QWidget:
         boite = QFrame()

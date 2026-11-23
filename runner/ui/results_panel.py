@@ -699,6 +699,14 @@ class ResultsPanel(QWidget):
         self._recent_runs: dict[int, list[bool]] = {}
         self._last_seen: float | None = None
         self._comparison_window = None
+        # Logs du test choisi : cherches seulement quand ils sont visibles, et
+        # avec un index par build. Avant, chaque clic, chaque fleche et chaque
+        # recherche parcouraient tout le dossier de logs du jour, pour chaque
+        # lecteur, sur le fil de l'interface : 2 a 5 s avec 3 500 logs.
+        self._logs_pending = None
+        self._log_build: int | None = None
+        self._log_index = None
+        self._log_lookups: dict[tuple[str, str], Path | None] = {}
         self._comparison_timer = QTimer(self)
         self._comparison_timer.setSingleShot(True)
         self._comparison_timer.timeout.connect(self._update_comparison_window)
@@ -729,6 +737,7 @@ class ResultsPanel(QWidget):
         # L'onglet courant est en gras, donc plus large : sans nouvelle mise
         # en page, le dernier onglet debordait de la barre en demi-ecran.
         self.tabs.currentChanged.connect(self._relayout_tabs)
+        self.tabs.currentChanged.connect(self._load_pending_logs)
         self.tabs.addTab(self.detail,
                          icons.icon("mdi.text-box-search-outline", t.TEXT_MUTED),
                          "Detail")
@@ -791,6 +800,7 @@ class ResultsPanel(QWidget):
             self._comparison_window.closed.connect(self._comparison_closed)
         self.logs._comparison_open = True
         self.logs._adapt_comparison()
+        self._load_pending_logs()
         window = self._comparison_window
         window.update_from_source()
         if window.isMinimized():
@@ -1082,7 +1092,49 @@ class ResultsPanel(QWidget):
     # ------------------------------------------------------------------ logs
 
     def set_log_root(self, racine: Path | None) -> None:
+        if racine != getattr(self, "_log_root", None):
+            self._forget_log_lookups()
         self._log_root = racine
+
+    def set_log_build(self, build_number: int | None) -> None:
+        """Le build dont l'arbre montre les resultats : ses logs s'indexent une fois."""
+        if build_number != self._log_build:
+            self._log_build = build_number
+            self._forget_log_lookups()
+
+    def _forget_log_lookups(self) -> None:
+        self._log_index = None
+        self._log_lookups = {}
+
+    def _logs_visible(self) -> bool:
+        return (self.tabs.currentIndex() == ONGLET_LOGS
+                or self._comparison_window is not None)
+
+    def _load_pending_logs(self, *_args) -> None:
+        if self._logs_pending is not None and self._logs_visible():
+            nodeid, readers = self._logs_pending
+            self._logs_pending = None
+            self._load_logs(nodeid, readers)
+
+    def _find_log(self, nodeid: str, reader: str) -> Path | None:
+        key = nodeid, reader
+        if key in self._log_lookups:
+            return self._log_lookups[key]
+        chemin = None
+        if self._log_build is not None:
+            from runner.domain.log_index import RunLogIndex
+            try:
+                if self._log_index is None:
+                    self._log_index = RunLogIndex(self._log_root, self._log_build)
+                chemin = self._log_index.find(nodeid, reader)
+            except OSError:
+                chemin = None
+        if chemin is None:
+            # Test absent du dernier build, ou conftest qui ne range pas ses
+            # logs par build : la recherche complete reste le dernier recours.
+            chemin = logs.find_test_log(self._log_root, nodeid, reader)
+        self._log_lookups[key] = chemin
+        return chemin
 
     def set_log_files(self, files: dict[int, Path | None] | None) -> None:
         """Use files recorded for an execution; None restores latest-test lookup."""
@@ -1093,13 +1145,22 @@ class ResultsPanel(QWidget):
         self.logs.context_nodeid = nodeid
         self._queue_comparison_update()
         if not nodeid or self._log_root is None:
+            self._logs_pending = None
             self.logs.clear()
             return
+        if self._log_files is None and not self._logs_visible():
+            # L'onglet Logs les chargera a son ouverture. Les chemins deja
+            # connus d'un profil ne coutent rien : ils se chargent tout de suite.
+            self._logs_pending = nodeid, readers
+            return
+        self._logs_pending = None
+        self._load_logs(nodeid, readers)
 
+    def _load_logs(self, nodeid: str, readers: tuple[Reader, ...]) -> None:
         cibles = readers or (Reader("", 0),)
         for lecteur in cibles:
             chemin = (self._log_files.get(lecteur.index) if self._log_files is not None
-                      else logs.find_test_log(self._log_root, nodeid, lecteur.name))
+                      else self._find_log(nodeid, lecteur.name))
             if chemin is None:
                 self.logs.set_text(lecteur.index,
                                    self._rien_trouve(lecteur),
@@ -1116,6 +1177,9 @@ class ResultsPanel(QWidget):
 
     def refresh_logs(self) -> None:
         """Recharge les logs du test encore selectionne apres un run."""
+        # Le run vient d'ecrire de nouveaux logs : rien de ce qui a ete trouve
+        # avant ne vaut plus.
+        self._forget_log_lookups()
         if self._nodeid:
             self.show_logs_for(self._nodeid, self._readers)
 

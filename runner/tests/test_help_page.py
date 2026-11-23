@@ -149,6 +149,7 @@ EMPHASE = {
     "Check the test interpreter", "Choose the readers", "Select the tests",
     "Every tab works on its own copy", "Slow Python", "Stability", "Display",
     "User guide", "Not run", "History", "X / Y", "amber dot", "warning triangle",
+    "Faster test selection", "Run tabs",
     "collects, selects, runs and analyzes pytest test suites", "colour-blind-friendly",
     "ordered sequence of tests", "profile → parent groups → subgroup → test",
     "protects", "single file", "two independent Python installations", "whole folder",

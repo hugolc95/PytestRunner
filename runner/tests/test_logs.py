@@ -436,8 +436,12 @@ def panneau(qapp):
     from runner.domain.models import Reader
     from runner.ui.results_panel import ResultsPanel
 
+    from runner.ui.results_panel import ONGLET_LOGS
+
     p = ResultsPanel()
     p.set_readers((Reader("LecteurA", 0), Reader("LecteurB", 1)))
+    # Les logs se chargent quand on les regarde : ces tests regardent l'onglet.
+    p.show_tab(ONGLET_LOGS)
     return p
 
 
@@ -589,3 +593,61 @@ def test_the_panel_shows_which_file_it_opened(panneau, tmp_path):
     panneau.show_logs_for(NODEID_SIMPLE, (Reader("LecteurA", 0),))
 
     assert panneau.logs.headers[0].toolTip() == str(ecrits["LecteurA"])
+
+
+
+def test_logs_are_only_searched_once_the_logs_tab_is_shown(qapp, tmp_path, monkeypatch):
+    """Chaque clic, fleche ou recherche cherchait les logs dans tout le dossier,
+    pour chaque lecteur, sur le fil de l'interface : 2 a 5 s avec 3 500 logs.
+    Tant que l'onglet Logs est ferme, rien n'est cherche ; son ouverture
+    charge les logs du test courant."""
+    from runner.domain import logs as logs_mod
+    from runner.domain.models import Reader
+    from runner.ui.results_panel import ONGLET_DETAIL, ONGLET_LOGS, ResultsPanel
+
+    _logs_par_lecteur(tmp_path, {"LecteurA": "vu par A", "LecteurB": "vu par B"})
+    appels = []
+    vrai = logs_mod.find_test_log
+    monkeypatch.setattr(logs_mod, "find_test_log",
+                        lambda *a, **k: appels.append(a) or vrai(*a, **k))
+    panel = ResultsPanel()
+    panel.set_readers((Reader("LecteurA", 0), Reader("LecteurB", 1)))
+    panel.set_log_root(tmp_path)
+    panel.show_tab(ONGLET_DETAIL)
+    for _ in range(5):
+        panel.show_logs_for(NODEID_SIMPLE, panel._readers)
+    assert appels == []
+
+    panel.show_tab(ONGLET_LOGS)
+    assert "vu par A" in panel.logs.views[0].text()
+    assert "vu par B" in panel.logs.views[1].text()
+    assert len(appels) == 2
+
+    # Le meme test, de nouveau choisi : rien n'est recherche une seconde fois.
+    panel.show_logs_for(NODEID_SIMPLE, panel._readers)
+    assert len(appels) == 2
+    # Apres un run, les logs peuvent avoir change : on recherche a nouveau.
+    panel._nodeid = NODEID_SIMPLE
+    panel.refresh_logs()
+    assert len(appels) == 4
+
+
+def test_logs_of_the_displayed_build_are_indexed_once(qapp, tmp_path, monkeypatch):
+    from runner.domain import logs as logs_mod
+    from runner.domain.models import Reader
+    from runner.ui.results_panel import ONGLET_LOGS, ResultsPanel
+
+    for lecteur in ("LecteurA", "LecteurB"):
+        dossier = tmp_path / "20261123" / "Run_0007" / lecteur
+        dossier.mkdir(parents=True)
+        (dossier / "test_atr.log").write_text(f"vu par {lecteur}", encoding="utf-8")
+    monkeypatch.setattr(logs_mod, "find_test_log",
+                        lambda *a, **k: pytest.fail("full search despite the build index"))
+    panel = ResultsPanel()
+    panel.set_readers((Reader("LecteurA", 0), Reader("LecteurB", 1)))
+    panel.show_tab(ONGLET_LOGS)
+    panel.set_log_root(tmp_path)
+    panel.set_log_build(7)
+    panel.show_logs_for("suite/test_card.py::test_atr", panel._readers)
+    assert "vu par LecteurA" in panel.logs.views[0].text()
+    assert "vu par LecteurB" in panel.logs.views[1].text()

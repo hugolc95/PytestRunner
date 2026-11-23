@@ -210,3 +210,33 @@ def test_saving_python_during_collection_discards_the_old_result(qtbot, tmp_path
     assert loads == ['python-B'] and not w._collecting
     w._collector = None
     w.close()
+
+
+def test_opening_the_page_shows_a_known_result_without_starting_python(qtbot, controlled, monkeypatch):
+    """Chaque visite de Python Environment relancait une verification complete
+    (environ 0,6 s « Checking… »). Un Python deja verifie s'affiche aussitot ;
+    « Test » relance toujours une vraie verification."""
+    from runner.domain import interpreter
+    monkeypatch.setattr(interpreter, 'cached_probe',
+                        lambda path: valid(path) if path == 'python-A' else None)
+    d = InterpreterDialog('python-A', embedded=True)
+    qtbot.addWidget(d)
+    controlled.clear()
+
+    d.show_known_or_check()
+    assert controlled == []
+    assert d.save_button.isEnabled()
+    assert 'Ready' in d.status_label.text()
+
+    d.test_now()
+    assert len(controlled) == 1
+    controlled[0].complete(valid('python-A'))
+
+    # Un Python jamais verifie part en verification comme avant.
+    d.path_field.setText('python-B')
+    d.show_known_or_check()
+    assert controlled[-1].path == 'python-B'
+    assert not d.save_button.isEnabled()
+    for worker in controlled:
+        if worker.running:
+            worker.complete(valid(worker.path))

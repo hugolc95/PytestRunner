@@ -172,6 +172,21 @@ also accepts reader names typed manually.</p>
         "The changes of this version, in short.",
         "new release notes changelog version 1.8 what changed update",
         f"""
+<h2>Version 1.8.1</h2>
+<ul>
+<li><b>Faster test selection.</b> Clicking a test, moving with the arrow keys
+or searching no longer waits for its logs: they are looked up when the
+<b>Logs</b> tab is open, using an index of the run shown in the tree. With a
+large log folder, selecting a test went from several seconds to a fraction
+of a second.</li>
+<li><b>YAML Configuration.</b> The page opens faster on large files, and the
+HubReader devices already found during this session are offered at once.
+<b>Refresh available readers</b> looks for them again.</li>
+<li><b>Python Environment.</b> An interpreter already checked is shown at
+once; <b>Test</b> checks it again.</li>
+<li><b>Run tabs.</b> <b>+ New run</b> opens a little faster.</li>
+</ul>
+
 <h2>Version 1.8.0</h2>
 <ul>
 <li><b>User guide.</b> <b>Help</b>, above Settings, opens this guide in your

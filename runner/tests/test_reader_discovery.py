@@ -42,3 +42,26 @@ def test_async_discovery_success_and_dependency_error(qtbot, tmp_path, monkeypat
     qtbot.waitUntil(lambda: 'six' in dialog.reader_discovery_status.text(), timeout=5000)
     assert dialog._readers_connus == ('Reader A',)
     assert dialog.discover_readers_button.isEnabled()
+
+
+def test_a_new_yaml_editor_reuses_the_readers_found_this_session(qtbot, tmp_path, monkeypatch):
+    """Chaque editeur YAML (un par run) relancait Python et le framework avant
+    de proposer un lecteur : la liste restait vide plusieurs secondes. Les
+    lecteurs trouves sont repris aussitot ; « Refresh » les reinterroge."""
+    from runner.domain import reader_discovery
+    from runner.ui import config_dialog
+    monkeypatch.setattr(reader_discovery, 'PROBE', "print('HUBREADERS_JSON:[\"Reader A\", \"Reader B\"]')")
+    premier = editor(qtbot, tmp_path, interpreter=sys.executable)
+    qtbot.waitUntil(lambda: '2 available' in premier.reader_discovery_status.text(), timeout=5000)
+
+    lances = []
+    monkeypatch.setattr(config_dialog.ConfigDialog, 'discover_readers', lambda self: lances.append(self))
+    second = editor(qtbot, tmp_path, interpreter=sys.executable)
+    qtbot.wait(20)
+    assert lances == []
+    assert second._readers_connus == ('Reader A', 'Reader B')
+    assert '2 available' in second.reader_discovery_status.text()
+
+    # Un autre interpreteur n'a rien trouve encore : il cherche.
+    autre = editor(qtbot, tmp_path, interpreter=sys.executable + '-other')
+    qtbot.waitUntil(lambda: lances == [autre], timeout=2000)

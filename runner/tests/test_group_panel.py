@@ -236,6 +236,9 @@ def test_a_group_does_not_leave_the_previous_source_behind(joue, tmp_path):
     journal.mkdir(parents=True, exist_ok=True)
     (journal / "test_atr.log").write_text("APDU >> 00A4\n", encoding="utf-8")
     joue.results.set_log_root(tmp_path / "logs")
+    # Les logs se chargent quand l'onglet Logs est affiche.
+    from runner.ui.results_panel import ONGLET_LOGS
+    joue.results.show_tab(ONGLET_LOGS)
 
     joue.tree.setCurrentIndex(joue.model.index_for_nodeid(NODEIDS[0]))
     assert "test_atr" in joue.results.source.editor.toPlainText(), (
@@ -403,6 +406,9 @@ def test_a_group_never_shows_the_logs_of_a_test(avec_source, tmp_path):
     journal.mkdir(parents=True, exist_ok=True)
     (journal / "test_atr.log").write_text("APDU >> 00A4\n", encoding="utf-8")
     avec_source.results.set_log_root(tmp_path / "logs")
+    # Les logs se chargent quand l'onglet Logs est affiche.
+    from runner.ui.results_panel import ONGLET_LOGS
+    avec_source.results.show_tab(ONGLET_LOGS)
 
     avec_source.tree.setCurrentIndex(avec_source.model.index_for_nodeid(NODEIDS[0]))
     assert "APDU" in avec_source.results.logs.views[0].text(), (

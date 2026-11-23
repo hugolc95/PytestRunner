@@ -161,6 +161,28 @@ class InterpreterDialog(QDialog):
     def test_now(self) -> None:
         self._begin_check()
 
+    def show_known_or_check(self) -> None:
+        """A l'ouverture de la page : le resultat deja connu, sans relancer Python.
+
+        Chaque visite de Python Environment lancait une verification complete
+        (environ 0,6 s affichees « Checking… »). Le cache est indexe sur la
+        date et la taille de python.exe : un Python modifie est reverifie.
+        « Test » reste une vraie verification.
+        """
+        from runner.domain.interpreter import cached_probe
+        key = self._choice_key()
+        info = cached_probe(key[1]) if key[1] else None
+        if info is None:
+            self._begin_check()
+            return
+        self._auto_check.stop()
+        self._generation += 1
+        self._pending_check = None
+        self._save_requested = False
+        self._probe_key = key
+        self._probe_generation = self._generation
+        self._on_probed(info)
+
     def _choice_key(self):
         text = self.interpreter_path()
         return text, text or default()

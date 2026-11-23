@@ -1,5 +1,20 @@
 # Pytest Runner GUI
 
+## Sélection des tests et pages plus rapides — v1.8.1
+
+Cliquer sur un test, le parcourir avec les flèches ou le trouver avec la
+recherche n'attend plus ses logs. Ils sont cherchés seulement quand l'onglet
+**Logs** est ouvert, grâce à un index du run affiché dans l'arbre. Avec un
+dossier de logs bien rempli, la sélection d'un test passe de plusieurs
+secondes à quelques dixièmes de seconde, et ne ralentit plus avec
+l'historique.
+
+La page **YAML Configuration** s'ouvre plus vite sur les gros fichiers. Les
+lecteurs HubReader déjà trouvés pendant la session sont proposés tout de
+suite ; **Refresh available readers** les recherche de nouveau. La page
+**Python Environment** affiche directement un interpréteur déjà vérifié ;
+**Test** le revérifie. **+ New run** s'ouvre un peu plus vite.
+
 ## Guide d'utilisation et passe de stabilité — v1.8.0
 
 **Help**, juste au-dessus de **Settings** dans le menu de gauche, ouvre le

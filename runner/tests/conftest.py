@@ -66,6 +66,17 @@ def isolated_run_state(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def lecteurs_decouverts_par_test():
+    """Les lecteurs HubReader trouves restent en memoire pour la session de
+    l'application : entre deux tests, ils ne doivent rien transmettre."""
+    yield
+    import sys
+    module = sys.modules.get("runner.ui.config_dialog")
+    if module is not None:
+        module._DISCOVERED_READERS.clear()
+
+
+@pytest.fixture(autouse=True)
 def sans_widget_orphelin():
     """Detruit les widgets sans parent qu'un test laisse derriere lui."""
     from PySide6.QtWidgets import QApplication

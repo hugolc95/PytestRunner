@@ -349,6 +349,19 @@ class RunTabsController(QObject):
         QTimer.singleShot(30, create)
 
     def new_run(self, source=None):
+        # Les rafraichissements demandes pendant la construction sont regroupes
+        # en un seul, a la fin (`self.refresh()`).
+        self._labels_deferred = True
+        refreshing, self._refreshing = self._refreshing, True
+        try:
+            return self._build_new_run(source)
+        finally:
+            self._labels_deferred = False
+            self._refreshing = refreshing
+            self._labels_pending = False
+            self.refresh()
+
+    def _build_new_run(self, source=None):
         from runner.ui.main_window import MainWindow
         source = source or self.current.context
         context = MainWindow(self.window, run_host=self.window)
@@ -384,7 +397,6 @@ class RunTabsController(QObject):
         self.tabs.setCurrentIndex(self.entries.index(entry))
         self.window._show_page("workspace")
         self.window.preferences.track_buttons()
-        self.refresh()
         self.schedule_save()
         return context
 
@@ -935,8 +947,16 @@ class RunTabsController(QObject):
             label.setStyleSheet(style)
 
     def refresh_labels(self):
+        # Pendant la construction d'un onglet, chaque signal redemandait ce
+        # rafraichissement : une vingtaine de passages pour un seul geste.
+        if getattr(self, "_labels_deferred", False):
+            self._labels_pending = True
+            return
         # Mirror the run list in every configuration page without triggering
         # navigation when tabs are added, removed, renamed or reordered.
+        # L'etat d'un run se calcule une fois, pas une fois par onglet qui
+        # l'affiche : il recompte l'arbre de tests a chaque appel.
+        presentations = [self.presentation(entry) for entry in self.entries]
         for owner in self.entries:
             bar = owner.context.configuration_tabs
             was_blocked = bar.blockSignals(True)
@@ -946,7 +966,7 @@ class RunTabsController(QObject):
                 while bar.count() < len(self.entries):
                     bar.addTab("")
                 for index, entry in enumerate(self.entries):
-                    state, colour, glyph = self.presentation(entry)
+                    state, colour, glyph = presentations[index]
                     text = f"{entry.name} · {state}"
                     if bar.tabText(index) != text:
                         bar.setTabText(index, text)
@@ -960,7 +980,7 @@ class RunTabsController(QObject):
             finally:
                 bar.blockSignals(was_blocked)
         for index, entry in enumerate(self.entries):
-            state, colour, glyph = self.presentation(entry)
+            state, colour, glyph = presentations[index]
             self.tabs.setTabText(index, f"{entry.name} · {state}")
             self.tabs.setTabToolTip(index, f"{entry.name}\n{state}" + ("\nDetached window" if entry.floating else ""))
             self.tabs.setTabIcon(index, icons.icon(glyph, colour))
