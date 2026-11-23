@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QPushButton, QPlainTextEdit, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
 )
 from PySide6.QtCore import QEvent, QSize, Qt, QTimer
+from PySide6.QtGui import QIcon
 
 from runner.ui import tokens as t
 from runner.ui import icons
@@ -118,7 +119,7 @@ class StructuredRunHeader(QWidget):
         self._grid.setContentsMargins(0, 0, 0, 0)
         self._grid.setSpacing(t.SPACE_3)
         self._compact = None
-        self._dense = None
+        self._dense = True
         # Evalue une fois la mise en page posee : pendant un redimensionnement,
         # l'en-tete passe par des hauteurs transitoires qui faisaient grossir
         # la fenetre a chaque etape.
@@ -231,46 +232,67 @@ class StructuredRunHeader(QWidget):
         execution.addLayout(execution_fields)
         execution.addStretch()
 
-        progress = QHBoxLayout()
-        progress.setSpacing(t.SPACE_2)
-        # Share the heading row with the ring instead of reserving a separate
-        # line above it. Result actions stay together on the left.
+        # Le bandeau garde sa hauteur meme quand les actions apparaissent.
         result_heading = results.takeAt(0).widget()
         self.result_heading = result_heading
         result_heading.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
-        result_actions = QVBoxLayout()
-        result_actions.setSpacing(t.SPACE_1)
-        result_actions.addWidget(result_heading, 0, Qt.AlignTop)
+        result_heading.setMinimumWidth(result_heading.fontMetrics().horizontalAdvance('RESULTS') + 4)
         result_buttons = QHBoxLayout()
-        result_buttons.setSpacing(t.SPACE_2)
-        self._move(result_buttons, window.view_failures_button)
-        self._move(result_buttons, window.view_differences_button)
-        self._move(result_buttons, window.collection_errors_button)
-        result_buttons.addStretch()
-        result_actions.addLayout(result_buttons)
-        result_actions.addStretch()
-        progress.addLayout(result_actions, 1)
-        self._move(progress, window.compass_pct)
-        self._move(progress, window.compass_ring)
-        progress.setAlignment(window.compass_ring, Qt.AlignRight | Qt.AlignTop)
-        results.addLayout(progress)
-        self._result_progress = progress
+        result_buttons.setSpacing(t.SPACE_1)
+        for button, text, glyph in (
+                (window.view_failures_button, 'View failures', 'mdi.alert-circle-outline'),
+                (window.view_differences_button, 'View differences', 'mdi.call-split'),
+                (window.collection_errors_button, 'Collection errors', 'mdi.file-alert-outline')):
+            button.setAccessibleName(text)
+            button.setToolTip(button.toolTip() or text)
+            button.setText('' if button is window.collection_errors_button else text)
+            button.setIcon(icons.icon(glyph, t.TEXT_MUTED))
+            if button is window.collection_errors_button:
+                button.setFixedWidth(t.CONTROL_SM)
+            else:
+                button.setIcon(QIcon())
+                button.setStyleSheet('QPushButton { min-height: 24px; max-height: 24px; '
+                                    'padding: 0 3px; font-size: 12px; }')
+                button.setFixedHeight(26)
+                # La place est reservee avant le premier echec ou ecart :
+                # leur apparition ne doit pas agrandir toute la ligne.
+                policy = button.sizePolicy()
+                policy.setHorizontalPolicy(QSizePolicy.Ignored)
+                policy.setRetainSizeWhenHidden(True)
+                button.setSizePolicy(policy)
+            self._move(result_buttons, button)
+        result_buttons.setStretch(0, 5)
+        result_buttons.setStretch(1, 6)
+        result_heading.setFixedHeight(14)
         self._result_buttons = result_buttons
-        self._result_actions = result_actions
-        # Les cinq compteurs restent visibles, NOT RUN compris. En grande
-        # fenetre, la carte Results est une colonne etroite : sur une seule
-        # rangee ils tombaient en 11 px sur deux lignes. Ils y passent sur deux
-        # rangees lisibles ; la ligne compacte garde une rangee unique.
+        # Les petites cases gardent deux rangees ; l'anneau utilise leur
+        # hauteur cumulee sans imposer sa taille a chacune des deux rangees.
         counters = QGridLayout()
         counters.setHorizontalSpacing(t.SPACE_1)
         counters.setVerticalSpacing(t.SPACE_1)
         self._result_pills = tuple(window.pills.values())
-        for pill in self._result_pills:
-            pill.set_compact(True)
+        counters.addWidget(result_heading, 0, 0, 1, 2)
+        counters.addLayout(result_buttons, 1, 0, 1, 2)
+        # Les cinq boutons occupent les memes colonnes. L'anneau utilise
+        # aussi la place du bandeau au-dessus de la troisieme case du haut.
+        for index, pill in enumerate(self._result_pills):
+            row, column = (2, index) if index < 2 else (3, index - 2)
+            self._move(counters, pill, row, column)
+        self.result_diagram = QWidget()
+        self.result_diagram.setFixedSize(84, 84)
+        diagram = QGridLayout(self.result_diagram)
+        diagram.setContentsMargins(0, 0, 0, 0)
+        window.compass_ring.set_summary_size(84)
+        self._move(diagram, window.compass_ring, 0, 0, Qt.AlignCenter)
+        window.compass_pct.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Ignored)
+        window.compass_pct.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self._move(diagram, window.compass_pct, 0, 0, Qt.AlignCenter)
+        window.compass_pct.setFixedSize(84, 84)
+        counters.addWidget(self.result_diagram, 0, 2, 3, 1, Qt.AlignCenter)
+        for column in range(3):
+            counters.setColumnStretch(column, 1)
         results.addLayout(counters)
         self._counters = counters
-        self._counter_columns = None
-        self._place_counters(len(self._result_pills))
         results.addStretch()
 
         # Keep any legacy decoration owned, but never visible in the page.
@@ -362,19 +384,6 @@ class StructuredRunHeader(QWidget):
             self._grid.setColumnStretch(column, 0 if compact and column == 2 else
                                         5 if column == 1 else 4)
 
-    def _place_counters(self, columns):
-        if columns == self._counter_columns:
-            return
-        self._counter_columns = columns
-        for pill in self._result_pills:
-            self._counters.removeWidget(pill)
-        for index, pill in enumerate(self._result_pills):
-            explicitly_hidden = pill.isHidden()
-            self._counters.addWidget(pill, index // columns, index % columns)
-            pill.setVisible(not explicitly_hidden)
-        for column in range(len(self._result_pills)):
-            self._counters.setColumnStretch(column, 1 if column < columns else 0)
-
     def _keep_whole(self):
         """La fenetre ne descend pas sous la hauteur que l'en-tete exige.
 
@@ -421,34 +430,9 @@ class StructuredRunHeader(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._whole_timer.start()
-        dense = event.size().width() < 1260
-        if dense != self._dense:
-            self._dense = dense
-            self._window.compass_ring.set_compact(dense)
-            self.results.layout().setDirection(QBoxLayout.LeftToRight if dense else QBoxLayout.TopToBottom)
-            for pill in self._result_pills:
-                pill.set_header_density(True if dense else "medium")
-            self._place_counters(len(self._result_pills) if dense else 3)
-            for button, text, glyph in (
-                    (self._window.view_failures_button, 'View failures', 'mdi.alert-circle-outline'),
-                    (self._window.view_differences_button, 'View differences', 'mdi.call-split'),
-                    (self._window.collection_errors_button, self._window.collection_errors_button.text(), 'mdi.file-alert-outline')):
-                if dense and button.text():
-                    button.setProperty('fullLabel', button.text())
-                button.setText('' if dense else button.property('fullLabel') or text)
-                button.setIcon(icons.icon(glyph, t.TEXT_MUTED))
-                button.setMaximumWidth(32 if dense else 16777215)
-            self.results.setMinimumWidth(0)
-            # En ligne compacte, le titre (taille Ignored) cedait toute sa place
-            # aux compteurs et ne montrait plus que « RE ».
-            self.result_heading.setMinimumWidth(
-                self.result_heading.fontMetrics().horizontalAdvance("RESULTS") + 4 if dense else 0)
-        if dense:
-            margins = self.results.layout().contentsMargins()
-            required = (self._result_progress.minimumSize().width() + self._counters.minimumSize().width()
-                        + self.results.layout().spacing() + margins.left() + margins.right())
-            self.results.layout().setDirection(QBoxLayout.TopToBottom if event.size().width() < required else QBoxLayout.LeftToRight)
-            self._arrange('stacked' if event.size().width() < 740 else True)
+        width = event.size().width()
+        if width < 1260:
+            self._arrange('stacked' if width < 740 else True)
             return
         counter_width = self._counters.minimumSize().width()
         self.results.setMinimumWidth(counter_width + 2 * t.SPACE_3)
@@ -456,6 +440,5 @@ class StructuredRunHeader(QWidget):
                        (self.environment, self.execution, self.results))
         pair_width = sum(max(panel.minimumWidth(), panel.minimumSizeHint().width())
                          for panel in (self.environment, self.execution))
-        width = event.size().width()
         self._arrange("stacked" if width < pair_width + self._grid.spacing() else
                       width < required + 2 * self._grid.spacing())

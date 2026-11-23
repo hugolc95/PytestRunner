@@ -106,7 +106,6 @@ from runner.ui.widgets import (
     ReaderHeaderView,
     RemainingPill,
     SearchBar,
-    StatusPill,
     text_input_has_focus,
 )
 
@@ -982,12 +981,13 @@ class MainWindow(QMainWindow):
         # anneau qui dit la proportion d'un coup d'oeil, le detail par statut
         # juste a cote pour filtrer, comme avant.
         self.compass_ring = CompassRing(diameter=56, thickness=9)
-        self.compass_pct = QLabel("—")
+        from runner.ui.result_summary import ResultCounter, RingProgressLabel
+        self.compass_pct = RingProgressLabel("—")
         self.compass_pct.setStyleSheet(
             f"color: {t.TEXT}; font-weight: 700; font-size: {t.TEXT_SM + 6}px;")
 
         self.pills = {
-            statut: StatusPill(statut)
+            statut: ResultCounter(statut)
             for statut in (Status.PASSED, Status.FAILED, Status.SKIPPED, Status.ERROR, Status.NOT_RUN)
         }
         for pastille in self.pills.values():

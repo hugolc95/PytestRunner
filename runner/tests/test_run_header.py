@@ -47,22 +47,22 @@ def test_header_reflows_without_overlapping_controls(qtbot, width, monkeypatch, 
     assert abs(window.reader_selector.geometry().right() - window.reader_controls.contentsRect().right()) <= 1
     results = window.run_header.results
     ring_position = window.compass_ring.mapTo(results, window.compass_ring.rect().topLeft())
-    margins = results.layout().contentsMargins()
-    assert ring_position.y() == results.contentsRect().top() + margins.top()
-    if not window.run_header._dense:
-        assert ring_position.x() + window.compass_ring.width() == (
-            results.contentsRect().right() + 1 - margins.right())
-    else:
-        assert results.height() <= 130
+    diagram = window.run_header.result_diagram
+    assert diagram.rect().contains(window.compass_ring.geometry())
+    assert window.compass_pct.geometry() == window.compass_ring.geometry()
+    assert window.view_failures_button.text() == 'View failures'
+    assert window.view_differences_button.text() == 'View differences'
+    assert results.minimumSizeHint().height() <= 148
+    assert not window.view_failures_button.geometry().intersects(window.view_differences_button.geometry())
+    for action in (window.view_failures_button, window.view_differences_button):
+        assert action.width() >= action.fontMetrics().horizontalAdvance(action.text()) + 6
     positions = [pill.mapTo(results, pill.rect().topLeft()).y() for pill in window.pills.values()]
-    # Une rangee dans la ligne compacte ; deux rangees lisibles dans la carte
-    # etroite des grandes fenetres (voir test_all_five_counters_...).
-    assert len(set(positions)) == (1 if window.run_header._dense else 2)
+    assert len(set(positions)) == 2
     for pill in window.pills.values():
         position = pill.mapTo(results, pill.rect().bottomRight())
         assert results.rect().contains(position)
     for button in (window.view_failures_button, window.view_differences_button):
-        assert button.mapTo(results, button.rect().topRight()).x() < ring_position.x()
+        assert button.mapTo(results, button.rect().bottomLeft()).y() < window.pills[Status.PASSED].y()
     for i, panel in enumerate(panels):
         assert window.run_header.rect().contains(panel.geometry())
         for other in panels[i + 1:]:
@@ -220,6 +220,7 @@ def _window_with_readers(qtbot, monkeypatch, tmp_path, size):
     window.run_header.update_environment()
     window.view_failures_button.show()
     qtbot.waitExposed(window)
+    qtbot.waitUntil(lambda: not window.run_header._whole_timer.isActive())
     return window
 
 
@@ -276,19 +277,43 @@ def test_readers_arriving_after_collection_do_not_squeeze_the_header(qtbot, monk
     assert header.execution.height() >= header.execution.minimumSizeHint().height()
 
 
-@pytest.mark.parametrize("width,rows", [(1920, 2), (1600, 2), (1280, 1), (930, 1)])
-def test_all_five_counters_stay_visible_and_readable(qtbot, monkeypatch, tmp_path, width, rows):
-    """NOT RUN compris, les cinq compteurs restent visibles. En grande fenetre,
-    une rangee unique les tassait en 11 px sur deux lignes (« 78 » sur
-    « PASSED ») : ils passent sur deux rangees, chacun sur une ligne."""
+@pytest.mark.parametrize("width", [1920, 1600, 1280, 930, 800])
+def test_all_five_counters_stay_visible_and_readable(qtbot, monkeypatch, tmp_path, width):
+    """La grille reste identique meme avec plusieurs millions de tests."""
     window = _window_with_readers(qtbot, monkeypatch, tmp_path, (width, 900))
     pills = list(window.pills.values())
     assert len(pills) == 5
     qtbot.waitUntil(lambda: all(pill.isVisible() for pill in pills))
     tops = {pill.mapTo(window, pill.rect().topLeft()).y() for pill in pills}
-    assert len(tops) == rows
+    assert len(tops) == 2
+    assert pills[0].y() == pills[1].y()
+    assert pills[2].y() == pills[3].y() == pills[4].y()
+    assert pills[0].y() < pills[2].y()
+    assert max(pill.width() for pill in pills) - min(pill.width() for pill in pills) <= 1
+    assert len({pill.height() for pill in pills}) == 1
+    assert window.run_header.result_diagram.geometry().bottom() < pills[4].y()
     for pill in pills:
         assert "\n" not in pill.text()
     results = window.run_header.results
     for pill in pills:
         assert results.rect().contains(pill.mapTo(results, pill.rect().bottomRight()))
+    cells = [*pills, window.run_header.result_diagram]
+    before = [cell.geometry() for cell in cells]
+    window.view_differences_button.show()
+    qtbot.wait(20)
+    assert [cell.geometry() for cell in cells] == before
+    for value in (1, 999, 12000, 1000000, 9999999, 0):
+        for pill in pills:
+            pill.set_value(value)
+        window.compass_pct.setText(f'{value} / 12000')
+        qtbot.wait(20)
+        assert [cell.geometry() for cell in cells] == before
+        for pill in pills:
+            number_font, label_font, number, label, number_width, label_width = pill._inline_text()
+            assert number == str(value)
+            assert label == pill.status.label
+            assert number_font.bold() and not label_font.bold()
+            assert number_width + label_width + 27 <= pill.width() - 10
+        for index, cell in enumerate(cells):
+            assert all(not cell.geometry().intersects(other.geometry())
+                       for other in cells[index + 1:])

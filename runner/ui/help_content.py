@@ -245,6 +245,11 @@ When a profile is loaded, a chip shows its name; its <b>×</b> unloads it.</p>
 <b>Skipped</b>, <b>Error</b>, <b>Not run</b>, and the shortcuts <b>View
 failures</b> and <b>View differences</b>. Clicking a counter shows only those
 tests; clicking it again shows all tests.</p>
+<p>The counters stay in a compact, fixed two-row grid while tests run:
+Passed and Failed above, Skipped, Error and Not run below. The
+progress ring sits in the upper-right corner, with completed and expected executions at
+its centre. The labelled shortcuts above the grid open failures and
+differences.</p>
 
 <h2>Test tree and result panel</h2>
 <p>On the left, the test tree, with the tabs <b>All tests</b> and

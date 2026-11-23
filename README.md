@@ -1,5 +1,19 @@
 # Pytest Runner GUI
 
+## Résultats compacts et compteurs stables — v1.8.2
+
+La carte **Results** conserve une grille compacte pendant toute l'exécution :
+**Passed** et **Failed** sur la première ligne, puis **Skipped**, **Error** et
+**Not run** dessous. Les cinq cases gardent les mêmes dimensions et leur fond
+teinté. Chaque case affiche son icône agrandie, son nombre en gras et son
+libellé sur une seule ligne ; cliquer continue de filtrer les tests.
+
+L'anneau est plus grand dans le coin supérieur droit, avec le nombre
+d'exécutions terminées et le total au centre. Les boutons **View failures**
+et **View differences** apparaissent au-dessus avec leur nom complet. Leur
+apparition et les grands compteurs ne déplacent plus les cases pendant un run.
+Le rendu est vérifié en demi-écran et jusqu'à 9 999 999 dans chaque compteur.
+
 ## Sélection des tests et pages plus rapides — v1.8.1
 
 Cliquer sur un test, le parcourir avec les flèches ou le trouver avec la

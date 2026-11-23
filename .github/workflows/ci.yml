@@ -19,6 +19,8 @@ concurrency:
 env:
   QT_QPA_PLATFORM: offscreen
   QT_API: pyside6
+  # Meme jeu de polices que l'application Windows et le pilote run-app.
+  QT_QPA_FONTDIR: 'C:\Windows\Fonts'
 
 jobs:
   tests:

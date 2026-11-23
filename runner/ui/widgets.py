@@ -402,6 +402,13 @@ class CompassRing(QWidget):
         self.setFixedSize(self._diameter, self._diameter)
         self.update()
 
+    def set_summary_size(self, diameter):
+        """Adapte l'anneau a la case de progression sans toucher aux verdicts."""
+        self._diameter = diameter
+        self._thickness = 7
+        self.setFixedSize(diameter, diameter)
+        self.update()
+
     def set_collection_warning(self, text: str) -> None:
         self._collection_warning = text
         self.set_counts(self._counts)
