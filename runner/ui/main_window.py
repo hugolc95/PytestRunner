@@ -867,6 +867,10 @@ class MainWindow(QMainWindow):
     def _refresh_yaml_page(self, force: bool = False) -> None:
         if self.run_tabs and not self.run_tabs.ensure_configuration(self):
             return
+        if (getattr(self, '_configuration_source_updated', False) and not self._collecting
+                and not (self._collector is not None and self._collector.isRunning())):
+            self._configuration_source_updated = False
+            QTimer.singleShot(0, self.load_workspace)
         if self.workspace is None:
             self.yaml_empty.update_text(
                 "No workspace loaded",
@@ -879,10 +883,11 @@ class MainWindow(QMainWindow):
                 "Choose the configuration file for this workspace.")
             self.yaml_stack.setCurrentWidget(self.yaml_empty)
             return
-        if (not force and self.yaml_editor is not None
+        if (self.yaml_editor is not None
                 and Path(self.yaml_editor.path) == Path(self.workspace.config_path)):
+            self.yaml_editor.refresh_source(sync=False)
             signature = self._yaml_file_signature(self.workspace.config_path)
-            if signature != self._yaml_editor_signature:
+            if (force or signature != self._yaml_editor_signature) and not self.yaml_editor.has_changes():
                 self.yaml_editor.reload()
                 self._yaml_editor_signature = signature
             self.yaml_stack.setCurrentWidget(self.yaml_editor_host)
@@ -899,7 +904,8 @@ class MainWindow(QMainWindow):
             candidats=[str(path) for path in fichiers_config(self.workspace.path)],
             workspace_path=self.workspace.path,
             embedded=True, interpreter=self._effective_interpreter(),
-            configuration_resolver=self._run_configuration_path)
+            configuration_resolver=self._run_configuration_path,
+            configuration_sync=self._sync_run_configuration)
         if self.yaml_editor.windowType() != Qt.Widget:
             self.yaml_editor.setWindowFlags(Qt.Widget)
         self.yaml_editor.saved.connect(self._on_yaml_page_saved)
@@ -2085,7 +2091,8 @@ class MainWindow(QMainWindow):
             [r.name for r in self.workspace.readers], self,
             candidats=[str(c) for c in fichiers_config(racine)],
             workspace_path=racine, interpreter=self._effective_interpreter(),
-            configuration_resolver=self._run_configuration_path)
+            configuration_resolver=self._run_configuration_path,
+            configuration_sync=self._sync_run_configuration)
         dialogue.exec()
 
         # Le fichier qu'on vient d'editer devient CELUI du workspace : avoir
@@ -2327,6 +2334,7 @@ class MainWindow(QMainWindow):
         self.workspace = Workspace.load(chemin, self._config_retenue(chemin))
         if self.run_tabs and not self.run_tabs.ensure_configuration(self):
             return
+        self._configuration_source_updated = False
         self._remember_workspace(chemin)
 
         # Une nouvelle collecte doit pouvoir reessayer apres une installation
@@ -2614,8 +2622,9 @@ class MainWindow(QMainWindow):
     def _finish_collection(self):
         if self.sender() is not self._collector:
             return
-        if self._recollect_after_interpreter_change:
+        if self._recollect_after_interpreter_change or getattr(self, '_configuration_source_updated', False):
             self._recollect_after_interpreter_change = False
+            self._configuration_source_updated = False
             self._collecting = False
             self.load_workspace()
         else:
@@ -2799,6 +2808,13 @@ class MainWindow(QMainWindow):
             return self.run_tabs.configuration_path(self, self.workspace.path, path)
         return path
         self.settings.sync()
+
+    def _sync_run_configuration(self, path, *, allow_update=True, force=False, keep=False, local_edits=False):
+        if self.run_tabs and self.workspace is not None:
+            return self.run_tabs.configuration_sync(self, path, allow_update=allow_update,
+                                                    force=force, keep=keep, local_edits=local_edits)
+        from runner.domain.configuration_sync import SourceState
+        return SourceState()
 
     def _remember_workspace(self, chemin: str) -> None:
         recents = [chemin] + [p for p in self.settings.value(K_RECENT, [], type=list)

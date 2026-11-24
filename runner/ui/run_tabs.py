@@ -228,7 +228,8 @@ class RunTabsController(QObject):
                           root / sha256(origin.encode("utf-8")).hexdigest()[:16] / "config.yaml")
         else:
             target = root / "config.yaml"
-        if source and not target.exists():
+        created = not target.exists()
+        if source and created:
             content = Path(source).read_bytes()
             target.parent.mkdir(parents=True, exist_ok=True)
             temporary = target.with_suffix(".tmp")
@@ -242,7 +243,33 @@ class RunTabsController(QObject):
         if origin:
             entry.configuration_sources[key] = origin
             entry.configuration_copies[origin] = str(target)
+            from runner.domain.configuration_sync import remember_source
+            if created:
+                remember_source(target, origin, ancestor=source)
+            self.configuration_sync(context, str(target))
         return str(target)
+
+    def configuration_sync(self, context, path, *, allow_update=True, force=False, keep=False, local_edits=False):
+        from runner.domain.configuration_sync import SourceState, sync_source
+        entry = self.entry_for(context)
+        if entry is None:
+            return SourceState()
+        source = next((name for name, copy in entry.configuration_copies.items()
+                       if Path(copy).resolve() == Path(path).resolve()), '')
+        if not source:
+            return SourceState()
+        locked = self.is_locked(context)
+        if (force or keep) and locked:
+            raise OSError('This run is locked. Its configuration cannot be replaced.')
+        editor = getattr(context, 'yaml_editor', None)
+        dirty = bool(editor is not None and Path(editor.path).resolve() == Path(path).resolve()
+                     and editor.has_changes())
+        state = sync_source(path, source, allow_update=allow_update and not locked,
+                            force=force, keep=keep, local_edits=local_edits or dirty
+                            or bool(getattr(context, '_configuration_profile', '')))
+        if state.updated:
+            context._configuration_source_updated = True
+        return state
 
     def ensure_configuration(self, context):
         if context.workspace is None or self.entry_for(context) is None:
@@ -253,7 +280,14 @@ class RunTabsController(QObject):
             ErrorDialog.show_error(context, "Could not prepare this run's configuration",
                                    "The run configuration could not be copied.", str(exc))
             return False
-        context.workspace = replace(context.workspace, config_path=path)
+        if self.is_locked(context):
+            context.workspace = replace(context.workspace, config_path=path)
+        else:
+            from runner.domain.workspace import Workspace
+            previous = context.workspace
+            context.workspace = Workspace.load(previous.path, path)
+            if previous.config_path == path and previous.settings != context.workspace.settings:
+                context._configuration_source_updated = True
         return True
 
     def configuration_env(self, context, env):

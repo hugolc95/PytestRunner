@@ -774,6 +774,19 @@ copy</b>: editing a draft never changes the source file or the other tabs.
 The same copy is used for collection and execution. <b>Import YAML…</b> copies
 another file into the run. Queued and running tabs are locked.</p>
 
+<h2>Changes made in an external editor</h2>
+<p>Opening this page, choosing a YAML file or clicking <b>Reload</b> checks
+the original file again. If the run copy has not been customized, saved
+changes from VS Code, PyCharm or another editor are imported automatically.</p>
+<p>If this run has saved or unsaved custom settings, they are kept and a
+source-change notice appears. <b>Update from source…</b> offers
+<b>Keep run settings</b> or <b>Use source YAML</b>. Replacing the configuration
+affects only this run. Invalid or missing source files never replace a working
+copy. Copies from older sessions without a known source version also require
+this explicit choice.</p>
+<p>Queued runs, running tests and archived History keep their captured YAML.
+To discard only unsaved editor changes, use <b>Discard changes</b>.</p>
+
 <h2>Keys understood by Pytest Runner</h2>
 <p>Key names ignore case, dashes and spaces; they can be at the root or in a
 section (a key at the root wins). The alternative names in brackets work

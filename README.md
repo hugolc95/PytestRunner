@@ -1,5 +1,23 @@
 # Pytest Runner GUI
 
+## YAML modifié dans un IDE et rechargement fiable — v1.8.3
+
+Les modifications enregistrées dans VS Code, PyCharm ou un autre éditeur
+sont reprises à l'ouverture de **YAML Configuration**, au choix du fichier
+ou avec **Reload**, tant que la copie du Run n'a pas été personnalisée.
+Les nouvelles valeurs sont aussi utilisées pour la collecte et l'exécution.
+
+Si le Run contient des réglages locaux, une indication signale que le fichier
+source a changé. **Update from source…** permet de choisir **Keep run settings**
+ou **Use source YAML**, sans perdre de modifications sans confirmation.
+Les anciennes copies dont l'origine exacte n'est pas connue demandent aussi
+ce choix explicite. Un YAML source invalide ou supprimé conserve la copie
+existante et affiche le problème.
+
+Chaque onglet reste indépendant. Les configurations des runs en attente,
+des exécutions en cours et de l'historique restent figées. Le guide Help
+décrit ce comportement dans la rubrique YAML configuration.
+
 ## Résultats compacts et compteurs stables — v1.8.2
 
 La carte **Results** conserve une grille compacte pendant toute l'exécution :

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -212,12 +213,14 @@ class ConfigDialog(QDialog):
 
     def __init__(self, config_path: str, readers_connus=(), parent=None,
                  candidats=(), workspace_path: str = "", embedded: bool = False, interpreter: str = '',
-                 configuration_resolver=None):
+                 configuration_resolver=None, configuration_sync=None):
         # Integre a une page, l'editeur nait widget : le passer ensuite de
         # dialogue a widget recreait sa fenetre native (0,12 s a l'ouverture).
         super().__init__(parent, Qt.Widget) if embedded else super().__init__(parent)
         self.path = Path(config_path)
         self._configuration_resolver = configuration_resolver
+        self._configuration_sync = configuration_sync
+        self._source_state = None
         self._embedded = embedded
         self._workspace_path = (Path(workspace_path) if workspace_path
                                 else self.path.parent)
@@ -314,11 +317,11 @@ class ConfigDialog(QDialog):
 
         self.reload_button = QPushButton("Reload")
         self.reload_button.setObjectName("Ghost")
-        self.reload_button.clicked.connect(self.reload)
+        self.reload_button.clicked.connect(self.reload_requested)
 
         self.discard_button = QPushButton("Discard changes")
         self.discard_button.setObjectName("Ghost")
-        self.discard_button.clicked.connect(self.reload)
+        self.discard_button.clicked.connect(lambda: self.reload(sync_source=False))
         self.discard_button.setEnabled(False)
 
         self.save_button = QPushButton("Save")
@@ -343,6 +346,18 @@ class ConfigDialog(QDialog):
         colonne.setSpacing(t.SPACE_3)
         colonne.addWidget(self.file_row)
         colonne.addWidget(self.chemin_label)
+        self.source_notice = QWidget()
+        source_row = QHBoxLayout(self.source_notice)
+        source_row.setContentsMargins(0, 0, 0, 0)
+        self.source_notice_label = QLabel()
+        self.source_notice_label.setWordWrap(True)
+        self.source_update_button = QPushButton('Update from source…')
+        self.source_update_button.setObjectName('Ghost')
+        self.source_update_button.clicked.connect(self.update_from_source)
+        source_row.addWidget(self.source_notice_label, 1)
+        source_row.addWidget(self.source_update_button)
+        self.source_notice.hide()
+        colonne.addWidget(self.source_notice)
         colonne.addWidget(self.settings_search)
         reader_row = QHBoxLayout()
         self.discover_readers_button = QPushButton('Refresh available readers')
@@ -509,8 +524,80 @@ class ConfigDialog(QDialog):
         self.file_combo.setCurrentIndex(self.file_combo.findData(str(self.path)))
         self.file_combo.blockSignals(False)
 
-    def reload(self) -> None:
+    def has_changes(self):
+        return self._tracking_changes and bool(self._modifications() or self._has_raw_changes())
+
+    def refresh_source(self, *, sync=True, force=False, keep=False):
+        if self._configuration_sync is None:
+            return None
+        try:
+            state = self._configuration_sync(str(self.path), allow_update=sync,
+                                             force=force, keep=keep, local_edits=self.has_changes())
+        except OSError as exc:
+            from runner.domain.configuration_sync import SourceState
+            state = SourceState(problem=str(exc))
+        self._source_state = state
+        visible = bool(state.changed or state.problem or state.local_changed)
+        self.source_notice.setVisible(visible)
+        message = state.problem or ('Source changed · Run settings kept.' if state.changed else 'Custom run settings')
+        self.source_notice_label.setText(message)
+        self.source_notice_label.setToolTip(state.source)
+        self.source_update_button.setEnabled(bool(state.source))
+        if state.source:
+            self.reload_button.setToolTip('Check for source updates, then reload this run.\n' + state.source)
+        return state
+
+    def _confirm_source_reload(self):
+        box = QMessageBox(self)
+        box.setWindowTitle('Update configuration')
+        box.setIcon(QMessageBox.Question)
+        box.setText('Replace this run’s settings with the source YAML?')
+        box.setInformativeText('Local and unsaved changes in this run will be replaced. Other runs are kept.')
+        keep = box.addButton('Keep run settings', QMessageBox.RejectRole)
+        use_source = box.addButton('Use source YAML', QMessageBox.AcceptRole)
+        box.setDefaultButton(keep)
+        box.exec()
+        return box.clickedButton() is use_source
+
+    def update_from_source(self):
+        state = self.refresh_source(sync=False)
+        if state is None or not state.source:
+            return
+        if (state.local_changed or self.has_changes()) and not self._confirm_source_reload():
+            self.refresh_source(sync=False, keep=True)
+            self._dire('Run settings kept.')
+            return
+        state = self.refresh_source(sync=False, force=True)
+        if state.problem:
+            self._dire(state.problem, alerte=True)
+            return
+        self.reload(sync_source=False)
+        self._dire('Updated from source.')
+        self.file_changed.emit(str(self.path))
+
+    def reload_requested(self):
+        state = self.refresh_source(sync=True)
+        if state is not None and state.changed and state.local_changed:
+            self.update_from_source()
+            return
+        if self.has_changes():
+            self._dire('Save or discard your edits before reloading.', alerte=True)
+            return
+        previous = self._loaded_raw
+        self.reload(sync_source=False)
+        if state is not None and state.problem:
+            self._dire(state.problem, alerte=True)
+        elif state is not None and state.updated:
+            self._dire('Updated from source.')
+        if previous != self._loaded_raw:
+            self.file_changed.emit(str(self.path))
+
+    def reload(self, *, sync_source=True) -> None:
         """Relit le fichier et rebatit les deux vues."""
+        if sync_source:
+            self.refresh_source(sync=True)
+            if self.has_changes():
+                return
         self._tracking_changes = False
         donnees = config_file.charger(self.path)
         texte = config_file.lire_texte(self.path)
@@ -521,6 +608,8 @@ class ConfigDialog(QDialog):
         self._dire("")
         self._tracking_changes = True
         self._set_state("saved")
+        if not sync_source:
+            self.refresh_source(sync=False)
 
     def _batir(self, donnees: dict) -> None:
         while self._form.count():
@@ -772,7 +861,7 @@ class ConfigDialog(QDialog):
             self._dire(f"Could not write: {message}", alerte=True)
             return False
 
-        self.reload()
+        self.reload(sync_source=False)
         combien = len(changements)
         self._dire(f"Saved {combien} setting{'s' if combien > 1 else ''}.")
         if notify:
@@ -806,7 +895,7 @@ class ConfigDialog(QDialog):
             self._dire(f"Could not write: {message}", alerte=True)
             return False
 
-        self.reload()
+        self.reload(sync_source=False)
         self.tabs.setCurrentIndex(ONGLET_YAML)
         self._dire("Saved.")
         if notify:
