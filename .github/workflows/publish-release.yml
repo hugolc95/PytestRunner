@@ -59,8 +59,11 @@ jobs:
             const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {...repo, run_id});
             const artifact = artifacts.find(item => item.name === `PytestRunner-windows-${run.head_sha}` && !item.expired);
             if (!artifact) throw new Error('The validated Windows artifact is missing or expired');
-            const {data: release} = await github.rest.repos.getReleaseByTag({...repo, tag});
-            if (!release.draft) throw new Error('Publication requires an existing draft; public releases are never replaced');
+            // L'endpoint par tag ne trouve pas les brouillons : les chercher
+            // dans la liste authentifiee plutot que publier une release vide.
+            const releases = await github.paginate(github.rest.repos.listReleases, repo);
+            const release = releases.find(item => item.tag_name === tag);
+            if (!release || !release.draft) throw new Error('Publication requires an existing draft; public releases are never replaced');
             core.setOutput('sha', run.head_sha);
             core.setOutput('artifact', artifact.name);
 
