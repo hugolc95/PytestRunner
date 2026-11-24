@@ -1,0 +1,117 @@
+name: Publish validated Windows release
+
+# Publication manuelle : reutilise le build valide sans relancer les tests
+# et sans telecharger l'archive sur le poste de la personne qui publie.
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful main CI run containing the Windows build
+        required: true
+        type: string
+      tag:
+        description: Existing version tag with a prepared draft release (vX.Y.Z)
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: publish-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CI_RUN_ID: ${{ inputs.run_id }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Verify CI, tag and draft release
+        id: validate
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const tag = process.env.RELEASE_TAG;
+            if (!/^v\d+\.\d+\.\d+$/.test(tag) || !/^\d+$/.test(process.env.CI_RUN_ID)) {
+              throw new Error('Expected a version tag and a numeric CI run ID');
+            }
+            const repo = context.repo;
+            const run_id = Number(process.env.CI_RUN_ID);
+            const {data: run} = await github.rest.actions.getWorkflowRun({...repo, run_id});
+            const {data: workflow} = await github.rest.actions.getWorkflow({...repo, workflow_id: run.workflow_id});
+            if (run.conclusion !== 'success' || run.head_branch !== 'main' || run.event !== 'push'
+                || workflow.path !== '.github/workflows/ci.yml') {
+              throw new Error('A successful main push of the Windows CI workflow is required');
+            }
+            const {data: ref} = await github.rest.git.getRef({...repo, ref: `tags/${tag}`});
+            let object = ref.object;
+            for (let depth = 0; object.type === 'tag' && depth < 5; depth++) {
+              const {data: annotated} = await github.rest.git.getTag({...repo, tag_sha: object.sha});
+              object = annotated.object;
+            }
+            if (object.type !== 'commit' || object.sha !== run.head_sha) {
+              throw new Error('The version tag must point to the exact validated CI commit');
+            }
+            const artifacts = await github.paginate(github.rest.actions.listWorkflowRunArtifacts, {...repo, run_id});
+            const artifact = artifacts.find(item => item.name === `PytestRunner-windows-${run.head_sha}` && !item.expired);
+            if (!artifact) throw new Error('The validated Windows artifact is missing or expired');
+            const {data: release} = await github.rest.repos.getReleaseByTag({...repo, tag});
+            if (!release.draft) throw new Error('Publication requires an existing draft; public releases are never replaced');
+            core.setOutput('sha', run.head_sha);
+            core.setOutput('artifact', artifact.name);
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.validate.outputs.sha }}
+
+      - name: Download validated executable
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.run_id }}
+          name: ${{ steps.validate.outputs.artifact }}
+          path: staging/PytestRunner
+
+      - name: Package Windows ZIP and SHA-256
+        shell: python
+        run: |
+          import hashlib
+          import os
+          from pathlib import Path
+          import re
+          import zipfile
+
+          version = os.environ['RELEASE_TAG'][1:]
+          metadata = Path('runner/version.py').read_text(encoding='utf-8')
+          declared = re.search(r'^__version__ = "([^"]+)"$', metadata, re.MULTILINE)
+          assert declared and declared.group(1) == version, 'Version and tag differ'
+          source = Path('staging/PytestRunner')
+          assert (source / 'PytestRunner.exe').is_file(), 'Windows executable missing'
+          assert (source / '_internal').is_dir(), 'Runtime directory missing'
+          assert any(source.rglob('Qt6Core.dll')), 'Qt runtime missing'
+          assert any(source.rglob('qwindows.dll')), 'Windows platform plugin missing'
+          assets = Path('release-assets')
+          assets.mkdir()
+          target = assets / f'PytestRunner-{version}-windows-x64.zip'
+          with zipfile.ZipFile(target, 'w', zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+              for file in sorted(source.rglob('*')):
+                  if file.is_file():
+                      archive.write(file, (Path('PytestRunner') / file.relative_to(source)).as_posix())
+          with zipfile.ZipFile(target) as archive:
+              assert archive.testzip() is None, 'ZIP integrity check failed'
+              assert 'PytestRunner/PytestRunner.exe' in archive.namelist()
+          digest = hashlib.sha256(target.read_bytes()).hexdigest()
+          target.with_suffix('.zip.sha256').write_text(f'{digest}  {target.name}\n', encoding='ascii')
+          print(f'{target.name}: {target.stat().st_size} bytes, SHA-256 {digest}')
+
+      - name: Upload assets and publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload "$RELEASE_TAG" release-assets/*.zip release-assets/*.sha256
+          gh release edit "$RELEASE_TAG" --draft=false --latest --verify-tag
