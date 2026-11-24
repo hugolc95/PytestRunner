@@ -1,5 +1,12 @@
 # Pytest Runner GUI
 
+## Conservation des lecteurs pendant le rechargement YAML — v1.8.4
+
+Le rechargement depuis le fichier source actualise les réglages uniquement
+quand une modification externe a été reprise. Les autres actions conservent
+les lecteurs sélectionnés et les réglages du Run, y compris dans un nouvel
+onglet. Cette version inclut le rechargement YAML décrit ci-dessous.
+
 ## YAML modifié dans un IDE et rechargement fiable — v1.8.3
 
 Les modifications enregistrées dans VS Code, PyCharm ou un autre éditeur

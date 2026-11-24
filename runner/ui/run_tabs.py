@@ -280,14 +280,14 @@ class RunTabsController(QObject):
             ErrorDialog.show_error(context, "Could not prepare this run's configuration",
                                    "The run configuration could not be copied.", str(exc))
             return False
-        if self.is_locked(context):
-            context.workspace = replace(context.workspace, config_path=path)
-        else:
+        if not self.is_locked(context) and getattr(context, '_configuration_source_updated', False):
+            # Ne relire les reglages que lorsqu'une nouvelle source a ete
+            # importee. Un simple passage ici conserve les choix en memoire,
+            # notamment les lecteurs du Run et des nouveaux onglets.
             from runner.domain.workspace import Workspace
-            previous = context.workspace
-            context.workspace = Workspace.load(previous.path, path)
-            if previous.config_path == path and previous.settings != context.workspace.settings:
-                context._configuration_source_updated = True
+            context.workspace = Workspace.load(context.workspace.path, path)
+        else:
+            context.workspace = replace(context.workspace, config_path=path)
         return True
 
     def configuration_env(self, context, env):
