@@ -15,6 +15,7 @@ from PySide6.QtCore import QAbstractItemModel, QModelIndex, Qt, QTimer, Signal
 from PySide6.QtGui import QColor
 
 from runner.domain.duration import format_duration
+from runner.domain.report_timing import valid_duration
 from runner.domain.models import Kind, Reader, Status, TestNode, worst
 from runner.domain.reader_labels import badge_labels
 from runner.ui import icons
@@ -920,7 +921,14 @@ class TestTreeModel(QAbstractItemModel):
         for nodeid, row in self._by_nodeid.items():
             for reader, status in row.statuses.items():
                 if status.is_final:
-                    result.setdefault(nodeid, {})[reader] = dict(status=status.name, meta=dict(self._run_meta))
+                    entry = dict(status=status.name, meta=dict(self._run_meta))
+                    duration = self._durations.get(nodeid, {}).get(reader)
+                    if status.is_executed and valid_duration(duration):
+                        entry['duration'] = duration
+                    reason = self._not_run.get((nodeid, reader))
+                    if reason:
+                        entry['reason'] = reason
+                    result.setdefault(nodeid, {})[reader] = entry
         return result
 
     def begin_run(self, retain=False, meta=None):

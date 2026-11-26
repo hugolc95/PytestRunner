@@ -554,6 +554,26 @@ results in the test tree</a>, the last known verdict of every test stays in the
 tree: filled icons come from the latest run, outlined icons from earlier runs.
 The eraser <b>Clear tree results</b> resets the tree without touching
 History.</p>
+<h2>Exporting the tree to Excel</h2>
+<p>Open the tree toolbar's <i>More tree actions</i> menu or right-click in the
+main tree, then choose <b>Export all tree results to Excel…</b>. The workbook
+contains <i>All results</i>, <i>Differences</i> and <i>Traceability</i> sheets.
+The workbook uses the IN Groupe logo and colours. In <i>All results</i> and
+<i>Differences</i>, use Excel's + / − outline controls on the left to expand
+or collapse folders, files and parameterized tests. Numbered outline levels
+change the detail shown for the whole sheet. Parent rows summarize reader
+statuses and difference counts, even when their children are collapsed.
+It includes every collected test and every reader column, including unchecked,
+filtered and collapsed tests. Current and retained verdicts are exported together.</p>
+<p><i>Differences</i> lists different reader statuses and partial coverage.
+<i>NOT RUN</i> means a requested test was not executed; <i>No result</i> means
+there is no recorded verdict. Tests with no results on any reader stay in
+<i>All results</i>. With one reader there is no reader comparison.</p>
+<p><i>Traceability</i> identifies the source run, date and measured duration
+when available. Archived base YAML fingerprints help identify different run
+configurations; they do not describe per-test YAML overrides. Missing archives
+never erase retained verdicts. Export runs in the background and offers
+<i>Open Excel</i> when complete. Switch to <i>All tests</i> to export the main tree.</p>
 """,
     ),
     HelpTopic(

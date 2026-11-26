@@ -3724,6 +3724,7 @@ class MainWindow(QMainWindow):
             if menu.actions():
                 menu.addSeparator()
             self.tree_results.refresh()
+            menu.addAction(self.tree_results.export_action)
             menu.addAction(self.tree_results.action)
         return menu
 
@@ -4559,6 +4560,16 @@ class MainWindow(QMainWindow):
         self._refresh_interpreter_alert()
 
     def closeEvent(self, event) -> None:
+        tree_worker = getattr(getattr(getattr(self, 'tree_results', None), 'exporter', None), 'worker', None)
+        if self._run_host is None and tree_worker is not None and tree_worker.isRunning():
+            if not getattr(self, '_close_after_tree_export', False):
+                self._close_after_tree_export = True
+                def close_after_tree_export():
+                    self._close_after_tree_export = False
+                    self.close()
+                tree_worker.finished.connect(close_after_tree_export)
+            event.ignore()
+            return
         report_worker = getattr(getattr(self, 'history_dashboard', None), '_report_export_worker', None)
         if self._run_host is None and report_worker is not None and report_worker.isRunning():
             if not getattr(self, '_close_after_report', False):

@@ -1,5 +1,28 @@
 # Pytest Runner GUI
 
+## Export Excel des résultats conservés dans le tree — v1.9.0
+
+Dans **All tests**, ouvrir le menu **…** du tree ou faire un clic droit,
+puis choisir **Export all tree results to Excel…**. Le classeur contient :
+
+- **All results** : dossiers, sous-dossiers, tests et derniers statuts connus
+  par reader, y compris ceux conservés des runs précédents.
+- **Differences** : écarts de statuts entre readers et résultats manquants
+  sur certains readers. **NOT RUN** reste distinct de **No result**.
+- **Traceability** : run et date d'origine, durée mesurée quand elle est
+  disponible, motif de non-exécution et empreinte du YAML de base archivé.
+
+L'export comprend tout le tree collecté, indépendamment de la recherche,
+des cases cochées et des branches repliées. La génération se fait en
+arrière-plan ; **Open Excel** permet d'ouvrir le fichier une fois terminé.
+Le classeur reprend le logo et les couleurs **IN Groupe**. Dans **All results**
+et **Differences**, les commandes Excel **+/−** et les niveaux de plan
+permettent de déplier ou replier les dossiers, fichiers et tests paramétrés.
+Les parents gardent un bilan des statuts par reader et du nombre d'écarts.
+Les erreurs de collection sont signalées et les mesures absentes ne sont
+jamais remplacées par zéro. Les empreintes YAML concernent la configuration
+de base du run, sans les surcharges par test.
+
 ## Conservation des lecteurs pendant le rechargement YAML — v1.8.4
 
 Le rechargement depuis le fichier source actualise les réglages uniquement

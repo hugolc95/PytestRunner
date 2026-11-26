@@ -7,6 +7,7 @@ from PySide6.QtCore import QObject
 from PySide6.QtGui import QAction
 
 from runner.domain.models import Reader
+from runner.domain.report_timing import valid_duration
 from runner.domain.tree_results import TreeResultsStore
 from runner.ui import icons, tokens as t
 
@@ -18,6 +19,12 @@ class TreeResultsController(QObject):
         host = window._run_host or window
         owner = getattr(host, 'tree_results', self)
         self.store = owner.store if owner is not self else TreeResultsStore(window.history.racine.parent / 'tree-results')
+        from runner.ui.tree_results_export import TreeResultsExporter
+        self.exporter = owner.exporter if owner is not self else TreeResultsExporter(host)
+        self.export_action = QAction('Export all tree results to Excel…', window)
+        self.export_action.setToolTip('All collected tests and readers, with retained results, differences and provenance')
+        self.export_action.triggered.connect(lambda: self.exporter.export(window))
+        self.exporter.busy_changed.connect(self.refresh)
         self._hidden_previous = {}
         self.button = window._quiet('mdi.eraser', 'Clear tree results — saved History is kept', self.clear)
         self.action = QAction('Clear tree results', window)
@@ -27,6 +34,7 @@ class TreeResultsController(QObject):
         toolbar.insertWidget(toolbar.indexOf(window.select_all_button), self.button)
         window.model.layoutChanged.connect(self.refresh)
         window.model.dataChanged.connect(self.refresh)
+        window.profile_tree_button.toggled.connect(self.refresh)
         window.service.finished.connect(self.completed)
         self.collected(False)
 
@@ -55,6 +63,12 @@ class TreeResultsController(QObject):
         self.button.setIcon(icons.icon('mdi.eraser', t.TEXT_MUTED))
         self.action.setEnabled(self.button.isEnabled())
         self.action.setIcon(self.button.icon())
+        self.export_action.setIcon(icons.icon('mdi.file-excel-outline', t.TEXT_MUTED))
+        self.export_action.setEnabled(self.exporter.available(w))
+        self.export_action.setToolTip(
+            'Switch to All tests to export the main tree results' if w.profile_tree_button.isChecked() else
+            'An Excel export is already in progress' if self.exporter.worker is not None else
+            'All collected tests and readers, with retained results, differences and provenance')
 
     def collected(self, same_workspace, retained=None):
         w = self.window
@@ -110,7 +124,14 @@ class TreeResultsController(QObject):
             for nodeid, row in w.model._by_nodeid.items():
                 for index, status in row.statuses.items():
                     if status.is_final and index in names:
-                        records.setdefault(nodeid, {})[names[index]] = dict(status=status.name, meta=dict(w.model._run_meta))
+                        entry = dict(status=status.name, meta=dict(w.model._run_meta))
+                        duration = w.model._durations.get(nodeid, {}).get(index)
+                        if status.is_executed and valid_duration(duration):
+                            entry['duration'] = duration
+                        reason = w.model._not_run.get((nodeid, index))
+                        if reason:
+                            entry['reason'] = reason
+                        records.setdefault(nodeid, {})[names[index]] = entry
             try:
                 self.store.merge(w.workspace.path, records)
             except (OSError, ValueError, TypeError) as exc:
