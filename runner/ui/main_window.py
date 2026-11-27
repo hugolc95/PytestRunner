@@ -3725,6 +3725,7 @@ class MainWindow(QMainWindow):
                 menu.addSeparator()
             self.tree_results.refresh()
             menu.addAction(self.tree_results.export_action)
+            menu.addAction(self.tree_results.update_export_action)
             menu.addAction(self.tree_results.action)
         return menu
 

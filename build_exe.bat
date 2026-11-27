@@ -65,9 +65,9 @@ if errorlevel 1 exit /b 1
 exit /b 0
 
 :verifier_dependances
-"%BUILD_PYTHON%" -c "import PySide6" 2>nul
+"%BUILD_PYTHON%" -c "import PySide6, openpyxl, PIL" 2>nul
 if errorlevel 1 (
-    echo PySide6 est introuvable pour ce Python x64.
+    echo Des dependances GUI ou Excel sont introuvables pour ce Python x64.
     echo Installation des dependances GUI...
     "%BUILD_PYTHON%" -m pip install -r requirements.txt
     if errorlevel 1 exit /b 1

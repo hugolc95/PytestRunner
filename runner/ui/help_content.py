@@ -557,23 +557,35 @@ History.</p>
 <h2>Exporting the tree to Excel</h2>
 <p>Open the tree toolbar's <i>More tree actions</i> menu or right-click in the
 main tree, then choose <b>Export all tree results to Excel…</b>. The workbook
-contains <i>All results</i>, <i>Differences</i> and <i>Traceability</i> sheets.
-The workbook uses the IN Groupe logo and colours. In <i>All results</i> and
-<i>Differences</i>, use Excel's + / − outline controls on the left to expand
-or collapse folders, files and parameterized tests. Numbered outline levels
-change the detail shown for the whole sheet. Parent rows summarize reader
-statuses and difference counts, even when their children are collapsed.
+contains <i>Summary</i>, <i>Analysis</i>, <i>Groups</i> and <i>Reference</i> sheets,
+with the IN Groupe logo and colours. In <i>Groups</i>, use Excel's + / − outline
+controls to expand or collapse folders, files and parameterized tests.
 It includes every collected test and every reader column, including unchecked,
 filtered and collapsed tests. Current and retained verdicts are exported together.</p>
-<p><i>Differences</i> lists different reader statuses and partial coverage.
+<p><i>Analysis</i> has one row per test, with filters, reader statuses and differences.
+Use Ctrl+F to find a test. Edit the blue columns: follow-up, comment, Jira ticket,
+owner and action. Add personal columns or sheets as needed. Choose <i>Done</i>
+or <i>Expected</i> to close an analysis without changing the source verdicts.
+For separate tickets on different readers, copy a complete row and change
+<i>Reader scope</i>. Each test/reader pair must remain unique.</p>
+<p>Different reader statuses and partial coverage remain visible.
 <i>NOT RUN</i> means a requested test was not executed; <i>No result</i> means
 there is no recorded verdict. Tests with no results on any reader stay in
-<i>All results</i>. With one reader there is no reader comparison.</p>
-<p><i>Traceability</i> identifies the source run, date and measured duration
+<i>Analysis</i>. With one reader there is no reader comparison.</p>
+<p><i>Reference</i> identifies the source run, date and measured duration
 when available. Archived base YAML fingerprints help identify different run
 configurations; they do not describe per-test YAML overrides. Missing archives
 never erase retained verdicts. Export runs in the background and offers
 <i>Open Excel</i> when complete. Switch to <i>All tests</i> to export the main tree.</p>
+<p>To refresh an annotated workbook, save and close it, then choose
+<b>Update Excel analysis…</b> in the same tree menu. Comments, tickets, personal
+columns, cell notes and personal sheets stay attached to their test after sorting.
+Removed tests keep their notes. Changed results reopen the follow-up as
+<i>To review</i>; marking it <i>Done</i> clears the review flag. Summary, Groups
+and Reference are regenerated. Keep the hidden Test ID column and original
+Analysis headers. Workbooks from an older format or another project cannot be
+updated: export a new file. Unsupported Excel extensions are refused to avoid
+silently discarding workbook features.</p>
 """,
     ),
     HelpTopic(

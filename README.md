@@ -1,5 +1,40 @@
 # Pytest Runner GUI
 
+## Classeur d’analyse éditable — branche d’essai
+
+Le menu **…** du tree et son clic droit proposent **Export all tree results
+to Excel…**. Le nouveau classeur IN Groupe sépare les informations :
+
+- **Summary** : bilan et accès rapide aux feuilles.
+- **Analysis** : une ligne par test, filtres, statuts par reader et écarts.
+  Les colonnes bleues permettent de saisir suivi, commentaire, ticket Jira,
+  responsable et action. Des colonnes et feuilles personnelles peuvent être ajoutées.
+- **Groups** : arborescence avec les commandes **+/−** d’Excel.
+- **Reference** : source des verdicts, runs, dates, durées, configuration et
+  motifs de non-exécution. **No result** reste distinct de **NOT RUN**.
+
+Pour retrouver un cas parmi de nombreux tests, utiliser **Ctrl+F** ou filtrer
+**Needs review**, **Group**, un statut ou **Follow-up**. Choisir **Done** ou
+**Expected** termine son analyse sans changer les vrais résultats. Pour deux
+tickets distincts sur deux readers, copier la ligne complète et choisir un
+autre **Reader scope** ; chaque paire test/reader doit rester unique.
+
+Après de nouveaux runs, enregistrer et fermer le fichier puis choisir
+**Update Excel analysis…** dans le même menu. Les commentaires, tickets,
+colonnes personnelles, notes de cellule et feuilles personnelles sont conservés,
+même après un tri. Les tests retirés restent avec leur suivi. Un résultat modifié
+repasse **To review** ; une modification de date ou de durée seule ne rouvre pas
+l’analyse. **Summary**, **Groups** et **Reference** sont régénérés.
+
+Conserver la colonne technique **Test ID** (masquée) et les titres d’origine
+de la table **Analysis**. Les anciens classeurs v1.9.0 restent consultables :
+exporter vers un nouveau fichier pour obtenir ce format. Si un classeur utilise
+des extensions Excel non prises en charge, l’actualisation est refusée avant
+écriture. Les empreintes YAML concernent la base archivée, sans les surcharges
+par test. L’export se fait en arrière-plan.
+
+Depuis les sources, actualiser les dépendances avec `pip install -r requirements.txt`.
+
 ## Export Excel des résultats conservés dans le tree — v1.9.0
 
 Dans **All tests**, ouvrir le menu **…** du tree ou faire un clic droit,

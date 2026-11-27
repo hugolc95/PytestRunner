@@ -95,6 +95,7 @@ class TreeToolbarController(QObject):
         self.menu.clear()
         w.tree_results.refresh()
         self.menu.addAction(w.tree_results.export_action)
+        self.menu.addAction(w.tree_results.update_export_action)
         self.menu.addAction(w.tree_results.action)
         self.menu.addSeparator()
         for button in (w.select_all_button, w.select_none_button,

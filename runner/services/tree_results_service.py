@@ -1,7 +1,7 @@
 """Ecriture Excel hors du fil UI ; l'instantane ne contient aucun objet Qt."""
 from PySide6.QtCore import QThread
 
-from runner.domain.tree_results_export import export_tree_results_xlsx
+from runner.domain.analysis_workbook import export_analysis_xlsx as export_tree_results_xlsx
 
 
 class TreeResultsExportWorker(QThread):

@@ -73,10 +73,21 @@ class TreeResultsExporter(QObject):
             return
         if not destination.lower().endswith('.xlsx'):
             destination += '.xlsx'
-            if Path(destination).exists() and QMessageBox.question(window, 'Replace workbook?',
-                    f'A workbook already exists at:\n{destination}\nReplace it?',
+            if Path(destination).exists() and QMessageBox.question(window, 'Update existing workbook?',
+                    f'A workbook already exists at:\n{destination}\n'
+                    'Update it and keep its analysis notes? Older workbook formats require a new file.',
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
                 return
+        self.start(window, destination)
+
+    def update(self, window):
+        if not self.available(window):
+            return
+        destination, _ = QFileDialog.getOpenFileName(window, 'Update Excel analysis', '', 'Excel workbook (*.xlsx)')
+        if destination and self.available(window):
+            self.start(window, destination)
+
+    def start(self, window, destination):
         # Capturer sur le fil UI avant tout travail disque. Le thread reste
         # rattache a l'hote : fermer l'onglet ne detruit pas son export.
         snapshot = snapshot_tree(window)

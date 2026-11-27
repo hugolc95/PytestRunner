@@ -62,8 +62,29 @@ def test_export_is_available_in_both_menus_without_a_toolbar_button(window):
     assert action in window.tree_tools.menu.actions()
     assert action in window._tree_context_menu(QModelIndex()).actions()
     assert action.isEnabled()
+    update = window.tree_results.update_export_action
+    assert update in window.tree_tools.menu.actions()
+    assert update in window._tree_context_menu(QModelIndex()).actions()
+    assert update.isEnabled()
     window.profile_tree_button.setChecked(True)
     assert not action.isEnabled()
+    assert not update.isEnabled()
+
+
+def test_update_uses_existing_workbook_and_background_worker(window, qtbot, tmp_path, monkeypatch):
+    path = tmp_path / 'analysis.xlsx'
+    path.write_bytes(b'annotations')
+    calls = []
+    def update(destination, snapshot, entries):
+        calls.append((destination, destination.read_bytes()))
+        return 3, 0
+    monkeypatch.setattr('runner.services.tree_results_service.export_tree_results_xlsx', update)
+    monkeypatch.setattr('runner.ui.tree_results_export.QFileDialog.getOpenFileName', lambda *_: (str(path), ''))
+    exporter = window.tree_results.exporter
+    monkeypatch.setattr(exporter, 'offer_open', lambda *_: None)
+    window.tree_results.update_export_action.trigger()
+    qtbot.waitUntil(lambda: exporter.worker is None)
+    assert calls == [(path, b'annotations')]
 
 
 def test_background_export_keeps_ui_responsive_and_captures_before_changes(window, qtbot, tmp_path, monkeypatch):

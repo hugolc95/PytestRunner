@@ -24,6 +24,9 @@ class TreeResultsController(QObject):
         self.export_action = QAction('Export all tree results to Excel…', window)
         self.export_action.setToolTip('All collected tests and readers, with retained results, differences and provenance')
         self.export_action.triggered.connect(lambda: self.exporter.export(window))
+        self.update_export_action = QAction('Update Excel analysis…', window)
+        self.update_export_action.setToolTip('Refresh an existing workbook while keeping comments, tickets and personal columns')
+        self.update_export_action.triggered.connect(lambda: self.exporter.update(window))
         self.exporter.busy_changed.connect(self.refresh)
         self._hidden_previous = {}
         self.button = window._quiet('mdi.eraser', 'Clear tree results — saved History is kept', self.clear)
@@ -65,6 +68,8 @@ class TreeResultsController(QObject):
         self.action.setIcon(self.button.icon())
         self.export_action.setIcon(icons.icon('mdi.file-excel-outline', t.TEXT_MUTED))
         self.export_action.setEnabled(self.exporter.available(w))
+        self.update_export_action.setIcon(self.export_action.icon())
+        self.update_export_action.setEnabled(self.export_action.isEnabled())
         self.export_action.setToolTip(
             'Switch to All tests to export the main tree results' if w.profile_tree_button.isChecked() else
             'An Excel export is already in progress' if self.exporter.worker is not None else
